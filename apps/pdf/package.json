@@ -16,6 +16,7 @@
   "devDependencies": {
     "@hermesoffice/agent-core": "*",
     "@hermesoffice/ai-provider": "*",
+    "@hermesoffice/ai-search": "*",
     "@hermesoffice/electron-utils": "*",
     "@hermesoffice/i18n": "*",
     "@hermesoffice/ui": "*",

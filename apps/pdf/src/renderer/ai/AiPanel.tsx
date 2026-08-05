@@ -58,6 +58,9 @@ interface ChatEntry {
   /** the run failed and this user message was rolled back out of the model context */
   undelivered?: boolean
   tools?: ToolActivity[]
+  /** edit state captured before this run's first mutating tool (one-click rollback) */
+  snapshot?: unknown
+  rolledBack?: boolean
 }
 
 type Phase = 'thinking' | 'replying' | 'working'
@@ -121,19 +124,24 @@ export function AiPanel({
       applyFormEdit: (v) => apiRef.current.applyFormEdit(v),
       rotatePage: (idx, dir) => apiRef.current.rotatePage(idx, dir),
       deletePage: (idx) => apiRef.current.deletePage(idx),
+      webSearch: (query, maxResults) => apiRef.current.webSearch(query, maxResults),
+      captureEditState: () => apiRef.current.captureEditState(),
+      restoreEditState: (state) => apiRef.current.restoreEditState(state),
     }
     loopRef.current = new AgentLoop({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current) + HERMES_COMMANDS,
+      captureSnapshot: () => apiRef.current.captureEditState(),
       events: {
         onText: (text) => {
           setPhase('replying')
           patchLast({ text })
         },
-        onToolExecuted: ({ call, execution }) => {
+        onToolExecuted: ({ call, execution, snapshotBefore }) => {
           setPhase('working')
           patchLast((last) => ({
+            ...(snapshotBefore !== undefined ? { snapshot: snapshotBefore } : {}),
             tools: [
               ...(last.tools ?? []),
               {
@@ -345,6 +353,24 @@ export function AiPanel({
                   onLinkClick={(url) => void window.pdfApi.openPath(url)}
                 />
               )}
+              {entry.snapshot !== undefined &&
+                (entry.rolledBack ? (
+                  <div className="ai-msg-undelivered">{t('aiRolledBack')}</div>
+                ) : (
+                  !busy && (
+                    <button
+                      className="ai-retry-btn"
+                      onClick={() => {
+                        apiRef.current.restoreEditState(entry.snapshot)
+                        setChat((prev) =>
+                          prev.map((e, j) => (j === i ? { ...e, rolledBack: true } : e)),
+                        )
+                      }}
+                    >
+                      {t('aiRollback')}
+                    </button>
+                  )
+                ))}
             </div>
           )
         })}

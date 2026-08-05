@@ -57,6 +57,12 @@ function makeDeps(over: Partial<PdfAiDeps> = {}): PdfAiDeps {
     applyFormEdit: vi.fn(),
     rotatePage: vi.fn(),
     deletePage: vi.fn(() => true),
+    webSearch: vi.fn(async () => ({
+      results: [{ title: 'Result', url: 'https://example.com', snippet: 'Snippet' }],
+      method: 'test',
+    })),
+    captureEditState: vi.fn(() => ({})),
+    restoreEditState: vi.fn(),
     ...over,
   }
 }
@@ -359,5 +365,30 @@ describe('get_outline / unknown tools', () => {
     const result = await executePdfTool(makeDeps(), call('nope'))
     expect(result.isError).toBe(true)
     expect(result.output).toContain('Unknown tool')
+  })
+})
+
+describe('web_search', () => {
+  it('formats results as numbered title/url/snippet lines', async () => {
+    const deps = makeDeps()
+    const result = await executePdfTool(deps, call('web_search', { query: 'hermes' }))
+    expect(deps.webSearch).toHaveBeenCalledWith('hermes', 6)
+    expect(result.isError).toBeUndefined()
+    expect(result.output).toContain('1. Result')
+    expect(result.output).toContain('https://example.com')
+  })
+
+  it('passes maxResults through and errors on an empty query', async () => {
+    const deps = makeDeps()
+    await executePdfTool(deps, call('web_search', { query: 'x', maxResults: 3 }))
+    expect(deps.webSearch).toHaveBeenCalledWith('x', 3)
+    const bad = await executePdfTool(deps, call('web_search', { query: '  ' }))
+    expect(bad.isError).toBe(true)
+  })
+
+  it('reports empty result sets', async () => {
+    const deps = makeDeps({ webSearch: async () => ({ results: [], method: 'test' }) })
+    const result = await executePdfTool(deps, call('web_search', { query: 'nothing' }))
+    expect(result.output).toContain('(no results)')
   })
 })

@@ -1393,6 +1393,12 @@ export default function App() {
       deletePage(origIdx)
       return true
     },
+    webSearch: (query, maxResults) => window.pdfApi.aiWebSearch(query, maxResults),
+    captureEditState: snapshot,
+    restoreEditState: (state) => {
+      pushUndo()
+      applySnapshot(state as EditSnapshot)
+    },
   }
 
   /** Internal destination of a Link annotation → jump to that page */

@@ -5,6 +5,7 @@ import { BrowserWindow, WebContentsView, app, dialog, ipcMain, shell } from 'ele
 import type { WebContents } from 'electron'
 import { installNavigationGuard, safeExternalUrl } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang } from '@hermesoffice/i18n'
+import { registerPdfAiIpc } from './ai-ipc'
 import { PDF_CHANNELS } from '../shared/ipc'
 import type {
   ExportImagesRequest,
@@ -509,6 +510,7 @@ export function startPdfStandalone(): void {
   })
   void app.whenReady().then(() => {
     registerPdfIpc()
+    registerPdfAiIpc()
     const win = new BrowserWindow({
       width: 1200,
       height: 850,

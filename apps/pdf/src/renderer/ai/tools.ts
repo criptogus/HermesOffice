@@ -29,6 +29,18 @@ export interface PdfAiDeps {
   applyFormEdit(v: FormValueInput): void
   rotatePage(origIdx: number, dir: 90 | -90): void
   deletePage(origIdx: number): boolean
+  webSearch(
+    query: string,
+    maxResults?: number,
+  ): Promise<{
+    results: Array<{ title: string; url: string; snippet: string }>
+    answer?: string
+    method: string
+  }>
+  /** Full copy of the unsaved-edit state (markups/forms/rotations/deletions/…) for AI rollback */
+  captureEditState(): unknown
+  /** Restore a state captured by captureEditState (pushes the current state onto the undo stack) */
+  restoreEditState(state: unknown): void
 }
 
 export const AGENT_TOOLS: AgentToolDef[] = [
@@ -134,6 +146,19 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       type: 'object',
       properties: { page: { type: 'integer', description: 'Page number (1-based)' } },
       required: ['page'],
+    },
+  },
+  {
+    name: 'web_search',
+    description:
+      'Search the web for textual information (references/data/facts). Use when you need up-to-date information or are unsure about a fact. Returns titles/links/snippets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'search keywords' },
+        maxResults: { type: 'integer', description: 'maximum number of results, default 6' },
+      },
+      required: ['query'],
     },
   },
   {
@@ -391,6 +416,18 @@ export async function executePdfTool(deps: PdfAiDeps, call: AgentToolCall): Prom
         mutated: true,
         summary,
       }
+    }
+    case 'web_search': {
+      const query = String(input.query ?? '').trim()
+      const summary = t('aiToolWebSearch', { query })
+      if (!query) return err('query must not be empty', summary)
+      const r = await deps.webSearch(query, Number(input.maxResults) || 6)
+      const lines: string[] = []
+      if (r.answer) lines.push(`Direct answer: ${r.answer}\n`)
+      r.results.forEach((it, i) =>
+        lines.push(`${i + 1}. ${it.title}\n   ${it.url}\n   ${it.snippet}`),
+      )
+      return { output: lines.join('\n') || '(no results)', summary }
     }
     case 'get_outline': {
       const outline = deps.outline()

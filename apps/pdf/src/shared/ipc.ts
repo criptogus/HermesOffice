@@ -142,6 +142,7 @@ export const AI_CHANNELS = {
   stream: 'ai:stream',
   streamChunk: 'ai:stream-chunk',
   streamCancel: 'ai:stream-cancel',
+  webSearch: 'ai:web-search',
 } as const
 
 /** API exposed by preload to the renderer (window.pdfApi) */
@@ -168,4 +169,12 @@ export interface PdfApi {
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
   onAiStream(handler: (chunk: AiStreamChunk) => void): () => void
+  aiWebSearch(
+    query: string,
+    maxResults?: number,
+  ): Promise<{
+    results: Array<{ title: string; url: string; snippet: string }>
+    answer?: string
+    method: string
+  }>
 }
