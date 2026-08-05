@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "fixtures": "tsx scripts/generate-fixtures.ts"
+    "fixtures": "tsx scripts/generate-fixtures.ts",
+    "templates": "tsx scripts/generate-templates.ts"
   },
   "dependencies": {
     "fast-xml-parser": "^5.3.4",
