@@ -48,14 +48,14 @@ de IA reporta erro de conexão; suba o gateway e tente de novo.
 
 ## Mudanças em relação ao upstream (camada de fork)
 
-| Arquivo | Mudança |
-|---|---|
-| `packages/ai-provider/src/types.ts` | `AiProviderId` ganha `'hermes'`; `AiProviderMeta.defaultBaseUrl` |
-| `packages/ai-provider/src/providers.ts` | Provider `hermes` (default); `HERMES_LLM_BASE_URL` |
-| `packages/ai-provider/src/stream.ts` | `streamForProvider` case `hermes` (OpenAI-compatible) |
-| `packages/ai-provider/src/chat.ts` | `chatForProvider` case `hermes` (one-shot) |
-| `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forçado `genspark` → `hermes` |
-| `apps/docs/src/renderer/ai/AiPanel.tsx` | Sign-in Genspark só p/ provider `genspark` |
+| Arquivo                                                              | Mudança                                                          |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `packages/ai-provider/src/types.ts`                                  | `AiProviderId` ganha `'hermes'`; `AiProviderMeta.defaultBaseUrl` |
+| `packages/ai-provider/src/providers.ts`                              | Provider `hermes` (default); `HERMES_LLM_BASE_URL`               |
+| `packages/ai-provider/src/stream.ts`                                 | `streamForProvider` case `hermes` (OpenAI-compatible)            |
+| `packages/ai-provider/src/chat.ts`                                   | `chatForProvider` case `hermes` (one-shot)                       |
+| `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forçado `genspark` → `hermes`                           |
+| `apps/docs/src/renderer/ai/AiPanel.tsx`                              | Sign-in Genspark só p/ provider `genspark`                       |
 
 Ao sincronizar com o upstream, essas são as únicas áreas que podem conflitar
 — o script `tools/rebrand-hermesoffice.py --check` acusa qualquer
@@ -66,8 +66,7 @@ Ao sincronizar com o upstream, essas são as únicas áreas que podem conflitar
 - [x] Provider `hermes` default + roteamento de stream/chat
 - [x] Força do provider nos 3 apps (docs/sheets/slides)
 - [x] Sign-in Genspark não aparece para provider Hermes
-- [ ] Auto-detect de saúde do gateway (checar `/health` antes do stream e
-      dar erro amigável "gateway offline")
-- [ ] Continuidade de sessão por documento (`X-Hermes-Session-Id` header)
-- [ ] Ferramentas de documento expostas ao agente (skills do docx no Hermes)
-- [ ] Launcher que garante o gateway no ar ao abrir o app
+- [x] Auto-detect de saúde do gateway (`/health` antes do stream, erro amigável)
+- [x] Continuidade de sessão por documento (`X-Hermes-Session-Id` header)
+- [x] Ferramentas de documento expostas ao agente — skills publicadas em `hermes/skills/` (ver `hermes/README.md`)
+- [x] Launcher opcional que oferece subir o gateway ao abrir o app (com consentimento)
