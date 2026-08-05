@@ -48,7 +48,7 @@ Três princípios que decorrem do que o código já faz bem:
 
 - **Local-first**: o arquivo é a fonte da verdade; sync é uma camada, não um
   requisito. Nada de conta obrigatória.
-- **Propor antes de mutar**: toda edição de agente deve ser um *diff revisável*
+- **Propor antes de mutar**: toda edição de agente deve ser um _diff revisável_
   (o modelo do sheets), com aceitar/rejeitar granular e rollback.
 - **Um protocolo para todos os autores**: humano na UI, Hermes no painel, e
   agentes externos via MCP falam com o documento pela mesma superfície de
@@ -127,14 +127,14 @@ Objetivo: multi-usuário local-first, com agentes como participantes.
 
 ## Como a comunidade pode ajudar agora
 
-| Perfil | Por onde começar |
-|---|---|
-| Primeiro PR | TODOs mapeados (slicers, pivot, z-order, IME), testes de `agent-core` |
-| TypeScript/React | Unificação do proposed-change (Fase 1), paridade do app PDF |
-| Interessado em agentes | MCP server embutido, skills Hermes, plugins runtime |
-| Rust | Sidecar xlsx (pivot externo, performance) |
-| Distributed systems | RFC da camada CRDT (Fase 3) — abra uma issue de design antes de codar |
-| Docs/i18n | Guias de setup do gateway Hermes, traduções em `packages/i18n` |
+| Perfil                 | Por onde começar                                                      |
+| ---------------------- | --------------------------------------------------------------------- |
+| Primeiro PR            | TODOs mapeados (slicers, pivot, z-order, IME), testes de `agent-core` |
+| TypeScript/React       | Unificação do proposed-change (Fase 1), paridade do app PDF           |
+| Interessado em agentes | MCP server embutido, skills Hermes, plugins runtime                   |
+| Rust                   | Sidecar xlsx (pivot externo, performance)                             |
+| Distributed systems    | RFC da camada CRDT (Fase 3) — abra uma issue de design antes de codar |
+| Docs/i18n              | Guias de setup do gateway Hermes, traduções em `packages/i18n`        |
 
 Regras de contribuição em [CONTRIBUTING.md](../CONTRIBUTING.md). Para
 mudanças arquiteturais (Fases 2–3), abra primeiro uma issue `rfc` descrevendo
