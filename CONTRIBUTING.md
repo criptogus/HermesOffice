@@ -6,19 +6,21 @@ repository.
 
 ## How changes land here
 
-This GitHub repository is a mirror: development happens in a private tree,
-and `main` here advances through single squashed snapshot commits
-(`Sync snapshot (<date>)`). That is why every file in a sync shows the same
-last-commit message, and why nobody — maintainers included — pushes to
-`main` directly.
+`main` is the trunk: every change ships as a reviewed, **squash-merged** pull
+request (the merge commit carries the full PR description). Maintainers sync
+with the [upstream GenOffice](https://github.com/genspark-ai/genoffice) tree
+periodically — engines and app shells follow upstream, so please focus
+contributions on the fork's own layer (Hermes integration, agent features,
+collaboration, product polish) and on bug fixes to engines.
 
-External pull requests are welcome and are reviewed here. Once a change is
-accepted, a maintainer imports it into the private tree with your authorship
-preserved as a `Co-authored-by:` trailer, and it ships to `main` in the next
-snapshot; your PR is then closed with a note pointing at the snapshot that
-carried it. GitHub will show the PR as "closed" rather than "merged" — the
-code and the attribution still land. Issues and feature requests are handled
-directly on this repository as usual.
+External pull requests are welcome and reviewed here. The CI gate
+(format, lint, typecheck, tests, licenses) must pass — if your PR is against a
+red `main`, the gate still runs on your branch, so keep it green locally
+(see [Checks every change must pass](#checks-every-change-must-pass)). Issues
+and feature requests are handled directly on this repository as usual.
+
+New here? The [public roadmap](ROADMAP.md) lists where the product is going,
+and issues labeled `good first issue` are small, well-scoped entry points.
 
 ## Repository layout
 

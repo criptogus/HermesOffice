@@ -28,6 +28,39 @@ plan, draft, verify and polish together.
   Hermes — an open, local, extensible agent platform — not from a proprietary
   cloud. The office is one surface of that platform.
 
+## State of the code (honest diagnosis)
+
+**Real strengths**
+
+- Mature, very well tested format engines (byte-preserving docx round-trip,
+  in-house pptx engine, xlsx via Rust sidecar) — a foundation almost no
+  open-source project has.
+- A lean, solid `packages/agent-core`: a generic ReAct loop with context
+  compaction, tool-input retry, cancellation, snapshots and persistent
+  per-document sessions (`X-Hermes-Session-Id` shipped).
+- Native local AI via the Hermes gateway (OpenAI-compatible, no account, no
+  cloud) in all four apps.
+
+**Structural gaps**
+
+1. **AI trust UX is inconsistent across apps.** Sheets has the best model
+   (`propose_operations` → diff preview → atomic apply); docs and slides use
+   after-the-fact snapshot + rollback; PDF is catching up (content-editing
+   tools landed, trust UX pending).
+2. **Collaboration is nonexistent.** Zero CRDT/OT/sync/presence. Comments and
+   track-changes exist but are single-user OOXML features. The local
+   `project-store` already mirrors a "cloud" project model — the hook exists,
+   the cloud does not.
+3. **Extensibility is not formalized.** `AgentSkill` + `composeSkills()` is a
+   de facto plugin system, but compile-time only. No MCP host, no user
+   scripting, no automation API.
+4. **Hermes integration is unfinished** (see `docs/hermes-integration.md`):
+   document tools exposed to the agent and a gateway launcher remain open.
+5. **Unbalanced test coverage:** engines have 50–76 test files each;
+   `agent-core` (the heart of the AI) is under-covered; `slides-skill.ts`
+   (3,325 lines, 33 tools) is proportionally under-covered; only a handful of
+   E2E specs.
+
 ## Relationship with upstream
 
 HermesOffice is a **thin fork** of [genspark-ai/genoffice](https://github.com/genspark-ai/genoffice)
@@ -80,6 +113,9 @@ contributions merged.
 | Role-based agents per document | `@writer`, `@researcher`, `@reviewer`, `@data` — Hermes skills as office roles, invoked like teammates | 💡 ideas |
 | Project memory | Per-document conversation, decisions and state stored in Hermes sessions; resume from any machine | 🔄 in progress (session continuity shipped) |
 | Artifact generation | The agent produces real files (tables, slides, briefs) into the project, editable by humans | 💡 ideas |
+| Embedded MCP server per app | Expose the same tools as the AI panel (`read_blocks`, `replace_blocks`, `propose_operations`, slides/pdf tools) to any MCP agent — Hermes, Claude Code, whatever the community plugs in; every external mutation goes through the same proposed-change pipeline | 💡 design |
+| Agent authorship | OOXML comments and revisions signed with the agent's identity ("Hermes proposed, you accepted") — the audit base before any networked collaboration | 💡 ideas |
+| Runtime plugin system | Evolve `AgentSkill` from compile-time to dynamic loading with a manifest and declared permissions (which tools, which scopes) | 💡 ideas |
 | **Live meeting minutes** | A meeting running on your machine becomes a live, structured `.docx` minutes doc — Granola-style, but **100% local** (see spotlight below) | 💡 design |
 
 **Exit criteria:** a user can say *"prepare the Q3 board deck from these
@@ -143,6 +179,13 @@ full audit trail of who changed what.
 - Plugin/SDK surface for custom agents and document tools.
 - Agent marketplace: skills and personas for office roles.
 - RFC process for the collaboration protocol.
+- **Living documents**: blocks linked to sources (a sheets table embedded in
+  docs, a range feeding a chart in slides) with reactive recomputation.
+- **Proactive agent with consent**: Hermes watches the document (opt-in) and
+  suggests — "these numbers don't match the attached spreadsheet" — always as
+  a proposal, never as a mutation.
+- **Cross-generation**: "turn this report into a deck" as a pipeline between
+  engines, not one giant prompt.
 - Localization, accessibility, ecosystem integrations.
 
 ---
@@ -182,6 +225,17 @@ full audit trail of who changed what.
 - `packages/agent-core` — the agent loop shared by all apps.
 - `packages/docx-engine` — byte-preserving paragraph patch.
 - `apps/sheets/native/xlsx-engine` — Rust sidecar (calamine + IronCalc).
+
+### Where your profile fits
+
+| Profile | Where to start |
+|---|---|
+| First PR | Mapped TODOs (slicers, pivot, z-order, IME), `agent-core` tests, good first issues |
+| TypeScript/React | Proposed-change unification, PDF trust UX, agent actions |
+| Agent enthusiasts | Embedded MCP server, Hermes skills, runtime plugins |
+| Rust | xlsx sidecar (external pivots, performance) |
+| Distributed systems | CRDT layer RFC (Phase 3) — open a design issue before writing code |
+| Docs/i18n | Hermes gateway setup guides, translations in `packages/i18n` |
 
 ---
 

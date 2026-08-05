@@ -1,36 +1,35 @@
-# Integração Hermes (IA nativa)
+# Hermes integration (native AI)
 
-O HermesOffice usa o **Hermes Agent** (Nous Research) como IA nativa: o
-painel de IA dos apps conversa com o gateway local do Hermes, que roda o
-agente completo — memória, skills, tools e MCP — em vez de um LLM genérico
-com o documento colado no prompt.
+HermesOffice uses the **Hermes Agent** (Nous Research) as its native AI: the
+AI panel in every app talks to the local Hermes gateway, which runs the full
+agent — memory, skills, tools and MCP — instead of a generic LLM with the
+document pasted into the prompt.
 
-## Como funciona
+## How it works
 
 ```
 HermesOffice (docs/sheets/slides/pdf)
    └─ ai:stream (provider "hermes", OpenAI-compatible)
         └─ POST http://127.0.0.1:8642/v1/chat/completions   (stream: true)
-             └─ gateway do Hermes (API server, porta 8642)
-                  └─ agente Hermes completo (memória, skills, tools, MCP)
+             └─ Hermes gateway (API server, port 8642)
+                  └─ full Hermes agent (memory, skills, tools, MCP)
 ```
 
-- **Provider**: `hermes` — novo provider nativo em `packages/ai-provider`
-  (OpenAI-compatible, mesmo protocolo do Genspark, sem login de conta).
-- **Base URL default**: `http://127.0.0.1:8642/v1` (constante
-  `HERMES_LLM_BASE_URL` em `packages/ai-provider/src/providers.ts`).
-- **Model**: `hermes-agent` (o nome anunciado pelo API server em `/v1/models`).
-- **Auth**: `Authorization: Bearer <API_SERVER_KEY>` — a mesma chave do
-  gateway. A chave fica em `ai-settings.json` no userData do app, como as
-  demais chaves de provider.
+- **Provider**: `hermes` — a native provider in `packages/ai-provider`
+  (OpenAI-compatible, same protocol as Genspark, no account login).
+- **Default base URL**: `http://127.0.0.1:8642/v1` (constant
+  `HERMES_LLM_BASE_URL` in `packages/ai-provider/src/providers.ts`).
+- **Model**: `hermes-agent` (the name advertised by the API server in `/v1/models`).
+- **Auth**: `Authorization: Bearer *** — the same key as the gateway. The key
+lives in `ai-settings.json` in the app's userData, like other provider keys.
 
-## Pré-requisitos no host
+## Host prerequisites
 
-O gateway do Hermes precisa estar rodando com o API server habilitado:
+The Hermes gateway must be running with the API server enabled:
 
 ```bash
 # .env (Hermes)
-API_SERVER_KEY=<chave>
+API_SERVER_KEY=<key>
 
 # config.yaml (Hermes)
 gateway:
@@ -42,31 +41,33 @@ hermes gateway restart
 curl http://127.0.0.1:8642/health   # {"status":"ok",...}
 ```
 
-O HermesOffice não sobe o gateway sozinho — ele assume o gateway local
-disponível (mesma máquina, loopback). Se o gateway estiver offline, o painel
-de IA reporta erro de conexão; suba o gateway e tente de novo.
+HermesOffice does not start the gateway by itself — it assumes a local gateway
+is available (same machine, loopback). If the gateway is offline, the AI panel
+reports a connection error; start the gateway and try again. An optional
+launcher that ensures the gateway is running when the app opens is on the
+roadmap (see [ROADMAP.md](../ROADMAP.md)).
 
-## Mudanças em relação ao upstream (camada de fork)
+## Changes vs upstream (fork layer)
 
-| Arquivo                                                              | Mudança                                                          |
+| File                                                                 | Change                                                           |
 | -------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `packages/ai-provider/src/types.ts`                                  | `AiProviderId` ganha `'hermes'`; `AiProviderMeta.defaultBaseUrl` |
-| `packages/ai-provider/src/providers.ts`                              | Provider `hermes` (default); `HERMES_LLM_BASE_URL`               |
+| `packages/ai-provider/src/types.ts`                                  | `AiProviderId` gains `'hermes'`; `AiProviderMeta.defaultBaseUrl` |
+| `packages/ai-provider/src/providers.ts`                              | `hermes` provider (default); `HERMES_LLM_BASE_URL`               |
 | `packages/ai-provider/src/stream.ts`                                 | `streamForProvider` case `hermes` (OpenAI-compatible)            |
 | `packages/ai-provider/src/chat.ts`                                   | `chatForProvider` case `hermes` (one-shot)                       |
-| `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forçado `genspark` → `hermes`                           |
-| `apps/docs/src/renderer/ai/AiPanel.tsx`                              | Sign-in Genspark só p/ provider `genspark`                       |
+| `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forced `genspark` → `hermes`                            |
+| `apps/docs/src/renderer/ai/AiPanel.tsx`                              | Genspark sign-in only for `genspark` provider                    |
 
-Ao sincronizar com o upstream, essas são as únicas áreas que podem conflitar
-— o script `tools/rebrand-hermesoffice.py --check` acusa qualquer
-"genoffice" reintroduzido no código.
+When syncing with upstream, these are the only areas that can conflict — the
+`tools/rebrand-hermesoffice.py --check` script flags any "genoffice"
+reintroduced into the code.
 
-## Estado (roadmap)
+## Status (roadmap)
 
-- [x] Provider `hermes` default + roteamento de stream/chat
-- [x] Força do provider nos 3 apps (docs/sheets/slides)
-- [x] Sign-in Genspark não aparece para provider Hermes
-- [x] Auto-detect de saúde do gateway (`/health` antes do stream, erro amigável)
-- [x] Continuidade de sessão por documento (`X-Hermes-Session-Id` header)
-- [x] Ferramentas de documento expostas ao agente — skills publicadas em `hermes/skills/` (ver `hermes/README.md`)
-- [x] Launcher opcional que oferece subir o gateway ao abrir o app (com consentimento)
+- [x] `hermes` provider default + stream/chat routing
+- [x] Provider forced in all four apps (docs/sheets/slides/pdf)
+- [x] Genspark sign-in hidden for the Hermes provider
+- [x] Gateway health check before streaming with a friendly "gateway offline" error
+- [x] Per-document session continuity (`X-Hermes-Session-Id` header, stable sha256 of filePath)
+- [x] Document tools exposed to the agent — skills published in `hermes/skills/` (see `hermes/README.md`)
+- [x] Optional launcher that offers to start the gateway on app launch (consent-gated)
