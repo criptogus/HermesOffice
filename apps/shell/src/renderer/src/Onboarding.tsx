@@ -19,11 +19,14 @@ interface Slide {
   bodyDim?: boolean
   /** community slide shows the credits offer panel with the "Join GenTeam" call-to-action */
   showOffer?: boolean
-  art: 'logo' | 'gift' | 'check'
+  /** Hermes slide shows the live gateway status with a retry button */
+  showHermes?: boolean
+  art: 'logo' | 'gift' | 'check' | 'spark'
 }
 
 const SLIDES: readonly Slide[] = [
   { titleKey: 'onbTitle1', subtitleKey: 'onbSubtitle1', bodyKey: 'onbBody1', art: 'logo' },
+  { titleKey: 'onbHermesTitle', subtitleKey: 'onbHermesBody', showHermes: true, art: 'spark' },
   { titleKey: 'onbTitle2', subtitleKey: 'onbBody2', showOffer: true, art: 'gift' },
   {
     titleKey: 'onbTitle3',
@@ -33,6 +36,55 @@ const SLIDES: readonly Slide[] = [
     art: 'check',
   },
 ]
+
+/** Live gateway status for the "Connect to Hermes" slide: probe on mount, retry on demand */
+function HermesConnect({ active }: { active: boolean }) {
+  const { t } = useI18n()
+  const [status, setStatus] = useState<'checking' | 'ok' | 'offline'>('checking')
+  const probe = () => {
+    setStatus('checking')
+    window.aiOffice
+      .hermesStatus()
+      .then(setStatus)
+      .catch(() => setStatus('offline'))
+  }
+  // re-probe each time the slide becomes active, so starting the gateway
+  // mid-onboarding is picked up without a manual retry
+  useEffect(() => {
+    if (active) probe()
+  }, [active])
+  return (
+    <div className="onb-offer onb-hermes">
+      <p className={`onb-hermes-status ${status}`}>
+        <span className="onb-hermes-dot" aria-hidden="true" />
+        {status === 'checking'
+          ? '…'
+          : status === 'ok'
+            ? t('onbHermesConnected')
+            : t('onbHermesOffline')}
+      </p>
+      <div className="onb-hermes-actions">
+        {status === 'offline' && (
+          <button className="onb-join" onClick={probe}>
+            {t('onbHermesRetry')}
+          </button>
+        )}
+        <button className="onb-join" onClick={() => void window.aiOffice.openGenTeam()}>
+          {t('onbHermesGuide')}
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path
+              d="M3.5 8.5 8.5 3.5M4.5 3.5h4v4"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
 
 /** render `**emphasized**` segments of a localized string as <strong> */
 function renderEmphasis(text: string) {
@@ -46,6 +98,21 @@ function renderEmphasis(text: string) {
 function SlideArt({ kind }: { kind: Slide['art'] }) {
   if (kind === 'logo') {
     return <img className="onb-art onb-art-logo" src={appIcon} alt="" />
+  }
+  if (kind === 'spark') {
+    // four-point sparkle echoing the Hermes mark, same 60px visual mass
+    return (
+      <span className="onb-art onb-art-badge onb-art-spark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="3.2">
+          <path
+            d="M24 5c2.2 9.8 5.2 12.8 15 15-9.8 2.2-12.8 5.2-15 15-2.2-9.8-5.2-12.8-15-15 9.8-2.2 12.8-5.2 15-15Z"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path d="M38.5 33.5c1 4.4 2.3 5.7 6.5 6.5-4.2.8-5.5 2.1-6.5 6.5-1-4.4-2.3-5.7-6.5-6.5 4.2-.8 5.5-2.1 6.5-6.5Z" />
+        </svg>
+      </span>
+    )
   }
   if (kind === 'gift') {
     // hand-drawn gift kept over the spec vector deliberately; 48 canvas at
@@ -177,6 +244,7 @@ export function Onboarding({ onDone }: OnboardingProps) {
               {s.bodyKey && (
                 <p className={`onb-body${s.bodyDim ? ' onb-body-dim' : ''}`}>{t(s.bodyKey)}</p>
               )}
+              {s.showHermes && <HermesConnect active={i === index} />}
               {s.showOffer && (
                 <div className="onb-offer">
                   <p className="onb-credits">{renderEmphasis(t('onbCredits'))}</p>

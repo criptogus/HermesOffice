@@ -320,3 +320,41 @@
   outline: 2px solid var(--onb-brand);
   outline-offset: 2px;
 }
+
+/* ── Hermes connect slide (fork) ─────────────────────────────── */
+.onb-hermes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.onb-hermes-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.onb-hermes-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+.onb-hermes-status.ok .onb-hermes-dot {
+  background: #16a34a;
+}
+.onb-hermes-status.offline .onb-hermes-dot {
+  background: #f59e0b;
+}
+.onb-hermes-status.offline {
+  color: #92600a;
+}
+.onb-hermes-status.ok {
+  color: #14733c;
+}
+.onb-hermes-actions {
+  display: flex;
+  gap: 10px;
+}

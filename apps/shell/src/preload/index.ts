@@ -136,6 +136,7 @@ const homeApi: HomeApi = {
   async openGenTeam() {
     await ipcRenderer.invoke(HOME_CHANNELS.openGenTeam)
   },
+  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
 }
 
 contextBridge.exposeInMainWorld('aiOffice', homeApi)

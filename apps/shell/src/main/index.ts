@@ -32,6 +32,7 @@ import menuXlsxIcon1x from './assets/menu-xlsx.png?asset'
 import menuXlsxIcon2x from './assets/menu-xlsx@2x.png?asset'
 import menuPptxIcon1x from './assets/menu-pptx.png?asset'
 import menuPptxIcon2x from './assets/menu-pptx@2x.png?asset'
+import { hermesHealthUrl } from '@hermesoffice/ai-provider'
 import { createI18n, isLang, normalizeLang, setUiLang, type Lang } from '@hermesoffice/i18n'
 import { installNavigationGuard } from '@hermesoffice/electron-utils'
 import { readAppSettings, writeAppSetting } from './app-settings'
@@ -1508,6 +1509,16 @@ function registerHomeIpc(): void {
     shell.openExternal(GENTEAM_URL).catch(() => {
       // no browser handler available; nothing actionable for the user here
     })
+  })
+
+  // Fork onboarding: live gateway status for the "Connect to Hermes" slide
+  ipcMain.handle(HOME_CHANNELS.hermesStatus, async (): Promise<'ok' | 'offline'> => {
+    try {
+      const response = await fetch(hermesHealthUrl(''), { signal: AbortSignal.timeout(2000) })
+      return response.ok ? 'ok' : 'offline'
+    } catch {
+      return 'offline'
+    }
   })
 }
 

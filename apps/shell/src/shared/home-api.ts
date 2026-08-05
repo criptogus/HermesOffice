@@ -101,6 +101,8 @@ export interface HomeApi {
   setOnboardingSeen(): Promise<void>
   /** open the GenTeam community page in the default browser */
   openGenTeam(): Promise<void>
+  /** Probe the local Hermes gateway's /health (fork onboarding) */
+  hermesStatus(): Promise<'ok' | 'offline'>
 }
 
 export interface AccountStatus {
@@ -180,6 +182,7 @@ export const HOME_CHANNELS = {
   onboardingSeen: 'home:onboarding-seen',
   setOnboardingSeen: 'home:set-onboarding-seen',
   openGenTeam: 'home:open-genteam',
+  hermesStatus: 'home:hermes-status',
 } as const
 
 export const PROJECT_CHANNELS = {
