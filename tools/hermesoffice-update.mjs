@@ -21,7 +21,7 @@
  *   HERMESOFFICE_REPO        default https://github.com/criptogus/HermesOffice.git
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 const REPO = process.env.HERMESOFFICE_REPO || 'https://github.com/criptogus/HermesOffice.git'
@@ -128,6 +128,22 @@ function cmdBuild() {
   )
 }
 
+/** refuse to install a bundle that is visibly incomplete — a partial swap is
+ * exactly what leaves the UI loading mismatched assets (raw CSS on screen) */
+function verifyBundle(appPath) {
+  const required = [
+    join(appPath, 'Contents', 'Info.plist'),
+    join(appPath, 'Contents', 'MacOS', 'HermesOffice'),
+    join(appPath, 'Contents', 'Resources', 'app.asar'),
+    join(appPath, 'Contents', 'Resources', 'build-info.json'),
+  ]
+  for (const p of required) {
+    if (!existsSync(p)) throw new Error(`bundle verification failed: missing ${p}`)
+  }
+  if (!builtCommit(appPath))
+    throw new Error('bundle verification failed: unreadable build-info.json')
+}
+
 function cmdInstall() {
   // Wait for the running app to release the bundle (the shell quits first, but
   // be defensive: poll up to 30s).
@@ -140,10 +156,30 @@ function cmdInstall() {
   }
   const staged = join(STAGE_DIR, 'HermesOffice.app')
   if (!existsSync(staged)) throw new Error(`no staged app at ${staged} — run build first`)
+  verifyBundle(staged)
 
+  // Atomic swap with rollback: never delete the installed app before its
+  // replacement is fully copied, verified and signed next to it. The old
+  // copyApp-over-APP_PATH approach removed the live bundle first, so a ditto
+  // failure (or an early relaunch) left a partial/mixed bundle — the UI then
+  // loads mismatched renderer assets (raw CSS rendered as text).
+  const fresh = `${APP_PATH}.update-new`
+  const backup = `${APP_PATH}.update-old`
   progress(98, 'swapping bundle')
-  copyApp(staged, APP_PATH)
-  run('codesign', ['--force', '--deep', '--sign', '-', APP_PATH], { timeout: 120_000 })
+  copyApp(staged, fresh)
+  verifyBundle(fresh)
+  run('codesign', ['--force', '--deep', '--sign', '-', fresh], { timeout: 120_000 })
+
+  rmSync(backup, { recursive: true, force: true })
+  renameSync(APP_PATH, backup)
+  try {
+    renameSync(fresh, APP_PATH)
+  } catch (err) {
+    // restore the previous bundle rather than leaving no app at all
+    renameSync(backup, APP_PATH)
+    throw err
+  }
+  rmSync(backup, { recursive: true, force: true })
 
   progress(100, 'relaunching')
   // This helper itself runs through the packaged Electron binary with
