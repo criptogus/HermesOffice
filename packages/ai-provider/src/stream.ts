@@ -4,6 +4,7 @@
  * atribuição original preservada em NOTICE.
  */
 import type { AgentMessage, AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
+import { ensureHermesGatewayHealthy } from './hermes-health'
 import { httpBodyDetail } from './http-error'
 import { GENSPARK_LLM_BASE_URLS, HERMES_LLM_BASE_URL } from './providers'
 import type { AiProviderConfig, AiProviderId } from './types'
@@ -461,6 +462,7 @@ export async function streamForProvider(
       // Native Hermes integration: the local Hermes gateway (API server,
       // OpenAI-compatible) runs the full agent. baseUrl comes from settings,
       // defaulting to the local gateway when unset.
+      await ensureHermesGatewayHealthy(config.baseUrl || HERMES_LLM_BASE_URL)
       return streamOpenAiCompatible(
         config.baseUrl || HERMES_LLM_BASE_URL,
         config,

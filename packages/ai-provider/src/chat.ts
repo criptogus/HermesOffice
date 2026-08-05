@@ -3,6 +3,7 @@
  * Copyright 2026 Mainfunc, Inc.). Modificações do fork por criptogus;
  * atribuição original preservada em NOTICE.
  */
+import { ensureHermesGatewayHealthy } from './hermes-health'
 import { httpBodyDetail } from './http-error'
 import { GENSPARK_LLM_BASE_URLS, HERMES_LLM_BASE_URL } from './providers'
 import type { AiChatResponse, AiProviderConfig, AiProviderId } from './types'
@@ -30,7 +31,10 @@ async function chatAnthropic(
     }),
   })
   if (!response.ok) {
-    return { ok: false, error: `Claude HTTP ${response.status}: ${httpBodyDetail(await response.text())}` }
+    return {
+      ok: false,
+      error: `Claude HTTP ${response.status}: ${httpBodyDetail(await response.text())}`,
+    }
   }
   const json = (await response.json()) as { content?: Array<{ type: string; text?: string }> }
   const content = json.content
@@ -58,7 +62,10 @@ async function chatGemini(
     }),
   })
   if (!response.ok) {
-    return { ok: false, error: `Gemini HTTP ${response.status}: ${httpBodyDetail(await response.text())}` }
+    return {
+      ok: false,
+      error: `Gemini HTTP ${response.status}: ${httpBodyDetail(await response.text())}`,
+    }
   }
   const json = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
@@ -112,6 +119,11 @@ export async function chatForProvider(
 ): Promise<AiChatResponse> {
   switch (provider) {
     case 'hermes':
+      try {
+        await ensureHermesGatewayHealthy(config.baseUrl || HERMES_LLM_BASE_URL)
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      }
       return chatOpenAiCompatible(config.baseUrl || HERMES_LLM_BASE_URL, config, system, user)
     case 'genspark':
       if (config.model.startsWith('claude')) {
