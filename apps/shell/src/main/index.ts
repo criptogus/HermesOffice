@@ -97,6 +97,7 @@ import type { RecentEntry, RecentPage, RenameResult } from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
 import type { TabKind } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
+import { ensureHermesGateway } from './hermes-launcher'
 import { normalizeRecentQuery, pageRecentPaths, statExistingPaths } from './recent-files'
 import { TabManager } from './tab-manager'
 import { initAutoUpdater } from './updater'
@@ -238,6 +239,13 @@ const tMain = createI18n({
     copySuffix: '副本',
     menuHelp: '帮助',
     thirdPartyNotices: '第三方软件声明',
+    hermesGwTitle: 'Hermes 网关',
+    hermesGwBody: 'Hermes 网关未在运行。HermesOffice 的 AI 功能需要本地网关。现在启动它吗？',
+    hermesGwStart: '启动',
+    hermesGwNotNow: '暂不',
+    hermesGwNever: '不再询问',
+    hermesGwAlways: '总是自动启动',
+    hermesGwFailed: '网关启动失败，请在终端中手动运行 hermes gateway start。',
   },
   en: {
     menuFile: 'File',
@@ -271,6 +279,15 @@ const tMain = createI18n({
     copySuffix: 'copy',
     menuHelp: 'Help',
     thirdPartyNotices: 'Third-Party Notices',
+    hermesGwTitle: 'Hermes gateway',
+    hermesGwBody:
+      "The Hermes gateway is not running. HermesOffice's AI features need the local gateway. Start it now?",
+    hermesGwStart: 'Start',
+    hermesGwNotNow: 'Not now',
+    hermesGwNever: "Don't ask again",
+    hermesGwAlways: 'Always start automatically',
+    hermesGwFailed:
+      'The gateway failed to start; run `hermes gateway start` manually in a terminal.',
   },
   ja: {
     menuFile: 'ファイル',
@@ -304,6 +321,15 @@ const tMain = createI18n({
     copySuffix: 'コピー',
     menuHelp: 'ヘルプ',
     thirdPartyNotices: 'サードパーティソフトウェアに関する通知',
+    hermesGwTitle: 'Hermes ゲートウェイ',
+    hermesGwBody:
+      'Hermes ゲートウェイが起動していません。HermesOffice の AI 機能にはローカルゲートウェイが必要です。今すぐ起動しますか？',
+    hermesGwStart: '起動',
+    hermesGwNotNow: '後で',
+    hermesGwNever: '今後表示しない',
+    hermesGwAlways: '常に自動で起動',
+    hermesGwFailed:
+      'ゲートウェイの起動に失敗しました。ターミナルで hermes gateway start を実行してください。',
   },
   ko: {
     menuFile: '파일',
@@ -337,6 +363,14 @@ const tMain = createI18n({
     copySuffix: '복사본',
     menuHelp: '도움말',
     thirdPartyNotices: '타사 소프트웨어 고지',
+    hermesGwTitle: 'Hermes 게이트웨이',
+    hermesGwBody:
+      'Hermes 게이트웨이가 실행 중이 아닙니다. HermesOffice의 AI 기능에는 로컬 게이트웨이가 필요합니다. 지금 시작할까요?',
+    hermesGwStart: '시작',
+    hermesGwNotNow: '나중에',
+    hermesGwNever: '다시 묻지 않음',
+    hermesGwAlways: '항상 자동으로 시작',
+    hermesGwFailed: '게이트웨이 시작에 실패했습니다. 터미널에서 hermes gateway start를 실행하세요.',
   },
   fr: {
     menuFile: 'Fichier',
@@ -370,6 +404,15 @@ const tMain = createI18n({
     copySuffix: 'copie',
     menuHelp: 'Aide',
     thirdPartyNotices: 'Mentions relatives aux logiciels tiers',
+    hermesGwTitle: 'Passerelle Hermes',
+    hermesGwBody:
+      "La passerelle Hermes n'est pas en cours d'exécution. Les fonctions IA de HermesOffice en ont besoin. La démarrer maintenant ?",
+    hermesGwStart: 'Démarrer',
+    hermesGwNotNow: 'Plus tard',
+    hermesGwNever: 'Ne plus demander',
+    hermesGwAlways: 'Toujours démarrer automatiquement',
+    hermesGwFailed:
+      'Échec du démarrage de la passerelle ; exécutez hermes gateway start dans un terminal.',
   },
   de: {
     menuFile: 'Datei',
@@ -403,6 +446,15 @@ const tMain = createI18n({
     copySuffix: 'Kopie',
     menuHelp: 'Hilfe',
     thirdPartyNotices: 'Hinweise zu Drittanbietersoftware',
+    hermesGwTitle: 'Hermes-Gateway',
+    hermesGwBody:
+      'Das Hermes-Gateway läuft nicht. Die KI-Funktionen von HermesOffice benötigen das lokale Gateway. Jetzt starten?',
+    hermesGwStart: 'Starten',
+    hermesGwNotNow: 'Nicht jetzt',
+    hermesGwNever: 'Nicht mehr fragen',
+    hermesGwAlways: 'Immer automatisch starten',
+    hermesGwFailed:
+      'Der Gateway-Start ist fehlgeschlagen; führen Sie hermes gateway start im Terminal aus.',
   },
   es: {
     menuFile: 'Archivo',
@@ -436,6 +488,14 @@ const tMain = createI18n({
     copySuffix: 'copia',
     menuHelp: 'Ayuda',
     thirdPartyNotices: 'Avisos de software de terceros',
+    hermesGwTitle: 'Puerta de enlace Hermes',
+    hermesGwBody:
+      'La puerta de enlace Hermes no está en ejecución. Las funciones de IA de HermesOffice la necesitan. ¿Iniciarla ahora?',
+    hermesGwStart: 'Iniciar',
+    hermesGwNotNow: 'Ahora no',
+    hermesGwNever: 'No volver a preguntar',
+    hermesGwAlways: 'Iniciar siempre automáticamente',
+    hermesGwFailed: 'No se pudo iniciar; ejecute hermes gateway start en una terminal.',
   },
   th: {
     menuFile: 'ไฟล์',
@@ -469,6 +529,14 @@ const tMain = createI18n({
     copySuffix: 'สำเนา',
     menuHelp: 'วิธีใช้',
     thirdPartyNotices: 'ประกาศเกี่ยวกับซอฟต์แวร์ของบุคคลที่สาม',
+    hermesGwTitle: 'เกตเวย์ Hermes',
+    hermesGwBody:
+      'เกตเวย์ Hermes ยังไม่ทำงาน ฟีเจอร์ AI ของ HermesOffice ต้องใช้เกตเวย์ในเครื่อง เริ่มตอนนี้หรือไม่?',
+    hermesGwStart: 'เริ่ม',
+    hermesGwNotNow: 'ไว้ทีหลัง',
+    hermesGwNever: 'ไม่ต้องถามอีก',
+    hermesGwAlways: 'เริ่มอัตโนมัติเสมอ',
+    hermesGwFailed: 'เริ่มเกตเวย์ไม่สำเร็จ โปรดรัน hermes gateway start ในเทอร์มินัล',
   },
   id: {
     menuFile: 'File',
@@ -502,6 +570,14 @@ const tMain = createI18n({
     copySuffix: 'salinan',
     menuHelp: 'Bantuan',
     thirdPartyNotices: 'Pemberitahuan Perangkat Lunak Pihak Ketiga',
+    hermesGwTitle: 'Gateway Hermes',
+    hermesGwBody:
+      'Gateway Hermes tidak berjalan. Fitur AI HermesOffice memerlukan gateway lokal. Mulai sekarang?',
+    hermesGwStart: 'Mulai',
+    hermesGwNotNow: 'Nanti saja',
+    hermesGwNever: 'Jangan tanya lagi',
+    hermesGwAlways: 'Selalu mulai otomatis',
+    hermesGwFailed: 'Gateway gagal dimulai; jalankan hermes gateway start di terminal.',
   },
   ru: {
     menuFile: 'Файл',
@@ -535,6 +611,14 @@ const tMain = createI18n({
     copySuffix: 'копия',
     menuHelp: 'Справка',
     thirdPartyNotices: 'Уведомления о стороннем ПО',
+    hermesGwTitle: 'Шлюз Hermes',
+    hermesGwBody:
+      'Шлюз Hermes не запущен. Функциям ИИ HermesOffice нужен локальный шлюз. Запустить сейчас?',
+    hermesGwStart: 'Запустить',
+    hermesGwNotNow: 'Не сейчас',
+    hermesGwNever: 'Больше не спрашивать',
+    hermesGwAlways: 'Всегда запускать автоматически',
+    hermesGwFailed: 'Не удалось запустить шлюз; выполните hermes gateway start в терминале.',
   },
   ar: {
     menuFile: 'ملف',
@@ -568,6 +652,14 @@ const tMain = createI18n({
     copySuffix: 'نسخة',
     menuHelp: 'تعليمات',
     thirdPartyNotices: 'إشعارات برامج الجهات الخارجية',
+    hermesGwTitle: 'بوابة Hermes',
+    hermesGwBody:
+      'بوابة Hermes غير مشغّلة. تحتاج ميزات الذكاء الاصطناعي في HermesOffice إلى البوابة المحلية. هل تريد تشغيلها الآن؟',
+    hermesGwStart: 'تشغيل',
+    hermesGwNotNow: 'ليس الآن',
+    hermesGwNever: 'عدم السؤال مجددًا',
+    hermesGwAlways: 'التشغيل تلقائيًا دائمًا',
+    hermesGwFailed: 'فشل تشغيل البوابة؛ نفّذ hermes gateway start في الطرفية.',
   },
   pt: {
     menuFile: 'Arquivo',
@@ -601,6 +693,14 @@ const tMain = createI18n({
     copySuffix: 'cópia',
     menuHelp: 'Ajuda',
     thirdPartyNotices: 'Avisos de software de terceiros',
+    hermesGwTitle: 'Gateway Hermes',
+    hermesGwBody:
+      'O gateway Hermes não está em execução. Os recursos de IA do HermesOffice precisam do gateway local. Iniciar agora?',
+    hermesGwStart: 'Iniciar',
+    hermesGwNotNow: 'Agora não',
+    hermesGwNever: 'Não perguntar novamente',
+    hermesGwAlways: 'Sempre iniciar automaticamente',
+    hermesGwFailed: 'Falha ao iniciar o gateway; execute hermes gateway start em um terminal.',
   },
   it: {
     menuFile: 'File',
@@ -634,6 +734,14 @@ const tMain = createI18n({
     copySuffix: 'copia',
     menuHelp: 'Aiuto',
     thirdPartyNotices: 'Note sul software di terze parti',
+    hermesGwTitle: 'Gateway Hermes',
+    hermesGwBody:
+      'Il gateway Hermes non è in esecuzione. Le funzioni IA di HermesOffice lo richiedono. Avviarlo ora?',
+    hermesGwStart: 'Avvia',
+    hermesGwNotNow: 'Non ora',
+    hermesGwNever: 'Non chiedere più',
+    hermesGwAlways: 'Avvia sempre automaticamente',
+    hermesGwFailed: 'Avvio del gateway non riuscito; esegui hermes gateway start in un terminale.',
   },
   pl: {
     menuFile: 'Plik',
@@ -667,6 +775,14 @@ const tMain = createI18n({
     copySuffix: 'kopia',
     menuHelp: 'Pomoc',
     thirdPartyNotices: 'Informacje o oprogramowaniu innych firm',
+    hermesGwTitle: 'Brama Hermes',
+    hermesGwBody:
+      'Brama Hermes nie działa. Funkcje AI HermesOffice wymagają lokalnej bramy. Uruchomić ją teraz?',
+    hermesGwStart: 'Uruchom',
+    hermesGwNotNow: 'Nie teraz',
+    hermesGwNever: 'Nie pytaj ponownie',
+    hermesGwAlways: 'Zawsze uruchamiaj automatycznie',
+    hermesGwFailed: 'Nie udało się uruchomić bramy; wykonaj hermes gateway start w terminalu.',
   },
   nl: {
     menuFile: 'Bestand',
@@ -700,6 +816,15 @@ const tMain = createI18n({
     copySuffix: 'kopie',
     menuHelp: 'Help',
     thirdPartyNotices: 'Kennisgevingen over software van derden',
+    hermesGwTitle: 'Hermes-gateway',
+    hermesGwBody:
+      'De Hermes-gateway draait niet. De AI-functies van HermesOffice hebben de lokale gateway nodig. Nu starten?',
+    hermesGwStart: 'Starten',
+    hermesGwNotNow: 'Niet nu',
+    hermesGwNever: 'Niet meer vragen',
+    hermesGwAlways: 'Altijd automatisch starten',
+    hermesGwFailed:
+      'Het starten van de gateway is mislukt; voer hermes gateway start uit in een terminal.',
   },
   ms: {
     menuFile: 'Fail',
@@ -733,6 +858,14 @@ const tMain = createI18n({
     copySuffix: 'salinan',
     menuHelp: 'Bantuan',
     thirdPartyNotices: 'Notis Perisian Pihak Ketiga',
+    hermesGwTitle: 'Gateway Hermes',
+    hermesGwBody:
+      'Gateway Hermes tidak berjalan. Ciri AI HermesOffice memerlukan gateway setempat. Mulakan sekarang?',
+    hermesGwStart: 'Mula',
+    hermesGwNotNow: 'Bukan sekarang',
+    hermesGwNever: 'Jangan tanya lagi',
+    hermesGwAlways: 'Sentiasa mula secara automatik',
+    hermesGwFailed: 'Gateway gagal dimulakan; jalankan hermes gateway start dalam terminal.',
   },
   he: {
     menuFile: 'קובץ',
@@ -766,6 +899,14 @@ const tMain = createI18n({
     copySuffix: 'עותק',
     menuHelp: 'עזרה',
     thirdPartyNotices: 'הודעות על תוכנות צד שלישי',
+    hermesGwTitle: 'שער Hermes',
+    hermesGwBody:
+      'שער Hermes אינו פועל. תכונות ה-AI של HermesOffice זקוקות לשער המקומי. להפעיל עכשיו?',
+    hermesGwStart: 'הפעל',
+    hermesGwNotNow: 'לא עכשיו',
+    hermesGwNever: 'אל תשאל שוב',
+    hermesGwAlways: 'הפעל תמיד אוטומטית',
+    hermesGwFailed: 'הפעלת השער נכשלה; הריצו hermes gateway start בטרמינל.',
   },
   hi: {
     menuFile: 'फ़ाइल',
@@ -799,6 +940,14 @@ const tMain = createI18n({
     copySuffix: 'प्रतिलिपि',
     menuHelp: 'सहायता',
     thirdPartyNotices: 'तृतीय-पक्ष सॉफ़्टवेयर सूचनाएँ',
+    hermesGwTitle: 'Hermes गेटवे',
+    hermesGwBody:
+      'Hermes गेटवे नहीं चल रहा है। HermesOffice की AI सुविधाओं को स्थानीय गेटवे चाहिए। अभी शुरू करें?',
+    hermesGwStart: 'शुरू करें',
+    hermesGwNotNow: 'अभी नहीं',
+    hermesGwNever: 'फिर न पूछें',
+    hermesGwAlways: 'हमेशा स्वतः शुरू करें',
+    hermesGwFailed: 'गेटवे शुरू नहीं हो सका; टर्मिनल में hermes gateway start चलाएँ।',
   },
   'zh-TW': {
     menuFile: '檔案',
@@ -832,6 +981,13 @@ const tMain = createI18n({
     copySuffix: '副本',
     menuHelp: '說明',
     thirdPartyNotices: '第三方軟體聲明',
+    hermesGwTitle: 'Hermes 閘道',
+    hermesGwBody: 'Hermes 閘道未在執行。HermesOffice 的 AI 功能需要本機閘道。現在啟動嗎？',
+    hermesGwStart: '啟動',
+    hermesGwNotNow: '暫不',
+    hermesGwNever: '不再詢問',
+    hermesGwAlways: '總是自動啟動',
+    hermesGwFailed: '閘道啟動失敗，請在終端機手動執行 hermes gateway start。',
   },
 })
 
@@ -1696,6 +1852,16 @@ app.whenReady().then(() => {
   installDockMenu()
   initAutoUpdater(() => shellWindow)
   initMainUpdater(() => shellWindow)
+  // Fork (#7): offer to start the local Hermes gateway when it is offline (consent-gated, never blocks startup)
+  void ensureHermesGateway(() => shellWindow, {
+    title: tm('hermesGwTitle'),
+    body: tm('hermesGwBody'),
+    start: tm('hermesGwStart'),
+    notNow: tm('hermesGwNotNow'),
+    never: tm('hermesGwNever'),
+    always: tm('hermesGwAlways'),
+    failed: tm('hermesGwFailed'),
+  })
 
   if (!pendingLaunchPath || !openDocumentPath(pendingLaunchPath)) tabManager?.openHomeTab()
   pendingLaunchPath = null
