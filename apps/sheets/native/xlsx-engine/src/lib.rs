@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zip::ZipArchive;
@@ -2426,7 +2426,7 @@ fn attribute_value<R: std::io::BufRead>(
         if attribute.key.local_name().as_ref() == name {
             return Ok(Some(
                 attribute
-                    .decode_and_unescape_value(reader.decoder())?
+                    .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())?
                     .into_owned(),
             ));
         }
