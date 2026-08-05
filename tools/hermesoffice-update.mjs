@@ -144,15 +144,38 @@ function verifyBundle(appPath) {
     throw new Error('bundle verification failed: unreadable build-info.json')
 }
 
-function cmdInstall() {
-  // Wait for the running app to release the bundle (the shell quits first, but
-  // be defensive: poll up to 30s).
-  progress(97, 'waiting for app to quit')
-  const deadline = Date.now() + 30_000
+/** true while any HermesOffice GUI process is alive */
+function appRunning() {
+  return spawnSync('pgrep', ['-x', 'HermesOffice'], { encoding: 'utf8' }).status === 0
+}
+
+function waitAppGone(ms) {
+  const deadline = Date.now() + ms
   while (Date.now() < deadline) {
-    const p = spawnSync('pgrep', ['-x', 'HermesOffice'], { encoding: 'utf8' })
-    if (p.status !== 0) break
+    if (!appRunning()) return true
     spawnSync('sleep', ['1'])
+  }
+  return !appRunning()
+}
+
+function cmdInstall() {
+  // The swap must NEVER happen with the app alive: a surviving process holds
+  // the Electron single-instance lock, the relaunch `open -n` then no-ops
+  // silently, and the old main process keeps running against the new asar —
+  // a mixed-version state that renders the UI broken (raw CSS as text).
+  // Grace period first (the shell quits itself), then TERM, then KILL, and
+  // hard-abort if something still survives.
+  progress(97, 'waiting for app to quit')
+  if (!waitAppGone(30_000)) {
+    console.error('app still running after 30s — sending SIGTERM')
+    spawnSync('pkill', ['-x', 'HermesOffice'])
+    if (!waitAppGone(10_000)) {
+      console.error('app ignored SIGTERM — sending SIGKILL')
+      spawnSync('pkill', ['-9', '-x', 'HermesOffice'])
+      if (!waitAppGone(5_000)) {
+        throw new Error('HermesOffice is still running; refusing to swap a live bundle')
+      }
+    }
   }
   const staged = join(STAGE_DIR, 'HermesOffice.app')
   if (!existsSync(staged)) throw new Error(`no staged app at ${staged} — run build first`)
@@ -187,8 +210,25 @@ function cmdInstall() {
   // relaunched GUI would start in Node mode instead of normal Electron mode.
   const relaunchEnv = { ...process.env }
   delete relaunchEnv.ELECTRON_RUN_AS_NODE
+  // `open -n` can no-op silently (e.g. LaunchServices confusion right after a
+  // bundle swap) — verify the process actually appeared and retry once.
   spawnSync('open', ['-n', APP_PATH], { stdio: 'ignore', env: relaunchEnv })
-  console.log(`RESULT ${JSON.stringify({ installed: APP_PATH, commit: builtCommit(APP_PATH) })}`)
+  let relaunched = false
+  for (let i = 0; i < 10 && !relaunched; i++) {
+    spawnSync('sleep', ['1'])
+    relaunched = appRunning()
+  }
+  if (!relaunched) {
+    console.error('relaunch did not surface a HermesOffice process — retrying open -n')
+    spawnSync('open', ['-n', APP_PATH], { stdio: 'ignore', env: relaunchEnv })
+    for (let i = 0; i < 10 && !relaunched; i++) {
+      spawnSync('sleep', ['1'])
+      relaunched = appRunning()
+    }
+  }
+  console.log(
+    `RESULT ${JSON.stringify({ installed: APP_PATH, commit: builtCommit(APP_PATH), relaunched })}`,
+  )
 }
 
 const [cmd] = process.argv.slice(2)
