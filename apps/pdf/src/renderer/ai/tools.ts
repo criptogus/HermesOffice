@@ -41,6 +41,26 @@ export interface PdfAiDeps {
   captureEditState(): unknown
   /** Restore a state captured by captureEditState (pushes the current state onto the undo stack) */
   restoreEditState(state: unknown): void
+  /** Sticky-note annotation at PDF user-space coords; the app picks a default position when at is omitted */
+  addNote(origIdx: number, text: string, at?: [number, number]): void
+  /** Set (merge over defaults) or clear (null) the document watermark */
+  setWatermark(cfg: { text: string; angle?: number; opacity?: number; color?: string } | null): void
+  /** Set (merge over defaults) or clear (null) headers/footers; pageNumber enables auto page numbers in the footer center */
+  setHeaderFooter(
+    cfg: {
+      headerLeft?: string
+      headerCenter?: string
+      headerRight?: string
+      footerLeft?: string
+      footerCenter?: string
+      footerRight?: string
+      pageNumber?: boolean
+    } | null,
+  ): void
+  /** Reorder among visible pages (0-based positions); false when out of range or read-only */
+  movePage(fromPos: number, toPos: number): boolean
+  /** Number of visible (non-deleted) pages, for move_page bounds */
+  visiblePageCount(): number
 }
 
 export const AGENT_TOOLS: AgentToolDef[] = [
@@ -146,6 +166,70 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       type: 'object',
       properties: { page: { type: 'integer', description: 'Page number (1-based)' } },
       required: ['page'],
+    },
+  },
+  {
+    name: 'add_note',
+    description:
+      'Add a sticky-note annotation to a page. Use for comments/observations anchored to a page rather than to a text passage (for text passages use markup_text). Coordinates are optional PDF points from the bottom-left corner; omit them to place the note near the top-left of the page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Page number (1-based)' },
+        text: { type: 'string', description: 'Note content' },
+        x: { type: 'number', description: 'Optional x position in PDF points' },
+        y: { type: 'number', description: 'Optional y position in PDF points' },
+      },
+      required: ['page', 'text'],
+    },
+  },
+  {
+    name: 'set_watermark',
+    description:
+      'Set or remove the document watermark (applies to every page on save). Pass an empty text to remove it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Watermark text; empty string removes the watermark' },
+        angle: { type: 'number', description: 'Counterclockwise angle in degrees, default 35' },
+        opacity: { type: 'number', description: '0–1, default 0.18' },
+        color: { type: 'string', description: 'CSS hex color, default #d0342c' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'set_header_footer',
+    description:
+      'Set or remove page headers/footers (left/center/right slots; applied to every page on save). pageNumber=true prints automatic page numbers in the footer center. remove=true clears all headers/footers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        headerLeft: { type: 'string' },
+        headerCenter: { type: 'string' },
+        headerRight: { type: 'string' },
+        footerLeft: { type: 'string' },
+        footerCenter: { type: 'string' },
+        footerRight: { type: 'string' },
+        pageNumber: {
+          type: 'boolean',
+          description: 'Automatic page number in the footer center (overrides footerCenter)',
+        },
+        remove: { type: 'boolean', description: 'true removes all headers/footers' },
+      },
+    },
+  },
+  {
+    name: 'move_page',
+    description:
+      'Move a page to a different position in the document (page assembly; takes effect on save). Both values are 1-based positions among the currently visible pages.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Current position of the page to move (1-based)' },
+        to: { type: 'integer', description: 'Target position (1-based)' },
+      },
+      required: ['page', 'to'],
     },
   },
   {
@@ -413,6 +497,102 @@ export async function executePdfTool(deps: PdfAiDeps, call: AgentToolCall): Prom
       if (!deps.deletePage(r.origIdx)) return err('At least one page must remain', summary)
       return {
         output: `Deleted page ${r.origIdx + 1} (unsaved; can be undone)`,
+        mutated: true,
+        summary,
+      }
+    }
+    case 'add_note': {
+      const summary = t('aiToolNote', { page: Number(input.page) })
+      if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+      const r = resolvePage(deps, input.page)
+      if ('bad' in r) return err(r.bad, summary)
+      const text = String(input.text ?? '').trim()
+      if (!text) return err('text must not be empty', summary)
+      const x = Number(input.x)
+      const y = Number(input.y)
+      const at: [number, number] | undefined =
+        Number.isFinite(x) && Number.isFinite(y) ? [x, y] : undefined
+      deps.addNote(r.origIdx, text, at)
+      deps.gotoPage(r.origIdx + 1)
+      return {
+        output: `Added a note to page ${r.origIdx + 1} (unsaved; the user saves with ⌘S)`,
+        mutated: true,
+        summary,
+      }
+    }
+    case 'set_watermark': {
+      const text = String(input.text ?? '').trim()
+      const summary = t(text ? 'aiToolWatermark' : 'aiToolWatermarkRemove')
+      if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+      if (!text) {
+        deps.setWatermark(null)
+        return { output: 'Watermark removed (unsaved)', mutated: true, summary }
+      }
+      const opacity = Number(input.opacity)
+      const angle = Number(input.angle)
+      deps.setWatermark({
+        text,
+        ...(Number.isFinite(angle) ? { angle } : {}),
+        ...(Number.isFinite(opacity) ? { opacity: Math.min(1, Math.max(0, opacity)) } : {}),
+        ...(typeof input.color === 'string' && input.color ? { color: input.color } : {}),
+      })
+      return {
+        output: `Watermark "${text}" set on every page (unsaved; the user saves with ⌘S)`,
+        mutated: true,
+        summary,
+      }
+    }
+    case 'set_header_footer': {
+      const remove = input.remove === true
+      const summary = t(remove ? 'aiToolHeaderFooterRemove' : 'aiToolHeaderFooter')
+      if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+      if (remove) {
+        deps.setHeaderFooter(null)
+        return { output: 'Headers/footers removed (unsaved)', mutated: true, summary }
+      }
+      const str = (v: unknown) => (typeof v === 'string' ? { defined: true, value: v } : null)
+      const cfg: Parameters<PdfAiDeps['setHeaderFooter']>[0] = {}
+      for (const key of [
+        'headerLeft',
+        'headerCenter',
+        'headerRight',
+        'footerLeft',
+        'footerCenter',
+        'footerRight',
+      ] as const) {
+        const s = str(input[key])
+        if (s) cfg[key] = s.value
+      }
+      if (typeof input.pageNumber === 'boolean') cfg.pageNumber = input.pageNumber
+      if (Object.keys(cfg).length === 0)
+        return err('Provide at least one header/footer field, pageNumber, or remove=true', summary)
+      deps.setHeaderFooter(cfg)
+      return {
+        output: 'Headers/footers set (unsaved; the user saves with ⌘S)',
+        mutated: true,
+        summary,
+      }
+    }
+    case 'move_page': {
+      const from = Number(input.page)
+      const to = Number(input.to)
+      const summary = t('aiToolMovePage', { page: from, to })
+      if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+      const count = deps.visiblePageCount()
+      if (
+        !Number.isInteger(from) ||
+        !Number.isInteger(to) ||
+        from < 1 ||
+        to < 1 ||
+        from > count ||
+        to > count
+      ) {
+        return err(`Positions must be between 1 and ${count}`, summary)
+      }
+      if (from === to) return err('page and to are the same position', summary)
+      if (!deps.movePage(from - 1, to - 1)) return err('The page could not be moved', summary)
+      return {
+        output: `Moved the page from position ${from} to position ${to} (unsaved; the user saves with ⌘S)`,
         mutated: true,
         summary,
       }

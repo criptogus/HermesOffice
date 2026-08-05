@@ -63,6 +63,11 @@ function makeDeps(over: Partial<PdfAiDeps> = {}): PdfAiDeps {
     })),
     captureEditState: vi.fn(() => ({})),
     restoreEditState: vi.fn(),
+    addNote: vi.fn(),
+    setWatermark: vi.fn(),
+    setHeaderFooter: vi.fn(),
+    movePage: vi.fn(() => true),
+    visiblePageCount: () => 2,
     ...over,
   }
 }
@@ -390,5 +395,97 @@ describe('web_search', () => {
     const deps = makeDeps({ webSearch: async () => ({ results: [], method: 'test' }) })
     const result = await executePdfTool(deps, call('web_search', { query: 'nothing' }))
     expect(result.output).toContain('(no results)')
+  })
+})
+
+describe('add_note', () => {
+  it('adds a note with explicit coordinates and jumps to the page', async () => {
+    const deps = makeDeps()
+    const result = await executePdfTool(
+      deps,
+      call('add_note', { page: 2, text: 'check this', x: 100, y: 200 }),
+    )
+    expect(result.mutated).toBe(true)
+    expect(deps.addNote).toHaveBeenCalledWith(1, 'check this', [100, 200])
+    expect(deps.gotoPage).toHaveBeenCalledWith(2)
+  })
+
+  it('omits the position when coordinates are absent', async () => {
+    const deps = makeDeps()
+    await executePdfTool(deps, call('add_note', { page: 1, text: 'note' }))
+    expect(deps.addNote).toHaveBeenCalledWith(0, 'note', undefined)
+  })
+
+  it('rejects empty text, invalid pages, and read-only documents', async () => {
+    const deps = makeDeps()
+    expect((await executePdfTool(deps, call('add_note', { page: 1, text: '  ' }))).isError).toBe(
+      true,
+    )
+    expect((await executePdfTool(deps, call('add_note', { page: 9, text: 'x' }))).isError).toBe(
+      true,
+    )
+    const ro = makeDeps({ readOnly: () => true })
+    expect((await executePdfTool(ro, call('add_note', { page: 1, text: 'x' }))).isError).toBe(true)
+    expect(deps.addNote).not.toHaveBeenCalled()
+  })
+})
+
+describe('set_watermark', () => {
+  it('merges provided options and clamps opacity', async () => {
+    const deps = makeDeps()
+    const result = await executePdfTool(
+      deps,
+      call('set_watermark', { text: 'DRAFT', opacity: 3, angle: 10, color: '#000000' }),
+    )
+    expect(result.mutated).toBe(true)
+    expect(deps.setWatermark).toHaveBeenCalledWith({
+      text: 'DRAFT',
+      opacity: 1,
+      angle: 10,
+      color: '#000000',
+    })
+  })
+
+  it('empty text removes the watermark', async () => {
+    const deps = makeDeps()
+    const result = await executePdfTool(deps, call('set_watermark', { text: '' }))
+    expect(result.mutated).toBe(true)
+    expect(deps.setWatermark).toHaveBeenCalledWith(null)
+  })
+})
+
+describe('set_header_footer', () => {
+  it('passes only provided fields', async () => {
+    const deps = makeDeps()
+    await executePdfTool(deps, call('set_header_footer', { headerLeft: 'ACME', pageNumber: true }))
+    expect(deps.setHeaderFooter).toHaveBeenCalledWith({ headerLeft: 'ACME', pageNumber: true })
+  })
+
+  it('remove=true clears all headers/footers', async () => {
+    const deps = makeDeps()
+    await executePdfTool(deps, call('set_header_footer', { remove: true }))
+    expect(deps.setHeaderFooter).toHaveBeenCalledWith(null)
+  })
+
+  it('errors when nothing is provided', async () => {
+    const deps = makeDeps()
+    expect((await executePdfTool(deps, call('set_header_footer', {}))).isError).toBe(true)
+    expect(deps.setHeaderFooter).not.toHaveBeenCalled()
+  })
+})
+
+describe('move_page', () => {
+  it('moves between 1-based positions', async () => {
+    const deps = makeDeps()
+    const result = await executePdfTool(deps, call('move_page', { page: 2, to: 1 }))
+    expect(result.mutated).toBe(true)
+    expect(deps.movePage).toHaveBeenCalledWith(1, 0)
+  })
+
+  it('rejects out-of-range and no-op moves', async () => {
+    const deps = makeDeps()
+    expect((await executePdfTool(deps, call('move_page', { page: 3, to: 1 }))).isError).toBe(true)
+    expect((await executePdfTool(deps, call('move_page', { page: 1, to: 1 }))).isError).toBe(true)
+    expect(deps.movePage).not.toHaveBeenCalled()
   })
 })

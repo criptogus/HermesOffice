@@ -127,6 +127,11 @@ export function AiPanel({
       webSearch: (query, maxResults) => apiRef.current.webSearch(query, maxResults),
       captureEditState: () => apiRef.current.captureEditState(),
       restoreEditState: (state) => apiRef.current.restoreEditState(state),
+      addNote: (idx, text, at) => apiRef.current.addNote(idx, text, at),
+      setWatermark: (cfg) => apiRef.current.setWatermark(cfg),
+      setHeaderFooter: (cfg) => apiRef.current.setHeaderFooter(cfg),
+      movePage: (from, to) => apiRef.current.movePage(from, to),
+      visiblePageCount: () => apiRef.current.visiblePageCount(),
     }
     loopRef.current = new AgentLoop({
       transport: createElectronTransport(() => settingsRef.current!),
