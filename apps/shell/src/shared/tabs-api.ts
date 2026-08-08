@@ -27,6 +27,11 @@ export interface TabsApi {
   showNewMenu(x: number, y: number): Promise<void>
   /** move a tab to a new index in the strip; Home stays pinned at index 0 */
   reorder(id: string, toIndex: number): Promise<void>
+  /**
+   * open the "Send to…" share window for the active document (no-op when the
+   * active tab is Home or has no file on disk yet).
+   */
+  shareActive(): Promise<void>
   /** subscribe to tab list changes (open/close/activate/title updates); returns unsubscribe */
   onChanged(handler: (tabs: TabSummary[]) => void): () => void
 }
@@ -38,5 +43,6 @@ export const TABS_CHANNELS = {
   showMenu: 'tabs:show-menu',
   showNewMenu: 'tabs:show-new-menu',
   reorder: 'tabs:reorder',
+  shareActive: 'tabs:share-active',
   changed: 'tabs:changed',
 } as const

@@ -8,7 +8,13 @@
  */
 
 export { hermesBinCandidates, resolveHermesBin } from './hermes-cli'
-export { SEND_LIST_TIMEOUT_MS, execSendList, listShareTargets, parseSendList } from './targets'
+export {
+  SEND_LIST_TIMEOUT_MS,
+  execSendList,
+  listShareTargets,
+  parseSendList,
+  withHomeChannelFallbacks,
+} from './targets'
 export {
   MAX_ATTACHMENT_BYTES,
   SEND_TIMEOUT_MS,

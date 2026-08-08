@@ -5,7 +5,7 @@ vi.mock('node:child_process', () => ({
   execFile: (...args: unknown[]) => execFileMock(...args),
 }))
 
-import { listShareTargets, parseSendList } from '../src/targets'
+import { listShareTargets, parseSendList, withHomeChannelFallbacks } from '../src/targets'
 
 describe('parseSendList', () => {
   it('normalizes the directory into a flat channel list', () => {
@@ -51,6 +51,30 @@ describe('parseSendList', () => {
   it('returns empty lists for malformed JSON', () => {
     expect(parseSendList('not json at all')).toEqual({ channels: [], platforms: [] })
     expect(parseSendList('{"unexpected": true}')).toEqual({ channels: [], platforms: [] })
+  })
+})
+
+describe('withHomeChannelFallbacks', () => {
+  it('leaves discovered channels untouched', () => {
+    const targets = parseSendList(
+      JSON.stringify({ platforms: { telegram: [{ id: '1', name: 'A' }] } }),
+    )
+    const expanded = withHomeChannelFallbacks(targets)
+    expect(expanded.channels).toHaveLength(1)
+    expect(expanded.channels[0]).toMatchObject({ platform: 'telegram', id: '1' })
+  })
+
+  it('adds a home-channel entry for configured platforms without channels', () => {
+    const targets = parseSendList(
+      JSON.stringify({ platforms: { telegram: [{ id: '1', name: 'A' }], whatsapp: [] } }),
+    )
+    const expanded = withHomeChannelFallbacks(targets)
+    expect(expanded.channels).toHaveLength(2)
+    expect(expanded.channels[1]).toMatchObject({
+      platform: 'whatsapp',
+      name: 'whatsapp (home)',
+      target: 'whatsapp',
+    })
   })
 })
 

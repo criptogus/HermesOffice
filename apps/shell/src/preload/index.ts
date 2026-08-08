@@ -246,6 +246,9 @@ const tabsApi: TabsApi = {
   async reorder(id, toIndex) {
     await ipcRenderer.invoke(TABS_CHANNELS.reorder, id, toIndex)
   },
+  async shareActive() {
+    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
+  },
   onChanged(handler) {
     const listener = (_event: IpcRendererEvent, tabs: TabSummary[]) => handler(tabs)
     ipcRenderer.on(TABS_CHANNELS.changed, listener)

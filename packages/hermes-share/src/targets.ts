@@ -65,3 +65,17 @@ export async function listShareTargets(bin: string): Promise<ShareTargets> {
   const stdout = await execSendList(bin)
   return parseSendList(stdout)
 }
+
+/**
+ * Append a synthetic home-channel entry for every configured platform that has
+ * no discovered channels (e.g. a WhatsApp bridge in self-chat mode never
+ * discovers chats). Delivery then resolves through `<PLATFORM>_HOME_CHANNEL` —
+ * the same configured-but-undiscovered fallback `hermes send --list` exposes.
+ */
+export function withHomeChannelFallbacks(targets: ShareTargets): ShareTargets {
+  const covered = new Set(targets.channels.map((c) => c.platform))
+  const fallbacks = targets.platforms
+    .filter((platform) => !covered.has(platform))
+    .map((platform) => ({ platform, name: `${platform} (home)`, target: platform }))
+  return { ...targets, channels: [...targets.channels, ...fallbacks] }
+}

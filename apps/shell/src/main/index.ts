@@ -65,6 +65,7 @@ import {
   registerShareIpc,
   resolveHermesBin,
   sendFileToTarget,
+  withHomeChannelFallbacks,
   type ShareStrings,
   type ShareWindowSendRequest,
   type ShareWindowState,
@@ -2041,13 +2042,16 @@ function registerHomeIpc(): void {
     listChannels: async () => {
       if (!hermesBin) return { channels: [], platforms: [] }
       const targets = await listShareTargets(hermesBin)
-      return {
+      const withTargets = {
         ...targets,
         channels: targets.channels.map((channel) => ({
           ...channel,
           target: buildTarget(channel),
         })),
       }
+      // configured-but-undiscovered platforms (e.g. a WhatsApp self-chat
+      // bridge) still get a home-channel entry in the picker
+      return withHomeChannelFallbacks(withTargets)
     },
     send: async (request: ShareWindowSendRequest & { filePath?: string }) => {
       if (!hermesBin) return { ok: false, error: 'Hermes CLI not found' }
@@ -2131,6 +2135,7 @@ function registerTabsIpc(): void {
   ipcMain.handle(TABS_CHANNELS.reorder, (_event, id: string, toIndex: number) => {
     if (typeof id === 'string' && Number.isInteger(toIndex)) tabManager?.reorderTab(id, toIndex)
   })
+  ipcMain.handle(TABS_CHANNELS.shareActive, () => shareActiveTab())
   // "all tabs" overflow menu — native popup because the editors' WebContentsView
   // would cover any DOM dropdown the shell renderer draws below the tab strip
   ipcMain.handle(TABS_CHANNELS.showMenu, (_event, x: unknown, y: unknown) => {

@@ -130,6 +130,7 @@ export const strings = {
     closeTab: '关闭标签',
     tabList: '全部标签',
     newTab: '新建标签页',
+    sendTo: '发送到…',
     // First-run onboarding
     onbTitle1: '欢迎使用 HermesOffice',
     onbSubtitle1: '第一个开源的 AI 原生 Office 套件',
@@ -278,6 +279,7 @@ export const strings = {
     closeTab: 'Close tab',
     tabList: 'All tabs',
     newTab: 'New tab',
+    sendTo: 'Send to…',
     // First-run onboarding
     onbTitle1: 'Welcome to HermesOffice',
     onbSubtitle1: 'The first open-source, AI-native office suite',
@@ -443,6 +445,7 @@ export const strings = {
     closeTab: 'タブを閉じる',
     tabList: 'すべてのタブ',
     newTab: '新しいタブ',
+    sendTo: '送信…',
     // First-run onboarding
     onbTitle1: 'HermesOffice へようこそ',
     onbSubtitle1: '初のオープンソース AI ネイティブ Office スイート',
@@ -603,6 +606,7 @@ export const strings = {
     closeTab: '탭 닫기',
     tabList: '모든 탭',
     newTab: '새 탭',
+    sendTo: '보내기…',
     // First-run onboarding
     onbTitle1: 'HermesOffice에 오신 것을 환영합니다',
     onbSubtitle1: '최초의 오픈소스 AI 네이티브 오피스 제품군',
@@ -768,6 +772,7 @@ export const strings = {
     closeTab: "Fermer l'onglet",
     tabList: 'Tous les onglets',
     newTab: 'Nouvel onglet',
+    sendTo: 'Envoyer à…',
     // First-run onboarding
     onbTitle1: 'Bienvenue dans HermesOffice',
     onbSubtitle1: 'La première suite bureautique open source et native IA',
@@ -935,6 +940,7 @@ export const strings = {
     closeTab: 'Tab schließen',
     tabList: 'Alle Tabs',
     newTab: 'Neuer Tab',
+    sendTo: 'Senden an…',
     // First-run onboarding
     onbTitle1: 'Willkommen bei HermesOffice',
     onbSubtitle1: 'Die erste quelloffene, KI-native Office-Suite',
@@ -1101,6 +1107,7 @@ export const strings = {
     closeTab: 'Cerrar pestaña',
     tabList: 'Todas las pestañas',
     newTab: 'Nueva pestaña',
+    sendTo: 'Enviar a…',
     // First-run onboarding
     onbTitle1: 'Bienvenido a HermesOffice',
     onbSubtitle1: 'La primera suite ofimática de código abierto y nativa de IA',
@@ -1261,6 +1268,7 @@ export const strings = {
     closeTab: 'ปิดแท็บ',
     tabList: 'แท็บทั้งหมด',
     newTab: 'แท็บใหม่',
+    sendTo: 'ส่งถึง…',
     // First-run onboarding
     onbTitle1: 'ยินดีต้อนรับสู่ HermesOffice',
     onbSubtitle1: 'ชุดโปรแกรมออฟฟิศ AI-native โอเพนซอร์สตัวแรก',
@@ -1422,6 +1430,7 @@ export const strings = {
     closeTab: 'Tutup tab',
     tabList: 'Semua tab',
     newTab: 'Tab baru',
+    sendTo: 'Kirim ke…',
     // First-run onboarding
     onbTitle1: 'Selamat datang di HermesOffice',
     onbSubtitle1: 'Suite office open source AI-native pertama',
@@ -1584,6 +1593,7 @@ export const strings = {
     closeTab: 'Закрыть вкладку',
     tabList: 'Все вкладки',
     newTab: 'Новая вкладка',
+    sendTo: 'Отправить…',
     // First-run onboarding
     onbTitle1: 'Добро пожаловать в HermesOffice',
     onbSubtitle1: 'Первый открытый AI-нативный офисный пакет',
@@ -1744,6 +1754,7 @@ export const strings = {
     closeTab: 'إغلاق علامة التبويب',
     tabList: 'كل علامات التبويب',
     newTab: 'علامة تبويب جديدة',
+    sendTo: 'إرسال إلى…',
     // First-run onboarding
     onbTitle1: 'مرحبًا بك في HermesOffice',
     onbSubtitle1: 'أول حزمة مكتبية مفتوحة المصدر وأصيلة في الذكاء الاصطناعي',
@@ -1897,6 +1908,7 @@ export const strings = {
     closeTab: 'Fechar guia',
     tabList: 'Todas as guias',
     newTab: 'Nova guia',
+    sendTo: 'Enviar para…',
     // First-run onboarding
     onbTitle1: 'Bem-vindo ao HermesOffice',
     onbSubtitle1: 'A primeira suíte de escritório open source e nativa de IA',
@@ -2050,6 +2062,7 @@ export const strings = {
     closeTab: 'Chiudi scheda',
     tabList: 'Tutte le schede',
     newTab: 'Nuova scheda',
+    sendTo: 'Invia a…',
     // First-run onboarding
     onbTitle1: 'Benvenuto in HermesOffice',
     onbSubtitle1: 'La prima suite per ufficio open source e nativa per l’IA',
@@ -2202,6 +2215,7 @@ export const strings = {
     closeTab: 'Zamknij kartę',
     tabList: 'Wszystkie karty',
     newTab: 'Nowa karta',
+    sendTo: 'Wyślij do…',
     // First-run onboarding
     onbTitle1: 'Witamy w HermesOffice',
     onbSubtitle1: 'Pierwszy otwartoźródłowy, natywnie oparty na AI pakiet biurowy',
@@ -2355,6 +2369,7 @@ export const strings = {
     closeTab: 'Tabblad sluiten',
     tabList: 'Alle tabbladen',
     newTab: 'Nieuw tabblad',
+    sendTo: 'Versturen naar…',
     // First-run onboarding
     onbTitle1: 'Welkom bij HermesOffice',
     onbSubtitle1: 'De eerste open source, AI-native officesuite',
@@ -2507,6 +2522,7 @@ export const strings = {
     closeTab: 'Tutup tab',
     tabList: 'Semua tab',
     newTab: 'Tab baharu',
+    sendTo: 'Hantar ke…',
     // First-run onboarding
     onbTitle1: 'Selamat datang ke HermesOffice',
     onbSubtitle1: 'Suite pejabat sumber terbuka natif AI yang pertama',
@@ -2656,6 +2672,7 @@ export const strings = {
     closeTab: 'סגירת כרטיסייה',
     tabList: 'כל הכרטיסיות',
     newTab: 'כרטיסייה חדשה',
+    sendTo: 'שליחה אל…',
     // First-run onboarding
     onbTitle1: 'ברוכים הבאים ל-HermesOffice',
     onbSubtitle1: 'חבילת המשרד הראשונה בקוד פתוח שהיא AI-נייטיב',
@@ -2808,6 +2825,7 @@ export const strings = {
     closeTab: 'टैब बंद करें',
     tabList: 'सभी टैब',
     newTab: 'नया टैब',
+    sendTo: 'भेजें…',
     // First-run onboarding
     onbTitle1: 'HermesOffice में आपका स्वागत है',
     onbSubtitle1: 'पहला ओपन-सोर्स, AI-नेटिव ऑफ़िस सुइट',
@@ -2955,6 +2973,7 @@ export const strings = {
     closeTab: '關閉分頁',
     tabList: '全部分頁',
     newTab: '新分頁',
+    sendTo: '傳送到…',
     // First-run onboarding
     onbTitle1: '歡迎使用 HermesOffice',
     onbSubtitle1: '第一個開源的 AI 原生 Office 套件',
