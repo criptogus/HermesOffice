@@ -322,7 +322,6 @@
   outline-offset: 2px;
 }
 
-<<<<<<< HEAD
 /* ── Hermes connect slide (fork) ─────────────────────────────── */
 .onb-hermes {
   display: flex;
@@ -359,7 +358,8 @@
 .onb-hermes-actions {
   display: flex;
   gap: 10px;
-=======
+}
+
 /* ── Dark mode onboarding overrides ──────────────────────── */
 
 [data-theme='dark'] .onb-overlay {
@@ -418,5 +418,4 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
->>>>>>> upstream/main
 }

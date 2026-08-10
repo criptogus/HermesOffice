@@ -1,4 +1,9 @@
-import type { ParsedDocFull, StyleDisplay, ThemeColors, ThemeFonts } from '@hermesoffice/docx-engine'
+import type {
+  ParsedDocFull,
+  StyleDisplay,
+  ThemeColors,
+  ThemeFonts,
+} from '@hermesoffice/docx-engine'
 import {
   cssDualFontFamily,
   cssFontFamily,

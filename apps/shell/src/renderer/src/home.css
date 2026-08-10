@@ -1715,7 +1715,6 @@ body.vib .home {
     transform: rotate(360deg);
   }
 }
-<<<<<<< HEAD
 
 /* ---- cloud sync panel (sidebar) — follows the .nav-item design system ---- */
 
@@ -1978,7 +1977,8 @@ body.vib .home {
   margin: 4px 2px 0;
   font-size: 12px;
   color: #d93025;
-=======
+}
+
 /* Motion accessibility: suppress all animation for users who opt out */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1988,5 +1988,4 @@ body.vib .home {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
->>>>>>> upstream/main
 }

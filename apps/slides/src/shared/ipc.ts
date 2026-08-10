@@ -9,11 +9,7 @@
  */
 import type { RenderSlide } from '@hermesoffice/pptx-render'
 import type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
-import type {
-  AiSettings,
-  AiStreamChunk,
-  AiStreamRequest,
-} from '@hermesoffice/ai-provider'
+import type { AiSettings, AiStreamChunk, AiStreamRequest } from '@hermesoffice/ai-provider'
 
 export type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
 

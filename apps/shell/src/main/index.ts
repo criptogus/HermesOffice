@@ -173,12 +173,7 @@ import {
   setMarkdownDocxExportedHook,
   setMarkdownFileSavedHook,
 } from '../../../markdown/src/main/markdown-main'
-import type {
-  RecentEntry,
-  RecentPage,
-  RenameResult,
-  UiTheme,
-} from '../shared/home-api'
+import type { RecentEntry, RecentPage, RenameResult, UiTheme } from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
 import type { TabKind } from '../shared/tabs-api'
