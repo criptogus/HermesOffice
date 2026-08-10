@@ -24,7 +24,7 @@ and issues labeled `good first issue` are small, well-scoped entry points.
 
 ## Repository layout
 
-- `apps/*` — the five Electron apps (docs, sheets, slides, pdf, shell).
+- `apps/*` — the six Electron apps (docs, sheets, slides, pdf, markdown, shell).
   Each app is an npm workspace with its own `src/main` (Electron main
   process), `src/renderer` (React UI), and `tests/`.
 - `packages/*` — pure TypeScript engine and shared packages (no Electron
@@ -34,7 +34,7 @@ and issues labeled `good first issue` are small, well-scoped entry points.
 
 ## Getting started
 
-Prerequisites: Node 20+, npm 10+, and a Rust toolchain (`cargo` on PATH,
+Prerequisites: Node 22+, npm 10+, and a Rust toolchain (`cargo` on PATH,
 needed only for the sheets xlsx sidecar).
 
 ```bash
@@ -119,7 +119,7 @@ within hours — the gate lives on your machine first.
 ## Building installers
 
 Run these from the repository root — they regenerate the third-party
-notices and build all five apps before packaging:
+notices and build all six apps before packaging:
 
 ```bash
 npm run dist:mac   # dmg + zip

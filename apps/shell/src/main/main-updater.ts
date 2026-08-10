@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, Notification } from 'electron'
+import { app, Notification, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { UpdateUiState } from '../shared/update-api'
 import { closeUpdateWindow, pushUpdateState, showUpdateWindow } from './update-window'
@@ -323,6 +323,12 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
       app.dock?.setBadge('')
       dismissedCommit = main
       closeUpdateWindow()
+    },
+    onOpenDownload: () => {
+      app.dock?.setBadge('')
+      void shell.openExternal(REPO_URL.replace(/\.git$/, '') + '/releases').catch(() => {
+        // no browser handler available; nothing actionable for the user here
+      })
     },
   }
 

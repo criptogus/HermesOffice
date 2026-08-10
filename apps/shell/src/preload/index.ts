@@ -16,14 +16,6 @@ import type {
 import { HOME_CHANNELS, PROJECT_CHANNELS } from '../shared/home-api'
 import type { TabsApi, TabSummary } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
-import {
-  CLOUD_CHANNELS,
-  type CloudApi,
-  type CloudConfig,
-  type CloudFileState,
-  type ConnectResult,
-  type DriveAuthState,
-} from '../shared/cloud-api'
 
 const UI_LANGUAGES: readonly UiLanguage[] = [
   'zh',
@@ -90,6 +82,9 @@ const homeApi: HomeApi = {
   },
   async newSlide(opts) {
     await ipcRenderer.invoke(HOME_CHANNELS.newSlide, opts)
+  },
+  async newMarkdown(opts) {
+    await ipcRenderer.invoke(HOME_CHANNELS.newMarkdown, opts)
   },
   async removeRecent(paths) {
     await ipcRenderer.invoke(HOME_CHANNELS.removeRecent, paths)
@@ -163,10 +158,36 @@ const homeApi: HomeApi = {
   async setOnboardingSeen() {
     await ipcRenderer.invoke(HOME_CHANNELS.setOnboardingSeen)
   },
+  async getTheme() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getTheme)
+    return result === 'dark' || result === 'light' ? result : 'system'
+  },
+  async setTheme(theme) {
+    if (theme !== 'light' && theme !== 'dark' && theme !== 'system')
+      throw new Error('Invalid theme.')
+    await ipcRenderer.invoke(HOME_CHANNELS.setTheme, theme)
+  },
+  async getDefaultSaveDir() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getDefaultSaveDir)
+    return typeof result === 'string' ? result : ''
+  },
+  async pickDefaultSaveDir() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.pickDefaultSaveDir)
+    return typeof result === 'string' && result ? result : null
+  },
+  onThemeChanged(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, theme: unknown) => {
+      if (theme === 'light' || theme === 'dark' || theme === 'system') handler(theme)
+    }
+    ipcRenderer.on('app:theme-changed', listener)
+    return () => ipcRenderer.removeListener('app:theme-changed', listener)
+  },
   async openGenTeam() {
     await ipcRenderer.invoke(HOME_CHANNELS.openGenTeam)
   },
-  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
+  async openCreditUsage() {
+    await ipcRenderer.invoke(HOME_CHANNELS.openCreditUsage)
+  },
   async cloudProjectsCached() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.cloudProjectsCached)
     return asCloudProjectsSnapshot(result)
@@ -184,6 +205,7 @@ const homeApi: HomeApi = {
     if (typeof projectUrl !== 'string' || !projectUrl) throw new Error('Invalid project URL.')
     await ipcRenderer.invoke(HOME_CHANNELS.openCloudProject, projectUrl)
   },
+  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
 }
 
 function asCloudProjectsSnapshot(result: unknown): CloudProjectsSnapshot | null {
@@ -254,50 +276,17 @@ const tabsApi: TabsApi = {
   async reorder(id, toIndex) {
     await ipcRenderer.invoke(TABS_CHANNELS.reorder, id, toIndex)
   },
-  async shareActive() {
-    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
-  },
   onChanged(handler) {
     const listener = (_event: IpcRendererEvent, tabs: TabSummary[]) => handler(tabs)
     ipcRenderer.on(TABS_CHANNELS.changed, listener)
     return () => ipcRenderer.removeListener(TABS_CHANNELS.changed, listener)
   },
+  notifyChromePressed() {
+    ipcRenderer.send(TABS_CHANNELS.chromePressed)
+  },
+  async shareActive() {
+    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
+  },
 }
 
 contextBridge.exposeInMainWorld('aiOfficeTabs', tabsApi)
-
-const cloudApi: CloudApi = {
-  async getConfig() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getConfig)) as CloudConfig
-  },
-  async setConfig(config) {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.setConfig, config)) as CloudConfig
-  },
-  async uploadNow(filePath) {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.uploadNow, filePath)) as CloudFileState
-  },
-  async getStates() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getStates)) as CloudFileState[]
-  },
-  onStatesChanged(handler) {
-    const listener = (_event: IpcRendererEvent, states: CloudFileState[]) => handler(states)
-    ipcRenderer.on(CLOUD_CHANNELS.statesChanged, listener)
-    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.statesChanged, listener)
-  },
-  async connect() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.connect)) as ConnectResult
-  },
-  async disconnect() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.disconnect)) as boolean
-  },
-  async getAuthState() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getAuthState)) as DriveAuthState
-  },
-  onAuthChanged(handler) {
-    const listener = (_event: IpcRendererEvent, state: DriveAuthState) => handler(state)
-    ipcRenderer.on(CLOUD_CHANNELS.authChanged, listener)
-    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.authChanged, listener)
-  },
-}
-
-contextBridge.exposeInMainWorld('aiOfficeCloud', cloudApi)

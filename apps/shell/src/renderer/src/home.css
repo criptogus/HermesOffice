@@ -1,22 +1,46 @@
+/* Shared chrome/AI-panel tokens come from @hermesoffice/ui/tokens.css (imported
+ * before this file in main.tsx); only shell-specific tokens live here. */
 :root {
-  --accent: #2367ec;
-  --accent-hover: #1b58cf;
-  --surface: #ffffff;
-  --surface-subtle: #f6f7f9;
-  --border: #e3e6ea;
-  --text: #242424;
-  --text-muted: #878e96;
-  --text-secondary: #606366;
-
-  /* Design tokens (confirm dialog) */
-  --radius-6: 6px;
-  --radius-8: 8px;
-  --color-error: #ef4444;
-  --color-border-default: #eaeaea;
-  --color-bg-overlay: rgb(0 0 0 / 50%);
-  --shadow-modal-strong: 0 20px 25px rgb(0 0 0 / 10%);
+  /* Genspark DS v4.1: guide/onboarding accent is the brand blue */
+  --accent: #0f7fff;
+  --accent-hover: #0e72e5;
   --modal-width-sm: 480px;
-  color-scheme: light;
+  --avatar-bg: #e8ebef;
+  --badge-bg: #eaf0fd;
+  --checkbox-bg: #ececec;
+  --timeline-user-bg: #eef1f5;
+  --timeline-user-text: #5a6170;
+
+  /* genoffice-logo.svg is pure black-and-white; dark themes flip it to 1 */
+  --logo-invert: 0;
+}
+
+/* ── Dark mode overrides ─────────────────────────────────── */
+
+/* Explicit dark: [data-theme="dark"] on <html> */
+[data-theme='dark'] {
+  --accent: #3f99ff;
+  --accent-hover: #5ba5ff;
+  --avatar-bg: #333;
+  --badge-bg: #2a3a4a;
+  --checkbox-bg: #333;
+  --timeline-user-bg: #2a2a3a;
+  --timeline-user-text: #b0b0c0;
+  --logo-invert: 1;
+}
+
+/* System dark: no data-theme or data-theme="system" — follow OS preference */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --accent: #3f99ff;
+    --accent-hover: #5ba5ff;
+    --avatar-bg: #333;
+    --badge-bg: #2a3a4a;
+    --checkbox-bg: #333;
+    --timeline-user-bg: #2a2a3a;
+    --timeline-user-text: #b0b0c0;
+    --logo-invert: 1;
+  }
 }
 
 * {
@@ -88,6 +112,7 @@ body.vib .home {
   display: block;
   height: 28px;
   width: auto;
+  filter: invert(var(--logo-invert));
 }
 
 .sidebar-nav {
@@ -113,17 +138,17 @@ body.vib .home {
 }
 
 .nav-item:hover {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .nav-item.active {
-  background: #f5f5f5;
+  background: var(--bg-hover);
   font-weight: 600;
 }
 
 .nav-item svg {
   flex-shrink: 0;
-  color: #232425;
+  color: var(--text-primary);
 }
 
 .nav-label {
@@ -140,42 +165,14 @@ body.vib .home {
 }
 
 /* ---- bottom-left account entry (today = Genspark login, later = signup/account system) ---- */
-/* language switching lives in the account popup menu (.lang-row / .lang-flyout) */
-
-.lang-menu-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  width: 100%;
-  height: 34px;
-  margin: 2px 0;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 10px;
-  background: none;
-  font: inherit;
-  font-size: 14px;
-  line-height: 22px;
-  color: #232425;
-  cursor: pointer;
-  text-align: left;
-}
-
-.lang-menu-item:hover {
-  background: #f5f5f5;
-}
-
-.lang-menu-item.active {
-  color: var(--accent);
-  font-weight: 600;
-}
+/* clicking it opens the settings modal (settings.css) directly, which hosts
+   login/logout plus preferences (language / theme / save location / update channel) */
 
 .account-entry {
   position: relative;
   margin-top: auto;
   padding-top: 12px;
-  border-top: 1px solid #efefef;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .account-btn {
@@ -204,7 +201,7 @@ body.vib .home {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #e8ebef;
+  background: var(--avatar-bg);
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 700;
@@ -234,6 +231,13 @@ body.vib .home {
   flex-direction: column;
   min-width: 0;
   line-height: 1.25;
+  flex: 1;
+}
+
+.account-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-muted);
 }
 
 .account-name {
@@ -280,177 +284,17 @@ body.vib .home {
   font-size: 13px;
   line-height: 20px;
   padding: 6px 8px;
-  color: #232425;
+  color: var(--text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .login-hint button:hover {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
-.login-hint .login-hint-open,
-.account-menu-item.login-rescue {
+.login-hint .login-hint-open {
   color: var(--accent);
-}
-
-/* popup panel metrics match the Genspark account dropdown;
-   stretched past the account entry (max width the sidebar can host un-clipped) */
-.account-menu {
-  position: absolute;
-  left: -8px;
-  bottom: calc(100% + 4px);
-  width: calc(100% + 16px);
-  padding: 16px 8px;
-  border: none;
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  z-index: 30;
-}
-
-.account-menu-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 8px;
-}
-
-.account-menu-email {
-  font-size: 14px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-menu-divider {
-  height: 1px;
-  margin: 9px 0;
-  background: #efefef;
-}
-
-.account-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  height: 34px;
-  margin: 2px 0;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 10px;
-  background: none;
-  font: inherit;
-  font-size: 14px;
-  line-height: 22px;
-  color: #232425;
-  cursor: pointer;
-  text-align: left;
-}
-
-.account-menu-item:hover {
-  background: #f5f5f5;
-}
-
-.account-menu-item.danger {
-  color: #d93025;
-}
-
-.account-menu-item.danger svg {
-  flex-shrink: 0;
-}
-
-.account-menu-version {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  height: 34px;
-  margin: 2px 0;
-  padding: 6px 8px;
-  font-size: 14px;
-  line-height: 22px;
-  color: #232425;
-  user-select: text;
-}
-
-.account-menu-version svg {
-  flex-shrink: 0;
-  color: #232425;
-}
-
-.version-row-label {
-  flex-shrink: 0;
-}
-
-.version-row-value {
-  flex: 1;
-  min-width: 0;
-  text-align: right;
-  font-size: 12px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.account-menu-item:disabled {
-  color: var(--text-muted);
-  cursor: default;
-}
-
-/* language row in the account menu (hover opens the flyout) */
-.account-menu-item.lang-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.lang-row svg {
-  flex-shrink: 0;
-  color: #232425;
-}
-
-.lang-row-label {
-  flex-shrink: 0;
-}
-
-.lang-row-current {
-  flex: 1;
-  min-width: 0;
-  text-align: right;
-  font-size: 12px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* wrapper spans the menu's full row width (takes over the item's negative margins)
-   and hosts the hover flyout */
-.lang-row-wrap {
-  width: 100%;
-  margin: 2px 0;
-}
-
-.lang-row-wrap .lang-row {
-  width: 100%;
-  margin: 0;
-}
-
-/* hover flyout with the language list; fixed-position (anchored from JS) so it
-   is not clipped by the sidebar scroll container */
-.lang-flyout {
-  position: fixed;
-  min-width: 160px;
-  max-height: 320px;
-  overflow-y: auto;
-  padding: 8px;
-  border: none;
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  z-index: 40;
 }
 
 /* ---- main content ---- */
@@ -460,7 +304,7 @@ body.vib .home {
   min-width: 0;
   padding: 28px 36px 40px;
   overflow-y: auto;
-  background: #fafafa;
+  background: var(--bg-content);
 }
 
 .section-head {
@@ -487,13 +331,13 @@ body.vib .home {
   font-weight: 700;
   letter-spacing: -0.01em;
   line-height: 1.3;
-  color: #232425;
+  color: var(--text-primary);
 }
 
 .hero-ask {
   display: block;
   margin-top: 0;
-  color: #232425;
+  color: var(--text-primary);
   font-weight: 500;
 }
 
@@ -526,7 +370,7 @@ body.vib .home {
 }
 
 .quick-card:hover {
-  border-color: #d3d7dd;
+  border-color: var(--border-hover);
   box-shadow: 0 3px 12px rgb(0 0 0 / 8%);
 }
 
@@ -584,7 +428,7 @@ body.vib .home {
 .ai-chip {
   padding: 1px 6px;
   border-radius: 4px;
-  background: #eaf0fd;
+  background: var(--badge-bg);
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
@@ -634,7 +478,7 @@ body.vib .home {
   gap: 2px;
   padding: 2px;
   border-radius: 10px;
-  background: #ececec;
+  background: var(--checkbox-bg);
 }
 
 .filter-pill {
@@ -644,7 +488,7 @@ body.vib .home {
   background: none;
   font: inherit;
   font-size: 13px;
-  color: #606366;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
@@ -713,12 +557,12 @@ body.vib .home {
 }
 
 .selection-action.danger {
-  color: #d13438;
-  border-color: #f0c8c9;
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 
 .selection-action.danger:hover {
-  background: #fdf3f3;
+  background: var(--danger-bg);
 }
 
 /* ---- file table ---- */
@@ -742,11 +586,11 @@ body.vib .home {
 .recent-columns {
   padding-top: 11px;
   padding-bottom: 11px;
-  border-bottom: 1px solid #efefef;
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  color: #909499;
+  color: var(--text-tertiary);
 }
 
 /* header label starts at the icon column so it lines up with the file badges */
@@ -765,7 +609,7 @@ body.vib .home {
 }
 
 .recent-list li + li {
-  border-top: 1px solid #efefef;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .recent-item {
@@ -786,7 +630,7 @@ body.vib .home {
 
 /* checked rows keep the same gray as the sidebar's active item */
 .recent-row:has(.row-check:checked) .recent-item {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .recent-item:focus-visible {
@@ -804,7 +648,7 @@ body.vib .home {
   height: 14px;
   margin: 0;
   appearance: none;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--surface);
   cursor: pointer;
@@ -845,12 +689,12 @@ body.vib .home {
   border: none;
   border-radius: 6px;
   background: none;
-  color: #b9bfc7;
+  color: var(--icon-muted);
   cursor: pointer;
 }
 
 .star-btn:hover {
-  background: #f0f2f5;
+  background: var(--bg-hover-subtle);
 }
 
 .recent-item:hover .star-btn,
@@ -875,7 +719,7 @@ body.vib .home {
 
 .recent-path {
   font-size: 12px;
-  color: #909499;
+  color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -883,13 +727,13 @@ body.vib .home {
 
 .recent-time {
   font-size: 12px;
-  color: #909499;
+  color: var(--text-tertiary);
   white-space: nowrap;
 }
 
 .recent-size {
   font-size: 12px;
-  color: #909499;
+  color: var(--text-tertiary);
   white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -917,7 +761,7 @@ body.vib .home {
 
 .more-btn:hover,
 .more-btn[aria-expanded='true'] {
-  background: #e8eaee;
+  background: var(--bg-hover-strong);
   color: var(--text);
 }
 
@@ -961,17 +805,17 @@ body.vib .home {
 }
 
 .row-menu button.danger {
-  color: #d13438;
+  color: var(--danger);
 }
 
 .row-menu button.danger:hover {
-  background: #fdf3f3;
+  background: var(--danger-bg);
 }
 
 .row-menu-divider {
   height: 1px;
   margin: 5px 6px;
-  background: #efefef;
+  background: var(--border-subtle);
 }
 
 /* ---- buttons + modal ---- */
@@ -989,13 +833,8 @@ body.vib .home {
   transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* design-system interaction states */
-.btn:hover:not(:disabled) {
-  filter: brightness(0.92);
-}
-
+/* design-system interaction states; hover fills live on each variant below */
 .btn:active:not(:disabled) {
-  filter: brightness(0.88);
   transform: scale(0.98);
 }
 
@@ -1010,10 +849,19 @@ body.vib .home {
   color: var(--text);
 }
 
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
+}
+
 .btn-danger {
   background: var(--color-error);
   border: none;
   color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-error-hover);
 }
 
 .modal-overlay {
@@ -1080,7 +928,7 @@ body.vib .home {
 .sidebar-divider {
   height: 1px;
   margin: 12px 0;
-  background: #efefef;
+  background: var(--border-subtle);
 }
 
 .proj-panel {
@@ -1163,7 +1011,7 @@ body.vib .home {
 }
 
 .proj-item.active {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .proj-item-main {
@@ -1184,7 +1032,7 @@ body.vib .home {
 }
 
 .proj-item:hover .proj-item-main {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
 
 .proj-item.active .proj-item-main {
@@ -1193,7 +1041,7 @@ body.vib .home {
 
 .proj-item-icon {
   flex-shrink: 0;
-  color: #232425;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
 }
@@ -1267,7 +1115,7 @@ body.vib .home {
 
 .proj-more-btn:hover,
 .proj-more-btn[aria-expanded='true'] {
-  background: #e0e4ea;
+  background: var(--bg-hover-accent);
   color: var(--text);
 }
 
@@ -1304,11 +1152,11 @@ body.vib .home {
 }
 
 .proj-menu button.danger {
-  color: #d13438;
+  color: var(--danger);
 }
 
 .proj-menu button.danger:hover {
-  background: #fdf3f3;
+  background: var(--danger-bg);
 }
 
 /* "move to project" submenu on a file row */
@@ -1404,7 +1252,7 @@ body.vib .home {
   text-align: center;
   margin: 0;
   padding-bottom: 60px;
-  color: #909499;
+  color: var(--text-tertiary);
   line-height: 1.7 !important;
 }
 
@@ -1485,7 +1333,7 @@ body.vib .home {
 }
 
 .timeline-list .timeline-item + .timeline-item {
-  border-top: 1px solid #efefef;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .timeline-item:hover {
@@ -1506,12 +1354,12 @@ body.vib .home {
 }
 
 .timeline-role.user {
-  background: #eef1f5;
-  color: #5a6170;
+  background: var(--timeline-user-bg);
+  color: var(--timeline-user-text);
 }
 
 .timeline-role.assistant {
-  background: #eaf0fd;
+  background: var(--badge-bg);
   color: var(--accent);
 }
 
@@ -1867,6 +1715,7 @@ body.vib .home {
     transform: rotate(360deg);
   }
 }
+<<<<<<< HEAD
 
 /* ---- cloud sync panel (sidebar) — follows the .nav-item design system ---- */
 
@@ -2129,4 +1978,15 @@ body.vib .home {
   margin: 4px 2px 0;
   font-size: 12px;
   color: #d93025;
+=======
+/* Motion accessibility: suppress all animation for users who opt out */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+>>>>>>> upstream/main
 }

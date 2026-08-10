@@ -1,3 +1,10 @@
 // Implementation lives in the engine (parse-time TOC numbering reuses it);
 // this module keeps the historical import path for the editor.
-export { computeListMarkers, formatNumber, type ListItemRef } from '@hermesoffice/docx-engine'
+export {
+  bulletMarkerScale,
+  computeListMarkerInfos,
+  computeListMarkers,
+  formatNumber,
+  type ListItemRef,
+  type ListMarkerInfo,
+} from '@hermesoffice/docx-engine'

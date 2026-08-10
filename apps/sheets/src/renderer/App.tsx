@@ -62,6 +62,7 @@ import {
   IUndoRedoService,
   LocaleType,
   mergeLocales,
+  ThemeService,
   type ICellData,
   type IRange,
   type IStyleData,
@@ -115,7 +116,7 @@ import {
   type CellBounds,
 } from '../domain/chart-visual'
 import { InMemoryWorkbookAdapter } from '../domain/in-memory-workbook'
-import { iconSetSaveable } from '../gateway/xlsx-cf'
+import { cfRuleUnsaveableReason, iconSetSaveable } from '../gateway/xlsx-cf'
 import type { ApplyOutcome, ChangePlan } from '../domain/workbook.types'
 import { createElectronTransport } from './ai/transport'
 import type { ActiveSheetInfo, SheetsSkillDeps } from './ai/tools'
@@ -131,7 +132,7 @@ import type {
   WorkbookFile,
   WorkbookVisualObject,
 } from '../shared/desktop-api'
-import type { PageSetupJournalState } from './edit-journal'
+import type { PageSetupJournalState, StructuralJournalOp } from './edit-journal'
 import {
   AUTO_FILL_COMMAND,
   AXIS_ATTR_MUTATIONS,
@@ -150,6 +151,8 @@ import {
   initialSnapshot,
   MERGE_MUTATIONS,
   MOVE_RANGE_COMMAND,
+  MOVE_ROWS_COMMAND,
+  MOVE_ROWS_MUTATION,
   MOVE_RANGE_MUTATION,
   NOTE_MUTATIONS,
   PERSIST_TOOL_FIELD_MAX,
@@ -158,7 +161,9 @@ import {
   REORDER_RANGE_MUTATION,
   ROW_COLUMN_MUTATIONS,
   safeJsonInput,
+  SET_FROZEN_MUTATION,
   SET_NUMFMT_MUTATION,
+  TOGGLE_GRIDLINES_MUTATION,
   SET_RANGE_VALUES_MUTATION,
   SHEET_LIFECYCLE_MUTATIONS,
   SORT_COMMAND_PATTERN,
@@ -177,9 +182,12 @@ import {
   handleCreateSlicer as handleCreateSlicerImpl,
   handleEditPivotApply as handleEditPivotApplyImpl,
   handleRefreshPivot as handleRefreshPivotImpl,
+  handleCreateTimeline as handleCreateTimelineImpl,
   handleRemoveSlicer as handleRemoveSlicerImpl,
+  handleRemoveTimeline as handleRemoveTimelineImpl,
   handleSlicerSelectAll as handleSlicerSelectAllImpl,
   handleSlicerToggle as handleSlicerToggleImpl,
+  handleTimelineRange as handleTimelineRangeImpl,
   isSelectionInPivot as isSelectionInPivotImpl,
   pivotEditInitial as pivotEditInitialImpl,
   pivotFieldOptions as pivotFieldOptionsImpl,
@@ -187,12 +195,14 @@ import {
   type PivotActionContext,
   type PivotEditContext,
   type SlicerPickerState,
+  type TimelinePickerState,
 } from './pivot-actions'
 import type { ChartRecommendations } from '../domain/chart-recommend'
 import {
   applyAiShapeEdit as applyAiShapeEditImpl,
   buildAiChartEdit as buildAiChartEditImpl,
   handleInsertChart as handleInsertChartImpl,
+  handleInsertEquation as handleInsertEquationImpl,
   handleInsertIcon as handleInsertIconImpl,
   handleInsertScreenshot,
   handleRecommendedCharts as handleRecommendedChartsImpl,
@@ -224,6 +234,7 @@ import { installCellFilenameFunction } from './cell-function'
 import { installFormulaLexerFix } from './formula-lexer-fix'
 import { installSheetRenameFix } from './sheet-rename-fix'
 import { installSelectionWrapGuard } from './selection-wrap-fix'
+import { installMultiRowAutofit } from './autofit-multi-row'
 import { installCopyMaterialize } from './copy-materialize'
 import { applyUniverLocale } from './univer-locales'
 import { installRuleDetail } from './univer-rule-detail'
@@ -238,7 +249,6 @@ import {
   handleApplyHeaderFooter as handleApplyHeaderFooterImpl,
   handleExportPdf as handleExportPdfImpl,
   handlePageLayoutCommand as handlePageLayoutCommandImpl,
-  recordFreezeJournal as recordFreezeJournalImpl,
   type PageLayoutContext,
 } from './page-layout-actions'
 import { handleSave as handleSaveImpl, type SaveContext } from './save-actions'
@@ -283,11 +293,13 @@ import { selectionFormatEquals, toSelectionFormat, type SelectionFormat } from '
 import { ExcelShell } from './ExcelShell'
 import { ToastHost } from './toast'
 import { AdvancedFilterDialog, type AdvancedFilterColumn } from './AdvancedFilterDialog'
+import { EquationDialog } from './EquationDialog'
 import { IconsDialog } from './IconsDialog'
 import { RecommendedChartsDialog } from './RecommendedChartsDialog'
 import { ScreenshotDialog } from './ScreenshotDialog'
 import { SymbolDialog } from './SymbolDialog'
 import { SlicerFieldPicker, SlicerPanels, type SlicerUiState } from './SlicerPanel'
+import { TimelineFieldPicker, TimelinePanels, type TimelineUiState } from './TimelinePanel'
 import type { DefinedNameAction, DefinedNameRow } from './NameManagerDialog'
 import {
   clearVisualSelection,
@@ -432,6 +444,7 @@ export function App(): React.JSX.Element {
   const [symbolDialogOpen, setSymbolDialogOpen] = useState(false)
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false)
   const [iconsDialogOpen, setIconsDialogOpen] = useState(false)
+  const [equationDialogOpen, setEquationDialogOpen] = useState(false)
   const [recommendedCharts, setRecommendedCharts] = useState<ChartRecommendations | null>(null)
   /// The focused floating visual (chart/shape/image); charts surface a
   /// contextual Chart Design ribbon tab while selected.
@@ -454,6 +467,10 @@ export function App(): React.JSX.Element {
   const [slicers, setSlicers] = useState<readonly SlicerUiState[]>([])
   /// Non-null while the "Insert Slicer" field picker is open.
   const [slicerPicker, setSlicerPicker] = useState<SlicerPickerState | null>(null)
+  /// In-session timelines (same session-only model as slicers).
+  const [timelines, setTimelines] = useState<readonly TimelineUiState[]>([])
+  /// Non-null while the "Insert Timeline" field picker is open.
+  const [timelinePicker, setTimelinePicker] = useState<TimelinePickerState | null>(null)
   const menuActionRef = useRef<(action: MenuAction) => void>(() => {})
   /// Fresh handleSave for the AutoSave tick (assigned each render, like
   /// menuActionRef, so the interval closure never goes stale).
@@ -491,6 +508,10 @@ export function App(): React.JSX.Element {
       slicerPicker,
       setSlicers,
       setSlicerPicker,
+      timelines,
+      timelinePicker,
+      setTimelines,
+      setTimelinePicker,
       setMessage,
       setPendingEdits,
     }
@@ -570,6 +591,16 @@ export function App(): React.JSX.Element {
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
   const attachmentsRef = useRef(attachments)
   attachmentsRef.current = attachments
+  /** Attachments consumed by earlier sends this session: sending clears the composer, but the
+      files skill must keep reading them mid-run and in follow-up turns. Deduped by path. */
+  const sentAttachmentsRef = useRef<readonly AttachmentMeta[]>([])
+  /** composer attachments plus everything already sent this session (deduped by path) */
+  const availableAttachments = (): AttachmentMeta[] => {
+    const seen = new Set<string>()
+    return [...sentAttachmentsRef.current, ...attachmentsRef.current].filter((a) =>
+      seen.has(a.path) ? false : (seen.add(a.path), true),
+    )
+  }
   /** Synchronous re-entrancy guard between runAgent trigger and loop.run
    * (loop.busy is still false while attachment images load asynchronously) */
   const runStartingRef = useRef(false)
@@ -700,6 +731,19 @@ export function App(): React.JSX.Element {
                 ...(t.name ? { name: t.name } : {}),
                 ...(t.output ? { output: t.output.slice(0, 2000) } : {}),
               })) ?? [],
+            // stored metadata only: no thumbnail read for history, the chips render name/size
+            ...(m.attachments && m.attachments.length > 0
+              ? {
+                  attachments: m.attachments
+                    .filter((a) => a.path)
+                    .map((a) => ({
+                      name: a.name,
+                      path: a.path ?? '',
+                      ext: a.ext ?? '',
+                      sizeBytes: a.sizeBytes ?? 0,
+                    })),
+                }
+              : {}),
           })),
         )
         // Restore model context: follow-ups after reopening the file continue the
@@ -721,6 +765,7 @@ export function App(): React.JSX.Element {
       input?: string
       output?: string
     }>,
+    attachments?: readonly AttachmentMeta[],
   ) => {
     const ids = chatRefIdsRef.current
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
@@ -733,6 +778,16 @@ export function App(): React.JSX.Element {
         text,
         ...(tools && tools.length > 0
           ? { tools: tools.map((t) => ({ ...t, name: t.name ?? '' })) }
+          : {}),
+        ...(attachments && attachments.length > 0
+          ? {
+              attachments: attachments.map((a) => ({
+                name: a.name,
+                path: a.path,
+                ext: a.ext,
+                sizeBytes: a.sizeBytes,
+              })),
+            }
           : {}),
       })
       .catch(() => {
@@ -776,7 +831,7 @@ export function App(): React.JSX.Element {
       systemSuffix: aiLangDirective,
       skill: composeSkills('sheets+files', '', [
         createWorkbookSkill(sheetsSkillDeps()),
-        createFilesSkill(() => attachmentsRef.current),
+        createFilesSkill(availableAttachments),
         createSearchSkill(),
       ]),
       // guide loading adds a tool round; the default 8 cuts off multi-step work
@@ -945,8 +1000,8 @@ export function App(): React.JSX.Element {
   /** Image attachments read as base64 and sent multimodal with this user message
    * (≤5MB each, max 20; same structure as docs/slides) */
   const MAX_IMAGES_PER_MESSAGE = 20
-  async function collectImageAttachments(): Promise<AgentImage[]> {
-    const imageAtts = attachmentsRef.current.filter((a) => ATTACHMENT_IMAGE_EXTS.has(a.ext))
+  async function collectImageAttachments(atts: readonly AttachmentMeta[]): Promise<AgentImage[]> {
+    const imageAtts = atts.filter((a) => ATTACHMENT_IMAGE_EXTS.has(a.ext))
     const images: AgentImage[] = []
     const failures: string[] = []
     for (const att of imageAtts.slice(0, MAX_IMAGES_PER_MESSAGE)) {
@@ -967,7 +1022,7 @@ export function App(): React.JSX.Element {
     return images
   }
 
-  function runAgent(instruction: string): void {
+  function runAgent(instruction: string, sentAttachments: readonly AttachmentMeta[]): void {
     const loop = agentLoopRef.current
     if (!instruction.trim() || !loop || loop.busy || runStartingRef.current) return
     runStartingRef.current = true
@@ -977,7 +1032,7 @@ export function App(): React.JSX.Element {
     setAiBusy(true)
     setMessage(t('appAiThinking'))
     appendChat({ role: 'assistant', text: '', tools: [], streaming: true })
-    void collectImageAttachments()
+    void collectImageAttachments(sentAttachments)
       .then((images) => {
         runStartingRef.current = false
         loop.run(instruction, images)
@@ -1028,6 +1083,7 @@ export function App(): React.JSX.Element {
     setAiBusy(false)
     setChat([])
     setHistoricChat([])
+    sentAttachmentsRef.current = []
     setPreview(null)
     lazyPreviewRef.current = null
     setMessage(t('appNewConversation'))
@@ -1067,9 +1123,16 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    // Univer paints the grid on canvas, so it can't follow the CSS tokens —
+    // mirror the <html data-theme> state into its official darkMode flag
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)')
+    const isDarkTheme = () =>
+      document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (!document.documentElement.hasAttribute('data-theme') && prefersDark.matches)
     const runtime = createUniver({
       // green selection/highlight instead of Univer's default blue
       theme: greenTheme,
+      darkMode: isDarkTheme(),
       locale: LocaleType.EN_US,
       locales: {
         [LocaleType.EN_US]: mergeLocales(
@@ -1138,6 +1201,13 @@ export function App(): React.JSX.Element {
     })
     loadSnapshotIntoUniver(runtime, initialSnapshot, 'new-workbook', 'Untitled')
     univerRef.current = runtime
+    // live theme switching: main.tsx updates data-theme first (its listener
+    // registered at bootstrap), so reading the attribute here is safe; the
+    // matchMedia listener covers OS appearance flips while in system mode
+    const themeService = runtime.univer.__getInjector().get(ThemeService)
+    const applyUniverDark = () => themeService.setDarkMode(isDarkTheme())
+    const offThemeChanged = window.desktopApi?.onThemeChanged?.(applyUniverDark)
+    prefersDark.addEventListener('change', applyUniverDark)
     // The window always starts blank now; still consume the one-shot
     // new-blank flag so it doesn't leak into the next workbook open.
     void window.desktopApi?.consumeNewBlankWorkbook?.()
@@ -1197,6 +1267,8 @@ export function App(): React.JSX.Element {
     const sheetRenameFixDisposable = installSheetRenameFix()
     // Arrow keys stop at the sheet edge instead of wrapping to the far side.
     const selectionWrapGuardDisposable = installSelectionWrapGuard(runtime)
+    // Row-header double-click autofits every selected row, like Excel.
+    const multiRowAutofitDisposable = installMultiRowAutofit(runtime)
     // Empty-value formula results (IFERROR/IF/CHOOSE over blank refs)
     // display as 0 like Excel.
     const nullResultDisposable = installFormulaNullResultFix(runtime)
@@ -1396,7 +1468,10 @@ export function App(): React.JSX.Element {
           !DV_MUTATIONS.has(event.id) &&
           !DEFINED_NAME_MUTATIONS.has(event.id) &&
           !NOTE_MUTATIONS.has(event.id) &&
-          event.id !== MOVE_RANGE_MUTATION
+          event.id !== MOVE_RANGE_MUTATION &&
+          event.id !== MOVE_ROWS_MUTATION &&
+          event.id !== SET_FROZEN_MUTATION &&
+          event.id !== TOGGLE_GRIDLINES_MUTATION
         ) {
           return
         }
@@ -1590,6 +1665,35 @@ export function App(): React.JSX.Element {
           }
           return
         }
+        if (event.id === SET_FROZEN_MUTATION) {
+          // Recording from the mutation (not the ribbon handler) keeps the
+          // journal in step with Univer's undo/redo of the freeze.
+          const freeze = event.params as
+            { subUnitId?: string; ySplit?: number; xSplit?: number } | undefined
+          if (freeze?.subUnitId && !isSheetRemoved(state.editJournal, freeze.subUnitId)) {
+            recordPageSetup(state.editJournal, freeze.subUnitId, {
+              frozenRows: Math.max(0, freeze.ySplit ?? 0),
+              frozenColumns: Math.max(0, freeze.xSplit ?? 0),
+            })
+            setPendingEdits(journalSize(state.editJournal))
+          }
+          return
+        }
+        if (event.id === TOGGLE_GRIDLINES_MUTATION) {
+          const gridlines = event.params as
+            { subUnitId?: string; showGridlines?: number } | undefined
+          if (
+            gridlines?.subUnitId &&
+            gridlines.showGridlines !== undefined &&
+            !isSheetRemoved(state.editJournal, gridlines.subUnitId)
+          ) {
+            recordPageSetup(state.editJournal, gridlines.subUnitId, {
+              showGridlines: gridlines.showGridlines === 1,
+            })
+            setPendingEdits(journalSize(state.editJournal))
+          }
+          return
+        }
         if (NOTE_MUTATIONS.has(event.id)) {
           if (params.subUnitId) {
             recordNoteChange(state.editJournal, params.subUnitId)
@@ -1606,15 +1710,27 @@ export function App(): React.JSX.Element {
           }
           return
         }
-        if (rowColumn) {
-          const range = params.range
-          if (!range) return
-          const index = rowColumn.axis === 'row' ? range.startRow : range.startColumn
-          const count =
-            rowColumn.axis === 'row'
-              ? range.endRow - range.startRow + 1
-              : range.endColumn - range.startColumn + 1
-          if (count <= 0) return
+        if (rowColumn || event.id === MOVE_ROWS_MUTATION) {
+          let structuralOp: StructuralJournalOp
+          if (rowColumn) {
+            const range = params.range
+            if (!range) return
+            const index = rowColumn.axis === 'row' ? range.startRow : range.startColumn
+            const count =
+              rowColumn.axis === 'row'
+                ? range.endRow - range.startRow + 1
+                : range.endColumn - range.startColumn + 1
+            if (count <= 0) return
+            structuralOp = { kind: rowColumn.kind, index, count }
+          } else {
+            const move = event.params as { sourceRange?: IRange; targetRange?: IRange } | undefined
+            if (!move?.sourceRange || !move.targetRange) return
+            const index = move.sourceRange.startRow
+            const count = move.sourceRange.endRow - move.sourceRange.startRow + 1
+            const before = move.targetRange.startRow
+            if (count <= 0 || (before >= index && before <= index + count)) return
+            structuralOp = { kind: 'move-rows', index, count, before }
+          }
           const structuralSheetId = params.subUnitId
           // Refs are matched by live sheet name (they follow renames).
           const structuralSheetName =
@@ -1623,7 +1739,6 @@ export function App(): React.JSX.Element {
               ?.getSheetBySheetId(structuralSheetId)
               ?.getSheetName() ??
             state.file.sheets.find((sheet) => sheet.id === structuralSheetId)?.name
-          const structuralOp = { kind: rowColumn.kind, index, count }
           recordStructuralOp(
             state.editJournal,
             structuralSheetId,
@@ -1644,19 +1759,19 @@ export function App(): React.JSX.Element {
           refreshLazyVisuals(state)
           // Univer shifted its installed cells itself, but the loaded-range
           // bookkeeping and frozen strip are now stale — refetch the viewport
-          // through the updated coordinate mapping.
-          state.loadedRanges.delete(params.subUnitId)
-          state.frozenStripKeys.delete(params.subUnitId)
+          // through the updated coordinate mapping. Moves are exempt: they
+          // are gated to fully loaded sheets, and the refetch would re-install
+          // cells through undoable commands, burying the move's undo entry.
+          if (structuralOp.kind !== 'move-rows') {
+            state.loadedRanges.delete(params.subUnitId)
+            state.frozenStripKeys.delete(params.subUnitId)
+          }
           // Pinned closure values shift with the model; pinned formulas are
           // dropped — Univer rewrote their references in the model, so a
           // stale snapshot must not be re-applied after eviction.
           const pinnedClosure = state.closure.pinned.get(params.subUnitId)
-          if (pinnedClosure) {
-            const shifted = shiftPinnedCells(pinnedClosure, {
-              kind: rowColumn.kind,
-              index,
-              count,
-            })
+          if (pinnedClosure && 'index' in structuralOp) {
+            const shifted = shiftPinnedCells(pinnedClosure, structuralOp)
             for (const [key, cell] of [...shifted]) {
               if (cell.f !== undefined) shifted.delete(key)
             }
@@ -1748,19 +1863,24 @@ export function App(): React.JSX.Element {
         const state = lazyWorkbookRef.current
         if (journalSuppression.active || !state) return
         if (CF_RULE_COMMAND_PATTERN.test(event.id)) {
-          // The Univer panel offers icon sets and per-threshold icon picks
-          // that only x14 can hold; block them here instead of failing the
-          // whole save later.
+          // The Univer panel offers rules base OOXML cannot hold (x14-only
+          // icon sets, date-occurring, equal/notEqual average, …); block them
+          // here instead of failing the whole save later.
           const rule = (
             event.params as
               | {
-                  rule?: { rule?: { type?: string; config?: unknown } }
+                  rule?: { rule?: Record<string, unknown> & { type?: string; config?: unknown } }
                 }
               | undefined
           )?.rule?.rule
           if (rule?.type === 'iconSet' && !iconSetSaveable(rule.config)) {
             event.cancel = true
             setMessage(t('appIconSetUnsupported'))
+            return
+          }
+          if (rule && cfRuleUnsaveableReason(rule) !== null) {
+            event.cancel = true
+            setMessage(t('appCfRuleUnsaveable'))
           }
           return
         }
@@ -1784,7 +1904,8 @@ export function App(): React.JSX.Element {
         if (
           SORT_COMMAND_PATTERN.test(event.id) ||
           FILTER_COMMAND_PATTERN.test(event.id) ||
-          event.id === MOVE_RANGE_COMMAND
+          event.id === MOVE_RANGE_COMMAND ||
+          event.id === MOVE_ROWS_COMMAND
         ) {
           const subUnitId =
             (event.params as { subUnitId?: string } | undefined)?.subUnitId ??
@@ -1799,7 +1920,7 @@ export function App(): React.JSX.Element {
             return
           }
           if (
-            event.id === MOVE_RANGE_COMMAND &&
+            (event.id === MOVE_RANGE_COMMAND || event.id === MOVE_ROWS_COMMAND) &&
             state.file.sheets.find((candidate) => candidate.id === subUnitId)?.pivotRanges.length
           ) {
             event.cancel = true
@@ -1949,6 +2070,8 @@ export function App(): React.JSX.Element {
     return () => {
       unsubscribeMenu()
       unsubscribeCloseSave()
+      offThemeChanged?.()
+      prefersDark.removeEventListener('change', applyUniverDark)
       dateTextDisposable.dispose()
       filteredCopyDisposable.dispose()
       tsvClipboardDisposable.dispose()
@@ -1960,6 +2083,7 @@ export function App(): React.JSX.Element {
       formulaLexerFixDisposable.dispose()
       sheetRenameFixDisposable.dispose()
       selectionWrapGuardDisposable.dispose()
+      multiRowAutofitDisposable.dispose()
       nullResultDisposable.dispose()
       copyMaterializeDisposable.dispose()
       ruleDetailDisposable()
@@ -1990,18 +2114,40 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  function handleSend(overrideInstruction?: string): void {
+  function handleSend(
+    overrideInstruction?: string,
+    overrideAttachments?: readonly AttachmentMeta[],
+  ): void {
     const instruction = (overrideInstruction ?? prompt).trim()
     if (!instruction || aiBusy) return
     runToolsRef.current = []
-    appendChat({ role: 'user', text: instruction, tools: [] })
-    persistChatMessage('user', instruction)
+    // The message consumes the composer attachments: they ride along (echoed on the
+    // bubble, images multimodal, files via the files skill) and the composer clears.
+    // Retry passes the failed message's original set instead.
+    const sentAtts = overrideAttachments ?? attachmentsRef.current
+    const agentConfigured = isAgentConfigured()
+    appendChat({
+      role: 'user',
+      text: instruction,
+      tools: [],
+      ...(sentAtts.length > 0 ? { attachments: sentAtts } : {}),
+    })
+    persistChatMessage('user', instruction, undefined, sentAtts)
     if (!overrideInstruction) setPrompt('')
+    // the deterministic path consumes the composer too — the bubble already echoes the set
+    if (!overrideAttachments && sentAtts.length > 0) {
+      const seen = new Set(sentAttachmentsRef.current.map((a) => a.path))
+      sentAttachmentsRef.current = [
+        ...sentAttachmentsRef.current,
+        ...sentAtts.filter((a) => !seen.has(a.path)),
+      ]
+      setAttachments([])
+    }
     // real LLM configured → let the agent read context and propose operations;
     // otherwise fall back to the local, deterministic regex planner
     // (kept for offline use and for the fixed micro-DSL it still supports).
-    if (isAgentConfigured()) {
-      runAgent(instruction)
+    if (agentConfigured) {
+      runAgent(instruction, sentAtts)
       return
     }
     const outcome = runDeterministicPlan(instruction)
@@ -2432,6 +2578,7 @@ export function App(): React.JSX.Element {
           }
           recordPageSetup(state.editJournal, op.sheetId, patch)
         } else if (op.op === 'set_freeze') {
+          // Journaled by the set-frozen mutation listener.
           const target = sheetById(op.sheetId)
           if (op.rows === 0 && op.columns === 0) {
             target.cancelFreeze()
@@ -2441,12 +2588,6 @@ export function App(): React.JSX.Element {
               startColumn: op.columns > 0 ? op.columns : -1,
               xSplit: op.columns,
               ySplit: op.rows,
-            })
-          }
-          if (!isSheetRemoved(state.editJournal, op.sheetId)) {
-            recordPageSetup(state.editJournal, op.sheetId, {
-              frozenRows: op.rows,
-              frozenColumns: op.columns,
             })
           }
         } else if (op.op === 'refresh_pivot') {
@@ -2563,6 +2704,7 @@ export function App(): React.JSX.Element {
       setSymbolDialogOpen,
       setScreenshotDialogOpen,
       setIconsDialogOpen,
+      setEquationDialogOpen,
       openRecommendedCharts: () => {
         void handleRecommendedChartsImpl(visualContext()).then((result) => {
           if (result) setRecommendedCharts(result)
@@ -2572,8 +2714,6 @@ export function App(): React.JSX.Element {
       visualContext,
       dataToolsContext,
       pivotContext,
-      recordFreezeJournal: (sheetId, rows, columns) =>
-        recordFreezeJournalImpl(pageLayoutContext(), sheetId, rows, columns),
       handlePageLayoutCommand: (rest) => handlePageLayoutCommandImpl(pageLayoutContext(), rest),
       handleExportPdf: () => handleExportPdfImpl(pageLayoutContext()),
     }
@@ -2733,10 +2873,12 @@ export function App(): React.JSX.Element {
     setPreview(null)
     lazyPreviewRef.current = null
     setPendingEdits(0)
-    // Slicers belong to the previous workbook's session only; switching files
-    // invalidates them.
+    // Slicers/timelines belong to the previous workbook's session only;
+    // switching files invalidates them.
     setSlicers([])
     setSlicerPicker(null)
+    setTimelines([])
+    setTimelinePicker(null)
     disposeVisuals(visualDisposablesRef.current)
     loadWorkbookSkeleton(univerRef.current, selected)
     applyWorkbookNotes(univerRef.current, selected)
@@ -3088,6 +3230,14 @@ export function App(): React.JSX.Element {
           onClose={() => setIconsDialogOpen(false)}
         />
       )}
+      {equationDialogOpen && (
+        <EquationDialog
+          onInsert={(dataUrl, width, height) =>
+            handleInsertEquationImpl(visualContext(), dataUrl, width, height)
+          }
+          onClose={() => setEquationDialogOpen(false)}
+        />
+      )}
       {recommendedCharts !== null && (
         <RecommendedChartsDialog
           recommendations={recommendedCharts}
@@ -3107,6 +3257,21 @@ export function App(): React.JSX.Element {
         onToggle={(slicerId, member) => handleSlicerToggleImpl(pivotContext(), slicerId, member)}
         onSelectAll={(slicerId) => handleSlicerSelectAllImpl(pivotContext(), slicerId)}
         onRemove={(slicerId) => handleRemoveSlicerImpl(pivotContext(), slicerId)}
+      />
+      {timelinePicker !== null && (
+        <TimelineFieldPicker
+          fields={timelinePicker.fields}
+          onPick={(field) => handleCreateTimelineImpl(pivotContext(), field)}
+          onClose={() => setTimelinePicker(null)}
+        />
+      )}
+      <TimelinePanels
+        timelines={timelines}
+        onRange={(timelineId, start, end) =>
+          handleTimelineRangeImpl(pivotContext(), timelineId, { start, end })
+        }
+        onClear={(timelineId) => handleTimelineRangeImpl(pivotContext(), timelineId, null)}
+        onRemove={(timelineId) => handleRemoveTimelineImpl(pivotContext(), timelineId)}
       />
     </>
   )

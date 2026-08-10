@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor } from '@tiptap/core'
 import { DOMParser as PmDOMParser, type Mark as PmMark } from '@tiptap/pm/model'
+import { markdownPasteHtml } from './editor/markdown-paste'
 import {
   BLANK_BULLET_NUM_ID,
   BLANK_ORDERED_NUM_ID,
@@ -39,6 +40,7 @@ import {
   liveSections,
   nextLineAnchor,
   measureBlocks,
+  docGridPitchPt,
   type LineAnchor,
   pageNumbers,
   sliceWithLineSplit,
@@ -47,6 +49,7 @@ import {
   type BlockMeta,
   type PageNoteItem,
   pageAt,
+  singleCutCell,
   sectionColGeom,
   sectionColumns,
   sectionFirstPages,
@@ -55,6 +58,7 @@ import {
   effectiveTopPx,
   effectiveBottomPx,
   formatPageNumber,
+  visiblePageCount,
   type SectionGeom,
   type SectionHfHeights,
   type PageSlice,
@@ -103,6 +107,7 @@ import {
 } from './editor/active-editor'
 import type { CompareEntry } from './editor/compare'
 import { collectHeadings } from './editor/headings'
+import { applyTocPageDisplays } from './editor/toc-refresh'
 import { setSelectionAlign } from './editor/direction'
 
 import {
@@ -115,11 +120,12 @@ import { InkOverlay } from './components/InkOverlay'
 import { collectRevisions, gotoRevision, type TrackChangesStorage } from './editor/revisions'
 import { NavPane } from './components/NavPane'
 import { Ruler } from './components/Ruler'
-import { docLineFactor, docThemeCss } from './doc-style-css'
+import { docBodyFont, docLineFactor, docThemeCss } from './doc-style-css'
 import { isDocDirty } from './doc-dirty'
 import {
   EMPTY_HF_VARIANTS,
   hfFromPart,
+  restingHfAreaVariant,
   type DocState,
   type HfVariantKey,
   type HfVariantsState,
@@ -167,6 +173,13 @@ const _IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 const twipsToPx = (twips: number) => (twips / 1440) * 96
 
+/** tiny stable string hash for decoration keys */
+function hashStr(str: string): number {
+  let h = 0
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0
+  return h
+}
+
 const EMPTY_BLOCKS: Block[] = []
 
 // O(doc) derivations cached by PM doc reference: caret moves and unrelated
@@ -195,6 +208,24 @@ function cleanPastedHtml(html: string): string {
     .replace(/<!--\[if[\s\S]*?<!\[endif\]-->/g, '')
     .replace(/<o:p>[\s\S]*?<\/o:p>/g, '')
     .replace(/<li([^>]*)>\s*<p[^>]*>([\s\S]*?)<\/p>\s*<\/li>/g, '<li$1>$2</li>')
+}
+
+/** All runs a footnote/endnote reference may live in: paragraph runs, plus table
+ *  cell paragraphs (incl. nested tables) — refs inside cells still print their
+ *  note at the page bottom like Word */
+function blockNoteScanRuns(b: Block): NonNullable<Block['runs']> {
+  const out: NonNullable<Block['runs']> = []
+  if (b.runs) out.push(...b.runs)
+  const walkTable = (table: NonNullable<Block['table']> | undefined): void => {
+    for (const row of table?.rows ?? []) {
+      for (const cell of row) {
+        for (const p of cell.richParas ?? []) out.push(...p.runs)
+        for (const nested of cell.nestedTables ?? []) walkTable(nested)
+      }
+    }
+  }
+  if (b.table) walkTable(b.table)
+  return out
 }
 
 /** Footnote area at the top of a page gap (previous page's bottom): absolutely positioned in the content area, double-click an entry to edit */
@@ -307,7 +338,17 @@ export function App() {
   const [titlePgDirty, setTitlePgDirty] = useState(false)
   const [evenOddHf, setEvenOddHf] = useState(false)
   const [evenOddHfDirty, setEvenOddHfDirty] = useState(false)
-  const [hfView, setHfView] = useState<HfView>('default')
+  const [hfView, setHfViewState] = useState<HfView>('default')
+  /** false until the user picks a variant (chip/toggle); resting areas then follow their page's variant instead */
+  const [hfViewTouched, setHfViewTouched] = useState(false)
+  const setHfView = (v: HfView) => {
+    setHfViewState(v)
+    setHfViewTouched(true)
+  }
+  const [pageInfo, setPageInfo] = useState({ current: 1, total: 1 })
+  // last page's number for the document-end footer: text for the page marker, num for
+  // even/odd parity (section restarts / pageNumberFmt make both differ from the physical count)
+  const [lastPageNo, setLastPageNo] = useState<{ text: string; num: number } | null>(null)
   /** Page-number-format dialog + pending final-section pgNumType write (non-final sections rewrite sectPr via pgNumDirtySections) */
   const [pgNumModal, setPgNumModal] = useState<{ fmt: string; start: string } | null>(null)
   const [pgNumEdit, setPgNumEdit] = useState<{ fmt?: string; start?: number } | null>(null)
@@ -345,18 +386,30 @@ export function App() {
     }
     return sectionHfEdits[`${sec.lastBlockIndex}:${kind}`] ?? fromPart()
   }
+  /** Variant an on-canvas area shows/edits: explicit chip choice wins; at rest the header area is page 1 and the footer area the last page */
+  const areaView = (kind: 'header' | 'footer'): HfView =>
+    hfViewTouched
+      ? effHfView
+      : restingHfAreaVariant(kind, {
+          titlePg,
+          evenOddHf,
+          pageCount: pageInfo.total,
+          ...(lastPageNo ? { lastPageNo: lastPageNo.num } : {}),
+        })
+  const headerAreaView = areaView('header')
+  const footerAreaView = areaView('footer')
   const shownHeader =
-    effHfView === 'first'
+    headerAreaView === 'first'
       ? hfVariants.headerFirst
-      : effHfView === 'even'
+      : headerAreaView === 'even'
         ? hfVariants.headerEven
         : multiHf
           ? sectionHfValue('header')
           : header
   const shownFooter =
-    effHfView === 'first'
+    footerAreaView === 'first'
       ? hfVariants.footerFirst
-      : effHfView === 'even'
+      : footerAreaView === 'even'
         ? hfVariants.footerEven
         : multiHf
           ? sectionHfValue('footer')
@@ -365,10 +418,11 @@ export function App() {
   const hfImagesOf = (kind: 'header' | 'footer') => {
     const parsed = doc?.parsed
     if (!parsed) return undefined
-    if (effHfView === 'first') {
+    const view = kind === 'header' ? headerAreaView : footerAreaView
+    if (view === 'first') {
       return (kind === 'header' ? parsed.headerFirst : parsed.footerFirst)?.images
     }
-    if (effHfView === 'even') {
+    if (view === 'even') {
       return (kind === 'header' ? parsed.headerEven : parsed.footerEven)?.images
     }
     if (multiHf) {
@@ -380,13 +434,14 @@ export function App() {
   }
 
   const commitHf = (kind: 'header' | 'footer', next: HeaderFooter) => {
+    const view = kind === 'header' ? headerAreaView : footerAreaView
     // multi-section and not the final one: use the per-section edit channel (that section becomes its own part; earlier sections are unaffected)
-    if (effHfView === 'default' && multiHf && hfSectionClamped < sections.length - 1) {
+    if (view === 'default' && multiHf && hfSectionClamped < sections.length - 1) {
       const sec = sections[hfSectionClamped]
       setSectionHfEdits((m) => ({ ...m, [`${sec.lastBlockIndex}:${kind}`]: next }))
       return
     }
-    if (effHfView === 'default') {
+    if (view === 'default') {
       if (kind === 'header') {
         setHeader(next)
         setHeaderDirty(true)
@@ -397,7 +452,7 @@ export function App() {
       return
     }
     const key: HfVariantKey =
-      effHfView === 'first'
+      view === 'first'
         ? kind === 'header'
           ? 'headerFirst'
           : 'footerFirst'
@@ -500,10 +555,6 @@ export function App() {
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const [showFontDialog, setShowFontDialog] = useState(false)
   const [showParaDialog, setShowParaDialog] = useState(false)
-  const [pageInfo, setPageInfo] = useState({ current: 1, total: 1 })
-  // last page's displayed number for the document-end footer '#' marker
-  // (section restarts / pageNumberFmt make it differ from the physical count)
-  const [lastPageNo, setLastPageNo] = useState<number | string | null>(null)
   const [, forceRender] = useReducer((x: number) => x + 1, 0)
   const dirtyRef = useRef(false)
   // serializes save(): overlapping saves (Cmd+S vs autosave timer vs blur) would
@@ -567,6 +618,45 @@ export function App() {
           }
           reader.readAsDataURL(imageFile)
           return true
+        }
+        // text/plain-only Markdown (code blocks, terminals, .md files, LLM
+        // output): convert and insert as formatted content instead of literal
+        // "## Heading" / "**bold**" characters
+        if (!html && text) {
+          const markdownHtml = markdownPasteHtml(text)
+          if (markdownHtml !== null) {
+            try {
+              // cleanPastedHtml unwraps <li><p>…</p></li> from loose lists —
+              // docListItem only allows inline content and would shatter them.
+              const dom = new window.DOMParser().parseFromString(
+                cleanPastedHtml(markdownHtml),
+                'text/html',
+              )
+              const parser = PmDOMParser.fromSchema(view.state.schema)
+              if (
+                selEmpty &&
+                $from.parent.isTextblock &&
+                $from.parent.content.size === 0 &&
+                $from.depth === 1
+              ) {
+                // same wholesale replace as block HTML onto an empty paragraph
+                const parsed = parser.parse(dom.body)
+                if (parsed.content.childCount > 0) {
+                  view.dispatch(
+                    view.state.tr.replaceWith($from.before(1), $from.after(1), parsed.content),
+                  )
+                  return true
+                }
+              } else {
+                view.dispatch(
+                  view.state.tr.replaceSelection(parser.parseSlice(dom.body)).scrollIntoView(),
+                )
+                return true
+              }
+            } catch {
+              /* fall back to default literal paste on parse failure */
+            }
+          }
         }
         return false
       },
@@ -644,6 +734,11 @@ export function App() {
   }, [doc])
 
   useEffect(() => window.desktop.onTeardown?.(() => setTornDown(true)), [])
+
+  // keep the native View menu's checkmarks (AI Sidebar / Dark Mode) in sync
+  useEffect(() => {
+    window.desktop.reportViewMenuState?.({ aiSidebar: showAi, darkCanvas })
+  }, [showAi, darkCanvas])
 
   // Crash-recovery copy: while the document is dirty, push a serialized
   // copy to the main process every 30s; a normal save (or discarding on close) removes
@@ -757,7 +852,11 @@ export function App() {
     setTitlePgDirty,
     setEvenOddHf,
     setEvenOddHfDirty,
-    setHfView,
+    // opening a document resets to the resting per-page variant selection
+    setHfView: (v: HfView) => {
+      setHfViewState(v)
+      setHfViewTouched(false)
+    },
     pgNumEdit,
     pgNumDirtySections,
     setPgNumEdit,
@@ -1329,9 +1428,10 @@ export function App() {
   // page-bottom height (px) reserved for footnote references inside a block: same estimation model as the parity runner
   const footnoteExtraOf = useCallback(
     (b: Block): number => {
-      if (!b.runs || footnotes.length === 0) return 0
+      const runs = blockNoteScanRuns(b)
+      if (runs.length === 0 || footnotes.length === 0) return 0
       let extra = 0
-      for (const run of b.runs) {
+      for (const run of runs) {
         if (run.noteRef?.kind !== 'footnote') continue
         const sec =
           sections.find((s) => (b.docxIndex ?? 0) <= s.lastBlockIndex)?.settings ?? section
@@ -1344,6 +1444,9 @@ export function App() {
     },
     [footnotes, sections, section],
   )
+
+  // typed w:docGrid line pitch (pt) when every section shares one; null = no snapping
+  const gridPitchPt = useMemo(() => docGridPitchPt(sections), [sections])
 
   // single-section header/footer push-down: body top = max(marginTop, headerDist + header height)
   const singleHfPx = useMemo(() => {
@@ -1426,8 +1529,10 @@ export function App() {
       for (const b of blocks) {
         if (b.docxIndex === undefined) continue
         const pb = doc.parsed.blocks.find((bl) => bl.docxIndex === b.docxIndex)
-        if (!pb?.runs) continue
-        const ids = pb.runs.filter((r) => r.noteRef?.kind === 'footnote').map((r) => r.noteRef!.id)
+        if (!pb) continue
+        const ids = blockNoteScanRuns(pb)
+          .filter((r) => r.noteRef?.kind === 'footnote')
+          .map((r) => r.noteRef!.id)
         if (ids.length === 0) continue
         const page = pageAt(slices, b.top + 0.5) - 1
         const sec = sections.find((s) => b.docxIndex! <= s.lastBlockIndex)?.settings ?? section
@@ -1531,7 +1636,8 @@ export function App() {
       }
       return { mBlocks: blocks, slices: s, secs: live }
     })
-    const nums = secs.length > 1 ? pageNumbers(slices, secs) : slices.map((_, i) => i + 1)
+    // same page-number algorithm as the footer path (w:pgNumType start offsets apply to single-section docs too)
+    const nums = secs.length > 0 ? pageNumbers(slices, secs) : slices.map((_, i) => i + 1)
     const byEl = new Map(mBlocks.filter((b) => b.el).map((b) => [b.el as HTMLElement, b.top]))
     const pages: number[] = []
     for (const h of collectHeadings(editor.state.doc)) {
@@ -1576,15 +1682,18 @@ export function App() {
       const scrollRect = scroller.getBoundingClientRect()
       const origin = pmRect.top + mTopPx * factor
       const midScreen = Math.min(scrollRect.top + scrollRect.height / 2, pmRect.bottom)
-      // slices use gapless virtual coordinates; subtract the page-gap height above the midpoint (including mid-paragraph inline gaps)
+      // slices use gapless virtual coordinates; subtract the page-gap height above the midpoint
+      // (including mid-paragraph inline gaps and repeated-header clone rows, which carry
+      // page-repeat-header but not page-gap)
       let gapAbove = 0
-      for (const gap of pm.querySelectorAll('.page-gap')) {
+      for (const gap of pm.querySelectorAll('.page-gap, .page-repeat-header')) {
         const r = gap.getBoundingClientRect()
         if (r.top < midScreen) gapAbove += Math.min(r.height, midScreen - r.top)
       }
       const midY = (midScreen - origin - gapAbove) / factor
-      const current = pageAt(slices, midY)
-      const total = slices.length
+      // visible-page numbering so the status bar and F9 NUMPAGES agree with the gap widgets
+      const current = visiblePageCount(slices, pageAt(slices, midY))
+      const total = visiblePageCount(slices)
       setPageInfo((prev) =>
         prev.current === current && prev.total === total ? prev : { current, total },
       )
@@ -1592,12 +1701,17 @@ export function App() {
     const remeasure = () => {
       const pm = pmEl()
       if (!pm) return
+      const tStart = performance.now()
+      let tMeasure = 0
+      let tSlice = 0
       // a columned canvas measures + slices in the single-flow measuring state (fillLineBoxes
       // also reads the DOM for line sampling, so it must share the state); display-state DOM
       // reads like gap positioning happen outside the measuring state
       const measured = measureSingleFlow(pm, () => {
+        const t0 = performance.now()
         const origin = pm.getBoundingClientRect().top + mTopPx * factor
         const { blocks, totalHeight } = measureBlocks(pm, origin, factor)
+        tMeasure = performance.now() - t0
         // multi-section: assign blocks to sections by docxIndex; each section has its own content height / forced breaks.
         // liveSections: when a section-break block is deleted, that section merges into the next in real time (effective before saving)
         const secList = sections.length > 0 ? liveSections(sections, blocks) : null
@@ -1611,6 +1725,7 @@ export function App() {
         )
         const flowH = withEndnotes?.totalHeight ?? totalHeight
         const hfHs = secList ? hfHeightsOf(secList) : null
+        const t1 = performance.now()
         const s = secList
           ? sliceWithLineSplit(
               blocks,
@@ -1626,6 +1741,7 @@ export function App() {
               factor,
               blockMetaOf,
             )
+        tSlice = performance.now() - t1
         return { blocks, secList, hfHs, s }
       })
       const { blocks, secList, hfHs } = measured
@@ -1633,18 +1749,47 @@ export function App() {
       // document-end footer shows the last page's displayed number, not the physical count
       if (slices.length > 0) {
         const lastIdx = slices.length - 1
-        setLastPageNo(
-          secList
+        const num = secList ? pageNumbers(slices, secList)[lastIdx] : slices.length
+        setLastPageNo({
+          num,
+          text: secList
             ? formatPageNumber(
-                pageNumbers(slices, secList)[lastIdx],
+                num,
                 secList[Math.min(slices[lastIdx].section, secList.length - 1)]?.pageNumberFmt,
               )
-            : slices.length,
-        )
+            : String(num),
+        })
+      }
+      // Auto-refresh TOC page numbers from the fresh slicing, like Word's field
+      // update. Gated on dirtyRef — our pagination approximates Word's, so a
+      // pristine open keeps the file's numbers. History-exempt: a field result
+      // change is not an edit to undo.
+      if (editor && dirtyRef.current && slices.length > 0) {
+        const nums = secList ? pageNumbers(slices, secList) : slices.map((_, n) => n + 1)
+        const byEl = new Map(blocks.filter((b) => b.el).map((b) => [b.el as HTMLElement, b.top]))
+        const headings = collectHeadings(editor.state.doc)
+        // formatted with the owning section's pgNumType, like the header/footer numbers
+        const displays = headings.map((h) => {
+          const dom = editor.view.nodeDOM(h.pos) as HTMLElement | null
+          const top = dom ? byEl.get(dom) : undefined
+          if (top === undefined) return undefined
+          const idx = Math.min(Math.max(pageAt(slices, top + 1), 1), nums.length)
+          const fmt =
+            secList?.[Math.min(slices[idx - 1].section, secList.length - 1)]?.pageNumberFmt
+          return formatPageNumber(nums[idx - 1] ?? idx, fmt)
+        })
+        const tr = editor.state.tr
+        if (applyTocPageDisplays(editor.state.doc, tr, headings, displays)) {
+          tr.setMeta('addToHistory', false)
+          editor.view.dispatch(tr)
+        }
       }
       // M4 always-on pagination in the canvas: render page gaps before page-leading blocks
       // (print view only; gaps don't count as content — measureBlocks subtracts them, so
       // slice results are gap-independent and refresh is idempotent)
+      let tGapsBuild: number | undefined
+      let tSetGaps: number | undefined
+      const tGaps0 = performance.now()
       if (editor) {
         const gaps: PageGapSpec[] = []
         const gapIds = new Set<string>()
@@ -1701,6 +1846,10 @@ export function App() {
             )
           const hfSig = (v: HeaderFooter | null | undefined) =>
             v ? `${v.text}·${v.pageNumber ? 1 : 0}·${v.paras?.length ?? 0}` : ''
+          const visiblePages = visiblePageCount(slices)
+          // stopgap until per-section canvas geometry: a landscape section's header/footer
+          // strip must not overflow the (portrait) canvas paper it is drawn on
+          const canvasPaperW = pmRect.width / factor
           slices.slice(1).forEach((slice, k) => {
             // an even/odd section's zero-height blank page shares its start with the following page: draw only one gap band on the canvas
             if (slice.start === slices[k].start) return
@@ -1728,11 +1877,11 @@ export function App() {
                 value: gapFooter.value ?? { text: '' },
                 images: gapFooter.images,
                 pageNo: pageNoTextOf(k),
-                pageTotal: slices.length,
+                pageTotal: visiblePages,
               })
               el.style.top = 'auto'
               el.style.bottom = `${GAP_BAND + metrics.marginTop + box.footerDist}px`
-              el.style.width = `${box.width - 120}px`
+              el.style.width = `${Math.min(box.width, canvasPaperW) - 120}px`
               hfEls.push(el)
             }
             if (hfHasVisibleContent(gapHeader.value, gapHeader.images)) {
@@ -1742,11 +1891,11 @@ export function App() {
                 value: gapHeader.value ?? { text: '' },
                 images: gapHeader.images,
                 pageNo: pageNoTextOf(k + 1),
-                pageTotal: slices.length,
+                pageTotal: visiblePages,
               })
               el.style.bottom = 'auto'
               el.style.top = `calc(100% - ${Math.max(0, metrics.marginTop - box.headerDist)}px)`
-              el.style.width = `${box.width - 120}px`
+              el.style.width = `${Math.min(box.width, canvasPaperW) - 120}px`
               hfEls.push(el)
             }
             const hfProps =
@@ -1755,7 +1904,7 @@ export function App() {
                     hfEls,
                     // key must cover everything baked into the widgets (both pages'
                     // formatted numbers + total count), or stale PAGE/NUMPAGES survive reuse
-                    hfKey: `${pageNoTextOf(k)}·${pageNoTextOf(k + 1)}·${slices.length}·${hfSig(gapFooter.value)}·${hfSig(gapHeader.value)}`,
+                    hfKey: `${pageNoTextOf(k)}·${pageNoTextOf(k + 1)}·${visiblePages}·${hfSig(gapFooter.value)}·${hfSig(gapHeader.value)}`,
                   }
                 : {}
             // previous page's footnotes: rendered into the top of the gap (page-bottom area), with the gap enlarged by the reserved height.
@@ -1802,19 +1951,63 @@ export function App() {
               )
               const elTop = b.el.getBoundingClientRect().top
               let matched = false
+              let cutRow: Element | null = null
               for (const tr of Array.from(b.el.querySelectorAll('tr')).filter(
-                (r) => !r.closest('.doc-nested-table'),
+                (r) =>
+                  !r.closest('.doc-nested-table') && !r.classList.contains('page-repeat-header'),
               )) {
                 const trTop = tr.getBoundingClientRect().top
                 const gapsAbove = gapRects.reduce((s, g) => (g.top <= trTop ? s + g.height : s), 0)
                 const off = (trTop - elTop - gapsAbove) / factor
+                // last real row starting at/above the cut = the row the cut falls inside
+                if (!tr.classList.contains('page-gap') && off <= slice.start - b.top + 0.5)
+                  cutRow = tr
                 if (Math.abs(off - (slice.start - b.top)) < 1.5) {
                   matched = true
                   try {
                     const $pos = editor.view.state.doc.resolve(editor.view.posAtDOM(tr, 0))
+                    // w:tblHeader repetition: the engine reserved slice.repeatHeader.height
+                    // at the top of this page's column, so cloning the source header rows
+                    // below the gap fills exactly that space. Clones are decorations —
+                    // page-gap-inline keeps them out of the virtual coordinates.
+                    let repeatHeaderEls: HTMLElement[] | undefined
+                    if (slice.repeatHeader) {
+                      const tableEl = tr.closest('table')
+                      const srcRows = tableEl
+                        ? (Array.from(tableEl.querySelectorAll(':scope > tbody > tr')).filter(
+                            (r) =>
+                              !r.classList.contains('page-gap') &&
+                              !r.classList.contains('page-repeat-header'),
+                          ) as HTMLElement[])
+                        : []
+                      const els: HTMLElement[] = []
+                      let acc = 0
+                      for (const row of srcRows) {
+                        if (acc >= slice.repeatHeader.height - 1.5) break
+                        const clone = row.cloneNode(true) as HTMLElement
+                        clone.classList.add('page-gap-inline', 'page-repeat-header')
+                        clone.setAttribute('contenteditable', 'false')
+                        els.push(clone)
+                        acc += row.getBoundingClientRect().height / factor
+                      }
+                      if (els.length > 0) repeatHeaderEls = els
+                    }
                     for (let d = $pos.depth; d > 0; d--) {
                       if ($pos.node(d).type.name === 'docTableRow') {
-                        gaps.push({ pos: $pos.before(d), kind: 'table', metrics })
+                        gaps.push({
+                          pos: $pos.before(d),
+                          kind: 'table',
+                          metrics,
+                          ...hfProps,
+                          ...(repeatHeaderEls
+                            ? {
+                                repeatHeaderEls,
+                                // content signature: header edits with unchanged height
+                                // must still rebuild the widgets (same rule as hfKey)
+                                repeatHeaderKey: `${repeatHeaderEls.length}-${Math.round(slice.repeatHeader!.height)}-${hashStr(repeatHeaderEls.map((e) => e.innerHTML).join('§'))}`,
+                              }
+                            : {}),
+                        })
                         break
                       }
                     }
@@ -1825,10 +2018,31 @@ export function App() {
                 }
               }
               if (!matched) {
-                // inline cut point (page break mid-line): the cut falls in a line's band gap; locate the first line after it and insert a zero-height dashed marker
+                // in-row cut point (page break between a cell's lines): anchor at the first line after it
                 const anchor = nextLineAnchor(b.el, slice.start - b.top, factor)
                 const pos = anchor ? posFromAnchor(editor.view, anchor) : undefined
-                if (pos != null) gaps.push({ pos, kind: 'cut', metrics })
+                if (anchor == null || pos == null) return
+                const cutCell = singleCutCell(cutRow)
+                if (cutCell) {
+                  // single-column row: insert a real inline gap band; bleed to the paper
+                  // edges from the anchor's block (the widget's containing block)
+                  const r = (
+                    anchor.node.parentElement?.closest('td > *, th > *') ?? cutCell
+                  ).getBoundingClientRect()
+                  gaps.push({
+                    pos,
+                    kind: 'cell',
+                    metrics: {
+                      ...metrics,
+                      marginLeft: metrics.marginLeft + (r.left - pmRect.left) / factor,
+                      marginRight: metrics.marginRight + (pmRect.right - r.right) / factor,
+                    },
+                    ...hfProps,
+                  })
+                } else {
+                  // multi-cell row: keep the zero-height dashed marker (no hfProps — it can't host header/footer strips)
+                  gaps.push({ pos, kind: 'cut', metrics })
+                }
               }
               return
             }
@@ -1849,8 +2063,36 @@ export function App() {
             })
             markShown()
           })
+          // TOC page numbers: the file's cached PAGEREF results are stale (generators
+          // write them against a layout that never matches; Word silently refreshes on
+          // open, we never write back). Backfill the display from the live layout —
+          // DOM-only, inside contenteditable=false subtrees the save path never reads.
+          const tocLines = pm.querySelectorAll<HTMLElement>('.doc-toc-line[data-toc-anchor]')
+          if (tocLines.length > 0) {
+            const anchorIdx = new Map<string, number>()
+            for (const b of parsed.blocks) {
+              if (b.docxIndex == null) continue
+              for (const a of b.hiddenBookmarks ?? []) anchorIdx.set(a, b.docxIndex)
+            }
+            const topByIdx = new Map<number, number>()
+            for (const b of blocks) {
+              if (b.docxIndex != null) topByIdx.set(b.docxIndex, b.top)
+            }
+            for (const el of tocLines) {
+              const idx = anchorIdx.get(el.getAttribute('data-toc-anchor') ?? '')
+              const top = idx === undefined ? undefined : topByIdx.get(idx)
+              if (top === undefined) continue
+              const pageEl = el.querySelector('.doc-toc-page')
+              // pageAt is 1-based; pageNoTextOf indexes nums/slices 0-based
+              const pageIdx = Math.max(0, Math.min(pageAt(slices, top + 1) - 1, slices.length - 1))
+              if (pageEl && slices.length > 0) pageEl.textContent = pageNoTextOf(pageIdx)
+            }
+          }
         }
+        tGapsBuild = performance.now() - tGaps0
+        const tSet0 = performance.now()
         setPageGaps(editor.view, gaps)
+        tSetGaps = performance.now() - tSet0
         // the last page paints as a full sheet like the ones above it:
         // extend the canvas to that page's paper bottom, measured from the last gap
         const gapEls = pm.querySelectorAll('.page-gap')
@@ -1870,7 +2112,19 @@ export function App() {
         ;(window as unknown as Record<string, unknown>).__pageDebug = {
           slices,
           blocks: blocks.map((b) => ({ top: b.top, height: b.height, docxIndex: b.docxIndex })),
+          remeasureMs: performance.now() - tStart,
+          measureMs: tMeasure,
+          sliceMs: tSlice,
+          gapsBuildMs: tGapsBuild,
+          setGapsMs: tSetGaps,
         }
+        requestAnimationFrame(() => {
+          const tf = performance.now()
+          requestAnimationFrame(() => {
+            const dbg = (window as unknown as Record<string, Record<string, unknown>>).__pageDebug
+            if (dbg) dbg.frameMs = performance.now() - tf
+          })
+        })
         setGapNoteIds((prev) => {
           if (prev.size === gapIds.size && [...gapIds].every((id) => prev.has(id))) return prev
           return gapIds
@@ -2516,9 +2770,17 @@ export function App() {
       {doc && liveDocCjk != null && (
         <style>{`.doc-page { --doc-line-factor:${docLineFactor(doc.parsed, liveDocCjk)} }`}</style>
       )}
+      {doc && gridPitchPt != null && (
+        // typed w:docGrid: line-height round(up) expressions snap to this pitch
+        <style>{`.doc-page { --doc-grid-pitch:${gridPitchPt}pt }`}</style>
+      )}
+      {doc && section && (
+        // over-wide tables may spill into the right margin (Word/LO), capped at the paper edge
+        <style>{`.doc-page { --doc-margin-right:${twipsToPx(section.marginRight)}px }`}</style>
+      )}
       {/* Theme CSS comes from live state, so a Design ▸ Themes/Fonts/Colors pick shows
           on the page immediately instead of only in the saved file */}
-      {doc && <style>{docThemeCss(themeFonts, themeColors)}</style>}
+      {doc && <style>{docThemeCss(themeFonts, themeColors, !!docBodyFont(doc.parsed))}</style>}
       {colFlow && viewMode === 'print' && (
         // columns (sectPr w:cols): column gap follows the document's w:space; measuring-columns
         // is the single-flow measuring state (columns removed, content-box width = column width,
@@ -2650,7 +2912,7 @@ export function App() {
                           </button>
                           {titlePg && (
                             <button
-                              className={effHfView === 'first' ? 'on' : ''}
+                              className={headerAreaView === 'first' ? 'on' : ''}
                               onClick={() => setHfView('first')}
                             >
                               {t('appFirstPage')}
@@ -2658,7 +2920,7 @@ export function App() {
                           )}
                           {(titlePg || evenOddHf) && (
                             <button
-                              className={effHfView === 'default' ? 'on' : ''}
+                              className={headerAreaView === 'default' ? 'on' : ''}
                               onClick={() => setHfView('default')}
                             >
                               {evenOddHf ? t('appOddPage') : t('appDefaultPage')}
@@ -2666,7 +2928,7 @@ export function App() {
                           )}
                           {evenOddHf && (
                             <button
-                              className={effHfView === 'even' ? 'on' : ''}
+                              className={headerAreaView === 'even' ? 'on' : ''}
                               onClick={() => setHfView('even')}
                             >
                               {t('appEvenPage')}
@@ -2675,7 +2937,7 @@ export function App() {
                         </div>
                       )}
                       {(multiHf ||
-                        effHfView !== 'default' ||
+                        (hfViewTouched && effHfView !== 'default') ||
                         shownHeader?.text ||
                         shownHeader?.paras?.length ||
                         hfImagesOf('header')?.length) && (
@@ -2743,7 +3005,7 @@ export function App() {
                         </div>
                       )}
                       {(multiHf ||
-                        effHfView !== 'default' ||
+                        (hfViewTouched && effHfView !== 'default') ||
                         shownFooter?.text ||
                         shownFooter?.pageNumber ||
                         shownFooter?.paras?.length ||
@@ -2754,7 +3016,7 @@ export function App() {
                           images={hfImagesOf('footer')}
                           readOnly={isProtected || readMode}
                           onCommit={(next) => commitHf('footer', next)}
-                          pageNo={lastPageNo ?? pageInfo.total}
+                          pageNo={lastPageNo?.text ?? pageInfo.total}
                           pageTotal={pageInfo.total}
                         />
                       )}
@@ -2968,6 +3230,9 @@ export function App() {
           pageFootnotesOf={pageFootnotesOf}
           endnoteItems={endnoteItems}
           sectionHfOverride={sectionHfOverride}
+          clearPageGaps={() => {
+            if (editor) setPageGaps(editor.view, [])
+          }}
           onExportPdf={() => void exportPdf()}
           onExportMarkdown={() => void exportMarkdown()}
           onClose={() => setShowPagePreview(false)}

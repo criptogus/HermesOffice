@@ -54,7 +54,7 @@ import type {
 } from './types'
 import { patchTableStyleXml, ensureTableStyleXml, type TableStyleEdit } from './table-edit'
 import { buildChartSpaceXml, type NewChartKind, type NewChartOptions } from './chart-insert'
-import { prepareInsertSlideWithLayout } from './layout'
+import { parseLayoutPlaceholders, placeholderSpXml, prepareInsertSlideWithLayout } from './layout'
 import {
   chooseLayout,
   collectSlideBundle,
@@ -154,6 +154,14 @@ export {
   type FormatPatchResult,
 } from './format-brush'
 export { listSlideLayouts, type SlideLayoutInfo, type LayoutPlaceholder } from './layout'
+export {
+  BUILTIN_LAYOUTS,
+  BUILTIN_LAYOUT_PREFIX,
+  builtinLayoutInfos,
+  ensureBuiltinLayout,
+  shouldOfferBuiltinLayouts,
+  type BuiltinLayoutDef,
+} from './builtin-layouts'
 export {
   parsePlaceholderMap,
   resolvePlaceholderTransform,
@@ -771,6 +779,58 @@ export function setPictureOpacity(slide: Slide, sourceId: string, opacity: numbe
   return true
 }
 
+/**
+ * Swap a picture's backing image for new bytes, keeping frame, z-order, border
+ * and effects. New media part + rel; the <a:blip> reference is re-pointed via
+ * byte surgery baked into originalXml (same pattern as setPictureOpacity).
+ * srcRect is kept only when the caller knows the new image shares the old one's
+ * pixel geometry (e.g. background-removal output) — otherwise the stale crop
+ * would show an arbitrary window of the new image.
+ */
+export function replacePictureBytes(
+  opened: OpenedPptx,
+  slide: Slide,
+  sourceId: string,
+  bytes: Uint8Array,
+  ext: string,
+  opts?: { keepSrcRect?: boolean },
+): boolean {
+  const el = slide.elements.find((e) => e.id === sourceId && e.type === 'picture')
+  if (!el) return false
+  const pic = el as import('./types').PictureElement
+  let xml = patchedElementXml(el)
+  const blip = /<a:blip\b[^>]*\/?>/.exec(xml)
+  if (!blip) return false
+  const added = addImageMediaAndRel(opened, slide, bytes, ext)
+  if (!added) return false
+  let tag = blip[0]
+  // A coexisting r:link ("insert and link" pictures) would keep refreshing from
+  // the old external file, so it is dropped once the embed points at new bytes
+  if (/r:embed="/.test(tag))
+    tag = tag.replace(/r:embed="[^"]*"/, `r:embed="${added.rid}"`).replace(/\s+r:link="[^"]*"/, '')
+  else if (/r:link="/.test(tag)) tag = tag.replace(/r:link="[^"]*"/, `r:embed="${added.rid}"`)
+  else tag = tag.replace(/<a:blip\b/, `<a:blip r:embed="${added.rid}"`)
+  xml = xml.slice(0, blip.index) + tag + xml.slice(blip.index + blip[0].length)
+  // The replacement is always raster (IMAGE_MIME gate), and PowerPoint prefers a
+  // leftover Office-2016 <asvg:svgBlip> extension over the retargeted r:embed —
+  // drop that extension entry (and its wrapper when nothing else remains)
+  xml = xml
+    .replace(/<a:ext\b[^>]*>\s*<\w+:svgBlip\b[\s\S]*?<\/a:ext>/, '')
+    .replace(/<a:extLst>\s*<\/a:extLst>/, '')
+  if (!opts?.keepSrcRect) {
+    xml = xml.replace(/<a:srcRect\b[^>]*\/>|<a:srcRect\b[^>]*>[\s\S]*?<\/a:srcRect>/, '')
+    delete pic.srcRect
+  }
+  pic.mediaRef = added.mediaPath
+  delete pic.dataUrl // the media resolver re-derives it from the new mediaRef
+  el.dirty = el.dirtyTransform = el.dirtyFill = el.dirtyStroke = false
+  el.dirtySrcRect = false
+  el.dirtyPPr = undefined
+  el.anchor.originalXml = xml
+  slide.structureDirty = true
+  return true
+}
+
 // ── New slides (duplicate an existing slide / blank slide) ────────────
 
 const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml'
@@ -1321,12 +1381,18 @@ export function setElementConnection(
   return true
 }
 
+// title/ctrTitle share one slot; content placeholders (body/obj/subTitle/untyped) match by idx
+function phSlotKey(type: string, idx: string): string {
+  return type === 'title' || type === 'ctrTitle' ? 'title' : `body:${idx}`
+}
+
 /**
  * Switch an existing slide's layout: point the slide rels' slideLayout
  * relationship at the new layout, then reparse (inheritance chain/decoration
  * layer/placeholder default styles all refreshed). Placeholder positions are kept
  * (existing shapes stay put; use resetSlideLayout to snap
- * them back).
+ * them back). Layout placeholders with no counterpart on the slide are added as
+ * empty prompt boxes (PowerPoint semantics).
  */
 export function setSlideLayout(
   opened: OpenedPptx,
@@ -1362,6 +1428,29 @@ export function setSlideLayout(
     )
   }
   opened.archive.entries.set(relsPath, Buffer.from(next, 'utf8'))
+
+  const layoutPhs = parseLayoutPlaceholders(opened.archive.readText(layoutPath) ?? '')
+  const taken = new Set<string>()
+  let maxId = 1
+  for (const el of slide.elements) {
+    const xml = patchedElementXml(el)
+    const m = /<p:ph\b([^>]*?)\/?>/.exec(xml)
+    const type = m ? (/\btype="([^"]*)"/.exec(m[1]!)?.[1] ?? '') : ''
+    // ftr/sldNum/dt live outside the content-slot namespace (their idx 2/3/4 must not block body slots)
+    if (m && !['ftr', 'sldNum', 'dt'].includes(type))
+      taken.add(phSlotKey(type, /\bidx="([^"]*)"/.exec(m[1]!)?.[1] ?? ''))
+    for (const idm of xml.matchAll(/<p:cNvPr\s[^>]*\bid="(\d+)"/g))
+      maxId = Math.max(maxId, Number(idm[1]))
+  }
+  const missing = layoutPhs.filter((ph) => !taken.has(phSlotKey(ph.type, ph.idx)))
+  if (missing.length) {
+    const r = appendRawElements(
+      opened,
+      slideIndex,
+      missing.map((ph, i) => placeholderSpXml(ph, maxId + 1 + i)),
+    )
+    if (r) return r.slide
+  }
   return materializeSlide(opened, slideIndex)
 }
 

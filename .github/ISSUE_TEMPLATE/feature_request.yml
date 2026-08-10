@@ -7,10 +7,11 @@ body:
     attributes:
       label: App
       options:
-        - HermesOffice Docs (docs)
-        - HermesOffice Sheets (sheets)
-        - HermesOffice Slides (slides)
-        - HermesOffice PDF (pdf)
+        - GenOffice Docs (docs)
+        - GenOffice Sheets (sheets)
+        - GenOffice Slides (slides)
+        - GenOffice PDF (pdf)
+        - GenOffice Markdown (markdown)
         - Shell / home screen
         - AI panel / providers
         - Whole suite

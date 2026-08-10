@@ -5,6 +5,7 @@ import iconDocx from './assets/file-docx.svg'
 import iconXlsx from './assets/file-xlsx.svg'
 import iconPptx from './assets/file-pptx.svg'
 import iconPdf from './assets/file-pdf.svg'
+import iconMd from './assets/file-md.svg'
 import type {
   AccountStatus,
   CloudProjectKind,
@@ -18,6 +19,7 @@ import { fileCountKey, visiblePageCount } from './counts'
 import { useI18n } from './locale'
 import type { I18n, StringKey } from './locale'
 import type { CloudApi, CloudConfig, CloudFileState, DriveAuthState } from '../../shared/cloud-api'
+import { SettingsModal } from './SettingsModal'
 
 declare global {
   interface Window {
@@ -45,6 +47,8 @@ const FILE_ICONS: Record<string, string> = {
   xlsx: iconXlsx,
   pptx: iconPptx,
   pdf: iconPdf,
+  md: iconMd,
+  markdown: iconMd,
 }
 
 function FileBadge({ ext, size }: { ext: string; size: number }) {
@@ -115,6 +119,7 @@ const FILTERS: { key: string; label: StringKey }[] = [
   { key: 'xlsx', label: 'filterSheets' },
   { key: 'pptx', label: 'filterSlides' },
   { key: 'pdf', label: 'filterPdf' },
+  { key: 'md', label: 'filterMd' },
 ]
 
 // ── Project sidebar component ────────────────────────────
@@ -324,7 +329,7 @@ function ProjectPanel({ projects, selectedId, onSelect, onRefresh }: ProjectPane
         <span className="proj-panel-title">{t('projects')}</span>
         <button
           className="proj-add-btn"
-          title={t('newProject')}
+          data-tip={t('newProject')}
           onClick={() => setCreating(true)}
           aria-label={t('newProject')}
         >
@@ -508,14 +513,13 @@ function ProjectPanel({ projects, selectedId, onSelect, onRefresh }: ProjectPane
 
 // ── Account entry (bottom-left) ──────────────────────────
 // Currently the Genspark (gsk) login entry; to be upgraded to a signup/account system later.
-// Language switching also lives in this popup menu.
+// Clicking it opens the settings modal directly (SettingsModal.tsx), which hosts
+// login/logout plus preferences (language, theme, save location, update channel).
 
 const LOGIN_POLL_MS = 2500
 /** fallback deadline when the CLI does not report expires_in (device codes live ~300s) */
 const LOGIN_MAX_WAIT_MS = 300_000
 
-// sorted by ISO 639 language code — native-script labels have no natural
-// shared alphabet, so the code is the ordering key
 const LANG_OPTIONS = [
   { value: 'ar', label: 'العربية' },
   { value: 'de', label: 'Deutsch' },
@@ -565,6 +569,7 @@ function AccountEntry({
   const [urlCopied, setUrlCopied] = useState(false)
   const loginDeadline = useRef(0)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // language flyout: opens on hover, fixed-position so it can escape the
   // sidebar's scroll container (same trick as the project row menu)
   const [langFly, setLangFly] = useState<{ left: number; bottom: number } | null>(null)
@@ -579,6 +584,13 @@ function AccountEntry({
   const chanCloseTimer = useRef<number | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  const doLogout = () => {
+    setLoggingOut(true)
+    void window.aiOffice.accountLogout().then(() => {
+      setLoggingOut(false)
+      setStatus({ loggedIn: false })
+    })
+  }
 
   // query login state + app version once on mount
   useEffect(() => {
@@ -1098,13 +1110,26 @@ function AccountEntry({
           )}
         </span>
       </button>
+      {settingsOpen && (
+        <SettingsModal
+          status={status}
+          loggingOut={loggingOut}
+          loginWaiting={waiting}
+          loginUrl={authUrl}
+          urlCopied={urlCopied}
+          onOpenLoginUrl={openLoginUrl}
+          onCopyLoginUrl={copyLoginUrl}
+          onClose={() => setSettingsOpen(false)}
+          onLogin={() => {
+            setSettingsOpen(false)
+            startLogin()
+          }}
+          onLogout={doLogout}
+        />
+      )}
     </div>
   )
 }
-
-// ── Cloud (Genspark web) projects view ──────────────────
-
-/** kind filter segments; labels shared with the recents type filter */
 const CLOUD_FILTERS = [
   { key: 'all', label: 'filterAll' },
   { key: 'docs', label: 'filterDocs' },
@@ -1238,7 +1263,7 @@ function CloudProjectsView() {
         <li key={proj.projectId}>
           <button
             className="cloud-row"
-            title={t('cloudOpenInBrowser')}
+            data-tip={t('cloudOpenInBrowser')}
             onClick={() => openProject(proj.projectUrl)}
           >
             <FileBadge ext={CLOUD_KIND_EXT[proj.kind] ?? ''} size={22} />
@@ -1350,7 +1375,7 @@ function CloudProjectsView() {
               <div className="cloud-actions">
                 <button
                   className={`cloud-refresh-btn${syncing ? ' syncing' : ''}`}
-                  title={t('cloudRefresh')}
+                  data-tip={t('cloudRefresh')}
                   aria-label={t('cloudRefresh')}
                   disabled={syncing}
                   onClick={() => startSync()}
@@ -1810,10 +1835,17 @@ export function Home() {
     void window.aiOffice.newSlide(selectedProjectId ? { projectId: selectedProjectId } : undefined)
   }
 
+  const handleNewMarkdown = () => {
+    void window.aiOffice.newMarkdown(
+      selectedProjectId ? { projectId: selectedProjectId } : undefined,
+    )
+  }
+
   const NEW_ITEMS = [
     { ext: 'docx', title: t('newDoc'), sub: '.docx', action: handleNewDoc },
     { ext: 'xlsx', title: t('newSheet'), sub: '.xlsx', action: handleNewSheet },
     { ext: 'pptx', title: t('newSlide'), sub: '.pptx', action: handleNewSlide },
+    { ext: 'md', title: t('newMarkdown'), sub: '.md', action: handleNewMarkdown },
   ]
 
   function renderQuickCards() {
@@ -1846,7 +1878,7 @@ export function Home() {
             <span className="quick-title-row">
               <span className="quick-title">{t('openLocal')}</span>
             </span>
-            <span className="quick-sub">.docx / .xlsx / .xls / .csv / .pptx / .pdf</span>
+            <span className="quick-sub">.docx / .xlsx / .xls / .csv / .pptx / .pdf / .md</span>
           </span>
         </button>
       </div>

@@ -22,6 +22,9 @@ export type UiLanguage =
   | 'hi'
   | 'zh-TW'
 
+/** UI theme preference */
+export type UiTheme = 'light' | 'dark' | 'system'
+
 /** a recent file entry shown on the home screen; type derives from the extension */
 export interface RecentEntry {
   path: string
@@ -73,6 +76,8 @@ export interface HomeApi {
   newSheet(opts?: { projectId?: string }): Promise<void>
   /** open a slides tab at its start screen (open-a-pptx) */
   newSlide(opts?: { projectId?: string }): Promise<void>
+  /** open a blank markdown editor tab */
+  newMarkdown(opts?: { projectId?: string }): Promise<void>
   /** drop entries from the recent list (does not touch the files) */
   removeRecent(paths: string[]): Promise<void>
   /** reveal the file in Finder / Explorer */
@@ -103,16 +108,28 @@ export interface HomeApi {
   openLoginUrl(): Promise<void>
   /** log out (clears the saved API key; the login state is shared globally with the gsk CLI) */
   accountLogout(): Promise<void>
-  /** Probe the local Hermes gateway's /health (fork onboarding) */
-  hermesStatus(): Promise<'ok' | 'offline'>
   /** app version (from package.json / electron app.getVersion) */
   getAppVersion(): Promise<string>
   /** whether the first-run onboarding has been completed or skipped (persisted in userData/app-settings.json) */
   onboardingSeen(): Promise<boolean>
   /** mark the first-run onboarding as done so it never shows again */
   setOnboardingSeen(): Promise<void>
+  /** current UI theme preference (persisted in userData/app-settings.json) */
+  getTheme(): Promise<UiTheme>
+  /** switch + persist the UI theme; broadcasts 'app:theme-changed' to all web contents */
+  setTheme(theme: UiTheme): Promise<void>
+  /** effective default save folder for new/untitled files (configured in userData/app-settings.json, falls back to <Documents>/GenOffice) */
+  getDefaultSaveDir(): Promise<string>
+  /** directory picker to change the default save folder; resolves to the new folder, or null when canceled or the pick was unusable */
+  pickDefaultSaveDir(): Promise<string | null>
+  /** theme switched anywhere (broadcast from the main process) */
+  onThemeChanged(handler: (theme: UiTheme) => void): () => void
   /** open the GenTeam community page in the default browser */
   openGenTeam(): Promise<void>
+  /** open the Genspark credit-usage page in the default browser */
+  openCreditUsage(): Promise<void>
+  /** Probe the local Hermes gateway's /health (fork onboarding) */
+  hermesStatus(): Promise<'ok' | 'offline'>
   /** locally stored full cloud project list (instant; null when no store or logged out) */
   cloudProjectsCached(): Promise<CloudProjectsSnapshot | null>
   /** sync the full list from Genspark and return it (1 request when nothing changed); null when the sync failed */
@@ -149,6 +166,8 @@ export interface AccountStatus {
   /** gsk is installed and logged in */
   loggedIn: boolean
   email?: string
+  /** remaining Genspark credits (absent when the balance query failed) */
+  creditBalance?: number
 }
 
 /** login flow progress pushed from main (gsk login CLI output) */
@@ -216,6 +235,7 @@ export const HOME_CHANNELS = {
   newDoc: 'home:new-doc',
   newSheet: 'home:new-sheet',
   newSlide: 'home:new-slide',
+  newMarkdown: 'home:new-markdown',
   removeRecent: 'home:remove-recent',
   revealPath: 'home:reveal-path',
   renameFile: 'home:rename-file',
@@ -234,7 +254,12 @@ export const HOME_CHANNELS = {
   getAppVersion: 'home:get-app-version',
   onboardingSeen: 'home:onboarding-seen',
   setOnboardingSeen: 'home:set-onboarding-seen',
+  getTheme: 'home:get-theme',
+  setTheme: 'home:set-theme',
+  getDefaultSaveDir: 'home:get-default-save-dir',
+  pickDefaultSaveDir: 'home:pick-default-save-dir',
   openGenTeam: 'home:open-genteam',
+  openCreditUsage: 'home:open-credit-usage',
   hermesStatus: 'home:hermes-status',
   cloudProjects: 'home:cloud-projects',
   cloudProjectsCached: 'home:cloud-projects-cached',
