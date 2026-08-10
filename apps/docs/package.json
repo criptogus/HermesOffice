@@ -19,11 +19,11 @@
   },
   "devDependencies": {
     "@hermesoffice/agent-core": "*",
-    "@hermesoffice/i18n": "*",
     "@hermesoffice/ai-provider": "*",
     "@hermesoffice/ai-search": "*",
     "@hermesoffice/docx-engine": "*",
     "@hermesoffice/file-parse": "*",
+    "@hermesoffice/i18n": "*",
     "@hermesoffice/project-store": "*",
     "@hermesoffice/ui": "*",
     "@tiptap/core": "^3.28.0",
@@ -89,9 +89,10 @@
     }
   },
   "dependencies": {
+    "@firecrawl/anydoc": "^0.1.7",
     "@hermesoffice/electron-utils": "*",
+    "@hermesoffice/pptx-render": "*",
     "electron-updater": "^6.8.9",
-    "pdf-lib": "^1.17.1",
-    "@hermesoffice/pptx-render": "*"
+    "pdf-lib": "^1.17.1"
   }
 }

@@ -353,6 +353,20 @@ export class TabManager {
     return this.tabs.find((t) => t.kind === 'pdf' && t.filePath === path)?.id
   }
 
+  /** the active tab's kind + on-disk path, for main-process actions (e.g. share) */
+  activeTabFilePath(): { kind: TabKind; filePath?: string } | undefined {
+    const tab = this.tabs.find((t) => t.id === this.activeId)
+    if (!tab) return undefined
+    return { kind: tab.kind, filePath: tab.filePath }
+  }
+
+  /** every editor tab's on-disk path, for cloud sync watchers */
+  openFilePaths(): string[] {
+    return this.tabs
+      .map((tab) => tab.filePath)
+      .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+  }
+
   /** the active tab's pdf view, if the active tab is a pdf (pdf menu target) */
   activePdfTab(): { id: string; webContents: WebContents; filePath?: string } | undefined {
     const tab = this.tabs.find((t) => t.id === this.activeId)

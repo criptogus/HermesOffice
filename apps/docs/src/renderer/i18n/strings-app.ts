@@ -58,6 +58,10 @@ export const appStrings = defineStrings({
     appExportedPdf: '已导出 PDF: {path}',
     appExportedPdfMixed: '已导出 PDF: {path}(混合纸张,{n} 组已按页合并)',
     appExportPdfCanceled: '已取消导出 PDF',
+    appExportMarkdown: '导出 Markdown',
+    appExportMarkdownFailed: '导出 Markdown 失败: {error}',
+    appExportingMarkdown: '正在导出 Markdown…',
+    appExportedMarkdown: '已导出 Markdown: {path}',
     appMixedExportOpening: '混合纸张文档:正在打开分页预览并按页合并导出…',
     // Comments
     appSelectTextToComment: '先选中要批注的文字',
@@ -344,6 +348,10 @@ export const appStrings = defineStrings({
     appExportedPdf: 'PDF exported: {path}',
     appExportedPdfMixed: 'PDF exported: {path} (mixed paper sizes, {n} groups merged by page)',
     appExportPdfCanceled: 'PDF export canceled',
+    appExportMarkdown: 'Export Markdown',
+    appExportMarkdownFailed: 'Markdown export failed: {error}',
+    appExportingMarkdown: 'Exporting Markdown…',
+    appExportedMarkdown: 'Markdown exported: {path}',
     appMixedExportOpening: 'Mixed paper sizes: opening pagination preview to export pages merged…',
     appSelectTextToComment: 'Select the text to comment on first',
     appCommentSelectionLost: 'The selection is no longer valid; reselect the text to comment on',
@@ -625,6 +633,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF をエクスポートしました: {path}(用紙サイズ混在、{n} グループをページ順に結合)',
     appExportPdfCanceled: 'PDF のエクスポートをキャンセルしました',
+    appExportMarkdown: 'Markdown にエクスポート',
+    appExportMarkdownFailed: 'Markdown エクスポート失敗: {error}',
+    appExportingMarkdown: 'Markdown をエクスポート中…',
+    appExportedMarkdown: 'Markdown をエクスポートしました: {path}',
     appMixedExportOpening:
       '用紙サイズが混在する文書:ページ プレビューを開き、ページごとに結合してエクスポートしています…',
     // Comments
@@ -927,6 +939,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF를 내보냈습니다: {path}(용지 크기 혼합, {n}개 그룹을 페이지 순서로 병합)',
     appExportPdfCanceled: 'PDF 내보내기를 취소했습니다',
+    appExportMarkdown: 'Markdown으로 내보내기',
+    appExportMarkdownFailed: 'Markdown 내보내기 실패: {error}',
+    appExportingMarkdown: 'Markdown 내보내는 중…',
+    appExportedMarkdown: 'Markdown 내보냄: {path}',
     appMixedExportOpening:
       '용지 크기가 혼합된 문서: 페이지 미리 보기를 열어 페이지별로 병합하여 내보내는 중…',
     // Comments
@@ -1226,6 +1242,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF exporté : {path} (formats de papier mixtes, {n} groupes fusionnés par page)',
     appExportPdfCanceled: 'Exportation PDF annulée',
+    appExportMarkdown: 'Exporter en Markdown',
+    appExportMarkdownFailed: 'Échec de l’export Markdown : {error}',
+    appExportingMarkdown: 'Export Markdown en cours…',
+    appExportedMarkdown: 'Markdown exporté : {path}',
     appMixedExportOpening:
       "Formats de papier mixtes : ouverture de l'aperçu de pagination pour exporter les pages fusionnées…",
     appSelectTextToComment: "Sélectionnez d'abord le texte à commenter",
@@ -1507,6 +1527,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF exportiert: {path} (gemischte Papierformate, {n} Gruppen seitenweise zusammengeführt)',
     appExportPdfCanceled: 'PDF-Export abgebrochen',
+    appExportMarkdown: 'Als Markdown exportieren',
+    appExportMarkdownFailed: 'Markdown-Export fehlgeschlagen: {error}',
+    appExportingMarkdown: 'Markdown wird exportiert…',
+    appExportedMarkdown: 'Markdown exportiert: {path}',
     appMixedExportOpening:
       'Gemischte Papierformate: Seitenvorschau wird geöffnet, um die Seiten zusammengeführt zu exportieren…',
     appSelectTextToComment: 'Wählen Sie zuerst den zu kommentierenden Text aus',
@@ -1791,6 +1815,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF exportado: {path} (tamaños de papel mixtos, {n} grupos combinados por página)',
     appExportPdfCanceled: 'Exportación de PDF cancelada',
+    appExportMarkdown: 'Exportar como Markdown',
+    appExportMarkdownFailed: 'Error al exportar Markdown: {error}',
+    appExportingMarkdown: 'Exportando Markdown…',
+    appExportedMarkdown: 'Markdown exportado: {path}',
     appMixedExportOpening:
       'Tamaños de papel mixtos: abriendo la vista previa de paginación para exportar las páginas combinadas…',
     appSelectTextToComment: 'Seleccione primero el texto que desea comentar',
@@ -2067,6 +2095,10 @@ export const appStrings = defineStrings({
     appExportedPdf: 'ส่งออก PDF แล้ว: {path}',
     appExportedPdfMixed: 'ส่งออก PDF แล้ว: {path} (ขนาดกระดาษผสม รวม {n} กลุ่มตามลำดับหน้า)',
     appExportPdfCanceled: 'ยกเลิกการส่งออก PDF แล้ว',
+    appExportMarkdown: 'ส่งออกเป็น Markdown',
+    appExportMarkdownFailed: 'ส่งออก Markdown ล้มเหลว: {error}',
+    appExportingMarkdown: 'กำลังส่งออก Markdown…',
+    appExportedMarkdown: 'ส่งออก Markdown แล้ว: {path}',
     appMixedExportOpening:
       'เอกสารมีขนาดกระดาษผสม: กำลังเปิดตัวอย่างการแบ่งหน้าเพื่อส่งออกแบบรวมทีละหน้า…',
     appSelectTextToComment: 'เลือกข้อความที่ต้องการใส่ข้อคิดเห็นก่อน',
@@ -2343,6 +2375,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF diekspor: {path} (ukuran kertas campuran, {n} grup digabungkan per halaman)',
     appExportPdfCanceled: 'Ekspor PDF dibatalkan',
+    appExportMarkdown: 'Ekspor Markdown',
+    appExportMarkdownFailed: 'Gagal mengekspor Markdown: {error}',
+    appExportingMarkdown: 'Mengekspor Markdown…',
+    appExportedMarkdown: 'Markdown diekspor: {path}',
     appMixedExportOpening:
       'Ukuran kertas campuran: membuka pratinjau paginasi untuk mengekspor halaman yang digabungkan…',
     appSelectTextToComment: 'Pilih teks yang ingin dikomentari terlebih dahulu',
@@ -2619,6 +2655,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF экспортирован: {path} (смешанные форматы бумаги, {n} групп объединено по страницам)',
     appExportPdfCanceled: 'Экспорт PDF отменен',
+    appExportMarkdown: 'Экспорт в Markdown',
+    appExportMarkdownFailed: 'Ошибка экспорта Markdown: {error}',
+    appExportingMarkdown: 'Экспорт Markdown…',
+    appExportedMarkdown: 'Markdown экспортирован: {path}',
     appMixedExportOpening:
       'Смешанные форматы бумаги: открывается предварительный просмотр страниц для постраничного объединения при экспорте…',
     appSelectTextToComment: 'Сначала выделите текст для примечания',
@@ -2896,6 +2936,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'تم تصدير PDF: {path} (أحجام ورق مختلطة، تم دمج {n} من المجموعات حسب الصفحات)',
     appExportPdfCanceled: 'تم إلغاء تصدير PDF',
+    appExportMarkdown: 'تصدير Markdown',
+    appExportMarkdownFailed: 'فشل تصدير Markdown: {error}',
+    appExportingMarkdown: 'جارٍ تصدير Markdown…',
+    appExportedMarkdown: 'تم تصدير Markdown: {path}',
     appMixedExportOpening:
       'أحجام ورق مختلطة: جارٍ فتح معاينة ترقيم الصفحات للتصدير مع الدمج حسب الصفحات…',
     appSelectTextToComment: 'حدد النص المراد التعليق عليه أولاً',
@@ -3170,6 +3214,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF exportado: {path} (tamanhos de papel mistos, {n} grupos mesclados por página)',
     appExportPdfCanceled: 'Exportação de PDF cancelada',
+    appExportMarkdown: 'Exportar Markdown',
+    appExportMarkdownFailed: 'Falha ao exportar Markdown: {error}',
+    appExportingMarkdown: 'Exportando Markdown…',
+    appExportedMarkdown: 'Markdown exportado: {path}',
     appMixedExportOpening:
       'Tamanhos de papel mistos: abrindo a visualização de paginação para exportar mesclando por página…',
     appSelectTextToComment: 'Selecione primeiro o texto a comentar',
@@ -3446,6 +3494,10 @@ export const appStrings = defineStrings({
     appExportedPdf: 'PDF esportato: {path}',
     appExportedPdfMixed: 'PDF esportato: {path} (formati carta misti, {n} gruppi uniti per pagina)',
     appExportPdfCanceled: 'Esportazione PDF annullata',
+    appExportMarkdown: 'Esporta Markdown',
+    appExportMarkdownFailed: 'Esportazione Markdown non riuscita: {error}',
+    appExportingMarkdown: 'Esportazione Markdown…',
+    appExportedMarkdown: 'Markdown esportato: {path}',
     appMixedExportOpening:
       "Formati carta misti: apertura dell'anteprima di impaginazione per esportare unendo per pagina…",
     appSelectTextToComment: 'Seleziona prima il testo da commentare',
@@ -3723,6 +3775,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'Wyeksportowano PDF: {path} (mieszane rozmiary papieru, {n} grup scalono według stron)',
     appExportPdfCanceled: 'Anulowano eksport PDF',
+    appExportMarkdown: 'Eksportuj Markdown',
+    appExportMarkdownFailed: 'Błąd eksportu Markdown: {error}',
+    appExportingMarkdown: 'Eksportowanie Markdown…',
+    appExportedMarkdown: 'Markdown wyeksportowany: {path}',
     appMixedExportOpening:
       'Mieszane rozmiary papieru: otwieranie podglądu podziału na strony w celu eksportu ze scaleniem według stron…',
     appSelectTextToComment: 'Najpierw zaznacz tekst do skomentowania',
@@ -4003,6 +4059,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF geëxporteerd: {path} (gemengde papierformaten, {n} groepen per pagina samengevoegd)',
     appExportPdfCanceled: 'PDF-export geannuleerd',
+    appExportMarkdown: 'Exporteren als Markdown',
+    appExportMarkdownFailed: 'Markdown-export mislukt: {error}',
+    appExportingMarkdown: 'Markdown exporteren…',
+    appExportedMarkdown: 'Markdown geëxporteerd: {path}',
     appMixedExportOpening:
       'Gemengde papierformaten: pagineringsvoorbeeld wordt geopend om per pagina samengevoegd te exporteren…',
     appSelectTextToComment: 'Selecteer eerst de tekst waarop je een opmerking wilt plaatsen',
@@ -4286,6 +4346,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF dieksport: {path} (saiz kertas bercampur, {n} kumpulan digabungkan mengikut halaman)',
     appExportPdfCanceled: 'Eksport PDF dibatalkan',
+    appExportMarkdown: 'Eksport Markdown',
+    appExportMarkdownFailed: 'Gagal eksport Markdown: {error}',
+    appExportingMarkdown: 'Mengeksport Markdown…',
+    appExportedMarkdown: 'Markdown dieksport: {path}',
     appMixedExportOpening:
       'Saiz kertas bercampur: membuka pratonton penomboran halaman untuk eksport dengan gabungan mengikut halaman…',
     appSelectTextToComment: 'Pilih dahulu teks yang hendak dikomen',
@@ -4556,6 +4620,10 @@ export const appStrings = defineStrings({
     appExportedPdf: 'PDF יוצא: {path}',
     appExportedPdfMixed: 'PDF יוצא: {path} (גודלי נייר מעורבים, {n} קבוצות אוחדו לפי עמודים)',
     appExportPdfCanceled: 'ייצוא ה-PDF בוטל',
+    appExportMarkdown: 'ייצוא Markdown',
+    appExportMarkdownFailed: 'ייצוא Markdown נכשל: {error}',
+    appExportingMarkdown: 'מייצא Markdown…',
+    appExportedMarkdown: 'Markdown יוצא: {path}',
     appMixedExportOpening:
       'גודלי נייר מעורבים: נפתחת תצוגה מקדימה של עימוד לייצוא עם איחוד לפי עמודים…',
     appSelectTextToComment: 'תחילה סמנו את הטקסט שעליו תרצו להעיר',
@@ -4829,6 +4897,10 @@ export const appStrings = defineStrings({
     appExportedPdfMixed:
       'PDF निर्यात किया गया: {path} (मिश्रित कागज़ आकार, {n} समूह पृष्ठ अनुसार मर्ज किए गए)',
     appExportPdfCanceled: 'PDF निर्यात रद्द किया गया',
+    appExportMarkdown: 'Markdown निर्यात करें',
+    appExportMarkdownFailed: 'Markdown निर्यात विफल: {error}',
+    appExportingMarkdown: 'Markdown निर्यात हो रहा है…',
+    appExportedMarkdown: 'Markdown निर्यात हुआ: {path}',
     appMixedExportOpening:
       'मिश्रित कागज़ आकार: पृष्ठ अनुसार मर्ज करके निर्यात के लिए पृष्ठांकन पूर्वावलोकन खोला जा रहा है…',
     appSelectTextToComment: 'पहले वह टेक्स्ट चुनें जिस पर टिप्पणी करनी है',
@@ -5099,6 +5171,10 @@ export const appStrings = defineStrings({
     appExportedPdf: '已匯出 PDF: {path}',
     appExportedPdfMixed: '已匯出 PDF: {path}(混合紙張,{n} 組已按頁合併)',
     appExportPdfCanceled: '已取消匯出 PDF',
+    appExportMarkdown: '匯出 Markdown',
+    appExportMarkdownFailed: '匯出 Markdown 失敗: {error}',
+    appExportingMarkdown: '正在匯出 Markdown…',
+    appExportedMarkdown: '已匯出 Markdown: {path}',
     appMixedExportOpening: '混合紙張文件:正在開啟分頁預覽並按頁合併匯出…',
     appSelectTextToComment: '請先選取要加註解的文字',
     appCommentSelectionLost: '選取範圍已失效,請重新選取要加註解的文字',

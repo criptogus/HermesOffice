@@ -8,6 +8,8 @@ release/
 .env
 .env.*
 electron-builder.env
+# Local OAuth client credentials for the embedded Drive sync (never committed)
+packages/hermes-cloud/src/oauth-credentials.ts
 ~$*
 
 # Local ad-hoc e2e driver scripts (not pushed); the folder and README are tracked, the scripts are not

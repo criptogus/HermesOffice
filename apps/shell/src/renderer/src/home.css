@@ -1867,3 +1867,266 @@ body.vib .home {
     transform: rotate(360deg);
   }
 }
+
+/* ---- cloud sync panel (sidebar) — follows the .nav-item design system ---- */
+
+.cloud-panel {
+  padding: 2px 0 0;
+  margin-top: 2px;
+}
+
+.cloud-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.cloud-panel-header:hover {
+  background: #f5f5f5;
+}
+
+.cloud-panel-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cloud-icon {
+  flex-shrink: 0;
+  color: #232425;
+}
+
+.cloud-panel-title {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.cloud-status {
+  margin-left: auto;
+  min-width: 22px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-status.on {
+  color: #15803d;
+}
+
+.cloud-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 150ms ease;
+}
+
+.cloud-panel-header.expanded .cloud-chevron {
+  transform: rotate(180deg);
+}
+
+.cloud-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 10px 12px;
+}
+
+.cloud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cloud-field select,
+.cloud-field input[type='text'],
+.cloud-field input:not([type]) {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.cloud-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(35 103 236 / 14%);
+}
+
+.cloud-field.cloud-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.cloud-field.cloud-check input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.cloud-field.cloud-check input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.4 2.4 4.6-5' stroke='%23fff' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 10px 10px no-repeat;
+}
+
+.cloud-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-connect-btn {
+  justify-content: center;
+  background: var(--accent);
+  border: none;
+  color: #fff;
+}
+
+.cloud-connect-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.cloud-connect-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cloud-test-btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.cloud-test-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cloud-disconnect-btn {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.cloud-disconnect-btn:hover {
+  background: rgb(239 68 68 / 8%);
+  color: var(--color-error);
+}
+
+.cloud-latest {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-latest:hover {
+  text-decoration: underline;
+}
+
+.cloud-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-error);
+}
+
+/* ── Cloud sync entry (sidebar; appended — do not move) ─────────────
+   Single connect button that becomes a live sync status row once the
+   user's Google Drive is connected (embedded OAuth, system browser). */
+.cloud-entry {
+  padding: 6px 10px 0;
+}
+
+.cloud-entry .cloud-connect {
+  font-size: 13px;
+}
+
+.cloud-glyph {
+  flex-shrink: 0;
+  color: #232425;
+}
+
+.cloud-glyph.on {
+  color: #1a73e8;
+}
+
+.cloud-sync-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: #34a853;
+  white-space: nowrap;
+}
+
+.cloud-sync-status.error {
+  color: #d93025;
+}
+
+.cloud-disconnect {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #999;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+}
+
+.cloud-entry .nav-item:hover .cloud-disconnect {
+  display: block;
+}
+
+.cloud-disconnect:hover {
+  background: #eee;
+  color: #555;
+}
+
+.cloud-entry .cloud-error {
+  margin: 4px 2px 0;
+  font-size: 12px;
+  color: #d93025;
+}

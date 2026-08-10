@@ -175,7 +175,8 @@ export function TabBar() {
   }, [])
 
   // keep the active tab in view — new tabs open at the far end of the strip
-  const activeId = tabs.find((tab) => tab.active)?.id
+  const activeTab = tabs.find((tab) => tab.active)
+  const activeId = activeTab?.id
   useEffect(() => {
     // pointer-down activation runs while the user is pressing that tab — it is
     // already visible, and scrolling the strip mid-press would invalidate the
@@ -357,6 +358,20 @@ export function TabBar() {
           />
         </svg>
       </button>
+      {/* Send to… — quick access to the share window for the active document;
+          always visible while an editor tab is active (Home hides it) */}
+      {activeTab && activeTab.kind !== 'home' && (
+        <button
+          className="tab-share-btn"
+          title={t('sendTo')}
+          onClick={() => void window.aiOfficeTabs.shareActive()}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor" />
+          </svg>
+          <span>{t('sendTo')}</span>
+        </button>
+      )}
     </div>
   )
 }

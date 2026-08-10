@@ -74,6 +74,7 @@ export function PaginationPreview({
   endnoteItems,
   sectionHfOverride,
   onExportPdf,
+  onExportMarkdown,
   onClose,
 }: {
   /** Canvas geometry (final section): for the measurement origin / clone width */
@@ -97,6 +98,8 @@ export function PaginationPreview({
   /** Multi-section: unsaved per-section header/footer edit overrides (default variant) */
   sectionHfOverride?: (sectionIndex: number, kind: 'header' | 'footer') => HeaderFooter | null
   onExportPdf: () => void
+  /** fork: convert the open document to Markdown (anydoc, local) */
+  onExportMarkdown: () => void
   onClose: () => void
 }) {
   const { t } = useI18n()
@@ -303,6 +306,9 @@ export function PaginationPreview({
         <span className="pv-hint">{t('appPvHint')}</span>
         <button className="pv-close" title={t('appPvExportTip')} onClick={onExportPdf}>
           {t('appExportPdf')}
+        </button>
+        <button className="pv-close" title={t('appExportMarkdown')} onClick={onExportMarkdown}>
+          {t('appExportMarkdown')}
         </button>
         <button className="pv-close" onClick={onClose}>
           {t('appClose')}

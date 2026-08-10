@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import {
   existsSync,
   mkdirSync,
@@ -6,10 +7,12 @@ import {
   readFileSync,
   statSync,
   unlinkSync,
+  watch,
   writeFileSync,
+  type FSWatcher,
 } from 'node:fs'
 import { copyFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BrowserWindow, Menu, WebContentsView, app, dialog, ipcMain, shell } from 'electron'
 import {
   appMenuLabels,
@@ -2207,6 +2210,7 @@ async function diskChangedExternally(wcId: number, filePath: string): Promise<bo
  * its 30s recovery loop resurrects content the user already discarded. */
 export function teardownDocsRenderer(contents: WebContents): void {
   tornDownWcIds.add(contents.id)
+  stopTrackingDocx(contents.id)
   // Sweep recovery copies for this renderer's documents: every non-crash close
   // either saved (docs:save already cleared it) or explicitly discarded, so a
   // copy still on disk here is a leftover from an in-flight recovery write.
@@ -2473,7 +2477,102 @@ const activeAiStreams = new Map<string, AbortController>()
  * register them exactly once for all window types (docs, sheets, home) —
  * sheets' standalone AI handlers use the same channel names.
  */
+// ── Auto-reload externo (fork) ──────────────────────────────────────────
+// O agente Hermes pode editar o arquivo por fora (engines headless via MCP).
+// Cada aba docs registra o arquivo aberto ('docx:track-file'); o main vigia o
+// diretório (fs.watch, filtro por basename, debounce 400ms) e emite
+// 'docx:external-change' para a aba dona. O guard anti-loop (o próprio save
+// do app também toca o arquivo) fica no renderer, que conhece o momento
+// exato de cada save. Multi-aba: um watcher por webContents, não singleton —
+// fechar uma aba não desliga o tracking das outras.
+interface TrackedDocx {
+  watcher: FSWatcher | null
+  path: string
+  timer: NodeJS.Timeout | null
+}
+
+const trackedDocxByWc = new Map<number, TrackedDocx>()
+
+function stopTrackingDocx(wcId: number): void {
+  const tracked = trackedDocxByWc.get(wcId)
+  if (!tracked) return
+  tracked.watcher?.close()
+  if (tracked.timer) clearTimeout(tracked.timer)
+  trackedDocxByWc.delete(wcId)
+}
+
+function registerDocxTrackIpc(): void {
+  ipcMain.handle('docx:track-file', (event, path?: string) => {
+    const wcId = event.sender.id
+    stopTrackingDocx(wcId)
+    if (!path || !existsSync(path)) return
+    const dir = dirname(path)
+    const base = basename(path)
+    const entry: TrackedDocx = { watcher: null, path, timer: null }
+    trackedDocxByWc.set(wcId, entry)
+    try {
+      entry.watcher = watch(dir, (_ev, filename) => {
+        // macOS entrega nomes em NFD ou NFC dependendo da origem (open-file
+        // event vs FSEvents) — normalizar antes de comparar, senão arquivos
+        // com acento nunca casam e o auto-reload morre silenciosamente.
+        if (!filename || filename.normalize('NFC') !== base.normalize('NFC')) return
+        // debounce: agrupa rajadas (saves atômicos, múltiplos eventos do FS)
+        if (entry.timer) return
+        entry.timer = setTimeout(() => {
+          entry.timer = null
+          if (!event.sender.isDestroyed()) event.sender.send('docx:external-change', entry.path)
+        }, 400)
+      })
+    } catch {
+      // diretório inacessível: sem watcher, sem auto-reload — save segue normal
+      trackedDocxByWc.delete(wcId)
+    }
+  })
+}
+
+// ── Export Markdown (fork: anydoc) ──────────────────────────────────────
+// Converts the open document to Markdown with anydoc (Firecrawl, MIT,
+// 100% local — files never leave the machine). The napi binding lives in
+// node_modules in dev; in the packaged app it is copied to
+// resources/anydoc/node_modules (extraResources — see electron-builder.cjs)
+// and loaded by absolute path here.
+const nodeRequire = createRequire(import.meta.url)
+
+let anydocLib: { toMarkdown: (path: string) => Promise<string> } | null = null
+
+function loadAnydoc(): { toMarkdown: (path: string) => Promise<string> } {
+  if (anydocLib) return anydocLib
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    anydocLib = nodeRequire('@firecrawl/anydoc') as {
+      toMarkdown: (path: string) => Promise<string>
+    }
+  } catch {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    anydocLib = nodeRequire(
+      join(process.resourcesPath, 'anydoc/node_modules/@firecrawl/anydoc'),
+    ) as { toMarkdown: (path: string) => Promise<string> }
+  }
+  return anydocLib as { toMarkdown: (path: string) => Promise<string> }
+}
+
+function registerExportMarkdownIpc(): void {
+  ipcMain.handle('docs:export-markdown', async (_event, filePath?: string) => {
+    if (!filePath || !existsSync(filePath)) return { ok: false, error: 'no-file' }
+    try {
+      const md = await loadAnydoc().toMarkdown(filePath)
+      const mdPath = filePath.replace(/\.(?:docx?|docm|odt|rtf|pdf|pptx?|xlsx?|epub)$/i, '') + '.md'
+      writeFileSync(mdPath, md)
+      return { ok: true, path: mdPath }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+}
+
 export function registerAiIpc(): void {
+  registerDocxTrackIpc()
+  registerExportMarkdownIpc()
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())

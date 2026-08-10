@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import {
   copyFileSync,
@@ -31,7 +33,14 @@ import menuPdfIcon1x from './assets/menu-pdf.png?asset'
 import menuPdfIcon2x from './assets/menu-pdf@2x.png?asset'
 import menuHomeIcon1x from './assets/menu-home.png?asset'
 import menuHomeIcon2x from './assets/menu-home@2x.png?asset'
-import { createI18n, isLang, normalizeLang, setUiLang, type Lang } from '@hermesoffice/i18n'
+import {
+  createI18n,
+  htmlLang,
+  isLang,
+  normalizeLang,
+  setUiLang,
+  type Lang,
+} from '@hermesoffice/i18n'
 import { hermesHealthUrl } from '@hermesoffice/ai-provider'
 import {
   appMenuLabels,
@@ -51,6 +60,33 @@ import {
   syncCloudProjects,
 } from './cloud-projects'
 import { ProjectStore } from '@hermesoffice/project-store'
+import {
+  buildTarget,
+  listShareTargets,
+  openShareWindow,
+  registerShareIpc,
+  resolveHermesBin,
+  sendFileToTarget,
+  withHomeChannelFallbacks,
+  type ShareStrings,
+  type ShareWindowSendRequest,
+  type ShareWindowState,
+} from '@hermesoffice/hermes-share'
+import {
+  CLOUD_CHANNELS,
+  CloudSyncManager,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  TokenStore,
+  buildAuthUrl,
+  driveAuthState,
+  exchangeCode,
+  loadCloudConfig,
+  normalizeCloudConfig,
+  saveCloudConfig,
+  type CloudConfig,
+  type CloudFileState,
+} from '@hermesoffice/hermes-cloud'
 import {
   ensureGenofficeLogin,
   gskConvertPdfToDocx,
@@ -261,6 +297,21 @@ const tMain = createI18n({
     menuWindow: '窗口',
     menuHome: '首页',
     backToHome: '返回首页',
+    menuSendTo: '发送到…',
+    shareTitle: '发送到…',
+    shareFileLabel: '文件',
+    shareTargetLabel: '频道',
+    shareMessageLabel: '消息',
+    shareOptional: '可选',
+    shareSend: '发送',
+    shareCancel: '取消',
+    shareSending: '发送中…',
+    shareSent: '已发送',
+    shareFailed: '发送失败',
+    shareNoHermes: 'Hermes 不可用。请安装 Hermes CLI 后分享文件。',
+    shareNoTargets: '未配置频道。请运行 `hermes gateway setup` 配置。',
+    shareNoFile: '请先保存文档',
+    shareClose: '关闭',
     dlgOpenTitle: '打开文件',
     filterSupported: '支持的文件',
     filterWord: 'Word 文档',
@@ -307,6 +358,21 @@ const tMain = createI18n({
     menuWindow: 'Window',
     menuHome: 'Home',
     backToHome: 'Back to Home',
+    menuSendTo: 'Send to…',
+    shareTitle: 'Send to…',
+    shareFileLabel: 'File',
+    shareTargetLabel: 'Channel',
+    shareMessageLabel: 'Message',
+    shareOptional: 'optional',
+    shareSend: 'Send',
+    shareCancel: 'Cancel',
+    shareSending: 'Sending…',
+    shareSent: 'Sent',
+    shareFailed: 'Send failed',
+    shareNoHermes: 'Hermes is not available. Install the Hermes CLI to share files.',
+    shareNoTargets: 'No channels configured. Set one up with `hermes gateway setup`.',
+    shareNoFile: 'Save the document first',
+    shareClose: 'Close',
     dlgOpenTitle: 'Open File',
     filterSupported: 'Supported Files',
     filterWord: 'Word Documents',
@@ -356,6 +422,22 @@ const tMain = createI18n({
     menuWindow: 'ウィンドウ',
     menuHome: 'ホーム',
     backToHome: 'ホームに戻る',
+    menuSendTo: '送信…',
+    shareTitle: '送信…',
+    shareFileLabel: 'ファイル',
+    shareTargetLabel: 'チャンネル',
+    shareMessageLabel: 'メッセージ',
+    shareOptional: '任意',
+    shareSend: '送信',
+    shareCancel: 'キャンセル',
+    shareSending: '送信中…',
+    shareSent: '送信しました',
+    shareFailed: '送信に失敗しました',
+    shareNoHermes:
+      'Hermes が利用できません。ファイルを共有するには Hermes CLI をインストールしてください。',
+    shareNoTargets: 'チャンネルが設定されていません。`hermes gateway setup` で設定してください。',
+    shareNoFile: '先にドキュメントを保存してください',
+    shareClose: '閉じる',
     dlgOpenTitle: 'ファイルを開く',
     filterSupported: '対応ファイル',
     filterWord: 'Word 文書',
@@ -405,6 +487,21 @@ const tMain = createI18n({
     menuWindow: '창',
     menuHome: '홈',
     backToHome: '홈으로 돌아가기',
+    menuSendTo: '보내기…',
+    shareTitle: '보내기…',
+    shareFileLabel: '파일',
+    shareTargetLabel: '채널',
+    shareMessageLabel: '메시지',
+    shareOptional: '선택 사항',
+    shareSend: '보내기',
+    shareCancel: '취소',
+    shareSending: '보내는 중…',
+    shareSent: '전송됨',
+    shareFailed: '전송 실패',
+    shareNoHermes: 'Hermes를 사용할 수 없습니다. 파일을 공유하려면 Hermes CLI를 설치하세요.',
+    shareNoTargets: '채널이 구성되지 않았습니다. `hermes gateway setup`으로 설정하세요.',
+    shareNoFile: '문서를 먼저 저장하세요',
+    shareClose: '닫기',
     dlgOpenTitle: '파일 열기',
     filterSupported: '지원되는 파일',
     filterWord: 'Word 문서',
@@ -454,6 +551,22 @@ const tMain = createI18n({
     menuWindow: 'Fenêtre',
     menuHome: 'Accueil',
     backToHome: "Retour à l'accueil",
+    menuSendTo: 'Envoyer à…',
+    shareTitle: 'Envoyer à…',
+    shareFileLabel: 'Fichier',
+    shareTargetLabel: 'Canal',
+    shareMessageLabel: 'Message',
+    shareOptional: 'facultatif',
+    shareSend: 'Envoyer',
+    shareCancel: 'Annuler',
+    shareSending: 'Envoi…',
+    shareSent: 'Envoyé',
+    shareFailed: "Échec de l'envoi",
+    shareNoHermes:
+      "Hermes n'est pas disponible. Installez la CLI Hermes pour partager des fichiers.",
+    shareNoTargets: 'Aucun canal configuré. Configurez-en un avec `hermes gateway setup`.',
+    shareNoFile: "Enregistrez d'abord le document",
+    shareClose: 'Fermer',
     dlgOpenTitle: 'Ouvrir un fichier',
     filterSupported: 'Fichiers pris en charge',
     filterWord: 'Documents Word',
@@ -503,6 +616,22 @@ const tMain = createI18n({
     menuWindow: 'Fenster',
     menuHome: 'Startseite',
     backToHome: 'Zurück zur Startseite',
+    menuSendTo: 'Senden an…',
+    shareTitle: 'Senden an…',
+    shareFileLabel: 'Datei',
+    shareTargetLabel: 'Kanal',
+    shareMessageLabel: 'Nachricht',
+    shareOptional: 'optional',
+    shareSend: 'Senden',
+    shareCancel: 'Abbrechen',
+    shareSending: 'Senden…',
+    shareSent: 'Gesendet',
+    shareFailed: 'Senden fehlgeschlagen',
+    shareNoHermes:
+      'Hermes ist nicht verfügbar. Installieren Sie die Hermes-CLI, um Dateien zu teilen.',
+    shareNoTargets: 'Keine Kanäle konfiguriert. Richten Sie einen mit `hermes gateway setup` ein.',
+    shareNoFile: 'Speichern Sie zuerst das Dokument',
+    shareClose: 'Schließen',
     dlgOpenTitle: 'Datei öffnen',
     filterSupported: 'Unterstützte Dateien',
     filterWord: 'Word-Dokumente',
@@ -552,6 +681,21 @@ const tMain = createI18n({
     menuWindow: 'Ventana',
     menuHome: 'Inicio',
     backToHome: 'Volver al inicio',
+    menuSendTo: 'Enviar a…',
+    shareTitle: 'Enviar a…',
+    shareFileLabel: 'Archivo',
+    shareTargetLabel: 'Canal',
+    shareMessageLabel: 'Mensaje',
+    shareOptional: 'opcional',
+    shareSend: 'Enviar',
+    shareCancel: 'Cancelar',
+    shareSending: 'Enviando…',
+    shareSent: 'Enviado',
+    shareFailed: 'Error al enviar',
+    shareNoHermes: 'Hermes no está disponible. Instala la CLI de Hermes para compartir archivos.',
+    shareNoTargets: 'No hay canales configurados. Configura uno con `hermes gateway setup`.',
+    shareNoFile: 'Guarda primero el documento',
+    shareClose: 'Cerrar',
     dlgOpenTitle: 'Abrir archivo',
     filterSupported: 'Archivos compatibles',
     filterWord: 'Documentos de Word',
@@ -601,6 +745,21 @@ const tMain = createI18n({
     menuWindow: 'หน้าต่าง',
     menuHome: 'หน้าแรก',
     backToHome: 'กลับไปหน้าแรก',
+    menuSendTo: 'ส่งไปที่…',
+    shareTitle: 'ส่งไปที่…',
+    shareFileLabel: 'ไฟล์',
+    shareTargetLabel: 'ช่องทาง',
+    shareMessageLabel: 'ข้อความ',
+    shareOptional: 'ไม่บังคับ',
+    shareSend: 'ส่ง',
+    shareCancel: 'ยกเลิก',
+    shareSending: 'กำลังส่ง…',
+    shareSent: 'ส่งแล้ว',
+    shareFailed: 'การส่งล้มเหลว',
+    shareNoHermes: 'ไม่พบ Hermes กรุณาติดตั้ง Hermes CLI เพื่อแชร์ไฟล์',
+    shareNoTargets: 'ยังไม่ได้ตั้งค่าช่องทาง ตั้งค่าด้วย `hermes gateway setup`',
+    shareNoFile: 'บันทึกเอกสารก่อน',
+    shareClose: 'ปิด',
     dlgOpenTitle: 'เปิดไฟล์',
     filterSupported: 'ไฟล์ที่รองรับ',
     filterWord: 'เอกสาร Word',
@@ -649,6 +808,21 @@ const tMain = createI18n({
     menuWindow: 'Jendela',
     menuHome: 'Beranda',
     backToHome: 'Kembali ke Beranda',
+    menuSendTo: 'Kirim ke…',
+    shareTitle: 'Kirim ke…',
+    shareFileLabel: 'Berkas',
+    shareTargetLabel: 'Saluran',
+    shareMessageLabel: 'Pesan',
+    shareOptional: 'opsional',
+    shareSend: 'Kirim',
+    shareCancel: 'Batal',
+    shareSending: 'Mengirim…',
+    shareSent: 'Terkirim',
+    shareFailed: 'Gagal mengirim',
+    shareNoHermes: 'Hermes tidak tersedia. Instal CLI Hermes untuk berbagi file.',
+    shareNoTargets: 'Belum ada saluran. Atur dengan `hermes gateway setup`.',
+    shareNoFile: 'Simpan dokumen terlebih dahulu',
+    shareClose: 'Tutup',
     dlgOpenTitle: 'Buka File',
     filterSupported: 'File yang Didukung',
     filterWord: 'Dokumen Word',
@@ -698,6 +872,21 @@ const tMain = createI18n({
     menuWindow: 'Окно',
     menuHome: 'Главная',
     backToHome: 'Вернуться на главную',
+    menuSendTo: 'Отправить…',
+    shareTitle: 'Отправить…',
+    shareFileLabel: 'Файл',
+    shareTargetLabel: 'Канал',
+    shareMessageLabel: 'Сообщение',
+    shareOptional: 'необязательно',
+    shareSend: 'Отправить',
+    shareCancel: 'Отмена',
+    shareSending: 'Отправка…',
+    shareSent: 'Отправлено',
+    shareFailed: 'Ошибка отправки',
+    shareNoHermes: 'Hermes недоступен. Установите CLI Hermes, чтобы отправлять файлы.',
+    shareNoTargets: 'Каналы не настроены. Настройте с помощью `hermes gateway setup`.',
+    shareNoFile: 'Сначала сохраните документ',
+    shareClose: 'Закрыть',
     dlgOpenTitle: 'Открытие файла',
     filterSupported: 'Поддерживаемые файлы',
     filterWord: 'Документы Word',
@@ -747,6 +936,21 @@ const tMain = createI18n({
     menuWindow: 'نافذة',
     menuHome: 'الصفحة الرئيسية',
     backToHome: 'العودة إلى الصفحة الرئيسية',
+    menuSendTo: 'إرسال إلى…',
+    shareTitle: 'إرسال إلى…',
+    shareFileLabel: 'ملف',
+    shareTargetLabel: 'القناة',
+    shareMessageLabel: 'الرسالة',
+    shareOptional: 'اختياري',
+    shareSend: 'إرسال',
+    shareCancel: 'إلغاء',
+    shareSending: 'جارٍ الإرسال…',
+    shareSent: 'تم الإرسال',
+    shareFailed: 'فشل الإرسال',
+    shareNoHermes: 'Hermes غير متاح. ثبّت CLI الخاص بـ Hermes لمشاركة الملفات.',
+    shareNoTargets: 'لا توجد قنوات مكوّنة. أنشئ قناة عبر `hermes gateway setup`.',
+    shareNoFile: 'احفظ المستند أولاً',
+    shareClose: 'إغلاق',
     dlgOpenTitle: 'فتح ملف',
     filterSupported: 'الملفات المدعومة',
     filterWord: 'مستندات Word',
@@ -795,6 +999,22 @@ const tMain = createI18n({
     menuWindow: 'Janela',
     menuHome: 'Início',
     backToHome: 'Voltar ao início',
+    menuSendTo: 'Enviar para…',
+    shareTitle: 'Enviar para…',
+    shareFileLabel: 'Arquivo',
+    shareTargetLabel: 'Canal',
+    shareMessageLabel: 'Mensagem',
+    shareOptional: 'opcional',
+    shareSend: 'Enviar',
+    shareCancel: 'Cancelar',
+    shareSending: 'Enviando…',
+    shareSent: 'Enviado',
+    shareFailed: 'Falha ao enviar',
+    shareNoHermes:
+      'O Hermes não está disponível. Instale o CLI do Hermes para compartilhar arquivos.',
+    shareNoTargets: 'Nenhum canal configurado. Configure um com `hermes gateway setup`.',
+    shareNoFile: 'Salve o documento primeiro',
+    shareClose: 'Fechar',
     dlgOpenTitle: 'Abrir arquivo',
     filterSupported: 'Arquivos compatíveis',
     filterWord: 'Documentos do Word',
@@ -844,6 +1064,21 @@ const tMain = createI18n({
     menuWindow: 'Finestra',
     menuHome: 'Home',
     backToHome: 'Torna alla Home',
+    menuSendTo: 'Invia a…',
+    shareTitle: 'Invia a…',
+    shareFileLabel: 'File',
+    shareTargetLabel: 'Canale',
+    shareMessageLabel: 'Messaggio',
+    shareOptional: 'facoltativo',
+    shareSend: 'Invia',
+    shareCancel: 'Annulla',
+    shareSending: 'Invio…',
+    shareSent: 'Inviato',
+    shareFailed: 'Invio non riuscito',
+    shareNoHermes: 'Hermes non è disponibile. Installa la CLI di Hermes per condividere file.',
+    shareNoTargets: 'Nessun canale configurato. Configuralo con `hermes gateway setup`.',
+    shareNoFile: 'Salva prima il documento',
+    shareClose: 'Chiudi',
     dlgOpenTitle: 'Apri file',
     filterSupported: 'File supportati',
     filterWord: 'Documenti Word',
@@ -893,6 +1128,21 @@ const tMain = createI18n({
     menuWindow: 'Okno',
     menuHome: 'Strona główna',
     backToHome: 'Wróć do strony głównej',
+    menuSendTo: 'Wyślij do…',
+    shareTitle: 'Wyślij do…',
+    shareFileLabel: 'Plik',
+    shareTargetLabel: 'Kanał',
+    shareMessageLabel: 'Wiadomość',
+    shareOptional: 'opcjonalne',
+    shareSend: 'Wyślij',
+    shareCancel: 'Anuluj',
+    shareSending: 'Wysyłanie…',
+    shareSent: 'Wysłano',
+    shareFailed: 'Błąd wysyłania',
+    shareNoHermes: 'Hermes jest niedostępny. Zainstaluj CLI Hermes, aby udostępniać pliki.',
+    shareNoTargets: 'Brak skonfigurowanych kanałów. Skonfiguruj je przez `hermes gateway setup`.',
+    shareNoFile: 'Najpierw zapisz dokument',
+    shareClose: 'Zamknij',
     dlgOpenTitle: 'Otwieranie pliku',
     filterSupported: 'Obsługiwane pliki',
     filterWord: 'Dokumenty programu Word',
@@ -942,6 +1192,21 @@ const tMain = createI18n({
     menuWindow: 'Venster',
     menuHome: 'Start',
     backToHome: 'Terug naar start',
+    menuSendTo: 'Verzenden naar…',
+    shareTitle: 'Verzenden naar…',
+    shareFileLabel: 'Bestand',
+    shareTargetLabel: 'Kanaal',
+    shareMessageLabel: 'Bericht',
+    shareOptional: 'optioneel',
+    shareSend: 'Verzenden',
+    shareCancel: 'Annuleren',
+    shareSending: 'Verzenden…',
+    shareSent: 'Verzonden',
+    shareFailed: 'Verzenden mislukt',
+    shareNoHermes: 'Hermes is niet beschikbaar. Installeer de Hermes CLI om bestanden te delen.',
+    shareNoTargets: 'Geen kanalen geconfigureerd. Stel er een in met `hermes gateway setup`.',
+    shareNoFile: 'Sla eerst het document op',
+    shareClose: 'Sluiten',
     dlgOpenTitle: 'Bestand openen',
     filterSupported: 'Ondersteunde bestanden',
     filterWord: 'Word-documenten',
@@ -991,6 +1256,21 @@ const tMain = createI18n({
     menuWindow: 'Tetingkap',
     menuHome: 'Laman Utama',
     backToHome: 'Kembali ke Laman Utama',
+    menuSendTo: 'Hantar ke…',
+    shareTitle: 'Hantar ke…',
+    shareFileLabel: 'Fail',
+    shareTargetLabel: 'Saluran',
+    shareMessageLabel: 'Mesej',
+    shareOptional: 'pilihan',
+    shareSend: 'Hantar',
+    shareCancel: 'Batal',
+    shareSending: 'Menghantar…',
+    shareSent: 'Dihantar',
+    shareFailed: 'Gagal menghantar',
+    shareNoHermes: 'Hermes tidak tersedia. Pasang CLI Hermes untuk berkongsi fail.',
+    shareNoTargets: 'Tiada saluran dikonfigurasikan. Sediakan dengan `hermes gateway setup`.',
+    shareNoFile: 'Simpan dokumen dahulu',
+    shareClose: 'Tutup',
     dlgOpenTitle: 'Buka Fail',
     filterSupported: 'Fail yang Disokong',
     filterWord: 'Dokumen Word',
@@ -1040,6 +1320,21 @@ const tMain = createI18n({
     menuWindow: 'חלון',
     menuHome: 'דף הבית',
     backToHome: 'חזרה לדף הבית',
+    menuSendTo: 'שלח אל…',
+    shareTitle: 'שלח אל…',
+    shareFileLabel: 'קובץ',
+    shareTargetLabel: 'ערוץ',
+    shareMessageLabel: 'הודעה',
+    shareOptional: 'אופציונלי',
+    shareSend: 'שלח',
+    shareCancel: 'ביטול',
+    shareSending: 'שולח…',
+    shareSent: 'נשלח',
+    shareFailed: 'נכשל',
+    shareNoHermes: 'Hermes אינו זמין. התקן את CLI של Hermes כדי לשתף קבצים.',
+    shareNoTargets: 'לא הוגדרו ערוצים. הגדר עם `hermes gateway setup`.',
+    shareNoFile: 'שמור את המסמך תחילה',
+    shareClose: 'סגור',
     dlgOpenTitle: 'פתיחת קובץ',
     filterSupported: 'קבצים נתמכים',
     filterWord: 'מסמכי Word',
@@ -1086,6 +1381,21 @@ const tMain = createI18n({
     menuWindow: 'विंडो',
     menuHome: 'होम',
     backToHome: 'होम पर वापस जाएँ',
+    menuSendTo: 'भेजें…',
+    shareTitle: 'भेजें…',
+    shareFileLabel: 'फ़ाइल',
+    shareTargetLabel: 'चैनल',
+    shareMessageLabel: 'संदेश',
+    shareOptional: 'वैकल्पिक',
+    shareSend: 'भेजें',
+    shareCancel: 'रद्द करें',
+    shareSending: 'भेज रहा है…',
+    shareSent: 'भेजा गया',
+    shareFailed: 'भेजना विफल',
+    shareNoHermes: 'Hermes उपलब्ध नहीं है। फ़ाइलें साझा करने के लिए Hermes CLI इंस्टॉल करें।',
+    shareNoTargets: 'कोई चैनल कॉन्फ़िगर नहीं है। `hermes gateway setup` से सेट करें।',
+    shareNoFile: 'पहले दस्तावेज़ सहेजें',
+    shareClose: 'बंद करें',
     dlgOpenTitle: 'फ़ाइल खोलें',
     filterSupported: 'समर्थित फ़ाइलें',
     filterWord: 'Word दस्तावेज़',
@@ -1135,6 +1445,21 @@ const tMain = createI18n({
     menuWindow: '視窗',
     menuHome: '首頁',
     backToHome: '返回首頁',
+    menuSendTo: '傳送到…',
+    shareTitle: '傳送到…',
+    shareFileLabel: '檔案',
+    shareTargetLabel: '頻道',
+    shareMessageLabel: '訊息',
+    shareOptional: '選填',
+    shareSend: '傳送',
+    shareCancel: '取消',
+    shareSending: '傳送中…',
+    shareSent: '已傳送',
+    shareFailed: '傳送失敗',
+    shareNoHermes: 'Hermes 無法使用。請安裝 Hermes CLI 以分享檔案。',
+    shareNoTargets: '尚未設定頻道。請用 `hermes gateway setup` 設定。',
+    shareNoFile: '請先儲存文件',
+    shareClose: '關閉',
     dlgOpenTitle: '開啟檔案',
     filterSupported: '支援的檔案',
     filterWord: 'Word 文件',
@@ -1248,7 +1573,10 @@ function createShellWindow(): void {
 
   const manager = new TabManager(
     win,
-    () => win.webContents.send(TABS_CHANNELS.changed, manager.list()),
+    () => {
+      win.webContents.send(TABS_CHANNELS.changed, manager.list())
+      resyncCloudWatchers()
+    },
     applyMenuFor,
     // no extension: these tabs have no file on disk yet; the title becomes the
     // real filename (the localized untitled default + .docx etc.) once the first save lands
@@ -1729,6 +2057,36 @@ function registerHomeIpc(): void {
     })
   })
 
+  // share bridge: the share window (share.html) talks to the Hermes CLI
+  registerShareIpc({
+    listChannels: async () => {
+      if (!hermesBin) return { channels: [], platforms: [] }
+      const targets = await listShareTargets(hermesBin)
+      const withTargets = {
+        ...targets,
+        channels: targets.channels.map((channel) => ({
+          ...channel,
+          target: buildTarget(channel),
+        })),
+      }
+      // configured-but-undiscovered platforms (e.g. a WhatsApp self-chat
+      // bridge) still get a home-channel entry in the picker
+      return withHomeChannelFallbacks(withTargets)
+    },
+    send: async (request: ShareWindowSendRequest & { filePath?: string }) => {
+      if (!hermesBin) return { ok: false, error: 'Hermes CLI not found' }
+      if (!request.filePath) return { ok: false, error: 'No file to share' }
+      return sendFileToTarget(hermesBin, {
+        filePath: request.filePath,
+        target: request.target,
+        message: request.message,
+      })
+    },
+  })
+
+  registerCloudIpc()
+  resyncCloudWatchers()
+
   // fork: probe the local Hermes gateway (onboarding)
   ipcMain.handle(HOME_CHANNELS.hermesStatus, async (): Promise<'ok' | 'offline'> => {
     try {
@@ -1800,6 +2158,7 @@ function registerTabsIpc(): void {
   ipcMain.handle(TABS_CHANNELS.reorder, (_event, id: string, toIndex: number) => {
     if (typeof id === 'string' && Number.isInteger(toIndex)) tabManager?.reorderTab(id, toIndex)
   })
+  ipcMain.handle(TABS_CHANNELS.shareActive, () => shareActiveTab())
   // "all tabs" overflow menu — native popup because the editors' WebContentsView
   // would cover any DOM dropdown the shell renderer draws below the tab strip
   ipcMain.handle(TABS_CHANNELS.showMenu, (_event, x: unknown, y: unknown) => {
@@ -1943,6 +2302,11 @@ function buildPdfMenu(): void {
         {
           label: tm('menuExportDocx'),
           click: () => void exportPdfAsDocx(),
+        },
+        { type: 'separator' },
+        {
+          label: tm('menuSendTo'),
+          click: () => shareActiveTab(),
         },
         { type: 'separator' },
         {
@@ -2110,6 +2474,256 @@ function openThirdPartyNotices(): Promise<string> {
   return shell.openPath(path)
 }
 
+// ---- share: deliver the active document to a messaging channel via the Hermes CLI ----
+// `hermes send` reuses the Hermes gateway credentials (Telegram, WhatsApp,
+// email, …) and attaches the document as a native media bubble.
+
+/** resolved once at startup; the share window shows a hint when absent */
+const hermesBin = resolveHermesBin()
+
+function shareStrings(): ShareStrings {
+  return {
+    title: tm('shareTitle'),
+    fileLabel: tm('shareFileLabel'),
+    targetLabel: tm('shareTargetLabel'),
+    messageLabel: tm('shareMessageLabel'),
+    optional: tm('shareOptional'),
+    send: tm('shareSend'),
+    cancel: tm('shareCancel'),
+    sending: tm('shareSending'),
+    sent: tm('shareSent'),
+    failed: tm('shareFailed'),
+    noHermes: tm('shareNoHermes'),
+    noTargets: tm('shareNoTargets'),
+    noFile: tm('shareNoFile'),
+    close: tm('shareClose'),
+  }
+}
+
+function shareWindowState(filePath: string | undefined): ShareWindowState {
+  return {
+    filePath,
+    hermesAvailable: hermesBin !== null,
+    lang: htmlLang(currentLang()),
+    strings: shareStrings(),
+  }
+}
+
+/** File → Send to… opens the share window for the active tab's document */
+function shareActiveTab(): void {
+  const active = tabManager?.activeTabFilePath()
+  openShareWindow({
+    parent: shellWindow,
+    filePath: active?.filePath,
+    state: shareWindowState(active?.filePath),
+  })
+}
+
+/** menu item injected into every editor's File menu */
+function shareTargetItem(): MenuItemConstructorOptions {
+  return {
+    label: tm('menuSendTo'),
+    click: () => shareActiveTab(),
+  }
+}
+
+// ---- cloud: sync open documents to Google Drive (embedded OAuth) ----
+// The app ships its own OAuth client (public desktop client, minimal
+// drive.file scope). "Connect" opens the Google consent page in a small
+// window; the loopback redirect lands back in the app, the code is exchanged
+// for tokens, and the token is persisted under userData. No third-party
+// relay, no agent loop — uploads call the Drive API directly.
+
+const cloudConfigPath = join(app.getPath('userData'), 'cloud-config.json')
+const cloudTokenPath = join(app.getPath('userData'), 'google-token.json')
+const cloudAuthPort = 5371
+let cloudConfig: CloudConfig = loadCloudConfig(cloudConfigPath)
+
+const cloudSync = new CloudSyncManager({
+  bin: hermesBin,
+  tokenPath: cloudTokenPath,
+  config: () => cloudConfig,
+  onStatesChanged: (states) => {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      shellWindow.webContents.send(CLOUD_CHANNELS.statesChanged, states)
+    }
+  },
+})
+
+/** keep the file watchers aligned with the open tabs (only when autoSync is on) */
+function resyncCloudWatchers(): void {
+  if (!tabManager) return
+  cloudSync.syncWith(cloudConfig.autoSync ? tabManager.openFilePaths() : [])
+}
+
+function registerCloudIpc(): void {
+  ipcMain.handle(CLOUD_CHANNELS.getConfig, () => cloudConfig)
+  ipcMain.handle(CLOUD_CHANNELS.setConfig, (_event, input: unknown) => {
+    cloudConfig = normalizeCloudConfig(input)
+    saveCloudConfig(cloudConfigPath, cloudConfig)
+    resyncCloudWatchers()
+    return cloudConfig
+  })
+  ipcMain.handle(CLOUD_CHANNELS.uploadNow, async (_event, filePath: unknown) => {
+    const target =
+      typeof filePath === 'string' && filePath
+        ? filePath
+        : tabManager?.activeTabFilePath()?.filePath
+    if (!target) {
+      return { filePath: '', error: 'No active file to upload' } as CloudFileState
+    }
+    return cloudSync.uploadNow(target)
+  })
+  ipcMain.handle(CLOUD_CHANNELS.getStates, () => cloudSync.getFileStates())
+  ipcMain.handle(CLOUD_CHANNELS.getAuthState, () =>
+    driveAuthState({
+      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      tokenPath: cloudTokenPath,
+    }),
+  )
+  ipcMain.handle(CLOUD_CHANNELS.connect, () => runGoogleConnectFlow())
+  ipcMain.handle(CLOUD_CHANNELS.disconnect, () => {
+    new TokenStore(cloudTokenPath).clear()
+    broadcastCloudAuth()
+    return true
+  })
+}
+
+function broadcastCloudAuth(): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    const state = driveAuthState({
+      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      tokenPath: cloudTokenPath,
+    })
+    shellWindow.webContents.send(CLOUD_CHANNELS.authChanged, state)
+  }
+}
+
+/** embedded OAuth flow: consent window → loopback redirect → token stored */
+// OAuth via the system browser (market standard: VS Code, Slack, Notion):
+// the app opens the Google consent page in the user's default browser (where
+// they are usually already signed in — zero typing) and captures the loopback
+// redirect on 127.0.0.1:<cloudAuthPort> to exchange the code for a token.
+const GOOGLE_AUTH_DONE_HTML = (ok: boolean, message: string): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${ok ? 'Connected' : 'Not connected'} - HermesOffice</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,'Segoe UI',sans-serif;background:#f6f7f9;color:#242424}
+  .card{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:32px 40px;
+    max-width:360px;text-align:center;box-shadow:0 10px 25px rgb(0 0 0 / 6%)}
+  .dot{width:44px;height:44px;border-radius:50%;display:inline-flex;align-items:center;
+    justify-content:center;margin-bottom:14px;font-size:22px}
+  .dot.ok{background:#e8f5ec;color:#15803d}.dot.bad{background:#fdecec;color:#b91c1c}
+  h1{font-size:16px;margin:0 0 8px}
+  p{font-size:13px;color:#606366;margin:0;line-height:1.5}
+</style>
+</head>
+<body><div class="card">
+  <div class="dot ${ok ? 'ok' : 'bad'}">${ok ? '\u2713' : '\u2717'}</div>
+  <h1>${ok ? 'Google Drive conectado' : 'Conexão não concluída'}</h1>
+  <p>${message}</p>
+</div></body>
+</html>`
+
+let authServer: import('node:http').Server | null = null
+let pendingAuth: {
+  state: string
+  timer: NodeJS.Timeout
+  finish: (result: { ok: boolean; error?: string }) => void
+} | null = null
+
+function settlePendingAuth(result: { ok: boolean; error?: string }): void {
+  const pending = pendingAuth
+  if (!pending) return
+  pendingAuth = null
+  clearTimeout(pending.timer)
+  broadcastCloudAuth()
+  pending.finish(result)
+}
+
+/** one lazy server on the loopback port; each connect() swaps the state/finish */
+function ensureAuthServer(): void {
+  if (authServer) return
+  authServer = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${cloudAuthPort}`)
+    const pending = pendingAuth
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    if (!pending) {
+      res.statusCode = 400
+      res.end(
+        GOOGLE_AUTH_DONE_HTML(
+          false,
+          'Nenhuma conexão ativa. Feche esta aba e tente novamente no app.',
+        ),
+      )
+      return
+    }
+    const code = url.searchParams.get('code')
+    const error = url.searchParams.get('error')
+    const returnedState = url.searchParams.get('state')
+    if (error) {
+      res.end(GOOGLE_AUTH_DONE_HTML(false, `Autorização recusada (${error}). Feche esta aba.`))
+      settlePendingAuth({ ok: false, error: `Authorization failed: ${error}` })
+      return
+    }
+    if (!code || returnedState !== pending.state) {
+      res.statusCode = 400
+      res.end(GOOGLE_AUTH_DONE_HTML(false, 'Retorno inválido. Feche esta aba e tente novamente.'))
+      settlePendingAuth({ ok: false, error: 'Authorization failed: invalid callback' })
+      return
+    }
+    // success: reply immediately (browser tab closes on its own) and exchange
+    // the code in the background
+    res.end(GOOGLE_AUTH_DONE_HTML(true, 'Pode fechar esta aba e voltar ao HermesOffice.'))
+    void (async () => {
+      const exchanged = await exchangeCode(
+        { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+        code,
+        cloudAuthPort,
+      )
+      if (!exchanged.ok || !exchanged.token) {
+        settlePendingAuth({ ok: false, error: exchanged.error ?? 'Authorization failed' })
+        return
+      }
+      new TokenStore(cloudTokenPath).save(exchanged.token)
+      settlePendingAuth({ ok: true })
+    })()
+  })
+  authServer.on('error', (err: NodeJS.ErrnoException) => {
+    settlePendingAuth({
+      ok: false,
+      error: `Could not start the local callback server: ${err.message}`,
+    })
+  })
+  authServer.listen(cloudAuthPort, '127.0.0.1')
+}
+
+function runGoogleConnectFlow(): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const state = randomBytes(16).toString('hex')
+    const authUrl = buildAuthUrl(
+      { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      cloudAuthPort,
+      state,
+    )
+    // 5 minutes: a real login (password + 2FA) takes time; a short timeout
+    // would kill the flow mid-way and read as "the app is broken".
+    const timer = setTimeout(
+      () => settlePendingAuth({ ok: false, error: 'Connection timed out' }),
+      300_000,
+    )
+    pendingAuth = { state, timer, finish: resolve }
+    ensureAuthServer()
+    void shell.openExternal(authUrl).catch(() => {
+      settlePendingAuth({ ok: false, error: 'Could not open the browser' })
+    })
+  })
+}
+
 /** every module's File menu gets a way back to the launcher */
 function installBackToHomeItems(): void {
   const backToHomeItem: MenuItemConstructorOptions = {
@@ -2117,9 +2731,10 @@ function installBackToHomeItems(): void {
     accelerator: 'Shift+CmdOrCtrl+H',
     click: () => tabManager?.openHomeTab(),
   }
-  setDocsExtraFileMenuItems([backToHomeItem])
-  setSheetsExtraFileMenuItems([backToHomeItem])
-  setSlidesExtraFileMenuItems([backToHomeItem])
+  const shareItem = shareTargetItem()
+  setDocsExtraFileMenuItems([backToHomeItem, shareItem])
+  setSheetsExtraFileMenuItems([backToHomeItem, shareItem])
+  setSlidesExtraFileMenuItems([backToHomeItem, shareItem])
 }
 
 function installDockMenu(): void {
@@ -2265,4 +2880,5 @@ app.on('before-quit', () => {
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()
+  cloudSync.dispose()
 })
