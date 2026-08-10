@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import {
   copyFileSync,
@@ -70,6 +72,21 @@ import {
   type ShareWindowSendRequest,
   type ShareWindowState,
 } from '@hermesoffice/hermes-share'
+import {
+  CLOUD_CHANNELS,
+  CloudSyncManager,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  TokenStore,
+  buildAuthUrl,
+  driveAuthState,
+  exchangeCode,
+  loadCloudConfig,
+  normalizeCloudConfig,
+  saveCloudConfig,
+  type CloudConfig,
+  type CloudFileState,
+} from '@hermesoffice/hermes-cloud'
 import {
   ensureGenofficeLogin,
   gskConvertPdfToDocx,
@@ -1556,7 +1573,10 @@ function createShellWindow(): void {
 
   const manager = new TabManager(
     win,
-    () => win.webContents.send(TABS_CHANNELS.changed, manager.list()),
+    () => {
+      win.webContents.send(TABS_CHANNELS.changed, manager.list())
+      resyncCloudWatchers()
+    },
     applyMenuFor,
     // no extension: these tabs have no file on disk yet; the title becomes the
     // real filename (the localized untitled default + .docx etc.) once the first save lands
@@ -2064,6 +2084,9 @@ function registerHomeIpc(): void {
     },
   })
 
+  registerCloudIpc()
+  resyncCloudWatchers()
+
   // fork: probe the local Hermes gateway (onboarding)
   ipcMain.handle(HOME_CHANNELS.hermesStatus, async (): Promise<'ok' | 'offline'> => {
     try {
@@ -2504,6 +2527,203 @@ function shareTargetItem(): MenuItemConstructorOptions {
   }
 }
 
+// ---- cloud: sync open documents to Google Drive (embedded OAuth) ----
+// The app ships its own OAuth client (public desktop client, minimal
+// drive.file scope). "Connect" opens the Google consent page in a small
+// window; the loopback redirect lands back in the app, the code is exchanged
+// for tokens, and the token is persisted under userData. No third-party
+// relay, no agent loop — uploads call the Drive API directly.
+
+const cloudConfigPath = join(app.getPath('userData'), 'cloud-config.json')
+const cloudTokenPath = join(app.getPath('userData'), 'google-token.json')
+const cloudAuthPort = 5371
+let cloudConfig: CloudConfig = loadCloudConfig(cloudConfigPath)
+
+const cloudSync = new CloudSyncManager({
+  bin: hermesBin,
+  tokenPath: cloudTokenPath,
+  config: () => cloudConfig,
+  onStatesChanged: (states) => {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      shellWindow.webContents.send(CLOUD_CHANNELS.statesChanged, states)
+    }
+  },
+})
+
+/** keep the file watchers aligned with the open tabs (only when autoSync is on) */
+function resyncCloudWatchers(): void {
+  if (!tabManager) return
+  cloudSync.syncWith(cloudConfig.autoSync ? tabManager.openFilePaths() : [])
+}
+
+function registerCloudIpc(): void {
+  ipcMain.handle(CLOUD_CHANNELS.getConfig, () => cloudConfig)
+  ipcMain.handle(CLOUD_CHANNELS.setConfig, (_event, input: unknown) => {
+    cloudConfig = normalizeCloudConfig(input)
+    saveCloudConfig(cloudConfigPath, cloudConfig)
+    resyncCloudWatchers()
+    return cloudConfig
+  })
+  ipcMain.handle(CLOUD_CHANNELS.uploadNow, async (_event, filePath: unknown) => {
+    const target =
+      typeof filePath === 'string' && filePath
+        ? filePath
+        : tabManager?.activeTabFilePath()?.filePath
+    if (!target) {
+      return { filePath: '', error: 'No active file to upload' } as CloudFileState
+    }
+    return cloudSync.uploadNow(target)
+  })
+  ipcMain.handle(CLOUD_CHANNELS.getStates, () => cloudSync.getFileStates())
+  ipcMain.handle(CLOUD_CHANNELS.getAuthState, () =>
+    driveAuthState({
+      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      tokenPath: cloudTokenPath,
+    }),
+  )
+  ipcMain.handle(CLOUD_CHANNELS.connect, () => runGoogleConnectFlow())
+  ipcMain.handle(CLOUD_CHANNELS.disconnect, () => {
+    new TokenStore(cloudTokenPath).clear()
+    broadcastCloudAuth()
+    return true
+  })
+}
+
+function broadcastCloudAuth(): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    const state = driveAuthState({
+      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      tokenPath: cloudTokenPath,
+    })
+    shellWindow.webContents.send(CLOUD_CHANNELS.authChanged, state)
+  }
+}
+
+/** embedded OAuth flow: consent window → loopback redirect → token stored */
+// OAuth via the system browser (market standard: VS Code, Slack, Notion):
+// the app opens the Google consent page in the user's default browser (where
+// they are usually already signed in — zero typing) and captures the loopback
+// redirect on 127.0.0.1:<cloudAuthPort> to exchange the code for a token.
+const GOOGLE_AUTH_DONE_HTML = (ok: boolean, message: string): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${ok ? 'Connected' : 'Not connected'} - HermesOffice</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:-apple-system,'Segoe UI',sans-serif;background:#f6f7f9;color:#242424}
+  .card{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:32px 40px;
+    max-width:360px;text-align:center;box-shadow:0 10px 25px rgb(0 0 0 / 6%)}
+  .dot{width:44px;height:44px;border-radius:50%;display:inline-flex;align-items:center;
+    justify-content:center;margin-bottom:14px;font-size:22px}
+  .dot.ok{background:#e8f5ec;color:#15803d}.dot.bad{background:#fdecec;color:#b91c1c}
+  h1{font-size:16px;margin:0 0 8px}
+  p{font-size:13px;color:#606366;margin:0;line-height:1.5}
+</style>
+</head>
+<body><div class="card">
+  <div class="dot ${ok ? 'ok' : 'bad'}">${ok ? '\u2713' : '\u2717'}</div>
+  <h1>${ok ? 'Google Drive conectado' : 'Conexão não concluída'}</h1>
+  <p>${message}</p>
+</div></body>
+</html>`
+
+let authServer: import('node:http').Server | null = null
+let pendingAuth: {
+  state: string
+  timer: NodeJS.Timeout
+  finish: (result: { ok: boolean; error?: string }) => void
+} | null = null
+
+function settlePendingAuth(result: { ok: boolean; error?: string }): void {
+  const pending = pendingAuth
+  if (!pending) return
+  pendingAuth = null
+  clearTimeout(pending.timer)
+  broadcastCloudAuth()
+  pending.finish(result)
+}
+
+/** one lazy server on the loopback port; each connect() swaps the state/finish */
+function ensureAuthServer(): void {
+  if (authServer) return
+  authServer = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${cloudAuthPort}`)
+    const pending = pendingAuth
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    if (!pending) {
+      res.statusCode = 400
+      res.end(
+        GOOGLE_AUTH_DONE_HTML(
+          false,
+          'Nenhuma conexão ativa. Feche esta aba e tente novamente no app.',
+        ),
+      )
+      return
+    }
+    const code = url.searchParams.get('code')
+    const error = url.searchParams.get('error')
+    const returnedState = url.searchParams.get('state')
+    if (error) {
+      res.end(GOOGLE_AUTH_DONE_HTML(false, `Autorização recusada (${error}). Feche esta aba.`))
+      settlePendingAuth({ ok: false, error: `Authorization failed: ${error}` })
+      return
+    }
+    if (!code || returnedState !== pending.state) {
+      res.statusCode = 400
+      res.end(GOOGLE_AUTH_DONE_HTML(false, 'Retorno inválido. Feche esta aba e tente novamente.'))
+      settlePendingAuth({ ok: false, error: 'Authorization failed: invalid callback' })
+      return
+    }
+    // success: reply immediately (browser tab closes on its own) and exchange
+    // the code in the background
+    res.end(GOOGLE_AUTH_DONE_HTML(true, 'Pode fechar esta aba e voltar ao HermesOffice.'))
+    void (async () => {
+      const exchanged = await exchangeCode(
+        { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+        code,
+        cloudAuthPort,
+      )
+      if (!exchanged.ok || !exchanged.token) {
+        settlePendingAuth({ ok: false, error: exchanged.error ?? 'Authorization failed' })
+        return
+      }
+      new TokenStore(cloudTokenPath).save(exchanged.token)
+      settlePendingAuth({ ok: true })
+    })()
+  })
+  authServer.on('error', (err: NodeJS.ErrnoException) => {
+    settlePendingAuth({
+      ok: false,
+      error: `Could not start the local callback server: ${err.message}`,
+    })
+  })
+  authServer.listen(cloudAuthPort, '127.0.0.1')
+}
+
+function runGoogleConnectFlow(): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const state = randomBytes(16).toString('hex')
+    const authUrl = buildAuthUrl(
+      { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
+      cloudAuthPort,
+      state,
+    )
+    // 5 minutes: a real login (password + 2FA) takes time; a short timeout
+    // would kill the flow mid-way and read as "the app is broken".
+    const timer = setTimeout(
+      () => settlePendingAuth({ ok: false, error: 'Connection timed out' }),
+      300_000,
+    )
+    pendingAuth = { state, timer, finish: resolve }
+    ensureAuthServer()
+    void shell.openExternal(authUrl).catch(() => {
+      settlePendingAuth({ ok: false, error: 'Could not open the browser' })
+    })
+  })
+}
+
 /** every module's File menu gets a way back to the launcher */
 function installBackToHomeItems(): void {
   const backToHomeItem: MenuItemConstructorOptions = {
@@ -2660,4 +2880,5 @@ app.on('before-quit', () => {
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()
+  cloudSync.dispose()
 })

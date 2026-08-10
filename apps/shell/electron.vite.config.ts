@@ -1,12 +1,37 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
+
+/**
+ * OAuth client for the embedded Google Drive sync: values are NOT committed —
+ * they live in packages/hermes-cloud/src/oauth-credentials.ts (gitignored,
+ * created locally from the Google Cloud console). They are inlined into the
+ * main bundle here; CI/fresh clones build with empty values (Drive connect
+ * then shows a clear configuration error instead of a broken consent URL).
+ */
+function loadOAuthDefine(): Record<string, string> {
+  const credsPath = resolve(__dirname, '../../packages/hermes-cloud/src/oauth-credentials.ts')
+  let clientId = ''
+  let clientSecret = ''
+  if (existsSync(credsPath)) {
+    const src = readFileSync(credsPath, 'utf8')
+    clientId = src.match(/GOOGLE_CLIENT_ID\s*=\s*'([^']+)'/)?.[1] ?? ''
+    clientSecret = src.match(/GOOGLE_CLIENT_SECRET\s*=\s*'([^']+)'/)?.[1] ?? ''
+  }
+  return {
+    'globalThis.__HERMESOFFICE_OAUTH_CLIENT_ID__': JSON.stringify(clientId),
+    'globalThis.__HERMESOFFICE_OAUTH_CLIENT_SECRET__': JSON.stringify(clientSecret),
+  }
+}
 
 export default defineConfig({
   // Bundle everything into the shell main (same policy as apps/docs): the
   // imported docs/sheets main modules are TS source with no build artifacts,
   // so externalizing them would break Node ESM resolution at runtime.
-  main: {},
+  main: {
+    define: loadOAuthDefine(),
+  },
   preload: {
     build: {
       rollupOptions: {

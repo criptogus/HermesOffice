@@ -26,6 +26,7 @@
     "@hermesoffice/electron-utils": "*",
     "@hermesoffice/hermes-share": "*",
     "@hermesoffice/i18n": "*",
+    "@hermesoffice/hermes-cloud": "*",
     "@hermesoffice/pptx-engine": "*",
     "@hermesoffice/pptx-render": "*",
     "@hermesoffice/sheets": "*",

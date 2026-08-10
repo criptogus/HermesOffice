@@ -360,6 +360,13 @@ export class TabManager {
     return { kind: tab.kind, filePath: tab.filePath }
   }
 
+  /** every editor tab's on-disk path, for cloud sync watchers */
+  openFilePaths(): string[] {
+    return this.tabs
+      .map((tab) => tab.filePath)
+      .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
+  }
+
   /** the active tab's pdf view, if the active tab is a pdf (pdf menu target) */
   activePdfTab(): { id: string; webContents: WebContents; filePath?: string } | undefined {
     const tab = this.tabs.find((t) => t.id === this.activeId)

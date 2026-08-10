@@ -16,6 +16,14 @@ import type {
 import { HOME_CHANNELS, PROJECT_CHANNELS } from '../shared/home-api'
 import type { TabsApi, TabSummary } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
+import {
+  CLOUD_CHANNELS,
+  type CloudApi,
+  type CloudConfig,
+  type CloudFileState,
+  type ConnectResult,
+  type DriveAuthState,
+} from '../shared/cloud-api'
 
 const UI_LANGUAGES: readonly UiLanguage[] = [
   'zh',
@@ -257,3 +265,39 @@ const tabsApi: TabsApi = {
 }
 
 contextBridge.exposeInMainWorld('aiOfficeTabs', tabsApi)
+
+const cloudApi: CloudApi = {
+  async getConfig() {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getConfig)) as CloudConfig
+  },
+  async setConfig(config) {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.setConfig, config)) as CloudConfig
+  },
+  async uploadNow(filePath) {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.uploadNow, filePath)) as CloudFileState
+  },
+  async getStates() {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getStates)) as CloudFileState[]
+  },
+  onStatesChanged(handler) {
+    const listener = (_event: IpcRendererEvent, states: CloudFileState[]) => handler(states)
+    ipcRenderer.on(CLOUD_CHANNELS.statesChanged, listener)
+    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.statesChanged, listener)
+  },
+  async connect() {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.connect)) as ConnectResult
+  },
+  async disconnect() {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.disconnect)) as boolean
+  },
+  async getAuthState() {
+    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getAuthState)) as DriveAuthState
+  },
+  onAuthChanged(handler) {
+    const listener = (_event: IpcRendererEvent, state: DriveAuthState) => handler(state)
+    ipcRenderer.on(CLOUD_CHANNELS.authChanged, listener)
+    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.authChanged, listener)
+  },
+}
+
+contextBridge.exposeInMainWorld('aiOfficeCloud', cloudApi)

@@ -1,0 +1,20 @@
+{
+  "name": "@hermesoffice/hermes-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloud sync for HermesOffice documents — direct Google Drive upload via embedded OAuth (drive.file scope).",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@hermesoffice/hermes-share": "*"
+  },
+  "license": "Apache-2.0"
+}

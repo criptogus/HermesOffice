@@ -17,11 +17,13 @@ import type {
 import { fileCountKey, visiblePageCount } from './counts'
 import { useI18n } from './locale'
 import type { I18n, StringKey } from './locale'
+import type { CloudApi, CloudConfig, CloudFileState, DriveAuthState } from '../../shared/cloud-api'
 
 declare global {
   interface Window {
     aiOffice: HomeApi
     aiOfficeProject?: ProjectHomeApi
+    aiOfficeCloud: CloudApi
   }
 }
 
@@ -122,6 +124,122 @@ interface ProjectPanelProps {
   selectedId: string | null
   onSelect: (id: string | null) => void
   onRefresh: () => void
+}
+
+/**
+ * Cloud sync entry (sidebar): a single "Connect Google Drive" action that
+ * becomes a live sync status row once connected. The embedded OAuth flow
+ * opens Google's own consent page in the system browser and comes back to
+ * the app through the loopback redirect (VS Code / Slack / Notion pattern).
+ */
+function CloudGlyph({ on = false }: { on?: boolean }) {
+  return (
+    <svg
+      className={`cloud-glyph${on ? ' on' : ''}`}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+      <path d="M12 12v6" />
+      <path d="m9.5 15.5 2.5 2.5 2.5-2.5" />
+    </svg>
+  )
+}
+
+function CloudSyncEntry() {
+  const { t } = useI18n()
+  const [auth, setAuth] = useState<DriveAuthState | null>(null)
+  const [states, setStates] = useState<CloudFileState[]>([])
+  const [config, setConfig] = useState<CloudConfig | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.aiOfficeCloud.getAuthState().then(setAuth)
+    void window.aiOfficeCloud.getStates().then(setStates)
+    void window.aiOfficeCloud.getConfig().then(setConfig)
+    const offAuth = window.aiOfficeCloud.onAuthChanged(setAuth)
+    const offStates = window.aiOfficeCloud.onStatesChanged(setStates)
+    return () => {
+      offAuth()
+      offStates()
+    }
+  }, [])
+
+  const connected = Boolean(auth?.connected)
+  const latest = states.length > 0 ? states[states.length - 1] : undefined
+
+  const connect = () => {
+    setBusy(true)
+    setConnectError(null)
+    void window.aiOfficeCloud
+      .connect()
+      .then((result) => {
+        if (!result.ok) {
+          setConnectError(result.error ?? t('cloudConnectError'))
+        } else {
+          // connecting implies syncing: turn the provider + auto-sync on
+          void window.aiOfficeCloud
+            .setConfig({
+              ...(config ?? { folder: 'HermesOffice' }),
+              provider: 'google-drive',
+              autoSync: true,
+            })
+            .then(setConfig)
+        }
+        // re-read the real state from disk instead of trusting the broadcast
+        // (the callback page may have finished before this listener attached)
+        return window.aiOfficeCloud.getAuthState()
+      })
+      .then(setAuth)
+      .finally(() => setBusy(false))
+  }
+
+  const disconnect = () => {
+    void window.aiOfficeCloud.disconnect().then(() => setAuth({ connected: false }))
+  }
+
+  return (
+    <div className="cloud-entry">
+      {!connected ? (
+        <button className="nav-item cloud-connect" disabled={busy} onClick={connect}>
+          <CloudGlyph />
+          <span className="nav-label">{busy ? t('cloudConnecting') : t('cloudConnect')}</span>
+        </button>
+      ) : (
+        <div
+          className="nav-item cloud-synced"
+          title={latest?.link ? `${t('cloudLastUpload')}: ${latest.link}` : t('cloudConnected')}
+        >
+          <CloudGlyph on />
+          <span className="nav-label">{t('cloudDriveLabel')}</span>
+          <span className={`cloud-sync-status${latest?.error ? ' error' : ''}`}>
+            {latest?.error
+              ? t('cloudSyncError')
+              : latest?.link
+                ? t('cloudSynced')
+                : t('cloudConnected')}
+          </span>
+          <button
+            className="cloud-disconnect"
+            onClick={disconnect}
+            title={t('cloudDisconnect')}
+            aria-label={t('cloudDisconnect')}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {connectError && <p className="cloud-error">{connectError}</p>}
+    </div>
+  )
 }
 
 function ProjectPanel({ projects, selectedId, onSelect, onRefresh }: ProjectPanelProps) {
@@ -2305,6 +2423,8 @@ export function Home() {
             />
           </>
         )}
+
+        <CloudSyncEntry />
 
         <AccountEntry onStatusChange={handleAccountStatus} />
       </aside>
