@@ -30,6 +30,13 @@ export default defineConfig({
   // imported docs/sheets main modules are TS source with no build artifacts,
   // so externalizing them would break Node ESM resolution at runtime.
   main: {
+    build: {
+      rollupOptions: {
+        // native module (napi) — never bundled; resolved from node_modules in
+        // dev and from resources/anydoc in the packaged app (docs-main loader)
+        external: ['@firecrawl/anydoc'],
+      },
+    },
     define: loadOAuthDefine(),
   },
   preload: {

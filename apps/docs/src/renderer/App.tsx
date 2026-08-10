@@ -75,6 +75,8 @@ import { Ribbon } from './components/Ribbon'
 import { computeFormatState } from './components/ribbon-format-state'
 import { IconRedo, IconSave, IconUndo } from './components/icons'
 import { ToastHost } from './components/toast'
+import { showToast } from './components/toast-bus'
+
 import {
   LinkInsertModal,
   insertImageFromDataUrl,
@@ -1148,6 +1150,19 @@ export function App() {
     (outPath?: string) => exportPdfImpl(fileCtxRef.current, outPath),
     [],
   )
+
+  // fork: Export Markdown — converts the open doc (anydoc, local) and saves the
+  // .md next to the source file
+  const exportMarkdown = useCallback(async () => {
+    const filePath = fileCtxRef.current.doc?.filePath
+    if (!filePath) {
+      showToast(t('appExportMarkdownFailed', { error: 'no-file' }), 'error')
+      return
+    }
+    const result = await window.desktop.exportMarkdown(filePath)
+    if (result.ok && result.path) showToast(t('appExportedMarkdown', { path: result.path }))
+    else showToast(t('appExportMarkdownFailed', { error: result.error ?? 'unknown' }), 'error')
+  }, [])
 
   // for real-device verification: trigger export directly via CDP (same as __pageDebug)
   useEffect(() => {
@@ -2954,6 +2969,7 @@ export function App() {
           endnoteItems={endnoteItems}
           sectionHfOverride={sectionHfOverride}
           onExportPdf={() => void exportPdf()}
+          onExportMarkdown={() => void exportMarkdown()}
           onClose={() => setShowPagePreview(false)}
         />
       )}

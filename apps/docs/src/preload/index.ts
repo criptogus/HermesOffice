@@ -71,6 +71,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke('docs:print-pdf-buffer', pageWidthTwips, pageHeightTwips),
   saveMergedPdf: (defaultName: string, base64Parts: string[], outPath?: string) =>
     ipcRenderer.invoke('docs:save-merged-pdf', defaultName, base64Parts, outPath),
+  exportMarkdown: (filePath: string) => ipcRenderer.invoke('docs:export-markdown', filePath),
   getAiSettings: () => ipcRenderer.invoke('ai:get-settings'),
   setAiSettings: (settings: AiSettings) => ipcRenderer.invoke('ai:set-settings', settings),
   aiChat: (request: AiChatRequest) => ipcRenderer.invoke('ai:chat', request),

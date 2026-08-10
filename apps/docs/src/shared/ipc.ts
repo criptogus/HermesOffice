@@ -207,6 +207,9 @@ export interface DesktopApi {
     base64Parts: string[],
     outPath?: string,
   ): Promise<{ ok: boolean; path?: string; error?: string }>
+  /** fork: convert the open document to Markdown (anydoc, local) and save the
+   *  .md next to the source file */
+  exportMarkdown(filePath: string): Promise<{ ok: boolean; path?: string; error?: string }>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
   /** start a streaming AI call; deltas arrive via onAiStream with the same requestId */
   aiStream(request: AiStreamRequest): Promise<void>

@@ -33,6 +33,8 @@ for (const rel of [
   '../../node_modules/@genspark/cli/node_modules/commander',
   '../../node_modules/ws',
   '../../node_modules/electron/dist/LICENSES.chromium.html',
+  '../../node_modules/@firecrawl/anydoc',
+  '../../node_modules/@firecrawl/anydoc-darwin-arm64',
 ]) {
   if (!existsSync(join(__dirname, rel))) {
     throw new Error(
@@ -112,6 +114,14 @@ const config = {
     {
       from: '../../node_modules/ws',
       to: 'gsk/node_modules/ws',
+    },
+    {
+      from: '../../node_modules/@firecrawl/anydoc',
+      to: 'anydoc/node_modules/@firecrawl/anydoc',
+    },
+    {
+      from: '../../node_modules/@firecrawl/anydoc-darwin-arm64',
+      to: 'anydoc/node_modules/@firecrawl/anydoc-darwin-arm64',
     },
   ],
   // `mimeType` is read only by the Linux target, where it becomes the

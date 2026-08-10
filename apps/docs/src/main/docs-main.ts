@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import {
   existsSync,
   mkdirSync,
@@ -2529,8 +2530,49 @@ function registerDocxTrackIpc(): void {
   })
 }
 
+// ── Export Markdown (fork: anydoc) ──────────────────────────────────────
+// Converts the open document to Markdown with anydoc (Firecrawl, MIT,
+// 100% local — files never leave the machine). The napi binding lives in
+// node_modules in dev; in the packaged app it is copied to
+// resources/anydoc/node_modules (extraResources — see electron-builder.cjs)
+// and loaded by absolute path here.
+const nodeRequire = createRequire(import.meta.url)
+
+let anydocLib: { toMarkdown: (path: string) => Promise<string> } | null = null
+
+function loadAnydoc(): { toMarkdown: (path: string) => Promise<string> } {
+  if (anydocLib) return anydocLib
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    anydocLib = nodeRequire('@firecrawl/anydoc') as {
+      toMarkdown: (path: string) => Promise<string>
+    }
+  } catch {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    anydocLib = nodeRequire(
+      join(process.resourcesPath, 'anydoc/node_modules/@firecrawl/anydoc'),
+    ) as { toMarkdown: (path: string) => Promise<string> }
+  }
+  return anydocLib as { toMarkdown: (path: string) => Promise<string> }
+}
+
+function registerExportMarkdownIpc(): void {
+  ipcMain.handle('docs:export-markdown', async (_event, filePath?: string) => {
+    if (!filePath || !existsSync(filePath)) return { ok: false, error: 'no-file' }
+    try {
+      const md = await loadAnydoc().toMarkdown(filePath)
+      const mdPath = filePath.replace(/\.(?:docx?|docm|odt|rtf|pdf|pptx?|xlsx?|epub)$/i, '') + '.md'
+      writeFileSync(mdPath, md)
+      return { ok: true, path: mdPath }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+}
+
 export function registerAiIpc(): void {
   registerDocxTrackIpc()
+  registerExportMarkdownIpc()
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
