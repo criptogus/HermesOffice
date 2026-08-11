@@ -31,6 +31,9 @@ packages/hermes-cloud/src/oauth-credentials.ts
 /*.zip
 /windows/
 
+# Playwright artifacts
+/test-results/
+
 .cursor/rules/git-remote.mdc
 __pycache__/
 /notes/

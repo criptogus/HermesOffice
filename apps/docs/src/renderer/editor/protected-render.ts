@@ -3,13 +3,21 @@ import {} from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import {} from '@tiptap/pm/tables'
 import { WORDART_PRESETS, wordArtStrokePx } from '@hermesoffice/ui'
-import { cssDualFontFamily, cssFontFamily } from '../line-metrics'
+import {
+  autospaceBoundaries,
+  autospacePadBetween,
+  cssCsFontFamily,
+  cssDualFontFamily,
+  cssFontFamily,
+  textHasComplexScript,
+} from '../line-metrics'
 import { shapeBackgroundCss } from './shape-svg'
 import { t } from '../i18n/locale'
 import {
   type ChartDisplay,
   type FieldDisplay,
   type FormulaDisplay,
+  type Run,
   type TableModel,
   type TextboxDisplay,
 } from '@hermesoffice/docx-engine'
@@ -24,11 +32,14 @@ import {
   DomSpec,
   ProtectedContentEditor,
   TableBordersAttr,
+  borderLineCss,
+  cellClipStyle,
   cellPadCss,
   preventProtectedLineBreak,
   protectedText,
   tableBordersCss,
 } from './extensions'
+import { cellClipTwips } from './convert'
 
 // Word: links and TOC entries jump on modifier+click only
 const jumpHint = () =>
@@ -51,7 +62,9 @@ export function renderFieldSpec(field: FieldDisplay): DomSpec | null {
       attrs,
       ...num,
       ['span', { class: 'doc-toc-title', contenteditable: 'false' }, field.left || '\u00a0'],
-      ['span', { class: 'doc-toc-dots' }],
+      // real dot glyphs (clipped to the free width), not a border decoration:
+      // Word/LO leader dots are text, and exported-PDF text comparison sees them
+      ['span', { class: 'doc-toc-dots', contenteditable: 'false' }, '.'.repeat(220)],
       ['span', { class: 'doc-toc-page', contenteditable: 'false' }, field.right ?? ''],
     ]
   }
@@ -159,6 +172,13 @@ export function renderChartSpec(chart: ChartDisplay): DomSpec {
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
+/** round up to a 1/2/5×10ⁿ "nice" axis step */
+function niceStep(target: number): number {
+  const pow = 10 ** Math.floor(Math.log10(Math.max(target, 1e-9)))
+  const n = target / pow
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow
+}
+
 interface ChartGeom {
   width: number
   height: number
@@ -175,13 +195,18 @@ export const CHART_MAX_WIDTH_PX = 660
 export function drawChartSvg(dom: HTMLElement, chart: ChartDisplay | null): void {
   const canvas = dom.querySelector<HTMLElement>('.doc-chart-canvas')
   if (!canvas || !chart?.series.length) return
+  // series-name legend inside the SVG: the data grid is an editing affordance
+  // (hidden unless the block is selected), so the printed chart must carry the
+  // legend itself, like Word/LibreOffice output
+  const legendNames = chart.series.map((s, i) => s.name ?? t('editorChartSeries', { num: i + 1 }))
+  const showLegend = chart.series.length > 1 || chart.series.some((s) => s.name)
   const geom: ChartGeom = {
     width: Math.min(chart.widthPx ?? 560, CHART_MAX_WIDTH_PX),
     height: chart.heightPx ?? 240,
     left: 46,
     right: 12,
     top: 12,
-    bottom: 26,
+    bottom: 26 + (showLegend ? 18 : 0),
   }
   const svg = document.createElementNS(SVG_NS, 'svg')
   svg.setAttribute('viewBox', `0 0 ${geom.width} ${geom.height}`)
@@ -191,6 +216,31 @@ export function drawChartSvg(dom: HTMLElement, chart: ChartDisplay | null): void
 
   if (chart.kind === 'pie') drawPie(svg, chart, geom)
   else drawAxes(svg, chart, geom)
+
+  if (showLegend) {
+    const slot = geom.width / legendNames.length
+    legendNames.forEach((name, i) => {
+      const cx = slot * i + slot / 2
+      svgEl(svg, 'rect', {
+        x: String(cx - Math.min(name.length * 3.2, slot / 2 - 14) - 12),
+        y: String(geom.height - 15),
+        width: '8',
+        height: '8',
+        fill: chartColor(i),
+      })
+      svgEl(
+        svg,
+        'text',
+        {
+          x: String(cx),
+          y: String(geom.height - 7),
+          class: 'doc-chart-axis-label',
+          'text-anchor': 'middle',
+        },
+        name,
+      )
+    })
+  }
 
   canvas.replaceChildren(svg)
 }
@@ -211,8 +261,14 @@ function svgEl(
 /** bar / line / area charts share the same axes and scale */
 function drawAxes(svg: SVGElement, chart: ChartDisplay, geom: ChartGeom): void {
   const values = chart.series.flatMap((s) => s.values).filter((v): v is number => v !== null)
-  const max = Math.max(0, ...values)
-  const min = Math.min(0, ...values)
+  // "nice" axis bounds (1/2/5×10ⁿ step, integer-friendly labels like Word/LO)
+  const rawMax = Math.max(0, ...values)
+  const rawMin = Math.min(0, ...values)
+  const step = niceStep((rawMax - rawMin) / 5 || 1)
+  const min = Math.floor(rawMin / step) * step
+  // Word/LO leave headroom: the top tick sits strictly above the data maximum
+  let max = Math.ceil(rawMax / step) * step || step
+  if (rawMax > 0 && max <= rawMax + 1e-9) max += step
   const span = max - min || 1
   const plotW = geom.width - geom.left - geom.right
   const plotH = geom.height - geom.top - geom.bottom
@@ -221,9 +277,9 @@ function drawAxes(svg: SVGElement, chart: ChartDisplay, geom: ChartGeom): void {
   const slotW = plotW / cols
 
   // horizontal gridlines with value labels
-  const steps = 4
+  const steps = Math.max(1, Math.round(span / step))
   for (let i = 0; i <= steps; i++) {
-    const v = min + (span / steps) * i
+    const v = min + step * i
     const y = yOf(v)
     svgEl(svg, 'line', {
       x1: String(geom.left),
@@ -443,14 +499,34 @@ export function textboxBoxStyle(box: TextboxDisplay): string {
       )
     : null
   const waStyle = box.wordArtId ? WORDART_CSS[box.wordArtId] : undefined
+  // picture fill (photo boxes / a:blipFill): tiles repeat at natural size,
+  // stretch fills cover the whole box. Document data, hence inline.
+  const fillImage = box.fillImageDataUrl
+    ? `background-image:url("${box.fillImageDataUrl}");` +
+      (box.fillTile
+        ? 'background-repeat:repeat'
+        : 'background-repeat:no-repeat;background-size:100% 100%')
+    : ''
+  const transforms = [box.rotDeg ? `rotate(${box.rotDeg}deg)` : '']
+  const floatPos = box.floating
+    ? `position:absolute;left:${((box.offsetXEmu ?? 0) / 9525).toFixed(1)}px;` +
+      `top:${((box.offsetYEmu ?? 0) / 9525).toFixed(1)}px`
+    : ''
   return [
     geomCss ?? '',
-    !geomCss && box.fill ? `background:#${box.fill}` : '',
+    !geomCss && box.fill ? `background-color:#${box.fill}` : '',
     !geomCss && box.borderColor ? `border-color:#${box.borderColor}` : '',
+    !geomCss && box.borderColor && box.borderWidthPx ? `border-width:${box.borderWidthPx}px` : '',
+    !geomCss && box.borderColor && box.borderDash ? `border-style:${box.borderDash}` : '',
+    fillImage,
+    floatPos,
     box.widthPx ? `width:${box.widthPx}px` : '',
     // Word clips fixed-height (noAutofit) boxes instead of growing them
     box.heightPx ? `height:${box.heightPx}px` : '',
     `padding:${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px`,
+    transforms.filter(Boolean).length > 0
+      ? `transform:${transforms.filter(Boolean).join(' ')}`
+      : '',
     waStyle?.color ? `-webkit-text-fill-color:${waStyle.color}` : '',
     waStyle?.stroke ? `-webkit-text-stroke:${waStyle.stroke}` : '',
     waStyle?.textShadow ? `text-shadow:${waStyle.textShadow}` : '',
@@ -459,31 +535,72 @@ export function textboxBoxStyle(box: TextboxDisplay): string {
     .join(';')
 }
 
+const AUTOSPACE_PAD_SPEC: DomSpec = ['span', { class: 'doc-autospace-pad' }]
+
+/** static-DOM counterpart of the editor's autospace pad decorations */
+function padSegments(text: string): unknown[] {
+  const cuts = autospaceBoundaries(text)
+  if (cuts.length === 0) return [text]
+  const out: unknown[] = []
+  let start = 0
+  for (const cut of cuts) {
+    out.push(text.slice(start, cut), AUTOSPACE_PAD_SPEC)
+    start = cut
+  }
+  out.push(text.slice(start))
+  return out
+}
+
+/** run → styled <span> spec, shared by textbox and table-cell rendering */
+export function runSpanSpec(run: Run, autoSpace?: boolean): DomSpec {
+  const cs = run.csFont && textHasComplexScript(run.text) ? run.csFont : undefined
+  const runStyle = [
+    run.color ? `color:#${run.color}` : '',
+    run.bold ? 'font-weight:700' : '',
+    run.italic ? 'font-style:italic' : '',
+    run.underline ? 'text-decoration:underline' : '',
+    run.font || run.fontAscii || cs
+      ? `font-family:${
+          cs
+            ? cssCsFontFamily(cs, run.fontAscii, run.font)
+            : run.font && run.fontAscii
+              ? cssDualFontFamily(run.fontAscii, run.font)
+              : cssFontFamily((run.font ?? run.fontAscii)!)
+        }`
+      : '',
+    run.sizeHalfPoints ? `font-size:${run.sizeHalfPoints / 2}pt` : '',
+    // explicit autoSpaceDE/DN off also disables the browser's native gap (same as the editor path)
+    autoSpace === false ? 'text-autospace:no-autospace' : '',
+  ]
+    .filter(Boolean)
+    .join(';')
+  const content = autoSpace === false ? [run.text] : padSegments(run.text)
+  return runStyle ? ['span', { style: runStyle }, ...content] : ['span', {}, ...content]
+}
+
+/** run spans with pads at run-boundary CJK-Latin seams (empty runs keep their span, no pad) */
+function runSpansWithPads(runs: Run[], autoSpace?: boolean): DomSpec[] {
+  const out: DomSpec[] = []
+  let prevText = ''
+  for (const run of runs) {
+    if (run.text !== '') {
+      if (autoSpace !== false && autospacePadBetween(prevText, run.text)) {
+        out.push(AUTOSPACE_PAD_SPEC)
+      }
+      prevText = run.text
+    }
+    out.push(runSpanSpec(run, autoSpace))
+  }
+  return out
+}
+
 export function renderTextboxSpec(box: TextboxDisplay): DomSpec {
   const style = textboxBoxStyle(box)
   const boxAttrs: Record<string, string> = { class: 'doc-textbox' }
   if (style) boxAttrs.style = style
 
   const paras: DomSpec[] = box.paras.map((para) => {
-    const spans: DomSpec[] = para.runs.map((run) => {
-      const runStyle = [
-        run.color ? `color:#${run.color}` : '',
-        run.bold ? 'font-weight:700' : '',
-        run.italic ? 'font-style:italic' : '',
-        run.underline ? 'text-decoration:underline' : '',
-        run.font || run.fontAscii
-          ? `font-family:${
-              run.font && run.fontAscii
-                ? cssDualFontFamily(run.fontAscii, run.font)
-                : cssFontFamily((run.font ?? run.fontAscii)!)
-            }`
-          : '',
-        run.sizeHalfPoints ? `font-size:${run.sizeHalfPoints / 2}pt` : '',
-      ]
-        .filter(Boolean)
-        .join(';')
-      return runStyle ? ['span', { style: runStyle }, run.text] : ['span', {}, run.text]
-    })
+    const spans: DomSpec[] = runSpansWithPads(para.runs, para.autoSpace)
     const pStyles = [
       para.align ? `text-align:${para.align}` : '',
       para.lineSpacing ? `line-height:${para.lineSpacing * 1.2}` : '',
@@ -537,10 +654,19 @@ export function renderTableSpec(model: TableModel): DomSpec {
           : cell.textDirection === 'btLr'
             ? 'writing-mode:sideways-lr'
             : '',
-        cell.fill ? `background:#${cell.fill}` : '',
         cell.color ? `color:#${cell.color}` : '',
         cell.bold ? 'font-weight:600' : '',
+        cell.fill ? `background:#${cell.fill}` : '',
         cell.align ? `text-align:${cell.align}` : '',
+        cell.vAlign && cell.vAlign !== 'top'
+          ? `vertical-align:${cell.vAlign === 'center' ? 'middle' : 'bottom'}`
+          : '',
+        // w:tcBorders — nested/read-only tables get no default gridlines, so
+        // per-cell borders are the only line source for style-less documents
+        ...(['top', 'left', 'bottom', 'right'] as const).map((side) => {
+          const v = borderLineCss(cell.borders?.[side])
+          return v ? `border-${side}:${v}` : ''
+        }),
         ...(['top', 'left', 'bottom', 'right'] as const).map((side) =>
           cell.cellMarTwips?.[side] !== undefined
             ? `padding-${side}:${(cell.cellMarTwips[side]! / 15).toFixed(1)}px`
@@ -553,16 +679,53 @@ export function renderTableSpec(model: TableModel): DomSpec {
       if (style) tdAttrs.style = style
       if (cell.colSpan && cell.colSpan > 1) tdAttrs.colspan = String(cell.colSpan)
       if (rowSpan > 1) tdAttrs.rowspan = String(rowSpan)
+      // run-level styles preserved; <br> separators keep innerText \n-split
+      // semantics that nested-table edit write-back depends on
+      const paraBlocks: unknown[][] = cell.richParas?.length
+        ? cell.richParas.map((p) => [
+            ...runSpansWithPads(
+              p.runs.filter((run) => run.text !== ''),
+              p.autoSpace,
+            ),
+          ])
+        : cell.paras.map((p) => (p === '' ? [] : [...padSegments(p)]))
+      // nested tables spliced in at their paragraph anchors (cells with them are never editable)
+      const nested = cell.nestedTables ?? []
+      const anchorOf = (i: number) =>
+        Math.min(cell.nestedTableAnchors?.[i] ?? paraBlocks.length, paraBlocks.length)
       const content: unknown[] = []
-      cell.paras.forEach((p, i) => {
-        if (i > 0) content.push(['br', {}])
-        if (p !== '') content.push(p)
+      let ni = 0
+      let lastWasTable = false
+      paraBlocks.forEach((blk, pi) => {
+        while (ni < nested.length && anchorOf(ni) <= pi) {
+          content.push(renderTableSpec(nested[ni++]))
+          lastWasTable = true
+        }
+        if (pi > 0 && !lastWasTable) content.push(['br', {}])
+        content.push(...blk)
+        lastWasTable = false
       })
-      for (const nt of cell.nestedTables ?? []) content.push(renderTableSpec(nt))
+      while (ni < nested.length) content.push(renderTableSpec(nested[ni++]))
       if (content.length === 0) content.push('\u00a0')
-      tds.push(['td', tdAttrs, ...content])
+      const clip = cellClipTwips(model, ri, cell, rowSpan)
+      if (clip !== null) {
+        tds.push([
+          'td',
+          tdAttrs,
+          [
+            'div',
+            { class: 'cell-clip', style: cellClipStyle(cell.vAlign ?? null, clip) },
+            ...content,
+          ],
+        ])
+      } else {
+        tds.push(['td', tdAttrs, ...content])
+      }
     })
-    return ['tr', {}, ...tds]
+    const trAttrs: Record<string, string> = {}
+    const rh = model.rowHeightsTwips?.[ri]
+    if (rh) trAttrs.style = `height:${((rh / 1440) * 96).toFixed(1)}px`
+    return ['tr', trAttrs, ...tds]
   })
 
   const tableChildren: unknown[] = []

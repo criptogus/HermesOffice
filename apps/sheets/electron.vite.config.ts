@@ -13,6 +13,7 @@ export default defineConfig({
           '@hermesoffice/ai-provider',
           '@hermesoffice/agent-core',
           '@hermesoffice/ai-search',
+          '@hermesoffice/docx-engine',
           '@hermesoffice/file-parse',
           '@hermesoffice/electron-utils',
           '@hermesoffice/i18n',

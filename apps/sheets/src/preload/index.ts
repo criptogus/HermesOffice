@@ -15,6 +15,7 @@ import type {
   DesktopApi,
   ScreenCaptureResult,
   ScreenSourcesResult,
+  UiTheme,
   WorkbookCellStyle,
   WorkbookConditionalRule,
   WorkbookFile,
@@ -45,6 +46,17 @@ const desktopApi: DesktopApi = {
     ) => handler(lang)
     ipcRenderer.on('app:language-changed', listener)
     return () => ipcRenderer.removeListener('app:language-changed', listener)
+  },
+  getTheme: () => ipcRenderer.invoke('app:get-theme'),
+  onThemeChanged(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, theme: UiTheme) => handler(theme)
+    ipcRenderer.on('app:theme-changed', listener)
+    return () => ipcRenderer.removeListener('app:theme-changed', listener)
+  },
+  onChromePressed(handler) {
+    const listener = () => handler()
+    ipcRenderer.on('app:chrome-pressed', listener)
+    return () => ipcRenderer.removeListener('app:chrome-pressed', listener)
   },
   async selectWorkbook() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.selectWorkbook)
@@ -1083,7 +1095,8 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
         typeof state.protected !== 'boolean',
     ) ||
     !isDefinedNamesState(input.definedNamesState) ||
-    (input.edits.length === 0 &&
+    (input.mode !== 'save-as' &&
+      input.edits.length === 0 &&
       input.structuralOps.length === 0 &&
       input.chartEdits.length === 0 &&
       input.visualEdits.length === 0 &&
@@ -1390,6 +1403,20 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
       continue
     }
     const { index, count } = op
+    if ('before' in op) {
+      if (
+        op.kind !== 'move-rows' ||
+        !isNonnegativeInteger(index) ||
+        !isNonnegativeInteger(count) ||
+        count === 0 ||
+        count > 10_000 ||
+        !isNonnegativeInteger(op.before) ||
+        (op.before >= index && op.before <= index + count)
+      ) {
+        throw new Error('Invalid workbook structural operation.')
+      }
+      continue
+    }
     if (
       !['insert-rows', 'remove-rows', 'insert-cols', 'remove-cols'].includes(String(op.kind)) ||
       !isNonnegativeInteger(index) ||

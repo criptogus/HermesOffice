@@ -2,16 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { AgentLoop } from '@hermesoffice/agent-core'
 import type { AiSettings } from '@hermesoffice/ai-provider'
-import { AiComposer, AiTypingIndicator, linkifyPaths } from '@hermesoffice/ui'
+import { AiComposer, AiTypingIndicator } from '@hermesoffice/ui'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
 import { Markdown } from '@hermesoffice/ui'
-
-// Fork: convenções do agente Hermes — invocação de skills e relatórios de documentos
-const HERMES_COMMANDS = `
-# Hermes commands
-- Skill invocation: when the user writes /<skill-name> or @<skill-name> (e.g. /board-intelligence), load that skill with skill_view (use skills_list to find it when the name is approximate) and follow its instructions for the current task. Prefer the exact match; resolve ambiguity with the closest available skill.
-- Document reports: when the user asks you to read a document (pdf/pptx/docx/xlsx) and produce a report, follow this flow: (1) read the document with hermesoffice_extract_text; (2) write the report as a new .docx with hermesoffice_docx_create; (3) open it in the app with hermesoffice_app_open_file so it opens in a new tab; (4) reply with the report file path in the chat.
-- Use these hermesoffice_* tools for file I/O even when the app-specific tools (block/page tools) are unavailable.`
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -19,6 +12,12 @@ import { createPdfSkill } from './pdf-skill'
 import { createElectronTransport } from './transport'
 import type { PdfAiDeps } from './tools'
 
+// Fork: convenções do agente Hermes — invocação de skills e relatórios de documentos
+const HERMES_COMMANDS = `
+# Hermes commands
+- Skill invocation: when the user writes /<skill-name> or @<skill-name> (e.g. /board-intelligence), load that skill with skill_view (use skills_list to find it when the name is approximate) and follow its instructions for the current task. Prefer the exact match; resolve ambiguity with the closest available skill.
+- Document reports: when the user asks you to read a document (pdf/pptx/docx/xlsx) and produce a report, follow this flow: (1) read the document with hermesoffice_extract_text; (2) write the report as a new .docx with hermesoffice_docx_create; (3) open it in the app with hermesoffice_app_open_file so it opens in a new tab; (4) reply with the report file path in the chat.
+- Use these hermesoffice_* tools for file I/O even when the app-specific tools (block/page tools) are unavailable.`
 const PANEL_WIDTH_KEY = 'pdf-ai-panel-width'
 const PANEL_WIDTH_DEFAULT = 360
 const PANEL_WIDTH_MIN = 280
@@ -47,9 +46,6 @@ interface ChatEntry {
   /** the run failed and this user message was rolled back out of the model context */
   undelivered?: boolean
   tools?: ToolActivity[]
-  /** edit state captured before this run's first mutating tool (one-click rollback) */
-  snapshot?: unknown
-  rolledBack?: boolean
 }
 
 type Phase = 'thinking' | 'replying' | 'working'
@@ -57,9 +53,12 @@ type Phase = 'thinking' | 'replying' | 'working'
 export function AiPanel({
   api,
   onCollapse,
+  preset,
 }: {
   api: PdfAiDeps
   onCollapse: () => void
+  /** Ribbon AI buttons push a one-shot prompt; a new nonce triggers an auto-run */
+  preset?: { text: string; nonce: number } | null
 }): ReactElement {
   const { lang, t } = useI18n()
   const [chat, setChat] = useState<ChatEntry[]>([])
@@ -100,7 +99,6 @@ export function AiPanel({
     const deps: PdfAiDeps = {
       doc: () => apiRef.current.doc(),
       fileName: () => apiRef.current.fileName(),
-      filePath: () => apiRef.current.filePath(),
       pageCount: () => apiRef.current.pageCount(),
       currentPage: () => apiRef.current.currentPage(),
       readOnly: () => apiRef.current.readOnly(),
@@ -109,33 +107,46 @@ export function AiPanel({
       isDeleted: (i) => apiRef.current.isDeleted(i),
       gotoPage: (p) => apiRef.current.gotoPage(p),
       addMarkup: (type, idx, rects) => apiRef.current.addMarkup(type, idx, rects),
+      editText: (input) => apiRef.current.editText(input),
+      editFonts: () => apiRef.current.editFonts(),
       formEdits: () => apiRef.current.formEdits(),
       applyFormEdit: (v) => apiRef.current.applyFormEdit(v),
       rotatePage: (idx, dir) => apiRef.current.rotatePage(idx, dir),
       deletePage: (idx) => apiRef.current.deletePage(idx),
+      pageGeom: (idx) => apiRef.current.pageGeom(idx),
+      listImages: () => apiRef.current.listImages(),
+      isImageClaimed: (ref) => apiRef.current.isImageClaimed(ref),
+      insertImage: (idx, png, rect, layer) => apiRef.current.insertImage(idx, png, rect, layer),
+      transformImage: (ref, rect, layer, quarterTurns) =>
+        apiRef.current.transformImage(ref, rect, layer, quarterTurns),
+      replaceImage: (ref, png) => apiRef.current.replaceImage(ref, png),
+      deleteImage: (ref) => apiRef.current.deleteImage(ref),
+      searchImages: (query, max) => apiRef.current.searchImages(query, max),
+      generateImage: (op) => apiRef.current.generateImage(op),
+      fetchImage: (url) => apiRef.current.fetchImage(url),
+      // Fork: capacidades do agente Hermes (leitura via engine, web search, rollback, anotações)
+      filePath: () => apiRef.current.filePath(),
       webSearch: (query, maxResults) => apiRef.current.webSearch(query, maxResults),
       captureEditState: () => apiRef.current.captureEditState(),
       restoreEditState: (state) => apiRef.current.restoreEditState(state),
-      addNote: (idx, text, at) => apiRef.current.addNote(idx, text, at),
+      addNote: (origIdx, text, at) => apiRef.current.addNote(origIdx, text, at),
       setWatermark: (cfg) => apiRef.current.setWatermark(cfg),
       setHeaderFooter: (cfg) => apiRef.current.setHeaderFooter(cfg),
-      movePage: (from, to) => apiRef.current.movePage(from, to),
+      movePage: (fromPos, toPos) => apiRef.current.movePage(fromPos, toPos),
       visiblePageCount: () => apiRef.current.visiblePageCount(),
     }
     loopRef.current = new AgentLoop({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current) + HERMES_COMMANDS,
-      captureSnapshot: () => apiRef.current.captureEditState(),
       events: {
         onText: (text) => {
           setPhase('replying')
           patchLast({ text })
         },
-        onToolExecuted: ({ call, execution, snapshotBefore }) => {
+        onToolExecuted: ({ call, execution }) => {
           setPhase('working')
           patchLast((last) => ({
-            ...(snapshotBefore !== undefined ? { snapshot: snapshotBefore } : {}),
             tools: [
               ...(last.tools ?? []),
               {
@@ -227,6 +238,12 @@ export function AiPanel({
 
   const stop = (): void => loopRef.current?.cancel()
 
+  // One-click AI actions from the ribbon (same pattern as the docs ribbon presets)
+  useEffect(() => {
+    if (preset) send(preset.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per nonce
+  }, [preset?.nonce])
+
   // Re-clamp the persisted width when the window shrinks (max is 60% of the window)
   useEffect(() => {
     const onResize = (): void => setPanelWidth((w) => clampPanelWidth(w))
@@ -287,12 +304,12 @@ export function AiPanel({
         onPointerDown={startResize}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Hermes"
+        aria-label="Genspark"
       />
       <header className="ai-panel-header">
         <span className="ai-panel-title">
-          <HermesMark size={22} />
-          Hermes
+          <GensparkMark size={22} />
+          Genspark
         </span>
         <div className="ai-panel-header-actions">
           {chat.length > 0 && (
@@ -304,12 +321,18 @@ export function AiPanel({
                 setBusy(false)
                 setChat([])
               }}
-              title={t('aiNewChat')}
+              data-tip={t('aiNewChat')}
+              aria-label={t('aiNewChat')}
             >
               <IconNewChat />
             </button>
           )}
-          <button className="ai-header-btn" onClick={onCollapse} title={t('aiCollapsePanel')}>
+          <button
+            className="ai-header-btn"
+            onClick={onCollapse}
+            data-tip={t('aiCollapsePanel')}
+            aria-label={t('aiCollapsePanel')}
+          >
             <IconCollapse />
           </button>
         </div>
@@ -356,30 +379,7 @@ export function AiPanel({
               className={`ai-msg ai-msg-assistant${entry.isError ? ' ai-msg-error' : ''}`}
             >
               {hasTools && <ToolChipList tools={entry.tools!} />}
-              {entry.text && (
-                <Markdown
-                  text={linkifyPaths(entry.text)}
-                  onLinkClick={(url) => void window.pdfApi.openPath(url)}
-                />
-              )}
-              {entry.snapshot !== undefined &&
-                (entry.rolledBack ? (
-                  <div className="ai-msg-undelivered">{t('aiRolledBack')}</div>
-                ) : (
-                  !busy && (
-                    <button
-                      className="ai-retry-btn"
-                      onClick={() => {
-                        apiRef.current.restoreEditState(entry.snapshot)
-                        setChat((prev) =>
-                          prev.map((e, j) => (j === i ? { ...e, rolledBack: true } : e)),
-                        )
-                      }}
-                    >
-                      {t('aiRollback')}
-                    </button>
-                  )
-                ))}
+              {entry.text && <Markdown text={entry.text} />}
             </div>
           )
         })}
@@ -514,14 +514,14 @@ function ToolChipList({ tools }: { tools: ToolActivity[] }) {
                     <button
                       type="button"
                       className="ai-step-title clickable"
-                      title={tool.name}
+                      data-tip={tool.name}
                       aria-expanded={isOpen}
                       onClick={() => toggle(j)}
                     >
                       {tool.summary}
                     </button>
                   ) : (
-                    <span className="ai-step-title" title={tool.name}>
+                    <span className="ai-step-title" data-tip={tool.name}>
                       {tool.summary}
                     </span>
                   )}
@@ -592,9 +592,9 @@ function IconCollapse(): ReactElement {
   )
 }
 
-/** Hermes brand mark (rounded-square sparkle badge), inline so it renders
+/** Genspark brand mark (rounded-square sparkle badge), inline so it renders
  * crisply at device resolution instead of going through <img> rasterization */
-export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element {
+export function GensparkMark({ size = 18 }: { size?: number }): React.JSX.Element {
   return (
     <svg
       width={size}
@@ -606,7 +606,7 @@ export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element 
     >
       <path
         d="M105.115 0H24.6428C11.0443 0 0 11.0686 0 24.6915V105.334C0 118.981 11.0199 130.025 24.6428 130.025H105.115C118.714 130.025 129.758 118.957 129.758 105.334V24.6915C129.758 11.0443 118.714 0 105.115 0ZM71.5201 35.2735C85.5078 33.1571 86.7729 31.9164 88.865 17.88C88.938 17.4421 89.3028 17.1259 89.7407 17.1259C90.1786 17.1259 90.5435 17.4421 90.6164 17.88C92.7328 31.8921 93.9735 33.1571 107.961 35.2735C108.399 35.3465 108.715 35.7114 108.715 36.1493C108.715 36.5871 108.399 36.952 107.961 37.025C93.9249 39.1414 92.7085 40.4064 90.5677 54.6131C90.5191 54.9537 90.2516 55.197 89.911 55.197C89.5704 55.197 89.3028 54.9537 89.2542 54.6131C87.1134 40.4064 85.5565 39.1658 71.4958 37.025C71.0579 36.952 70.7417 36.5871 70.7417 36.1493C70.7417 35.7114 71.0579 35.3465 71.4958 35.2735H71.5201ZM101.758 78.5261C101.758 78.8181 101.563 79.037 101.271 79.0856C92.3193 80.4236 91.5652 81.2264 90.2029 90.2759C90.1786 90.4948 89.9839 90.6408 89.7893 90.6408C89.5703 90.6408 89.4001 90.4948 89.3758 90.2759C88.0135 81.2507 87.0161 80.4479 78.0883 79.0856C77.7964 79.037 77.6017 78.7937 77.6017 78.5261C77.6017 78.2342 77.7964 78.0153 78.0883 77.9666C86.9918 76.6287 87.7703 75.8259 89.1326 66.898C89.1812 66.6061 89.4244 66.4115 89.692 66.4115C89.9839 66.4115 90.2028 66.6061 90.2515 66.898C91.5894 75.8259 92.3923 76.6043 101.296 77.9666C101.588 78.0153 101.782 78.2585 101.782 78.5261H101.758ZM16.5178 54.8077C16.5178 54.1023 17.0286 53.4941 17.7341 53.3968C40.1388 50.0154 42.1093 47.9963 45.4907 25.5672C45.588 24.8861 46.1961 24.3509 46.9016 24.3509C47.6071 24.3509 48.191 24.8617 48.3126 25.5672C51.694 47.9963 53.6887 50.0154 76.0691 53.3968C76.7503 53.4941 77.2855 54.1023 77.2855 54.8077C77.2855 55.5132 76.7746 56.1214 76.0691 56.2187C53.5914 59.6244 51.6696 61.6192 48.2639 84.3645C48.1909 84.8754 47.7287 85.2889 47.2179 85.2889C46.707 85.2889 46.2448 84.8997 46.1718 84.3645C42.7418 61.6435 40.2604 59.6244 17.7584 56.2187C17.0772 56.1214 16.542 55.5132 16.542 54.8077H16.5178ZM112.097 109.591C112.097 111.416 110.613 112.9 108.813 112.9H21.2614C19.4369 112.9 17.9774 111.416 17.9774 109.591V102.658C17.9774 100.834 19.4612 99.3497 21.2614 99.3497H108.813C110.637 99.3497 112.097 100.834 112.097 102.658V109.591Z"
-        fill="#000"
+        fill="currentColor"
       />
     </svg>
   )

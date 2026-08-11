@@ -91,6 +91,9 @@ const homeApi: HomeApi = {
   async newSlide(opts) {
     await ipcRenderer.invoke(HOME_CHANNELS.newSlide, opts)
   },
+  async newMarkdown(opts) {
+    await ipcRenderer.invoke(HOME_CHANNELS.newMarkdown, opts)
+  },
   async removeRecent(paths) {
     await ipcRenderer.invoke(HOME_CHANNELS.removeRecent, paths)
   },
@@ -163,10 +166,36 @@ const homeApi: HomeApi = {
   async setOnboardingSeen() {
     await ipcRenderer.invoke(HOME_CHANNELS.setOnboardingSeen)
   },
+  async getTheme() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getTheme)
+    return result === 'dark' || result === 'light' ? result : 'system'
+  },
+  async setTheme(theme) {
+    if (theme !== 'light' && theme !== 'dark' && theme !== 'system')
+      throw new Error('Invalid theme.')
+    await ipcRenderer.invoke(HOME_CHANNELS.setTheme, theme)
+  },
+  async getDefaultSaveDir() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getDefaultSaveDir)
+    return typeof result === 'string' ? result : ''
+  },
+  async pickDefaultSaveDir() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.pickDefaultSaveDir)
+    return typeof result === 'string' && result ? result : null
+  },
+  onThemeChanged(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, theme: unknown) => {
+      if (theme === 'light' || theme === 'dark' || theme === 'system') handler(theme)
+    }
+    ipcRenderer.on('app:theme-changed', listener)
+    return () => ipcRenderer.removeListener('app:theme-changed', listener)
+  },
   async openGenTeam() {
     await ipcRenderer.invoke(HOME_CHANNELS.openGenTeam)
   },
-  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
+  async openCreditUsage() {
+    await ipcRenderer.invoke(HOME_CHANNELS.openCreditUsage)
+  },
   async cloudProjectsCached() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.cloudProjectsCached)
     return asCloudProjectsSnapshot(result)
@@ -184,6 +213,7 @@ const homeApi: HomeApi = {
     if (typeof projectUrl !== 'string' || !projectUrl) throw new Error('Invalid project URL.')
     await ipcRenderer.invoke(HOME_CHANNELS.openCloudProject, projectUrl)
   },
+  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
 }
 
 function asCloudProjectsSnapshot(result: unknown): CloudProjectsSnapshot | null {
@@ -254,13 +284,16 @@ const tabsApi: TabsApi = {
   async reorder(id, toIndex) {
     await ipcRenderer.invoke(TABS_CHANNELS.reorder, id, toIndex)
   },
-  async shareActive() {
-    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
-  },
   onChanged(handler) {
     const listener = (_event: IpcRendererEvent, tabs: TabSummary[]) => handler(tabs)
     ipcRenderer.on(TABS_CHANNELS.changed, listener)
     return () => ipcRenderer.removeListener(TABS_CHANNELS.changed, listener)
+  },
+  notifyChromePressed() {
+    ipcRenderer.send(TABS_CHANNELS.chromePressed)
+  },
+  async shareActive() {
+    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
   },
 }
 

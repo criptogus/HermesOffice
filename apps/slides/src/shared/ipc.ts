@@ -9,12 +9,7 @@
  */
 import type { RenderSlide } from '@hermesoffice/pptx-render'
 import type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
-import type {
-  AiSettings,
-  AiStreamChunk,
-  AiStreamRequest,
-  GatewayAccountStatus,
-} from '@hermesoffice/ai-provider'
+import type { AiSettings, AiStreamChunk, AiStreamRequest } from '@hermesoffice/ai-provider'
 
 export type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
 
@@ -30,6 +25,9 @@ export type {
 } from '@hermesoffice/ai-provider'
 export { AI_PROVIDERS } from '@hermesoffice/ai-provider'
 export type { AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
+import type { GatewayAccountStatus } from '@hermesoffice/ai-provider'
+
+export type UiTheme = 'light' | 'dark' | 'system'
 
 export interface OpenResult {
   path: string
@@ -568,6 +566,7 @@ export interface AddSlideWithLayoutOp {
 /** Query the pptx's slideLayout list (for the new-slide dropdown panel). */
 export interface GetLayoutsResult {
   layouts: Array<{
+    /** Zip path; 'builtin:<key>' = built-in standard layout, injected into the package on first use */
     path: string
     name: string
     layoutType: string
@@ -582,6 +581,8 @@ export interface GetLayoutsResult {
       hint: string
     }>
   }>
+  /** Slide size (EMU), for normalizing the placeholder previews */
+  size: { cx: number; cy: number }
 }
 
 /** Element z-order adjustment (elements order = spTree order). */
@@ -652,6 +653,11 @@ export interface EditPictureSrcRectOp {
   sourceId: string
   /** Crop ratio per edge 0..1; null = remove the crop (full image) */
   srcRect: { l: number; t: number; r: number; b: number } | null
+  /** Crop confirm also shrinks the element frame to the on-screen crop frame; applied
+   * in the same undo step so one undo restores both frame and crop. Px relative to
+   * the fitWidthPx viewport (rotation is left unchanged). Requires fitWidthPx. */
+  boxPx?: { x: number; y: number; w: number; h: number }
+  fitWidthPx?: number
 }
 
 /** Group elements: merge ≥2 editable elements into one group. */
@@ -795,6 +801,17 @@ export interface AddImageBytesOp {
   hPx: number
   fitWidthPx: number
   name?: string
+}
+
+/** Swap a picture's backing image in place: frame, z-order, border and effects survive. */
+export interface ReplacePictureBytesOp {
+  slideIndex: number
+  sourceId: string
+  /** base64 without the data: prefix */
+  base64: string
+  ext: string
+  /** Keep the crop window — only valid when the new image shares the old one's pixel geometry (e.g. background removal) */
+  keepSrcRect?: boolean
 }
 
 /** Insert renderer-recorded media bytes (screen-recording webm etc.). */
@@ -987,6 +1004,10 @@ export interface SlidesApi {
       lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
     ) => void,
   ) => () => void
+  /** current UI theme preference (persisted by the shell in app-settings.json) */
+  getTheme: () => Promise<UiTheme>
+  /** theme switched from the shell home page */
+  onThemeChanged: (handler: (theme: UiTheme) => void) => () => void
   openPptx: (fitWidthPx: number) => Promise<OpenResult | null>
   openPptxPath: (path: string, fitWidthPx: number) => Promise<OpenResult | null>
   consumePendingOpen: (fitWidthPx: number) => Promise<OpenResult | null>
@@ -1013,7 +1034,7 @@ export interface SlidesApi {
       })
     | { error: string }
   >
-  /** Whether cloud single-page generation (gsk slide_generate) is available (HERMESOFFICE_CLOUD_SLIDE=1 + gsk login) */
+  /** Whether cloud single-page generation (gsk slide_generate) is available (GENOFFICE_CLOUD_SLIDE=1 + gsk login) */
   cloudGenStatus: () => Promise<{ enabled: boolean }>
   /** Cloud single-page generation: brief → one-slide pptx temp file; the marker goes into an htmlToPptx pagesHtml slot in place of HTML */
   cloudGeneratePage: (op: {
@@ -1139,6 +1160,10 @@ export interface SlidesApi {
   ) => Promise<
     { slide: RenderSlide; sourceId: string } | { error: 'unsupported'; ext: string } | null
   >
+  /** Swap a picture's backing image in place (frame/z-order/effects survive) */
+  replacePictureBytes: (
+    op: ReplacePictureBytesOp,
+  ) => Promise<RenderSlide | { error: 'unsupported'; ext: string } | null>
   /** Show the system dialog to pick a video/audio file and embed it into the current page */
   insertMedia: (
     slideIndex: number,
@@ -1285,10 +1310,6 @@ export interface SlidesApi {
   setAiSettings: (settings: AiSettings) => Promise<void>
   aiStream: (request: AiStreamRequest) => Promise<void>
   aiStreamCancel: (requestId: string) => Promise<void>
-  /** Hermes account status (gsk login state); with withEmail also fetches the email (needs a network request, slower) */
-  aiGatewayStatus: (withEmail?: boolean) => Promise<GatewayAccountStatus>
-  /** Open the browser to log into Hermes (fire-and-forget; aiGatewayStatus turns logged-in once done) */
-  aiGatewayLogin: () => Promise<void>
   webSearch: (
     query: string,
     maxResults?: number,
@@ -1320,7 +1341,14 @@ export interface SlidesApi {
     hPx: number
     fitWidthPx: number
   }) => Promise<{ slide: RenderSlide; sourceId: string } | null>
-  /** gsk (Hermes) AI image generation/editing, returns the image URL (error prompts login when logged out) */
+  /** Download a URL and swap it into an existing picture in place (frame/z-order/effects survive) */
+  replacePictureUrl: (op: {
+    slideIndex: number
+    sourceId: string
+    url: string
+    keepSrcRect?: boolean
+  }) => Promise<RenderSlide | null>
+  /** gsk (Genspark) AI image generation/editing, returns the image URL (error prompts login when logged out) */
   generateImage: (op: {
     prompt: string
     model?: string
@@ -1328,7 +1356,7 @@ export interface SlidesApi {
     aspectRatio?: string
     imageSize?: string
   }) => Promise<{ url?: string; error?: string }>
-  /** gsk (Hermes) media analysis: image/audio/video content understanding, returns analysis text */
+  /** gsk (Genspark) media analysis: image/audio/video content understanding, returns analysis text */
   analyzeMedia: (op: {
     mediaUrls: string[]
     requirements: string
@@ -1392,6 +1420,10 @@ export interface SlidesApi {
   onShowInk: (handler: (ev: ShowInkEvent) => void) => () => void
   /** Presenter: subscribe to navigation actions sent back by the audience window */
   onAudienceNav: (handler: (action: AudienceNavAction) => void) => () => void
+  /** Fork: Hermes gateway account status (gsk login state); withEmail also returns the email */
+  aiGatewayStatus: (withEmail?: boolean) => Promise<GatewayAccountStatus>
+  /** Fork: open the browser to log into Hermes (fire-and-forget; aiGatewayStatus turns logged-in once done) */
+  aiGatewayLogin: () => Promise<void>
 }
 
 declare global {

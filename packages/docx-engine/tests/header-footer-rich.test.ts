@@ -1,5 +1,6 @@
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
-import { parseDocx, saveDocx, TOTAL_PAGES_MARK, type SaveBlock } from '../src/index'
+import { PAGE_MARK, parseDocx, saveDocx, TOTAL_PAGES_MARK, type SaveBlock } from '../src/index'
 import { buildDocx } from './helpers/build-docx'
 
 /** rich header/footer paragraphs: save (paras) -> reparse (headerParas) round trip */
@@ -12,6 +13,22 @@ async function base() {
 }
 
 describe('rich header / footer', () => {
+  it('keeps an RTL header right-to-left and keeps its alignment side', async () => {
+    const { parsed, saveBlocks } = await base()
+    const saved = await saveDocx(parsed, saveBlocks, {
+      header: {
+        text: '',
+        paras: [
+          { bidi: true, align: 'left', runs: [{ text: 'ترويسة عربية' }] },
+          { bidi: true, runs: [{ text: 'بدون محاذاة' }] },
+        ],
+      },
+    })
+    const reparsed = await parseDocx(saved)
+    expect(reparsed.headerParas![0]).toMatchObject({ bidi: true, align: 'left' })
+    expect(reparsed.headerParas![1]?.bidi).toBe(true)
+  })
+
   it('saves multi-paragraph styled header and reparses it as headerParas', async () => {
     const { parsed, saveBlocks } = await base()
     const saved = await saveDocx(parsed, saveBlocks, {
@@ -46,7 +63,7 @@ describe('rich header / footer', () => {
     })
     const reparsed = await parseDocx(saved)
     expect(reparsed.footerHasPageNumber).toBe(true)
-    expect(reparsed.footerParas![0].runs.map((r) => r.text).join('')).toBe('第 # 页')
+    expect(reparsed.footerParas![0].runs.map((r) => r.text).join('')).toBe(`第 ${PAGE_MARK} 页`)
     const zip = await (await import('jszip')).default.loadAsync(saved)
     const names = Object.keys(zip.files).filter((n) => /word\/footer\d+\.xml/.test(n))
     const xml = await zip.file(names[0])!.async('string')
@@ -67,10 +84,59 @@ describe('rich header / footer', () => {
     const xml = await zip.file(names[0])!.async('string')
     expect(xml).toContain('<w:instrText xml:space="preserve"> NUMPAGES </w:instrText>')
     expect(xml).not.toContain(TOTAL_PAGES_MARK)
-    // Re-parse: the NUMPAGES field returns to the placeholder (no cached result lingers)
+    // Re-parse: both fields return to their placeholders (no cached result lingers)
     const reparsed = await parseDocx(saved)
     expect(reparsed.footerParas!.flatMap((p) => p.runs.map((r) => r.text)).join('')).toBe(
-      `Seite # von ${TOTAL_PAGES_MARK}`,
+      `Seite ${PAGE_MARK} von ${TOTAL_PAGES_MARK}`,
+    )
+  })
+
+  it('literal # before a PAGE field stays literal; the field parses to PAGE_MARK', async () => {
+    // regression: the footer "[Course #] | Page <PAGE field>" used to render the
+    // page number inside "[Course #]" because '#' doubled as the field marker
+    const FOOTER =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' +
+      '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p>' +
+      '<w:r><w:t xml:space="preserve">[Course #] | Page </w:t></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText>PAGE</w:instrText></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+      '<w:r><w:t>1</w:t></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+      '</w:p></w:ftr>'
+    const bytes = await buildDocx({
+      bodyXml: '<w:p><w:r><w:t>body</w:t></w:r></w:p>',
+      extraRels:
+        '<Relationship Id="rId62" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
+      extraParts: [
+        {
+          path: 'word/footer1.xml',
+          xml: FOOTER,
+          contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+        },
+      ],
+      sectPrExtra: '<w:footerReference w:type="default" r:id="rId62"/>',
+    })
+    const parsed = await parseDocx(bytes)
+    expect(parsed.footerHasPageNumber).toBe(true)
+    const line = parsed.footerParas!.flatMap((p) => p.runs.map((r) => r.text)).join('')
+    expect(line).toBe(`[Course #] | Page ${PAGE_MARK}`)
+
+    // saving the unchanged value keeps the field at its position, not at the literal '#'
+    const saveBlocks: SaveBlock[] = parsed.blocks
+      .filter((b) => !b.hidden && b.docxIndex !== null)
+      .map((b) => ({ kind: 'original', docxIndex: b.docxIndex! }))
+    const saved = await saveDocx(parsed, saveBlocks, {
+      footer: { text: parsed.footerText!, pageNumber: true, paras: parsed.footerParas! },
+    })
+    const zip = await (await import('jszip')).default.loadAsync(saved)
+    const xml = await zip.file('word/footer1.xml')!.async('string')
+    expect(xml.match(/<w:instrText[^>]*> PAGE <\/w:instrText>/g)).toHaveLength(1)
+    expect(xml).toContain('[Course #] | Page ')
+    expect(xml).not.toContain(PAGE_MARK)
+    const reparsed = await parseDocx(saved)
+    expect(reparsed.footerParas!.flatMap((p) => p.runs.map((r) => r.text)).join('')).toBe(
+      `[Course #] | Page ${PAGE_MARK}`,
     )
   })
 
@@ -172,6 +238,38 @@ describe('surgical header rewrite (real Word headers carry tables/logos)', () =>
     expect(hdr).toContain('新版页眉')
     expect(hdr).not.toContain('公司内部资料') // the text-paragraph set was replaced
   })
+
+  it('parses the header table as a cells paragraph (columns, widths, cell gap in text)', async () => {
+    const { parsed } = await richHeaderDocx()
+    const paras = parsed.headerParas!
+    expect(paras).toHaveLength(2)
+    const row = paras[0]
+    expect(row.cells).toHaveLength(2)
+    expect(row.cells![0].runs[0]).toMatchObject({ text: 'ACME 公司', bold: true })
+    expect(row.cells![1].runs[0]).toMatchObject({ text: 'Logo 占位' })
+    expect(row.cells!.map((c) => Math.round(c.widthPct!))).toEqual([50, 50])
+    expect(paras[1].runs[0].text).toBe('公司内部资料')
+    // legacy plain text separates cell texts instead of gluing them
+    expect(parsed.headerText).toBe('ACME 公司 Logo 占位 公司内部资料')
+  })
+
+  it('saving paras that include a cells paragraph keeps the table bytes and never duplicates them', async () => {
+    const { parsed, saveBlocks } = await richHeaderDocx()
+    const saved = await saveDocx(parsed, saveBlocks, {
+      header: {
+        text: '新页眉',
+        paras: [parsed.headerParas![0], { align: 'right', runs: [{ text: '新页眉' }] }],
+      },
+    })
+    const hdr = await (
+      await (await import('jszip')).default.loadAsync(saved)
+    )
+      .file('word/header1.xml')!
+      .async('string')
+    expect(hdr).toContain(HEADER_TBL)
+    expect(hdr.split('ACME 公司').length - 1).toBe(1) // table content only inside w:tbl
+    expect(hdr).toContain('新页眉')
+  })
 })
 
 describe('header edits keep image paragraphs', () => {
@@ -208,5 +306,50 @@ describe('header edits keep image paragraphs', () => {
     expect(hdr).toContain(LOGO_P) // the logo paragraph keeps its original bytes
     expect(hdr).toContain('新页眉文字')
     expect(hdr).not.toContain('旧页眉文字')
+  })
+})
+
+describe('header paragraph borders', () => {
+  const HDR_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+  /** a header whose side borders are reset with w:val="nil", as a style-level reset writes them */
+  async function withNilBorderHeader() {
+    const bytes = await buildDocx({
+      bodyXml: '<w:p><w:r><w:t>body</w:t></w:r></w:p>',
+      sectPrExtra: '<w:headerReference w:type="default" r:id="rIdHdr"/>',
+      extraRels:
+        '<Relationship Id="rIdHdr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>',
+      extraParts: [
+        {
+          path: 'word/header1.xml',
+          xml:
+            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr ${HDR_NS}>` +
+            '<w:p><w:pPr><w:pBdr><w:top w:val="nil"/><w:left w:val="nil"/><w:right w:val="nil"/>' +
+            '<w:bottom w:val="single" w:sz="18" w:color="4472C4"/></w:pBdr></w:pPr>' +
+            '<w:r><w:t>Quarterly report</w:t></w:r></w:p></w:hdr>',
+          contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
+        },
+      ],
+    })
+    return parseDocx(bytes)
+  }
+
+  it('does not read a nil side as a border', async () => {
+    const parsed = await withNilBorderHeader()
+    expect(parsed.headerParas?.[0]?.borders).toBe('b')
+  })
+
+  it('does not stamp rules the header never had when it is saved back', async () => {
+    const parsed = await withNilBorderHeader()
+    const blocks: SaveBlock[] = [{ kind: 'original', docxIndex: parsed.blocks[0].docxIndex! }]
+    const saved = await saveDocx(parsed, blocks, {
+      header: { text: '', paras: parsed.headerParas ?? [] },
+    })
+    const header = await (await JSZip.loadAsync(saved)).file('word/header1.xml')!.async('text')
+    const pBdr = /<w:pBdr>[\s\S]*?<\/w:pBdr>/.exec(header)?.[0] ?? ''
+    expect(pBdr).toContain('<w:bottom ')
+    for (const side of ['<w:top ', '<w:left ', '<w:right ']) {
+      expect(pBdr).not.toContain(side)
+    }
   })
 })

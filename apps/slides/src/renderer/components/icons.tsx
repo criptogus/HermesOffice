@@ -2003,13 +2003,46 @@ export function HermesMark({ size = 30 }: { size?: number }) {
       aria-hidden
     >
       <defs>
-        <linearGradient id="hermes-mark-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+        <linearGradient
+          id="hermes-mark-grad"
+          x1="0"
+          y1="0"
+          x2="24"
+          y2="24"
+          gradientUnits="userSpaceOnUse"
+        >
           <stop stopColor="#6E4FF6" />
           <stop offset="1" stopColor="#2DD4BF" />
         </linearGradient>
       </defs>
       <rect x="0.75" y="0.75" width="22.5" height="22.5" rx="6" fill="url(#hermes-mark-grad)" />
-      <path d="M7.25 6.25v11.5M16.75 6.25v11.5M7.25 12h9.5" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" />
+      <path
+        d="M7.25 6.25v11.5M16.75 6.25v11.5M7.25 12h9.5"
+        stroke="#ffffff"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
     </svg>
+  )
+}
+
+export function IconRemoveBg(props: IconProps) {
+  return (
+    <Svg {...props}>
+      {/* dashed selection frame, top-right corner open for the sparkle */}
+      <path
+        d="M 15.3 5.6 H 6.8 a 2.4 2.4 0 0 0 -2.4 2.4 v 8.6 a 2.4 2.4 0 0 0 2.4 2.4 h 10.4 a 2.4 2.4 0 0 0 2.4 -2.4 V 9.8"
+        strokeDasharray="2.7 2.05"
+      />
+      {/* photo subject: sun + mountains */}
+      <circle cx={9.4} cy={9.8} r={1.5} />
+      <path d="M 6.3 16.4 l 3.1 -3.5 2.5 2.7 1.9 -2.1 3.4 2.9" />
+      {/* sparkle */}
+      <path
+        d="M 18.9 3.4 l 0.78 2.12 2.12 0.78 -2.12 0.78 -0.78 2.12 -0.78 -2.12 -2.12 -0.78 2.12 -0.78 z"
+        fill="currentColor"
+        stroke="none"
+      />
+    </Svg>
   )
 }

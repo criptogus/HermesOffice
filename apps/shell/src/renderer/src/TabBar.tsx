@@ -78,12 +78,23 @@ function SlideIcon() {
   )
 }
 
+function MarkdownIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 240 240" fill="none" aria-hidden="true">
+      <rect width="240" height="240" rx="48" fill="#7C3AED" />
+      <path d="M52 168V96H76L96 122L116 96H140V168H118V128L96 154L74 128V168H52Z" fill="#fff" />
+      <path d="M168 92H184V130H198L176 170L154 130H168V92Z" fill="#fff" />
+    </svg>
+  )
+}
+
 const KIND_ICON: Record<TabSummary['kind'], ReactElement> = {
   home: <HomeIcon />,
   docs: <DocIcon />,
   sheets: <SheetIcon />,
   slides: <SlideIcon />,
   pdf: <PdfIcon />,
+  markdown: <MarkdownIcon />,
 }
 
 export function TabBar() {
@@ -146,6 +157,14 @@ export function TabBar() {
   useEffect(() => {
     void window.aiOfficeTabs.list().then(setTabs)
     return window.aiOfficeTabs.onChanged(setTabs)
+  }, [])
+
+  // document tabs are sibling WebContentsViews: they see neither this press
+  // nor a focus change, so relay it for them to dismiss open popovers
+  useEffect(() => {
+    const notify = (): void => window.aiOfficeTabs.notifyChromePressed?.()
+    document.addEventListener('pointerdown', notify, true)
+    return () => document.removeEventListener('pointerdown', notify, true)
   }, [])
 
   // if the dragged tab is closed mid-drag (e.g. Cmd+W) its element unmounts
@@ -301,6 +320,7 @@ export function TabBar() {
                 <button
                   className="tab-close"
                   title={t('closeTab')}
+                  aria-label={t('closeTab')}
                   onClick={(event) => {
                     event.stopPropagation()
                     void window.aiOfficeTabs.close(tab.id)
@@ -315,6 +335,7 @@ export function TabBar() {
         <button
           className="tab-new-btn"
           title={t('newTab')}
+          aria-label={t('newTab')}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect()
             void window.aiOfficeTabs.showNewMenu(Math.round(rect.left), Math.round(rect.bottom))
@@ -335,6 +356,7 @@ export function TabBar() {
       <button
         className="tab-overflow-btn"
         title={t('tabList')}
+        aria-label={t('tabList')}
         onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect()
           void window.aiOfficeTabs.showMenu(Math.round(rect.left), Math.round(rect.bottom))

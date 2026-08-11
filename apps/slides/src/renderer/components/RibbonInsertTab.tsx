@@ -34,7 +34,14 @@ import {
   IconZoomJump,
 } from './icons'
 import { saveEditSelection } from '../TextEditOverlay'
-import { BIG, Group, RbCaret, closeSiblingPanels, type RibbonTabCtx } from './ribbon-shared'
+import {
+  BIG,
+  Group,
+  LayoutList,
+  RbCaret,
+  closeSiblingPanels,
+  type RibbonTabCtx,
+} from './ribbon-shared'
 
 export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
   const {
@@ -44,6 +51,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
     hasDoc,
     hasSelection,
     layouts,
+    layoutSize,
     onAddSlide,
     onAddSlideWithLayout,
     onInsert,
@@ -87,13 +95,13 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
             className="rb-big"
             disabled={!hasDoc}
             onClick={onAddSlide}
-            title={t('ribbonNewSlideTip')}
+            data-tip={t('ribbonNewSlideTip')}
           >
             <span className="rb-big-icon">
               <IconNewSlide size={BIG} />
               <span
                 className={`rb-caret-hit${layoutOpen ? ' active' : ''}`}
-                title={t('ribbonChooseLayout')}
+                data-tip={t('ribbonChooseLayoutNew')}
                 onMouseDown={(e) => {
                   e.stopPropagation()
                   closeSiblingPanels(e, closePanels, 'layout')
@@ -110,52 +118,15 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           </button>
           {layoutOpen && (
             <div className="rb-drop rb-layout-panel" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="rb-drop-title">{t('ribbonChooseLayout')}</div>
-              <div className="rb-layout-list">
-                {(layouts ?? []).map((lay) => (
-                  <button
-                    key={lay.path}
-                    className="rb-layout-item"
-                    onClick={() => {
-                      setLayoutOpen(false)
-                      onAddSlideWithLayout(lay.path)
-                    }}
-                    title={lay.name}
-                  >
-                    <div className="rb-layout-preview">
-                      {lay.placeholders.map((ph, i) => {
-                        const S = 120,
-                          H = 68
-                        const EMU = 9144000
-                        const EMU_H = 5143500
-                        const x = Math.round((ph.x / EMU) * S)
-                        const y = Math.round((ph.y / EMU_H) * H)
-                        const w = Math.max(8, Math.round((ph.cx / EMU) * S))
-                        const h = Math.max(6, Math.round((ph.cy / EMU_H) * H))
-                        return (
-                          <div
-                            key={i}
-                            className="rb-layout-ph"
-                            style={{ left: x, top: y, width: w, height: h }}
-                          >
-                            <span>
-                              {ph.type === 'title' || ph.type === 'ctrTitle'
-                                ? 'T'
-                                : ph.type === 'body' || ph.type === 'obj'
-                                  ? '≡'
-                                  : ''}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div className="rb-layout-name">{lay.name}</div>
-                  </button>
-                ))}
-                {(layouts ?? []).length === 0 && (
-                  <div className="rb-layout-empty">{t('ribbonNoLayouts')}</div>
-                )}
-              </div>
+              <div className="rb-drop-title">{t('ribbonChooseLayoutNew')}</div>
+              <LayoutList
+                layouts={layouts}
+                size={layoutSize}
+                onPick={(path) => {
+                  setLayoutOpen(false)
+                  onAddSlideWithLayout(path)
+                }}
+              />
             </div>
           )}
         </div>
@@ -166,7 +137,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           <button
             className={`rb-big ${tableOpen ? 'active' : ''}`}
             disabled={!hasDoc}
-            title={t('ribbonInsertTableTip')}
+            data-tip={t('ribbonInsertTableTip')}
             onMouseDown={(e) => {
               e.stopPropagation()
               closeSiblingPanels(e, closePanels, 'table')
@@ -246,7 +217,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={onInsertImage}
-          title={t('ribbonPictureTip')}
+          data-tip={t('ribbonPictureTip')}
         >
           <span className="rb-big-icon">
             <IconPicture size={BIG} />
@@ -265,7 +236,8 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
                   key={c}
                   className={`rb-swatch ${iconColor === c ? 'on' : ''}`}
                   style={{ background: c }}
-                  title={c}
+                  data-tip={c}
+                  aria-label={c}
                   onClick={() => setIconColor(c)}
                 />
               ))}
@@ -275,7 +247,8 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
                 <button
                   key={def.name}
                   className="rb-icon-cell"
-                  title={def.name}
+                  data-tip={def.name}
+                  aria-label={def.name}
                   onClick={() => {
                     setInsertDrop(null)
                     onInsertIcon(def, iconColor)
@@ -301,7 +274,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={onInsertModel3d}
-          title={t('ribbon3dModelTip')}
+          data-tip={t('ribbon3dModelTip')}
         >
           <span className="rb-big-icon">
             <Icon3d size={BIG} />
@@ -325,7 +298,8 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
                     <button
                       key={s.prst}
                       className="rb-shape-cell"
-                      title={s.label}
+                      data-tip={s.label}
+                      aria-label={s.label}
                       onClick={() => {
                         setInsertDrop(null)
                         onPickShape(s.prst as InsertKind)
@@ -433,7 +407,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={onNewComment}
-          title={t('ribbonNewCommentTip')}
+          data-tip={t('ribbonNewCommentTip')}
         >
           <span className="rb-big-icon">
             <IconComment size={BIG} />
@@ -447,7 +421,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={() => onInsert('textbox')}
-          title={t('ribbonInsertTextBoxTip')}
+          data-tip={t('ribbonInsertTextBoxTip')}
         >
           <span className="rb-big-icon">
             <IconTextBox size={BIG} />
@@ -464,7 +438,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
               <button
                 key={p.id}
                 className="rb-wordart-cell"
-                title={t(p.nameKey as StringKey)}
+                data-tip={t(p.nameKey as StringKey)}
                 style={{
                   color: p.fill,
                   WebkitTextStroke: p.outline
@@ -487,7 +461,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={onOpenHeaderFooter}
-          title={t('ribbonHeaderFooterTip')}
+          data-tip={t('ribbonHeaderFooterTip')}
         >
           <span className="rb-big-icon">
             <IconFooter size={BIG} />
@@ -498,7 +472,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={() => onInsertField('datetime')}
-          title={t('ribbonDateTimeTip')}
+          data-tip={t('ribbonDateTimeTip')}
         >
           <span className="rb-big-icon">
             <IconDateTime size={BIG} />
@@ -509,7 +483,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={() => onInsertField('slidenum')}
-          title={t('ribbonSlideNumberTip')}
+          data-tip={t('ribbonSlideNumberTip')}
         >
           <span className="rb-big-icon">
             <IconPageNumber size={BIG} />
@@ -523,7 +497,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={onOpenEquation}
-          title={t('ribbonEquationTip')}
+          data-tip={t('ribbonEquationTip')}
         >
           <span className="rb-big-icon">
             <IconEquation size={BIG} />
@@ -537,7 +511,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={() => onInsertMedia('video')}
-          title={t('ribbonVideoTip')}
+          data-tip={t('ribbonVideoTip')}
         >
           <span className="rb-big-icon">
             <IconVideo size={BIG} />
@@ -548,7 +522,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className="rb-big"
           disabled={!hasDoc}
           onClick={() => onInsertMedia('audio')}
-          title={t('ribbonAudioTip')}
+          data-tip={t('ribbonAudioTip')}
         >
           <span className="rb-big-icon">
             <IconAudio size={BIG} />
@@ -559,7 +533,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           className={`rb-big ${recording ? 'active rb-recording' : ''}`}
           disabled={!hasDoc}
           onClick={onToggleScreenRecord}
-          title={recording ? t('ribbonStopRecTip') : t('ribbonScreenRecTip')}
+          data-tip={recording ? t('ribbonStopRecTip') : t('ribbonScreenRecTip')}
         >
           <span className="rb-big-icon">
             <IconScreenRec size={BIG} />
