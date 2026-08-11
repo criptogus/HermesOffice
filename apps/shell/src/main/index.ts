@@ -2091,30 +2091,19 @@ function registerHomeIpc(): void {
   // Fork: signed-in means the local Hermes gateway is reachable — no remote
   // account, no gsk CLI. The health endpoint answers {status, version}.
   ipcMain.handle(HOME_CHANNELS.accountStatus, async () => {
-    ipcMain.handle(HOME_CHANNELS.accountStatus, async () => {
-      try {
-        const ctrl = new AbortController()
-        const t = setTimeout(() => ctrl.abort(), 1500)
-        const resp = await fetch('http://127.0.0.1:8642/health', { signal: ctrl.signal })
-        clearTimeout(t)
-        if (resp.ok) {
-          const json = await resp.json().catch(() => null)
-          return { loggedIn: true, email: `Hermes ${json?.version ?? ''}`.trim() }
-        }
-        return { loggedIn: false }
-      } catch {
-        return { loggedIn: false }
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 1500)
+      const resp = await fetch('http://127.0.0.1:8642/health', { signal: ctrl.signal })
+      clearTimeout(t)
+      if (resp.ok) {
+        const json = await resp.json().catch(() => null)
+        return { loggedIn: true, email: `Hermes ${json?.version ?? ''}`.trim() }
       }
-    })
-
-    // Fork: sem fluxo de login em browser — o "login" apenas re-checa o gateway
-    ipcMain.handle(HOME_CHANNELS.accountLogin, async () => {
-      return null
-    })
-
-    ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-      // Fork: no remote login flow, nothing to open
-    })
+      return { loggedIn: false }
+    } catch {
+      return { loggedIn: false }
+    }
   })
 
   // Fork: sem fluxo de login em browser — o "login" apenas re-checa o gateway
@@ -2130,7 +2119,6 @@ function registerHomeIpc(): void {
     // Fork: não há conta remota para encerrar sessão; só limpa o cache local
     clearCloudProjectsStore(cloudProjectsStorePath())
   })
-
   ipcMain.handle(HOME_CHANNELS.getAppVersion, (): string => app.getVersion())
 
   ipcMain.handle(HOME_CHANNELS.recents, (_event, query: unknown): RecentPage =>
