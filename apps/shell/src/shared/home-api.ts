@@ -130,37 +130,11 @@ export interface HomeApi {
   openCreditUsage(): Promise<void>
   /** Probe the local Hermes gateway's /health (fork onboarding) */
   hermesStatus(): Promise<'ok' | 'offline'>
-  /** locally stored full cloud project list (instant; null when no store or logged out) */
-  cloudProjectsCached(): Promise<CloudProjectsSnapshot | null>
-  /** sync the full list from Genspark and return it (1 request when nothing changed); null when the sync failed */
-  cloudProjectsSync(): Promise<CloudProjectsSnapshot | null>
-  /** open a cloud project (relative '/agents?id=...' URL) in the default browser */
-  openCloudProject(projectUrl: string): Promise<void>
 }
 
 export type CloudProjectKind = 'docs' | 'sheets' | 'slides'
 
-/** a Genspark web project shown in the home cloud section */
-export interface CloudProjectEntry {
-  projectId: string
-  title: string
-  /** module kind derived from the API project type ('docs_agent' → 'docs') */
-  kind: CloudProjectKind | 'other'
-  /** creation time, ms since epoch (0 when unparsable) */
-  ctimeMs: number
-  /** relative genspark.ai URL ('/agents?id=...') */
-  projectUrl: string
-}
-
 /** full local copy of the cloud project list; filtering/paging are client-side */
-export interface CloudProjectsSnapshot {
-  /** false when gsk is unavailable (CLI missing or not logged in) */
-  available: boolean
-  /** all projects, newest first */
-  projects: CloudProjectEntry[]
-  /** ms epoch of the last successful sync (0 when never synced) */
-  syncedAt: number
-}
 
 export interface AccountStatus {
   /** gsk is installed and logged in */
@@ -261,9 +235,6 @@ export const HOME_CHANNELS = {
   openGenTeam: 'home:open-genteam',
   openCreditUsage: 'home:open-credit-usage',
   hermesStatus: 'home:hermes-status',
-  cloudProjects: 'home:cloud-projects',
-  cloudProjectsCached: 'home:cloud-projects-cached',
-  openCloudProject: 'home:open-cloud-project',
 } as const
 
 export const PROJECT_CHANNELS = {

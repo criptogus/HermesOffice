@@ -58,12 +58,6 @@ import {
   windowMenuTemplate,
 } from '@hermesoffice/electron-utils'
 import { readAppSettings, writeAppSetting } from './app-settings'
-import {
-  clearCloudProjectsStore,
-  cloudProjectExternalUrl,
-  readCloudProjectsStore,
-  syncCloudProjects,
-} from './cloud-projects'
 import { ProjectStore } from '@hermesoffice/project-store'
 import {
   buildTarget,
@@ -2117,7 +2111,6 @@ function registerHomeIpc(): void {
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {
     // Fork: não há conta remota para encerrar sessão; só limpa o cache local
-    clearCloudProjectsStore(cloudProjectsStorePath())
   })
   ipcMain.handle(HOME_CHANNELS.getAppVersion, (): string => app.getVersion())
 
@@ -2384,19 +2377,6 @@ function registerHomeIpc(): void {
     shell.openExternal(CREDIT_USAGE_URL).catch(() => {
       // no browser handler available; nothing actionable for the user here
     })
-  })
-
-  const cloudProjectsStorePath = () => join(app.getPath('userData'), 'cloud-projects.json')
-
-  ipcMain.handle(HOME_CHANNELS.cloudProjectsCached, () =>
-    readCloudProjectsStore(cloudProjectsStorePath()),
-  )
-
-  ipcMain.handle(HOME_CHANNELS.cloudProjects, () => syncCloudProjects(cloudProjectsStorePath()))
-
-  ipcMain.handle(HOME_CHANNELS.openCloudProject, (_event, projectUrl: unknown) => {
-    const url = cloudProjectExternalUrl(projectUrl)
-    if (url) void shell.openExternal(url)
   })
 }
 
