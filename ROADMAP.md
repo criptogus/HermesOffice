@@ -33,7 +33,7 @@ plan, draft, verify and polish together.
 - **Value is migrating to the agent-tooling layer.** Office suites are
   commoditizing; MCP (Model Context Protocol) has become the de facto standard
   for agent-tool interoperability across major agent platforms. The category
-  being defined today is "the office where *any* agent works" — and the first
+  being defined today is "the office where _any_ agent works" — and the first
   MCP-native office gets to shape it.
 - **Incumbents are bolting copilots onto proprietary walls.** That leaves the
   open-standards lane open: `.docx`/`.xlsx`/`.pptx` on disk, any agent in,
@@ -98,18 +98,18 @@ layer instead of re-engineering engines.
 
 ## Now — Phase 1 · Trusted Foundation
 
-> **Outcome:** *Enable anyone to install and evaluate HermesOffice in minutes —
+> **Outcome:** _Enable anyone to install and evaluate HermesOffice in minutes —
 > signed releases, a green codebase, clear docs — so the community can adopt,
-> test and contribute with confidence.*
+> test and contribute with confidence._
 
-| Initiative | Why (outcome) | Status |
-|---|---|---|
-| Signed releases (macOS + Windows) | Install without "unknown developer" friction | 🔜 in progress |
-| CI as a real gate (format, lint, typecheck, tests, licenses, OSV) | Every PR lands on a green, verified main | ✅ restored (Aug 2026) |
-| Public issue templates + labels (`good-first-issue`, `help-wanted`, `agent-integration`, `collaboration`, `quality`) | Community can find where to help | 🔜 planned |
-| Contribution guide matching the real merge flow | First PR is a 10-minute experience, not a mystery | 🔜 planned |
-| Hermes integration hardening (provider config, health checks, session continuity, error UX) | The agent brain "just works" on every machine | 🔄 health checks + session continuity shipped; error UX pending |
-| Security posture documentation + dependency scanning in CI | Users and companies can trust the install | 🔜 planned |
+| Initiative                                                                                                           | Why (outcome)                                     | Status                                                          |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| Signed releases (macOS + Windows)                                                                                    | Install without "unknown developer" friction      | 🔜 in progress                                                  |
+| CI as a real gate (format, lint, typecheck, tests, licenses, OSV)                                                    | Every PR lands on a green, verified main          | ✅ restored (Aug 2026)                                          |
+| Public issue templates + labels (`good-first-issue`, `help-wanted`, `agent-integration`, `collaboration`, `quality`) | Community can find where to help                  | 🔜 planned                                                      |
+| Contribution guide matching the real merge flow                                                                      | First PR is a 10-minute experience, not a mystery | 🔜 planned                                                      |
+| Hermes integration hardening (provider config, health checks, session continuity, error UX)                          | The agent brain "just works" on every machine     | 🔄 health checks + session continuity shipped; error UX pending |
+| Security posture documentation + dependency scanning in CI                                                           | Users and companies can trust the install         | 🔜 planned                                                      |
 
 **Exit criteria:** a new user goes from download to first agent-assisted
 document in under 10 minutes; CI stays green ≥95% of days; ≥5 external
@@ -117,14 +117,14 @@ contributions merged.
 
 ### Track — Trusted Agent Actions
 
-> **Outcome:** *The agent stops being a chat guest and becomes an auditable,
+> **Outcome:** _The agent stops being a chat guest and becomes an auditable,
 > approvable collaborator in every app — before any networked collaboration
-> exists.*
+> exists._
 
-| Initiative | Why (outcome) | Status |
-|---|---|---|
+| Initiative                      | Why (outcome)                                                                                                                                                                          | Status    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | Unified trust model across apps | Every mutation becomes a visible, reversible proposal — the Sheets `propose_operations` gold standard extended to Docs, Slides and PDF through one `Proposed Change` contract (RFC #8) | 💡 design |
-| Agent authorship | Accepted changes are signed in the OOXML (comment or revision) with agent identity + timestamp + reasoning — the audit base for Phase 3 | 💡 ideas |
+| Agent authorship                | Accepted changes are signed in the OOXML (comment or revision) with agent identity + timestamp + reasoning — the audit base for Phase 3                                                | 💡 ideas  |
 
 **Exit criteria:** "rewrite section 3 with the data from the attached sheet"
 produces a clean diff, the user accepts, and the change is recorded as
@@ -134,64 +134,64 @@ agent-authored — in Docs, Slides and PDF, not just Sheets.
 
 ## Next — Phase 2 · Value Loops
 
-> **Outcome:** *A user goes from raw material (meeting audio, a report, a
+> **Outcome:** _A user goes from raw material (meeting audio, a report, a
 > brief) to a complete deliverable (minutes, proposal, deck) in one session —
-> with every agent change visible and reversible.*
+> with every agent change visible and reversible._
 
 Phase 2 reorders the original "Agent-Native Office" plan around **complete
 vertical loops** instead of horizontal agent infrastructure. The test for
-every initiative: *does the user close the loop in a single session?* If not,
+every initiative: _does the user close the loop in a single session?_ If not,
 it waits. Loop-first is also the business case: each loop is a retention
 story the user feels daily.
 
-| Initiative | Why (outcome) | Status |
-|---|---|---|
-| **Templates: "New from template…"** | Instant value on first open — board minutes, proposal, report, invoice; attacks the Phase 1 ten-minute exit criterion | 🔄 in progress (invoice generator, PR #48) |
-| **Live meeting minutes** | The killer app for privacy-sensitive work: board-level, CISO-grade conversations never leave the machine; output is a real `.docx` (see spotlight below) | 💡 design — **keystone demo of the phase** |
-| **Report → Deck (cross-generation)** | The highest-frequency professional task: numbers/report in, board-ready deck out — one pipeline across engines, not one giant prompt | 💡 design (pulled forward from Phase 4) |
+| Initiative                                    | Why (outcome)                                                                                                                                                                                                                                                                                                                         | Status                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Templates: "New from template…"**           | Instant value on first open — board minutes, proposal, report, invoice; attacks the Phase 1 ten-minute exit criterion                                                                                                                                                                                                                 | 🔄 in progress (invoice generator, PR #48)                  |
+| **Live meeting minutes**                      | The killer app for privacy-sensitive work: board-level, CISO-grade conversations never leave the machine; output is a real `.docx` (see spotlight below)                                                                                                                                                                              | 💡 design — **keystone demo of the phase**                  |
+| **Report → Deck (cross-generation)**          | The highest-frequency professional task: numbers/report in, board-ready deck out — one pipeline across engines, not one giant prompt                                                                                                                                                                                                  | 💡 design (pulled forward from Phase 4)                     |
 | **Embedded MCP server per app — P0 keystone** | Expose the same tools as the AI panel (`read_blocks`, `replace_blocks`, `propose_operations`, slides/pdf tools) to any MCP agent — Hermes, Claude Code, whatever the community plugs in; every external mutation goes through the same proposed-change pipeline, gated by an approval policy for headless agents (approval-model RFC) | 💡 design — **the spine, built in parallel with the loops** |
-| Unified Proposed Change (RFC #8) | Every mutation in Docs, Slides and PDF becomes a visible, reversible proposal — the Sheets gold standard, extended (spike validated on Slides) | 💡 design |
-| **Document health check** | The agent cross-checks the document against its sources — *"these numbers don't match the attached sheet"* — always as a proposal, never a mutation; the trust win that sells the suite | 💡 ideas (new) |
-| **Deliverable pack** | Export the finished artifact (minutes, deck, report) to PDF or zip with attachments, ready to send — the loop's closing step | 💡 ideas (new) |
-| **Side-effect actions (light)** | The loop closes *after* the deliverable: create task, send follow-up, file to KB — with an explicit permission model | 💡 ideas |
-| Full-document context | The agent reads the whole project (document + related files) via Hermes memory/RAG, not just the visible page | 💡 design — enablement for the loops |
-| Project memory | Per-document conversation, decisions and state stored in Hermes sessions; resume from any machine | 🔄 in progress (session continuity shipped) |
-| Project document graph | `project-store` becomes the agent-native typed layer: document properties, cross-document references, status — never inside the OOXML (byte-preserving); value compounds as templates grow | 💡 design |
-| Artifact generation | The agent produces real files (tables, slides, briefs) into the project, editable by humans | 💡 ideas (subsumed by the loops) |
-| Role-based agents per document | `@writer`, `@researcher`, `@reviewer`, `@data` — Hermes skills as office roles, invoked like teammates | 💡 ideas (late in phase) |
-| Runtime plugin system | Evolve `AgentSkill` from compile-time to dynamic loading with a manifest and declared permissions (which tools, which scopes) | 💡 ideas (deferred) |
+| Unified Proposed Change (RFC #8)              | Every mutation in Docs, Slides and PDF becomes a visible, reversible proposal — the Sheets gold standard, extended (spike validated on Slides)                                                                                                                                                                                        | 💡 design                                                   |
+| **Document health check**                     | The agent cross-checks the document against its sources — _"these numbers don't match the attached sheet"_ — always as a proposal, never a mutation; the trust win that sells the suite                                                                                                                                               | 💡 ideas (new)                                              |
+| **Deliverable pack**                          | Export the finished artifact (minutes, deck, report) to PDF or zip with attachments, ready to send — the loop's closing step                                                                                                                                                                                                          | 💡 ideas (new)                                              |
+| **Side-effect actions (light)**               | The loop closes _after_ the deliverable: create task, send follow-up, file to KB — with an explicit permission model                                                                                                                                                                                                                  | 💡 ideas                                                    |
+| Full-document context                         | The agent reads the whole project (document + related files) via Hermes memory/RAG, not just the visible page                                                                                                                                                                                                                         | 💡 design — enablement for the loops                        |
+| Project memory                                | Per-document conversation, decisions and state stored in Hermes sessions; resume from any machine                                                                                                                                                                                                                                     | 🔄 in progress (session continuity shipped)                 |
+| Project document graph                        | `project-store` becomes the agent-native typed layer: document properties, cross-document references, status — never inside the OOXML (byte-preserving); value compounds as templates grow                                                                                                                                            | 💡 design                                                   |
+| Artifact generation                           | The agent produces real files (tables, slides, briefs) into the project, editable by humans                                                                                                                                                                                                                                           | 💡 ideas (subsumed by the loops)                            |
+| Role-based agents per document                | `@writer`, `@researcher`, `@reviewer`, `@data` — Hermes skills as office roles, invoked like teammates                                                                                                                                                                                                                                | 💡 ideas (late in phase)                                    |
+| Runtime plugin system                         | Evolve `AgentSkill` from compile-time to dynamic loading with a manifest and declared permissions (which tools, which scopes)                                                                                                                                                                                                         | 💡 ideas (deferred)                                         |
 
 **Sequencing:** the phase opens with the cheapest loop (templates, already in
-flight), then the keystone demo — *a 45-minute meeting ends with a complete,
+flight), then the keystone demo — _a 45-minute meeting ends with a complete,
 local minutes document, decisions and action items with owners, captured
-without note-taking* — then Report → Deck. The MCP server builds in parallel
+without note-taking_ — then Report → Deck. The MCP server builds in parallel
 as the spine: everything the agent does through the AI panel becomes doable
 by any external agent, through the same trust pipeline. One demo that changes
 minds beats nine features in parallel.
 
-**Exit criteria:** a user can say *"prepare the Q3 board deck from these
-numbers"* and review an agent-produced, fully editable deck; a 45-minute
+**Exit criteria:** a user can say _"prepare the Q3 board deck from these
+numbers"_ and review an agent-produced, fully editable deck; a 45-minute
 meeting ends with complete local minutes; ≥70% of agent mutations accepted
 vs reverted.
 
 ### Spotlight — Live meeting minutes (Granola-style, local-first)
 
-> **Outcome:** *Enable users to turn any meeting running on their machine into
+> **Outcome:** _Enable users to turn any meeting running on their machine into
 > a live, structured `.docx` minutes document — decisions, action items and
 > owners captured as they happen — so nobody takes notes manually and
-> follow-ups are never lost.*
+> follow-ups are never lost._
 
 The defining difference vs. cloud note-takers (Granola, Otter, Fireflies):
 **nothing leaves your machine.** Board-level, CISO-grade conversations stay
 local, and the output is a real `.docx` — not a proprietary format.
 
-| Block | How |
-|---|---|
-| **System audio capture** | macOS: ScreenCaptureKit (macOS 13+, captures the meeting app's audio — Zoom/Meet/Teams — no loopback driver). Windows later: WASAPI loopback |
-| **STT** | Hermes native STT (faster-whisper, `local` provider — already the Hermes default, no API key); `small`/`medium` model for meeting quality |
+| Block                    | How                                                                                                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **System audio capture** | macOS: ScreenCaptureKit (macOS 13+, captures the meeting app's audio — Zoom/Meet/Teams — no loopback driver). Windows later: WASAPI loopback                                                                                  |
+| **STT**                  | Hermes native STT (faster-whisper, `local` provider — already the Hermes default, no API key); `small`/`medium` model for meeting quality                                                                                     |
 | **Streaming summarizer** | The Hermes agent ingests transcript chunks, holds meeting context (per-session memory), and emits incremental structured notes: participants, topics, **decisions, action items, owners, deadlines** — Granola-style template |
-| **Live rendering** | The minutes docx is open in HermesOffice Docs; the existing byte-preserving paragraph-patch engine updates each section (Decisions, Action Items) incrementally — no full rewrites, no layout breakage |
-| **Post-meeting** | The agent finalizes the minutes, then *acts*: creates follow-up tasks, files the summary into a knowledge base, drafts the follow-up email |
+| **Live rendering**       | The minutes docx is open in HermesOffice Docs; the existing byte-preserving paragraph-patch engine updates each section (Decisions, Action Items) incrementally — no full rewrites, no layout breakage                        |
+| **Post-meeting**         | The agent finalizes the minutes, then _acts_: creates follow-up tasks, files the summary into a knowledge base, drafts the follow-up email                                                                                    |
 
 **Exit criteria:** a 45-minute meeting ends with a complete minutes document in
 `.docx` — decisions and action items with owners — captured without manual
@@ -201,21 +201,21 @@ note-taking; summary sections land within ~30s of each topic.
 
 ## Later — Phase 3 · Human + Agent Collaboration (online)
 
-> **Outcome:** *Enable teams of people and agents to work in the same project
+> **Outcome:** _Enable teams of people and agents to work in the same project
 > in real time, with Hermes as the collaboration server — so mixed human-agent
-> teams ship documents faster without losing human control.*
+> teams ship documents faster without losing human control._
 
 This is the defining bet: collaboration without a proprietary cloud. **Hermes
 runs the server** (identity, sessions, agents); HermesOffice clients sync.
 
-| Initiative | Why (outcome) | Status |
-|---|---|---|
-| Shared projects | Invite people **and agents** to a project; Hermes gateway provides identity and sessions | 💡 design |
-| Presence & activity | See who — human or agent — is working where, with auditable actions | 💡 ideas |
-| Collaborative editing (staged) | (a) shared workspace with per-block locks, then (b) real-time co-editing (CRDT) layered on byte-preserving engines | 🔬 exploration |
-| Agents as participants | `@agent` in a shared doc: the agent observes state and acts (edit, summarize, answer) — visible and auditable | 💡 ideas |
-| Live meetings as collaborative projects | A meeting is the first shared project: humans *and* agents co-participate, the minutes docx is the shared artifact (Phase 2 spotlight) | 💡 design |
-| Office as MCP tools | Hermes can work on documents from any channel (Telegram, CLI, web) — the office exposed as tools the agent already knows | 💡 ideas |
+| Initiative                              | Why (outcome)                                                                                                                          | Status         |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Shared projects                         | Invite people **and agents** to a project; Hermes gateway provides identity and sessions                                               | 💡 design      |
+| Presence & activity                     | See who — human or agent — is working where, with auditable actions                                                                    | 💡 ideas       |
+| Collaborative editing (staged)          | (a) shared workspace with per-block locks, then (b) real-time co-editing (CRDT) layered on byte-preserving engines                     | 🔬 exploration |
+| Agents as participants                  | `@agent` in a shared doc: the agent observes state and acts (edit, summarize, answer) — visible and auditable                          | 💡 ideas       |
+| Live meetings as collaborative projects | A meeting is the first shared project: humans _and_ agents co-participate, the minutes docx is the shared artifact (Phase 2 spotlight) | 💡 design      |
+| Office as MCP tools                     | Hermes can work on documents from any channel (Telegram, CLI, web) — the office exposed as tools the agent already knows               | 💡 ideas       |
 
 **Exit criteria:** two humans + two agents co-edit the same deck live, with a
 full audit trail of who changed what.
@@ -224,9 +224,9 @@ full audit trail of who changed what.
 
 ## Future — Phase 4 · Open Platform
 
-> **Outcome:** *Enable the community to extend the office with their own
+> **Outcome:** _Enable the community to extend the office with their own
 > agents, engines and integrations — so the platform grows beyond what the
-> core team ships.*
+> core team ships._
 
 - Plugin/SDK surface for custom agents and document tools.
 - Agent marketplace: skills and personas for office roles.
@@ -235,7 +235,7 @@ full audit trail of who changed what.
   docs, a range feeding a chart in slides) with reactive recomputation.
 - **Proactive agent with consent**: Hermes watches the document (opt-in) and
   suggests — "these numbers don't match the attached spreadsheet" — always as
-  a proposal, never as a mutation. (Light version — *Document health check* —
+  a proposal, never as a mutation. (Light version — _Document health check_ —
   already scheduled in Phase 2.)
 - Localization, accessibility, ecosystem integrations.
 
@@ -246,13 +246,13 @@ full audit trail of who changed what.
 Operational metrics that complement the per-phase exit criteria (all telemetry
 is local-first, opt-in and aggregate-only):
 
-| Phase | Metric |
-|---|---|
-| 1 | download → first agent-assisted document < 10 min; CI green ≥95% of days; ≥5 external PRs merged |
-| Trusted Agent Actions | share of agent mutations accepted vs reverted (target ≥70% after the first iteration); time from opening a document to the first agent action |
-| 2 | keystone demo ships (45-min meeting → complete local minutes docx); report → deck pipeline; time from raw material to deliverable < 30 min; loops completed per week; external MCP clients acting on real documents |
-| 3 | two humans + two agents co-edit a deck live with a full audit trail |
-| 4 | features shipped by the community, outside the core team |
+| Phase                 | Metric                                                                                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1                     | download → first agent-assisted document < 10 min; CI green ≥95% of days; ≥5 external PRs merged                                                                                                                    |
+| Trusted Agent Actions | share of agent mutations accepted vs reverted (target ≥70% after the first iteration); time from opening a document to the first agent action                                                                       |
+| 2                     | keystone demo ships (45-min meeting → complete local minutes docx); report → deck pipeline; time from raw material to deliverable < 30 min; loops completed per week; external MCP clients acting on real documents |
+| 3                     | two humans + two agents co-edit a deck live with a full audit trail                                                                                                                                                 |
+| 4                     | features shipped by the community, outside the core team                                                                                                                                                            |
 
 ---
 
@@ -268,13 +268,13 @@ is local-first, opt-in and aggregate-only):
 
 ### Areas & labels
 
-| Label | Best for |
-|---|---|
-| `good-first-issue` | Small, well-scoped: engine/UI bugs, tests, fixtures |
-| `help-wanted` | Bigger features, owner welcome |
-| `agent-integration` | Hermes ↔ office plumbing (providers, sessions, MCP, actions) |
-| `collaboration` | Collab protocol design — **design discussions are welcome early** |
-| `quality` | Tests, fuzzing, docs, tooling |
+| Label               | Best for                                                          |
+| ------------------- | ----------------------------------------------------------------- |
+| `good-first-issue`  | Small, well-scoped: engine/UI bugs, tests, fixtures               |
+| `help-wanted`       | Bigger features, owner welcome                                    |
+| `agent-integration` | Hermes ↔ office plumbing (providers, sessions, MCP, actions)      |
+| `collaboration`     | Collab protocol design — **design discussions are welcome early** |
+| `quality`           | Tests, fuzzing, docs, tooling                                     |
 
 ### Ways to contribute
 
@@ -294,16 +294,16 @@ is local-first, opt-in and aggregate-only):
 
 ### Where your profile fits
 
-| Profile | Where to start |
-|---|---|
-| First PR | Mapped TODOs (slicers, pivot, z-order, IME), `agent-core` tests, good first issues |
-| TypeScript/React | Proposed-change unification, PDF trust UX, agent actions |
-| Agent enthusiasts | Embedded MCP server, Hermes skills, runtime plugins |
-| Rust | xlsx sidecar (external pivots, performance) |
-| Distributed systems | CRDT layer RFC (Phase 3) — open a design issue before writing code |
-| Docs/i18n | Hermes gateway setup guides, translations in `packages/i18n` |
+| Profile             | Where to start                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| First PR            | Mapped TODOs (slicers, pivot, z-order, IME), `agent-core` tests, good first issues |
+| TypeScript/React    | Proposed-change unification, PDF trust UX, agent actions                           |
+| Agent enthusiasts   | Embedded MCP server, Hermes skills, runtime plugins                                |
+| Rust                | xlsx sidecar (external pivots, performance)                                        |
+| Distributed systems | CRDT layer RFC (Phase 3) — open a design issue before writing code                 |
+| Docs/i18n           | Hermes gateway setup guides, translations in `packages/i18n`                       |
 
 ---
 
-*Roadmap is a direction, not a promise — items move between phases as we learn.
-Questions? Open an issue with the `collaboration` or `help-wanted` label.*
+_Roadmap is a direction, not a promise — items move between phases as we learn.
+Questions? Open an issue with the `collaboration` or `help-wanted` label._
