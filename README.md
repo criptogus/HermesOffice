@@ -27,6 +27,16 @@ Most "AI office" tools bolt a chat panel onto a document. We inverted the model:
 - **Agent-native, auditable.** Every AI mutation is visible and reversible — a unified _Proposed Change_ pipeline (diff preview → atomic apply) that the agent itself goes through, in every app.
 - **Hermes is the backbone.** Identity, memory, sessions and skills come from the open-source [Hermes Agent](https://hermes-agent.nousresearch.com) — not from a proprietary cloud.
 
+## Screenshots
+
+| Docs                               | Sheets                                 |
+| ---------------------------------- | -------------------------------------- |
+| ![Docs](docs/screenshots/docs.png) | ![Sheets](docs/screenshots/sheets.png) |
+
+| Slides                                 | PDF                              |
+| -------------------------------------- | -------------------------------- |
+| ![Slides](docs/screenshots/slides.png) | ![PDF](docs/screenshots/pdf.png) |
+
 ## Apps
 
 | App        | What it is                                                                                                                                                                                                                                                                    |
