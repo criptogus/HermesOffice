@@ -80,7 +80,7 @@ plan, draft, verify and polish together.
 
 ## Relationship with upstream
 
-HermesOffice is a **thin fork** of [genspark-ai/hermesoffice](https://github.com/genspark-ai/hermesoffice)
+HermesOffice is a **thin fork** of [genspark-ai/genoffice](https://github.com/genspark-ai/genoffice)
 (Apache-2.0). Engines and app shells follow upstream; our own layer is the
 Hermes integration, product identity and collaboration features. That keeps
 upstream sync cheap and lets us focus community energy on the agent-native
@@ -132,33 +132,47 @@ agent-authored — in Docs, Slides and PDF, not just Sheets.
 
 ---
 
-## Next — Phase 2 · Agent-Native Office
+## Next — Phase 2 · Value Loops
 
-> **Outcome:** *Enable users to co-create documents with agents that hold full
-> project context and can act — so a draft-to-polished-document flow happens in
-> one session instead of days of back-and-forth.*
+> **Outcome:** *A user goes from raw material (meeting audio, a report, a
+> brief) to a complete deliverable (minutes, proposal, deck) in one session —
+> with every agent change visible and reversible.*
+
+Phase 2 reorders the original "Agent-Native Office" plan around **complete
+vertical loops** instead of horizontal agent infrastructure. The test for
+every initiative: *does the user close the loop in a single session?* If not,
+it waits. Loop-first is also the business case: each loop is a retention
+story the user feels daily.
 
 | Initiative | Why (outcome) | Status |
 |---|---|---|
-| Full-document context | The agent reads the whole project (document + related files) via Hermes memory/RAG, not just the visible page | 💡 design |
-| Role-based agents per document | `@writer`, `@researcher`, `@reviewer`, `@data` — Hermes skills as office roles, invoked like teammates | 💡 ideas |
+| **Templates: "New from template…"** | Instant value on first open — board minutes, proposal, report, invoice; attacks the Phase 1 ten-minute exit criterion | 🔄 in progress (invoice generator, PR #48) |
+| **Live meeting minutes** | The killer app for privacy-sensitive work: board-level, CISO-grade conversations never leave the machine; output is a real `.docx` (see spotlight below) | 💡 design — **keystone demo of the phase** |
+| **Report → Deck (cross-generation)** | The highest-frequency professional task: numbers/report in, board-ready deck out — one pipeline across engines, not one giant prompt | 💡 design (pulled forward from Phase 4) |
+| **Embedded MCP server per app — P0 keystone** | Expose the same tools as the AI panel (`read_blocks`, `replace_blocks`, `propose_operations`, slides/pdf tools) to any MCP agent — Hermes, Claude Code, whatever the community plugs in; every external mutation goes through the same proposed-change pipeline, gated by an approval policy for headless agents (approval-model RFC) | 💡 design — **the spine, built in parallel with the loops** |
+| Unified Proposed Change (RFC #8) | Every mutation in Docs, Slides and PDF becomes a visible, reversible proposal — the Sheets gold standard, extended (spike validated on Slides) | 💡 design |
+| **Document health check** | The agent cross-checks the document against its sources — *"these numbers don't match the attached sheet"* — always as a proposal, never a mutation; the trust win that sells the suite | 💡 ideas (new) |
+| **Deliverable pack** | Export the finished artifact (minutes, deck, report) to PDF or zip with attachments, ready to send — the loop's closing step | 💡 ideas (new) |
+| **Side-effect actions (light)** | The loop closes *after* the deliverable: create task, send follow-up, file to KB — with an explicit permission model | 💡 ideas |
+| Full-document context | The agent reads the whole project (document + related files) via Hermes memory/RAG, not just the visible page | 💡 design — enablement for the loops |
 | Project memory | Per-document conversation, decisions and state stored in Hermes sessions; resume from any machine | 🔄 in progress (session continuity shipped) |
-| Artifact generation | The agent produces real files (tables, slides, briefs) into the project, editable by humans | 💡 ideas |
-| **Embedded MCP server per app — P0 keystone** | Expose the same tools as the AI panel (`read_blocks`, `replace_blocks`, `propose_operations`, slides/pdf tools) to any MCP agent — Hermes, Claude Code, whatever the community plugs in; every external mutation goes through the same proposed-change pipeline, gated by an approval policy for headless agents (approval-model RFC) | 💡 design |
-| Side-effect actions | The agent acts *beyond* the document — create task, send follow-up, file to KB — with an explicit permission model: the document as state + contract + effects | 💡 ideas |
-| Project document graph | `project-store` becomes the agent-native typed layer: document properties, cross-document references, status — never inside the OOXML (byte-preserving) | 💡 design |
-| Runtime plugin system | Evolve `AgentSkill` from compile-time to dynamic loading with a manifest and declared permissions (which tools, which scopes) | 💡 ideas |
-| **Live meeting minutes** | A meeting running on your machine becomes a live, structured `.docx` minutes doc — Granola-style, but **100% local** (see spotlight below) | 💡 design |
+| Project document graph | `project-store` becomes the agent-native typed layer: document properties, cross-document references, status — never inside the OOXML (byte-preserving); value compounds as templates grow | 💡 design |
+| Artifact generation | The agent produces real files (tables, slides, briefs) into the project, editable by humans | 💡 ideas (subsumed by the loops) |
+| Role-based agents per document | `@writer`, `@researcher`, `@reviewer`, `@data` — Hermes skills as office roles, invoked like teammates | 💡 ideas (late in phase) |
+| Runtime plugin system | Evolve `AgentSkill` from compile-time to dynamic loading with a manifest and declared permissions (which tools, which scopes) | 💡 ideas (deferred) |
 
-**Sequencing:** the phase opens with one keystone demo — *an external agent
-(Claude Code or the Hermes CLI) edits a deck through the MCP server and the
-trust pipeline: policy-approved, fully audited* — and the remaining
-initiatives hang off that spine. One demo that changes minds beats nine
-features in parallel.
+**Sequencing:** the phase opens with the cheapest loop (templates, already in
+flight), then the keystone demo — *a 45-minute meeting ends with a complete,
+local minutes document, decisions and action items with owners, captured
+without note-taking* — then Report → Deck. The MCP server builds in parallel
+as the spine: everything the agent does through the AI panel becomes doable
+by any external agent, through the same trust pipeline. One demo that changes
+minds beats nine features in parallel.
 
 **Exit criteria:** a user can say *"prepare the Q3 board deck from these
-numbers"* and review an agent-produced, fully editable deck — with every
-change visible and reversible.
+numbers"* and review an agent-produced, fully editable deck; a 45-minute
+meeting ends with complete local minutes; ≥70% of agent mutations accepted
+vs reverted.
 
 ### Spotlight — Live meeting minutes (Granola-style, local-first)
 
@@ -221,9 +235,8 @@ full audit trail of who changed what.
   docs, a range feeding a chart in slides) with reactive recomputation.
 - **Proactive agent with consent**: Hermes watches the document (opt-in) and
   suggests — "these numbers don't match the attached spreadsheet" — always as
-  a proposal, never as a mutation.
-- **Cross-generation**: "turn this report into a deck" as a pipeline between
-  engines, not one giant prompt.
+  a proposal, never as a mutation. (Light version — *Document health check* —
+  already scheduled in Phase 2.)
 - Localization, accessibility, ecosystem integrations.
 
 ---
@@ -237,7 +250,7 @@ is local-first, opt-in and aggregate-only):
 |---|---|
 | 1 | download → first agent-assisted document < 10 min; CI green ≥95% of days; ≥5 external PRs merged |
 | Trusted Agent Actions | share of agent mutations accepted vs reverted (target ≥70% after the first iteration); time from opening a document to the first agent action |
-| 2 | keystone demo ships (external agent edits a deck through the trust pipeline); external MCP clients acting on real documents; artifacts generated per agent session |
+| 2 | keystone demo ships (45-min meeting → complete local minutes docx); report → deck pipeline; time from raw material to deliverable < 30 min; loops completed per week; external MCP clients acting on real documents |
 | 3 | two humans + two agents co-edit a deck live with a full audit trail |
 | 4 | features shipped by the community, outside the core team |
 
