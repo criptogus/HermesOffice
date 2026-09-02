@@ -252,7 +252,7 @@ export function DesignTab({
             <button
               className="rb-big"
               disabled={!hasDoc}
-              title={t('ribbonThemesTip')}
+              data-tip={t('ribbonThemesTip')}
               onClick={() => toggleDropdown(setDropdown, 'theme')}
             >
               <span className="rb-big-icon">
@@ -262,7 +262,7 @@ export function DesignTab({
               <span>{t('ribbonThemes')}</span>
             </button>
             {dropdown === 'theme' && (
-              <div className="layout-menu">
+              <div data-rb-panel="" className="layout-menu">
                 {THEME_PRESETS.map((p) => (
                   <button key={p.nameKey} onClick={() => applyTheme(p)}>
                     <span className="theme-accent-row">
@@ -284,7 +284,7 @@ export function DesignTab({
             <button
               className="rb-big"
               disabled={!hasDoc}
-              title={t('ribbonThemeFontsTip')}
+              data-tip={t('ribbonThemeFontsTip')}
               onClick={() => toggleDropdown(setDropdown, 'themefonts')}
             >
               <span className="rb-big-icon">
@@ -294,7 +294,7 @@ export function DesignTab({
               <span>{t('ribbonFonts')}</span>
             </button>
             {dropdown === 'themefonts' && (
-              <div className="layout-menu">
+              <div data-rb-panel="" className="layout-menu">
                 {THEME_FONT_PRESETS.map((p) => (
                   <button
                     key={p.nameKey}
@@ -318,7 +318,7 @@ export function DesignTab({
             <button
               className="rb-big"
               disabled={!hasDoc}
-              title={t('ribbonThemeColorsTip')}
+              data-tip={t('ribbonThemeColorsTip')}
               onClick={() => toggleDropdown(setDropdown, 'themecolors')}
             >
               <span className="rb-big-icon">
@@ -328,7 +328,7 @@ export function DesignTab({
               <span>{t('ribbonColors')}</span>
             </button>
             {dropdown === 'themecolors' && (
-              <div className="layout-menu">
+              <div data-rb-panel="" className="layout-menu">
                 {THEME_COLOR_PRESETS.map((p) => (
                   <button
                     key={p.nameKey}
@@ -364,7 +364,7 @@ export function DesignTab({
             <button
               className="rb-big"
               disabled={!hasDoc}
-              title={t('ribbonPageColorTip')}
+              data-tip={t('ribbonPageColorTip')}
               onClick={() => toggleDropdown(setDropdown, 'pagecolor')}
             >
               <span className="rb-big-icon rb-big-icon-colored">
@@ -378,12 +378,13 @@ export function DesignTab({
               <span>{t('ribbonPageColor')}</span>
             </button>
             {dropdown === 'pagecolor' && (
-              <div className="color-palette color-palette-page">
+              <div data-rb-panel="" className="color-palette color-palette-page">
                 {PAGE_COLORS.map((c) => (
                   <button
                     key={c.hex ?? 'auto'}
                     className={`color-swatch ${(pageColor ?? null) === c.hex ? 'selected' : ''}`}
-                    title={t(c.nameKey)}
+                    data-tip={t(c.nameKey)}
+                    aria-label={t(c.nameKey)}
                     style={{ background: c.hex ? `#${c.hex}` : '#ffffff' }}
                     onClick={() => {
                       onPageColor(c.hex)
@@ -407,7 +408,7 @@ export function DesignTab({
             <button
               className={`rb-big ${watermark ? 'active' : ''}`}
               disabled={!hasDoc}
-              title={t('ribbonWatermarkTip')}
+              data-tip={t('ribbonWatermarkTip')}
               onClick={() => toggleDropdown(setDropdown, 'watermark')}
             >
               <span className="rb-big-icon">
@@ -417,7 +418,7 @@ export function DesignTab({
               <span>{t('ribbonWatermark')}</span>
             </button>
             {dropdown === 'watermark' && (
-              <div className="layout-menu">
+              <div data-rb-panel="" className="layout-menu">
                 {watermarkPresets.map((text) => (
                   <button
                     key={text}
@@ -447,7 +448,7 @@ export function DesignTab({
             <button
               className={`rb-big ${section?.pageBorder ? 'active' : ''}`}
               disabled={!hasDoc || !section}
-              title={t('ribbonPageBordersTip')}
+              data-tip={t('ribbonPageBordersTip')}
               onClick={() => toggleDropdown(setDropdown, 'pgborders')}
             >
               <span className="rb-big-icon">
@@ -457,7 +458,7 @@ export function DesignTab({
               <span>{t('ribbonPageBorders')}</span>
             </button>
             {dropdown === 'pgborders' && section && (
-              <div className="layout-menu">
+              <div data-rb-panel="" className="layout-menu">
                 <button
                   className={section.pageBorder ? 'active' : ''}
                   onClick={() => {

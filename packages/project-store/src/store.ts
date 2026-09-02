@@ -35,9 +35,6 @@ import type {
   ProjectIndex,
   ProjectInfo,
   ProjectSummary,
-  ProjectDocumentReference,
-  ProposedChangeRecord,
-  ProposedChangeStatus,
   TimelineEntry,
 } from './types.js'
 
@@ -47,6 +44,14 @@ import type {
 
 /** Max stored characters for a single tool input/output field */
 const TOOL_FIELD_MAX_CHARS = 16_000
+
+/**
+ * Max stored characters for message text. A model that falls into a repetition
+ * loop can emit megabytes in one turn; stored whole it would both bloat the
+ * JSONL line and be replayed into the model context when the file reopens.
+ */
+const TEXT_MAX_CHARS = 32_000
+const TEXT_TRUNCATED_MARK = '\n\n[truncated]'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -104,18 +109,6 @@ export class ProjectStore {
 
   private chatPath(projectId: string, chatId: string): string {
     return join(this.chatsDir(projectId), `${chatId}.jsonl`)
-  }
-
-  private proposalsDir(projectId: string): string {
-    return join(this.projectDir(projectId), 'proposals')
-  }
-
-  private proposalPath(projectId: string, proposalId: string): string {
-    return join(this.proposalsDir(projectId), `${proposalId}.json`)
-  }
-
-  private documentGraphPath(projectId: string): string {
-    return join(this.projectDir(projectId), 'document-graph.json')
   }
 
   // ── seq counters (in-memory cache, initialized from JSONL line count on first read) ──
@@ -315,7 +308,11 @@ export class ProjectStore {
     try {
       const seq = this.nextSeq(projectId, chatId)
       const ts = msg.ts ?? nowIso()
-      const record: ChatMessage = { seq, ts, role: msg.role, text: msg.text }
+      const text =
+        msg.text.length > TEXT_MAX_CHARS
+          ? msg.text.slice(0, TEXT_MAX_CHARS) + TEXT_TRUNCATED_MARK
+          : msg.text
+      const record: ChatMessage = { seq, ts, role: msg.role, text }
       if (msg.fileRef !== undefined) record.fileRef = msg.fileRef
       if (msg.tools && msg.tools.length > 0) {
         // Truncate tool inputs/outputs so one JSONL line can't blow up on a huge payload
@@ -684,94 +681,6 @@ export class ProjectStore {
     const cur = this.seqCounters.get(oldKey)
     this.seqCounters.delete(oldKey)
     if (cur !== undefined) this.seqCounters.set(newKey, cur)
-  }
-
-  // ── Trusted agent actions (P0) ─────────────────────────────
-
-  /**
-   * Persists a proposed change without mutating the target document. Renderers
-   * and MCP hosts can share this append-only approval handoff before engines
-   * apply any app-specific operation.
-   */
-  saveProposedChange(
-    change: Omit<ProposedChangeRecord, 'createdAt' | 'updatedAt'> & {
-      createdAt?: string
-      updatedAt?: string
-    },
-  ): ProposedChangeRecord {
-    this.ensureDefaultProject()
-    if (!this.readProject(change.projectId))
-      throw new Error(`Project does not exist: ${change.projectId}`)
-    const now = nowIso()
-    const record: ProposedChangeRecord = {
-      ...change,
-      createdAt: change.createdAt ?? now,
-      updatedAt: change.updatedAt ?? change.createdAt ?? now,
-      operations: change.operations.map((op) => ({ ...op, scope: { ...op.scope } })),
-    }
-    if (change.risks !== undefined) record.risks = change.risks.map((risk) => ({ ...risk }))
-    writeJson(this.proposalPath(record.projectId, record.id), record)
-    return record
-  }
-
-  /** Updates only lifecycle status fields for an existing proposal. */
-  updateProposedChangeStatus(
-    projectId: string,
-    proposalId: string,
-    status: ProposedChangeStatus,
-  ): ProposedChangeRecord {
-    const existing = readJson<ProposedChangeRecord>(this.proposalPath(projectId, proposalId))
-    if (!existing) throw new Error(`Proposed change does not exist: ${proposalId}`)
-    const next: ProposedChangeRecord = { ...existing, status, updatedAt: nowIso() }
-    writeJson(this.proposalPath(projectId, proposalId), next)
-    return next
-  }
-
-  /** Lists proposal audit records for a project, newest first. */
-  listProposedChanges(projectId: string, limit = 100): ProposedChangeRecord[] {
-    const dir = this.proposalsDir(projectId)
-    if (!existsSync(dir)) return []
-    try {
-      return readdirSync(dir)
-        .filter((f) => f.endsWith('.json'))
-        .map((f) => readJson<ProposedChangeRecord>(join(dir, f)))
-        .filter((r): r is ProposedChangeRecord => Boolean(r && r.id && r.projectId === projectId))
-        .sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : b.updatedAt < a.updatedAt ? -1 : 0))
-        .slice(0, limit)
-    } catch {
-      return []
-    }
-  }
-
-  // ── Project document graph (P2) ────────────────────────────
-
-  /** Records a typed cross-document relationship outside OOXML/PDF bytes. */
-  upsertDocumentReference(
-    projectId: string,
-    ref: Omit<ProjectDocumentReference, 'createdAt' | 'updatedAt'> & {
-      createdAt?: string
-      updatedAt?: string
-    },
-  ): ProjectDocumentReference {
-    if (!this.readProject(projectId)) throw new Error(`Project does not exist: ${projectId}`)
-    const now = nowIso()
-    const refs = this.listDocumentReferences(projectId)
-    const next: ProjectDocumentReference = {
-      ...ref,
-      createdAt: ref.createdAt ?? refs.find((r) => r.id === ref.id)?.createdAt ?? now,
-      updatedAt: ref.updatedAt ?? now,
-    }
-    const merged = [next, ...refs.filter((r) => r.id !== next.id)]
-    writeJson(this.documentGraphPath(projectId), { references: merged })
-    return next
-  }
-
-  /** Lists typed cross-document relationships for a project. */
-  listDocumentReferences(projectId: string): ProjectDocumentReference[] {
-    const data = readJson<{ references?: ProjectDocumentReference[] }>(
-      this.documentGraphPath(projectId),
-    )
-    return Array.isArray(data?.references) ? data.references : []
   }
 
   /**

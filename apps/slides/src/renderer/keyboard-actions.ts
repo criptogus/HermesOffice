@@ -5,6 +5,7 @@
  * once with an empty dependency list.
  */
 import type { ActionCtx } from './action-context'
+import { isEditableText } from './konva-adapter'
 import * as clipboardActions from './clipboard-actions'
 import * as arrangeActions from './arrange-actions'
 import * as slideActions from './slide-actions'
@@ -19,7 +20,11 @@ function inTextField(): boolean {
 
 // Shortcuts: ⌘/Ctrl+Z undo, ⇧⌘Z / Ctrl+Y redo, ⌘/Ctrl+=/-/0 zoom,
 // Delete/Backspace delete selection, arrow keys nudge selection
-export function handleGlobalKeydown(ctx: ActionCtx, e: KeyboardEvent): void {
+export function handleGlobalKeydown(
+  ctx: ActionCtx,
+  e: KeyboardEvent,
+  platform = navigator.platform,
+): void {
   if (ctx.slideShow || ctx.presenter) return // In show/presenter view: navigation keys are handled by those views
   const mod = e.metaKey || e.ctrlKey
   const inField = inTextField()
@@ -28,6 +33,22 @@ export function handleGlobalKeydown(ctx: ActionCtx, e: KeyboardEvent): void {
   if (e.key === 'F5' && !mod) {
     e.preventDefault()
     showActions.startSlideShow(ctx, !e.shiftKey)
+    return
+  }
+  // PowerPoint for macOS: ⌘+Enter starts from the current slide. Keep
+  // Ctrl+Enter untouched on Windows, where PowerPoint uses it to move between
+  // placeholders (and Shift+F5 already starts from the current slide).
+  if (
+    /mac/i.test(platform) &&
+    e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.shiftKey &&
+    e.key === 'Enter'
+  ) {
+    if (e.defaultPrevented || editing || inField || ctx.cropTarget) return
+    e.preventDefault()
+    showActions.startSlideShow(ctx, false)
     return
   }
   // Undo/redo (menu accelerators normally intercept; fallback for shell/menuless scenarios)
@@ -48,6 +69,13 @@ export function handleGlobalKeydown(ctx: ActionCtx, e: KeyboardEvent): void {
     if (editing) return
     e.preventDefault()
     ctx.setFindOpen(true)
+    return
+  }
+  // ⌘K: annotate the selection with an AI edit
+  if (mod && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K')) {
+    if (editing || inField || selectedIds.length === 0) return
+    e.preventDefault()
+    ctx.openAskPopover()
     return
   }
   // ⌘P print
@@ -79,6 +107,12 @@ export function handleGlobalKeydown(ctx: ActionCtx, e: KeyboardEvent): void {
   if (mod && !e.altKey && !e.shiftKey && ['c', 'C', 'x', 'X'].includes(e.key)) {
     const sel = window.getSelection()
     if (sel && !sel.isCollapsed) return
+  }
+  // Esc: drop the ink pen/highlighter/eraser back to the select tool (PowerPoint behavior)
+  if (e.key === 'Escape' && ctx.inkTool !== 'select') {
+    e.preventDefault()
+    ctx.setInkTool('select')
+    return
   }
   // Esc: exit format painter continuous mode
   if (e.key === 'Escape' && ctx.brushMode) {
@@ -117,7 +151,7 @@ export function handleGlobalKeydown(ctx: ActionCtx, e: KeyboardEvent): void {
   ) {
     const ctx0 = ctx.findNodeCtx(selectedIds[0]!)
     const n0 = ctx0?.node
-    if (n0 && (n0.type === 'text' || n0.type === 'shape')) {
+    if (n0 && isEditableText(n0)) {
       e.preventDefault()
       ctx.setEditing({
         sourceId: n0.sourceId,

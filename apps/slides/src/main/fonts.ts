@@ -14,10 +14,12 @@
  *     (ja/ko/traditional-zh/serif/mono) with fonts guaranteed on this platform -> if all miss,
  *     return undefined (callers use heuristic metrics).
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import * as opentype from 'opentype.js'
+import type { EmbeddedFontFace } from '@hermesoffice/pptx-engine'
 import {
   OpentypeMetrics,
   HeuristicMetrics,
@@ -26,7 +28,82 @@ import {
   type RunStyle,
 } from '@hermesoffice/pptx-render'
 import { classifyCjkScript } from '../shared/cjk-script'
-import { initShapedMetrics, shapedMeasure, shapedFamily } from './shaped-metrics'
+import {
+  initShapedMetrics,
+  shapedMeasure,
+  shapedFamily,
+  complexScriptOf,
+  type ShapedPrefFace,
+} from './shaped-metrics'
+import carlitoRegular from '../renderer/fonts/Carlito-Regular.ttf?asset'
+import carlitoBold from '../renderer/fonts/Carlito-Bold.ttf?asset'
+import carlitoItalic from '../renderer/fonts/Carlito-Italic.ttf?asset'
+import carlitoBoldItalic from '../renderer/fonts/Carlito-BoldItalic.ttf?asset'
+
+/** Fonts shipped with the app (metric substitutes for fonts most decks assume, e.g. Calibri→Carlito). */
+const BUNDLED_FONTS: Record<string, string> = {
+  'Carlito-Regular': carlitoRegular,
+  'Carlito-Bold': carlitoBold,
+  'Carlito-Italic': carlitoItalic,
+  'Carlito-BoldItalic': carlitoBoldItalic,
+}
+
+/**
+ * User font store (downloaded catalog fonts + fonts installed via the in-app entry).
+ * Injected by slides-main at startup (fonts.ts stays free of electron imports); invisible
+ * to Chromium, so faces resolved from here get the same private FontFace treatment as
+ * Office DFonts.
+ */
+let userFontDir: string | null = null
+export function setUserFontDir(dir: string): void {
+  userFontDir = dir
+}
+export function getUserFontDir(): string | null {
+  return userFontDir
+}
+
+/**
+ * Document-embedded fonts (<p:embeddedFontLst> fntdata, uncompressed EOT payloads only).
+ * PowerPoint renders missing families with the embedded faces, so they slot into resolution
+ * between an exact system hit and the alias/substitute chain. Extracted sfnts are cached on
+ * disk by content hash; the dir is private (Chromium can't see it), so drawing goes through
+ * the same private FontFace channel as Office DFonts. Registrations are process-wide and
+ * live until the app exits — like PowerPoint keeping embedded fonts while the deck is open.
+ */
+const EMBEDDED_FONT_DIR = join(tmpdir(), 'hermesoffice-embedded-fonts')
+/** norm(typeface) -> styleKey ('<bold><italic>') -> extracted sfnt path */
+const embeddedFaces = new Map<string, Map<string, string>>()
+
+/** Register a deck's embedded faces; true when anything new was added (metrics must reset). */
+export function registerEmbeddedFonts(faces: EmbeddedFontFace[]): boolean {
+  let added = false
+  for (const f of faces) {
+    const key = norm(f.typeface)
+    if (!key) continue
+    const styleKey =
+      (f.style === 'bold' || f.style === 'boldItalic' ? '1' : '0') +
+      (f.style === 'italic' || f.style === 'boldItalic' ? '1' : '0')
+    let perStyle = embeddedFaces.get(key)
+    if (!perStyle) {
+      perStyle = new Map()
+      embeddedFaces.set(key, perStyle)
+    }
+    if (perStyle.has(styleKey)) continue
+    const path = join(
+      EMBEDDED_FONT_DIR,
+      `${createHash('sha256').update(f.sfnt).digest('hex').slice(0, 32)}.ttf`,
+    )
+    try {
+      mkdirSync(EMBEDDED_FONT_DIR, { recursive: true })
+      if (!existsSync(path)) writeFileSync(path, f.sfnt)
+    } catch {
+      continue
+    }
+    perStyle.set(styleKey, path)
+    added = true
+  }
+  return added
+}
 
 function fontDirs(): string[] {
   switch (process.platform) {
@@ -41,6 +118,65 @@ function fontDirs(): string[] {
       return ['C:\\Windows\\Fonts', join(homedir(), 'AppData/Local/Microsoft/Windows/Fonts')]
     default:
       return ['/usr/share/fonts', '/usr/local/share/fonts', join(homedir(), '.fonts')]
+  }
+}
+
+/**
+ * Office-private font dirs. PowerPoint for Mac bundles the Windows core fonts (real
+ * Calibri/YaHei/Verdana…) inside the app; PowerPoint renders with them, so metrics must
+ * too or every substituted family drifts from the reference. Chromium cannot resolve
+ * these by name — faces resolved from here are marked private and their bytes are served
+ * to the renderer for FontFace registration (same file measures and draws).
+ */
+function officeFontDirs(): string[] {
+  if (process.platform !== 'darwin') return []
+  return ['Microsoft PowerPoint', 'Microsoft Word', 'Microsoft Excel'].map((app) =>
+    join('/Applications', `${app}.app`, 'Contents/Resources/DFonts'),
+  )
+}
+
+const APPLE_FONT_ASSET_ROOT = '/System/Library/AssetsV2/com_apple_MobileAsset_Font7'
+const APPLE_FONT_SUBSETS =
+  '/System/Library/PrivateFrameworks/FontServices.framework/Versions/A/Resources/Fonts/Subsets'
+
+/**
+ * macOS on-demand font assets (CoreText downloadable fonts, e.g. NanumGothic): PowerPoint
+ * renders with them but Chromium cannot resolve them by name — same private treatment as
+ * Office DFonts. Materialized full downloads (AssetsV2) take precedence over the built-in
+ * stub subsets; both are read-only system paths and simply absent on other platforms.
+ */
+function appleFontAssetDirs(): string[] {
+  if (process.platform !== 'darwin') return []
+  const dirs: string[] = []
+  try {
+    for (const d of readdirSync(APPLE_FONT_ASSET_ROOT))
+      dirs.push(join(APPLE_FONT_ASSET_ROOT, d, 'AssetData'))
+  } catch {
+    /* asset root absent */
+  }
+  dirs.push(APPLE_FONT_SUBSETS)
+  return dirs
+}
+
+/** Office cloud-font roots: <root>/<Family Name>/<numeric-id>.ttf — indexed by directory name. */
+function cloudFontRoots(): string[] {
+  const globDirs = (base: string, sub: string): string[] => {
+    try {
+      return readdirSync(base).map((d) => join(base, d, sub))
+    } catch {
+      return []
+    }
+  }
+  switch (process.platform) {
+    case 'darwin':
+      return globDirs(
+        join(homedir(), 'Library/Group Containers/UBF8T346G9.Office/FontCache'),
+        'CloudFonts',
+      )
+    case 'win32':
+      return globDirs(join(homedir(), 'AppData/Local/Microsoft/FontCache'), 'CloudFonts')
+    default:
+      return []
   }
 }
 
@@ -73,14 +209,24 @@ const ALIASES: Record<string, string[]> = {
   helvetica: ['Arial'],
   'helvetica neue': ['Arial'],
   calibri: ['Carlito', 'Arial'],
+  'calibri light': ['Carlito', 'Arial'],
+  // PowerPoint for Mac substitutes the Windows-only Lucida Sans family with Lucida Grande
+  'lucida sans unicode': ['Lucida Grande', 'Arial'],
+  'lucida sans': ['Lucida Grande', 'Arial'],
   // —— Japanese ——
   'yu gothic': [...YU_GOTHIC, ...HIRAGINO_SANS],
+  // Yu Gothic UI faces live inside YuGothM/YuGothB.ttc (like Meiryo UI in meiryo.ttc);
+  // the origKey bonus in rankFaces picks them out of the alias target's collection
+  'yu gothic ui': [...YU_GOTHIC, ...HIRAGINO_SANS],
   游ゴシック: [...YU_GOTHIC, ...HIRAGINO_SANS],
   游ゴシック体: [...YU_GOTHIC, ...HIRAGINO_SANS],
   'yu mincho': [...YU_MINCHO, ...HIRAGINO_MINCHO],
   游明朝: [...YU_MINCHO, ...HIRAGINO_MINCHO],
   meiryo: [...MEIRYO, ...HIRAGINO_SANS],
   メイリオ: [...MEIRYO, ...HIRAGINO_SANS],
+  // Meiryo UI is a face inside meiryo.ttc/meiryob.ttc (narrower kana than Meiryo); the
+  // origKey bonus in rankFaces picks the UI face out of the alias target's collection
+  'meiryo ui': [...MEIRYO, ...HIRAGINO_SANS],
   'ms gothic': [...MS_GOTHIC, ...HIRAGINO_SANS],
   'ms pgothic': [...MS_GOTHIC, ...HIRAGINO_SANS],
   'ms ui gothic': [...MS_GOTHIC, ...HIRAGINO_SANS],
@@ -109,6 +255,12 @@ const ALIASES: Record<string, string[]> = {
   gulimche: ['Gulim'],
   dotum: ['Gulim'],
   돋움: ['Gulim'],
+  // Hangul-localized Nanum names (Google-Slides exports carry both spellings in one deck;
+  // the alias keeps them on the same downloadable NanumGothic asset instead of a substitute)
+  나눔고딕: ['NanumGothic'],
+  나눔바른고딕: ['NanumBarunGothic', 'NanumGothic'],
+  나눔명조: ['NanumMyeongjo'],
+  나눔스퀘어: ['NanumSquare', 'NanumGothic'],
   // —— Traditional Chinese ——
   'microsoft jhenghei': ['MSJH'],
   微軟正黑體: ['Microsoft JhengHei', 'MSJH'],
@@ -153,12 +305,24 @@ function classifyFamily(family: string): 'serif' | 'sans' | 'mono' {
   return 'sans'
 }
 
-function substitutesFor(family: string): string[] {
-  const script = classifyCjkScript(family)
+// PowerPoint substitutes a missing font by the run's declared language/charset, not by
+// classifying the font name (see TextRun.fontScriptHint): prod_079's JP-named font with
+// charset=134 renders with Microsoft YaHei; prod_043's altLang="ko-KR" runs get Malgun.
+function substitutesFor(family: string, substScript?: 'ja' | 'ko' | 'sc' | 'tc'): string[] {
+  const script = substScript ?? classifyCjkScript(family)
   if (!script) return SUBSTITUTES[classifyFamily(family)]
   const serif = SERIF_RE.test(family)
   const mac = process.platform === 'darwin'
   switch (script) {
+    case 'sc':
+      // Office-bundled YaHei first (msyh.ttc in DFonts) to mirror PPT's pick
+      return serif
+        ? mac
+          ? ['Songti SC', 'SimSun']
+          : ['SimSun']
+        : mac
+          ? ['Microsoft YaHei', 'PingFang SC', 'Heiti SC']
+          : ['Microsoft YaHei', 'DengXian', 'SimSun']
     case 'ja':
       return serif
         ? mac
@@ -168,12 +332,15 @@ function substitutesFor(family: string): string[] {
           ? ['Hiragino Sans']
           : ['Yu Gothic', 'Meiryo', 'MS Gothic']
     case 'ko':
+      // mac chains start with the Office-bundled faces to mirror the renderer's KO_SANS/
+      // KO_SERIF draw chains — measuring Apple SD Gothic Neo while drawing the private
+      // Malgun FontFace swallowed word spaces on unknown KR vendor fonts
       return serif
         ? mac
-          ? ['AppleMyungjo', 'Apple SD Gothic Neo']
+          ? ['Batang', 'AppleMyungjo', 'Apple SD Gothic Neo']
           : ['Batang', 'Malgun Gothic']
         : mac
-          ? ['Apple SD Gothic Neo', 'AppleGothic']
+          ? ['Malgun Gothic', 'Apple SD Gothic Neo', 'AppleGothic']
           : ['Malgun Gothic', 'Gulim']
     case 'tc':
       return serif
@@ -262,23 +429,41 @@ function readFaceDir(buf: Buffer): FaceInfo[] {
   })
 }
 
+/** OpenType layout tables — droppable for metrics-only parsing when opentype.js rejects them. */
+const LAYOUT_TABLES: ReadonlySet<string> = new Set(['GSUB', 'GPOS', 'GDEF'])
+
 /** Extract a single face from a ttc into a standalone sfnt (rewrite the table directory, copy table data by original offset). */
-function extractFace(buf: Buffer, offset: number): ArrayBuffer {
-  if (buf.toString('ascii', 0, 4) !== 'ttcf') {
+function extractFace(buf: Buffer, offset: number, drop?: ReadonlySet<string>): ArrayBuffer {
+  const isTtc = buf.toString('ascii', 0, 4) === 'ttcf'
+  if (!isTtc && !drop) {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
   }
-  const numTables = buf.readUInt16BE(offset + 4)
-  let total = 12 + 16 * numTables
+  const faceOff = isTtc ? offset : 0
+  const numTables = buf.readUInt16BE(faceOff + 4)
   const entries: Array<{ dirPos: number; tOff: number; tLen: number; newOff: number }> = []
   for (let t = 0; t < numTables; t++) {
-    const e = offset + 12 + 16 * t
-    const tLen = buf.readUInt32BE(e + 12)
-    entries.push({ dirPos: e, tOff: buf.readUInt32BE(e + 8), tLen, newOff: total })
-    total += (tLen + 3) & ~3
+    const e = faceOff + 12 + 16 * t
+    if (drop?.has(buf.toString('ascii', e, e + 4))) continue
+    entries.push({
+      dirPos: e,
+      tOff: buf.readUInt32BE(e + 8),
+      tLen: buf.readUInt32BE(e + 12),
+      newOff: 0,
+    })
+  }
+  let total = 12 + 16 * entries.length
+  for (const e of entries) {
+    e.newOff = total
+    total += (e.tLen + 3) & ~3
   }
   const out = Buffer.alloc(total)
-  buf.copy(out, 0, offset, offset + 12)
-  for (let t = 0; t < numTables; t++) {
+  buf.copy(out, 0, faceOff, faceOff + 4)
+  out.writeUInt16BE(entries.length, 4)
+  const pow = 2 ** Math.floor(Math.log2(entries.length || 1))
+  out.writeUInt16BE(pow * 16, 6)
+  out.writeUInt16BE(Math.log2(pow), 8)
+  out.writeUInt16BE(entries.length * 16 - pow * 16, 10)
+  for (let t = 0; t < entries.length; t++) {
     const e = entries[t]!
     buf.copy(out, 12 + 16 * t, e.dirPos, e.dirPos + 8)
     out.writeUInt32BE(e.newOff, 12 + 16 * t + 8)
@@ -288,7 +473,12 @@ function extractFace(buf: Buffer, offset: number): ArrayBuffer {
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer
 }
 
-function rankFaces(faces: FaceInfo[], wantKey: string, style: RunStyle): FaceInfo[] {
+function rankFaces(
+  faces: FaceInfo[],
+  wantKey: string,
+  style: RunStyle,
+  origKey?: string,
+): FaceInfo[] {
   const styleKeys =
     style.bold && style.italic
       ? ['bolditalic']
@@ -297,46 +487,107 @@ function rankFaces(faces: FaceInfo[], wantKey: string, style: RunStyle): FaceInf
         : style.italic
           ? ['italic', 'oblique']
           : ['regular', 'w3', 'medium']
+  // Style keywords the request did NOT ask for: without a penalty, "Bold Italic" matches the
+  // 'bold' substring and ties with the true Bold face, and cloud dirs (numeric filenames) can
+  // sort the italic file first — a bold request then lands on Bold Italic.
+  const avoidKeys = [
+    ...(style.italic ? [] : ['italic', 'oblique']),
+    ...(style.bold ? [] : ['bold']),
+  ]
+  // origKey: an alias candidate may open a ttc that also carries the exact requested face
+  // (request "Meiryo UI" -> alias "Meiryo" -> meiryo.ttc, which has both) — exact match wins.
+  // Sub-family faces (Poppins Light) still match exactly through their typographic family
+  // (name 16 = "Poppins"), so a famKey extending origKey costs a point and the plain face wins.
   const score = (f: FaceInfo) =>
     (f.display.startsWith('.') ? -4 : 0) +
+    (origKey && f.famKeys.some((k) => k === origKey) ? 4 : 0) -
+    (origKey && f.famKeys.some((k) => k !== origKey && k.startsWith(origKey)) ? 1 : 0) +
     (f.famKeys.some((k) => k === wantKey || k.startsWith(wantKey)) ? 2 : 0) +
-    (styleKeys.some((s) => f.styleText.includes(s)) ? 1 : 0)
+    (styleKeys.some((s) => f.styleText.includes(s)) ? 1 : 0) -
+    (avoidKeys.some((s) => f.styleText.includes(s)) ? 2 : 0)
   return [...faces].sort((a, b) => score(b) - score(a))
 }
 
 class FontRegistry {
   /** Normalized file basename (no extension) -> absolute path */
   private index = new Map<string, string>()
+  /** Normalized cloud family dir name -> font file paths (numeric filenames, one per style) */
+  private cloud = new Map<string, string[]>()
+  /** Dir prefixes invisible to Chromium (Office DFonts / cloud-font roots) */
+  private privateDirs: string[] = []
   /** Path -> face directory */
   private faceDirs = new Map<string, FaceInfo[]>()
   /** `path#offset` -> parsed font (null = parse failed) */
   private parsed = new Map<string, OpentypeFontLike | null>()
   private indexed = false
 
-  private buildIndex(): void {
-    if (this.indexed) return
-    this.indexed = true
-    for (const dir of fontDirs()) {
-      let names: string[]
+  private scanFlatDir(dir: string): void {
+    let names: string[]
+    try {
+      names = readdirSync(dir)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const m = /^(.+)\.(ttf|otf|ttc|otc)$/i.exec(name)
+      if (!m) continue
+      // Strip the variable-font axis suffix: NotoSansSC[wght].ttf -> notosanssc
+      const key = norm(m[1]!.replace(/\[[^\]]*\]$/, ''))
+      const full = join(dir, name)
       try {
-        names = readdirSync(dir)
+        if (!statSync(full).isFile()) continue
       } catch {
         continue
       }
-      for (const name of names) {
-        const m = /^(.+)\.(ttf|otf|ttc|otc)$/i.exec(name)
-        if (!m) continue
-        // Strip the variable-font axis suffix: NotoSansSC[wght].ttf -> notosanssc
-        const key = norm(m[1]!.replace(/\[[^\]]*\]$/, ''))
-        const full = join(dir, name)
+      if (!this.index.has(key)) this.index.set(key, full)
+    }
+  }
+
+  private buildIndex(): void {
+    if (this.indexed) return
+    this.indexed = true
+    for (const [name, path] of Object.entries(BUNDLED_FONTS)) {
+      this.index.set(norm(name), path)
+    }
+    // System dirs first so same-named Office copies (arial.ttf…) resolve non-private
+    for (const dir of fontDirs()) this.scanFlatDir(dir)
+    if (userFontDir) {
+      this.privateDirs.push(userFontDir)
+      this.scanFlatDir(userFontDir)
+    }
+    for (const dir of officeFontDirs()) {
+      this.privateDirs.push(dir)
+      this.scanFlatDir(dir)
+    }
+    // One prefix each covers every scanned asset dir for the isPrivate check
+    this.privateDirs.push(APPLE_FONT_ASSET_ROOT, APPLE_FONT_SUBSETS, EMBEDDED_FONT_DIR)
+    for (const dir of appleFontAssetDirs()) this.scanFlatDir(dir)
+    for (const root of cloudFontRoots()) {
+      let families: string[]
+      try {
+        families = readdirSync(root)
+      } catch {
+        continue
+      }
+      this.privateDirs.push(root)
+      for (const fam of families) {
+        const dir = join(root, fam)
+        let files: string[]
         try {
-          if (!statSync(full).isFile()) continue
+          files = readdirSync(dir)
         } catch {
           continue
         }
-        if (!this.index.has(key)) this.index.set(key, full)
+        const paths = files.filter((f) => /\.(ttf|otf|ttc|otc)$/i.test(f)).map((f) => join(dir, f))
+        if (!paths.length) continue
+        const key = norm(fam)
+        this.cloud.set(key, [...(this.cloud.get(key) ?? []), ...paths])
       }
     }
+  }
+
+  isPrivate(path: string): boolean {
+    return this.privateDirs.some((d) => path.startsWith(d))
   }
 
   private facesOf(path: string): FaceInfo[] {
@@ -358,7 +609,16 @@ class FontRegistry {
     if (cached !== undefined) return cached
     let font: OpentypeFontLike | null
     try {
-      font = opentype.parse(extractFace(readFileSync(path), offset)) as unknown as OpentypeFontLike
+      const buf = readFileSync(path)
+      try {
+        font = opentype.parse(extractFace(buf, offset)) as unknown as OpentypeFontLike
+      } catch {
+        // Legacy CJK fonts (gulim/batang) carry GSUB versions opentype.js rejects; advances
+        // only need cmap/hmtx/kern, so retry without the OpenType layout tables
+        font = opentype.parse(
+          extractFace(buf, offset, LAYOUT_TABLES),
+        ) as unknown as OpentypeFontLike
+      }
     } catch {
       font = null
     }
@@ -370,10 +630,51 @@ class FontRegistry {
     path: string,
     wantKey: string,
     style: RunStyle,
-  ): { font: OpentypeFontLike; family: string } | undefined {
-    for (const face of rankFaces(this.facesOf(path), wantKey, style)) {
+    origKey?: string,
+  ): { font: OpentypeFontLike; family: string; path: string; offset: number } | undefined {
+    for (const face of rankFaces(this.facesOf(path), wantKey, style, origKey)) {
       const font = this.parseFace(path, face.offset)
-      if (font) return { font, family: face.display }
+      if (font) return { font, family: face.display, path, offset: face.offset }
+    }
+    return undefined
+  }
+
+  /** Cloud families spread styles across numeric-named files: rank all faces of all files together. */
+  private loadBestCloud(
+    paths: string[],
+    wantKey: string,
+    style: RunStyle,
+    origKey?: string,
+  ): { font: OpentypeFontLike; family: string; path: string; offset: number } | undefined {
+    const all = paths.flatMap((p) => this.facesOf(p).map((face) => ({ path: p, face })))
+    const ranked = rankFaces(
+      all.map((x) => x.face),
+      wantKey,
+      style,
+      origKey,
+    )
+    for (const face of ranked) {
+      const path = all.find((x) => x.face === face)!.path
+      const font = this.parseFace(path, face.offset)
+      if (font) return { font, family: face.display, path, offset: face.offset }
+    }
+    return undefined
+  }
+
+  /** Document-embedded face for the requested family: exact style, else degrade to regular. */
+  private tryEmbedded(
+    origKey: string,
+    style: RunStyle,
+  ): { font: OpentypeFontLike; family: string; path: string; offset: number } | undefined {
+    const perStyle = embeddedFaces.get(origKey)
+    if (!perStyle) return undefined
+    const want = `${style.bold ? 1 : 0}${style.italic ? 1 : 0}`
+    for (const k of [...new Set([want, `${want[0]}0`, `0${want[1]}`, '00'])]) {
+      const path = perStyle.get(k)
+      if (!path) continue
+      const hit = this.loadBest(path, origKey, style, origKey)
+      // Subset faces may strip name records: fall back to the declared typeface for CSS
+      if (hit) return { ...hit, family: hit.family || style.fontFamily }
     }
     return undefined
   }
@@ -384,7 +685,18 @@ class FontRegistry {
    * fall back to regular; within a ttc, pick a face by the name table. Returns the matched font
    * and its "drawing family name" (the face's English family, guaranteed CSS-resolvable).
    */
-  resolve(style: RunStyle): { font: OpentypeFontLike; family: string } | undefined {
+  resolve(style: RunStyle):
+    | {
+        font: OpentypeFontLike
+        family: string
+        path: string
+        offset: number
+        /** True when the hit came from same-script/class substitution — the requested
+         *  family (and its aliases) is missing. Alias hits (Calibri→Carlito) are NOT
+         *  substitutions: PowerPoint has those fonts and kerns them. */
+        substituted?: boolean
+      }
+    | undefined {
     this.buildIndex()
     const candidates: string[] = []
     const seen = new Set<string>()
@@ -397,7 +709,10 @@ class FontRegistry {
     }
     push(style.fontFamily)
     for (const a of aliasesOf(style.fontFamily)) push(a)
-    for (const s of substitutesFor(style.fontFamily)) {
+    // Candidates after this index are same-script/class substitutes, not the requested
+    // family — the sub-family cloud fallback below must run before them
+    const substituteStart = candidates.length
+    for (const s of substitutesFor(style.fontFamily, style.substScript)) {
       push(s)
       for (const a of aliasesOf(s)) push(a)
     }
@@ -413,15 +728,56 @@ class FontRegistry {
           : style.italic
             ? ['italic', 'it', 'i', 'oblique']
             : ['', 'regular', 'w4', 'w3']
-    for (const family of candidates) {
+    const origKey = norm(style.fontFamily)
+    // A weight baked into the requested name (Hiragino Kaku Gothic ProN W3, Hiragino Sans W7) names an
+    // exact face — it beats the bold-flag-derived file suffix (which would try W4 first and
+    // measure/draw a different weight than PowerPoint)
+    const wReq = /w([0-9])$/.exec(origKey)?.[1]
+    if (wReq) suffixes.unshift(`w${wReq}`)
+    const tryFamily = (family: string) => {
       const base = norm(family)
       // Try style-variant files first, then fall back to regular (approximate widths still far better than heuristics)
       for (const suf of [...suffixes, '', 'regular']) {
         const path = this.index.get(base + norm(suf))
         if (!path) continue
-        const hit = this.loadBest(path, base, style)
-        if (hit) return { font: hit.font, family: hit.family || family }
+        const hit = this.loadBest(path, base, style, origKey)
+        if (hit) return { ...hit, family: hit.family || family }
       }
+      const cloudPaths = this.cloud.get(base)
+      if (cloudPaths) {
+        const hit = this.loadBestCloud(cloudPaths, base, style, origKey)
+        if (hit) return { ...hit, family: hit.family || family }
+      }
+      return undefined
+    }
+    const exact = tryFamily(candidates[0]!)
+    if (exact) return exact
+    // Document-embedded face: beats aliases and substitutes (PowerPoint uses the embedded
+    // font whenever the family is not installed), loses only to a real system hit above
+    const embedded = this.tryEmbedded(origKey, style)
+    if (embedded) return embedded
+    for (const family of candidates.slice(1, substituteStart)) {
+      const hit = tryFamily(family)
+      if (hit) return hit
+    }
+    // Before falling to substitutes: a sub-family request lives inside the base family's
+    // cloud dir (Poppins Light -> CloudFonts/Poppins). Requires a face whose family name
+    // matches the request exactly, so a shorter dir can never hijack a different family
+    // (Noto Sans JP must not bind to Latin-only Noto Sans).
+    let bestKey = ''
+    for (const k of this.cloud.keys()) {
+      if (origKey.startsWith(k) && k.length > bestKey.length) bestKey = k
+    }
+    if (bestKey) {
+      const paths = this.cloud.get(bestKey)!
+      if (paths.some((p) => this.facesOf(p).some((f) => f.famKeys.includes(origKey)))) {
+        const hit = this.loadBestCloud(paths, origKey, style, origKey)
+        if (hit) return { ...hit, family: hit.family || style.fontFamily }
+      }
+    }
+    for (const family of candidates.slice(substituteStart)) {
+      const hit = tryFamily(family)
+      if (hit) return { ...hit, substituted: true }
     }
     return undefined
   }
@@ -471,13 +827,14 @@ function wrapSafeAdvance(font: OpentypeFontLike): OpentypeFontLike {
     ...(font.charToGlyphIndex
       ? { charToGlyphIndex: (ch: string) => font.charToGlyphIndex!(ch) }
       : {}),
-    getAdvanceWidth(text: string, fontSize: number): number {
+    getAdvanceWidth(text: string, fontSize: number, options?: { kerning?: boolean }): number {
+      const kern = options?.kerning !== false
       let units = 0
       let prev: unknown = null
       for (const ch of text) {
         const glyph = f.charToGlyph!(ch)
         units += glyph?.advanceWidth ?? 0
-        if (prev && typeof f.getKerningValue === 'function') {
+        if (kern && prev && typeof f.getKerningValue === 'function') {
           try {
             units += f.getKerningValue(prev, glyph) || 0
           } catch {
@@ -547,35 +904,238 @@ function instantiateWeight(font: OpentypeFontLike, bold: boolean): OpentypeFontL
   }
 }
 
+/** An Office-private face the renderer must register as a FontFace (Chromium can't see the file). */
+export interface PrivateFontFaceInfo {
+  id: string
+  family: string
+  bold: boolean
+  italic: boolean
+}
+
+/** id -> file location of private faces referenced by layouts so far (grows as decks open). */
+const privateFaces = new Map<
+  string,
+  { family: string; bold: boolean; italic: boolean; path: string; offset: number }
+>()
+
+export function listPrivateFontFaces(): PrivateFontFaceInfo[] {
+  return [...privateFaces.entries()].map(([id, f]) => ({
+    id,
+    family: f.family,
+    bold: f.bold,
+    italic: f.italic,
+  }))
+}
+
+/** Extracted single-face sfnt bytes for a private face (ttc split out; FontFace can't take ttc). */
+export function getPrivateFontData(id: string): ArrayBuffer | null {
+  const f = privateFaces.get(id)
+  if (!f) return null
+  try {
+    return extractFace(readFileSync(f.path), f.offset)
+  } catch {
+    return null
+  }
+}
+
+/** Process-wide registry; reset after the user font store changes so new files get indexed. */
+let sharedRegistry: FontRegistry | null = null
+function getRegistry(): FontRegistry {
+  return (sharedRegistry ??= new FontRegistry())
+}
+export function resetFontRegistry(): void {
+  sharedRegistry = null
+}
+
+/** True when the family resolves without same-script/class substitution (alias hits count as available). */
+export function familyAvailable(family: string): boolean {
+  const hit = getRegistry().resolve({
+    fontFamily: family,
+    fontSizePx: 100,
+    bold: false,
+    italic: false,
+  })
+  return !!hit && !hit.substituted
+}
+
+/** Family names (name 1/16) declared by a local font file; [] when unreadable. */
+export function fontFileFamilies(path: string): string[] {
+  try {
+    const faces = readFaceDir(readFileSync(path))
+    return [...new Set(faces.map((f) => f.display).filter(Boolean))]
+  } catch {
+    return []
+  }
+}
+
 /** Create a metrics provider injected with system fonts (falls back to heuristics per run when no font is found). */
 export function createSystemFontMetrics(): FontMetricsProvider {
   initShapedMetrics()
-  const registry = new FontRegistry()
-  const cache = new Map<string, { font: OpentypeFontLike; family: string } | undefined>()
-  const resolveEntry = (style: RunStyle) => {
-    const key = `${style.fontFamily}|${style.bold ? 1 : 0}${style.italic ? 1 : 0}`
+  const registry = getRegistry()
+  const cache = new Map<
+    string,
+    | {
+        font: OpentypeFontLike
+        family: string
+        substituted?: boolean
+        path: string
+        offset: number
+      }
+    | undefined
+  >()
+  const resolveEntry = (
+    style: RunStyle,
+  ):
+    | {
+        font: OpentypeFontLike
+        family: string
+        substituted?: boolean
+        path: string
+        offset: number
+      }
+    | undefined => {
+    const key = `${style.fontFamily}|${style.bold ? 1 : 0}${style.italic ? 1 : 0}|${style.substScript ?? ''}`
     if (cache.has(key)) return cache.get(key)
     const raw = registry.resolve(style)
-    let entry: { font: OpentypeFontLike; family: string } | undefined
+    let entry:
+      | {
+          font: OpentypeFontLike
+          family: string
+          substituted?: boolean
+          path: string
+          offset: number
+        }
+      | undefined
+    // Weight-in-name requests (Hiragino Kaku Gothic ProN W3) resolve to a specific face of a system
+    // collection, but CSS matches that family by weight only (normal → W4) — register the
+    // exact face under a synthetic "<family> W<n>" name so drawing uses the measured face.
+    const wReq = /w([0-9])$/.exec(norm(style.fontFamily))?.[1]
+    if (raw && !registry.isPrivate(raw.path) && wReq) {
+      if (!norm(raw.family).endsWith(`w${wReq}`)) raw.family = `${raw.family} W${wReq}`
+      privateFaces.set(`${raw.family}|${style.bold ? 1 : 0}${style.italic ? 1 : 0}`, {
+        family: raw.family,
+        bold: style.bold,
+        italic: style.italic,
+        path: raw.path,
+        offset: raw.offset,
+      })
+    }
+    if (raw && registry.isPrivate(raw.path)) {
+      // Register under the requested style only when this style resolved to its own face —
+      // when bold/italic fell back to the same file+face as regular, skip it so Chromium
+      // keeps synthesizing bold/italic from the regular face (matching PowerPoint).
+      const base =
+        style.bold || style.italic
+          ? registry.resolve({ ...style, bold: false, italic: false })
+          : undefined
+      // Weight-in-name families ('Arimo Bold' + b=1) resolve both probes to the same real
+      // Bold face; keying it '|00' would collide with the sibling regular family ('Arimo')
+      // and draw regular glyphs — when the face's own style matches the request, keep the
+      // requested key so bold/regular faces of one display family coexist.
+      const os2Weight = (raw.font as { tables?: { os2?: { usWeightClass?: number } } }).tables?.os2
+        ?.usWeightClass
+      const italicAngle = (raw.font as { tables?: { post?: { italicAngle?: number } } }).tables
+        ?.post?.italicAngle
+      const faceMatchesRequest =
+        typeof os2Weight === 'number' &&
+        os2Weight >= 600 === style.bold &&
+        (typeof italicAngle === 'number' ? Math.abs(italicAngle) > 0.01 : false) === style.italic
+      if (!base || base.path !== raw.path || base.offset !== raw.offset || faceMatchesRequest) {
+        privateFaces.set(`${raw.family}|${style.bold ? 1 : 0}${style.italic ? 1 : 0}`, {
+          family: raw.family,
+          bold: style.bold,
+          italic: style.italic,
+          path: raw.path,
+          offset: raw.offset,
+        })
+      } else {
+        // Same file+face as regular: register the regular face (even if no regular run
+        // exists in the deck) so Chromium has a real face to synthesize bold/italic from.
+        privateFaces.set(`${base.family}|00`, {
+          family: base.family,
+          bold: false,
+          italic: false,
+          path: base.path,
+          offset: base.offset,
+        })
+      }
+    }
     if (raw) {
       const inst = instantiateWeight(raw.font, style.bold)
       // Non-variable fonts (instantiateWeight returned as-is) need the safe-advance wrapper;
       // the variable-font path already accumulates per glyph and is inherently safe
-      entry = { font: inst === raw.font ? wrapSafeAdvance(raw.font) : inst, family: raw.family }
+      let font = inst === raw.font ? wrapSafeAdvance(raw.font) : inst
+      // hhea lineGap (external leading): lives only in the table, and the wrappers above
+      // rebuild the object — carry it so single spacing includes it (CoreText semantics)
+      const hheaGap = (raw.font as { tables?: { hhea?: { lineGap?: number } } }).tables?.hhea
+        ?.lineGap
+      if (typeof hheaGap === 'number' && hheaGap > 0) font = { ...font, lineGap: hheaGap }
+      // Bundled Carlito ships Linux-style hhea metrics (1.0 em) while PowerPoint spaces
+      // Calibri by the OS/2 win metrics (1.22 em) — take line metrics from OS/2 win so
+      // substituted decks keep PowerPoint's line pitch.
+      if (raw.family.toLowerCase().startsWith('carlito')) {
+        const os2 = (
+          raw.font as { tables?: { os2?: { usWinAscent?: number; usWinDescent?: number } } }
+        ).tables?.os2
+        if (os2?.usWinAscent && os2.usWinDescent != null) {
+          // Win metrics span the full 1.22em pitch (== hhea asc+desc+gap for Carlito):
+          // the external leading is already inside them, adding it again double-counts
+          font = {
+            ...font,
+            ascender: os2.usWinAscent,
+            descender: -Math.abs(os2.usWinDescent),
+            lineGap: 0,
+          }
+        }
+      }
+      entry = {
+        font,
+        family: raw.family,
+        path: raw.path,
+        offset: raw.offset,
+        ...(raw.substituted ? { substituted: true } : {}),
+      }
     }
     cache.set(key, entry)
     return entry
   }
   const inner = new OpentypeMetrics((style) => resolveEntry(style)?.font, new HeuristicMetrics())
+  // Complex-script runs whose REQUESTED family resolved to a real (non-substituted)
+  // face shape and draw with that face — decks ship real Arabic fonts via Office
+  // CloudFonts/DFonts/embeds, and forcing the generic script substitute (Geeza Pro)
+  // makes every run ~20% wider than PowerPoint (prod_016). Substituted resolutions
+  // keep the script default so measuring and drawing stay on one font.
+  const prefFaceFor = (style: RunStyle, text: string): ShapedPrefFace | undefined => {
+    if (!complexScriptOf(text)) return undefined
+    const e = resolveEntry(style)
+    if (!e || e.substituted) return undefined
+    const { family, path, offset } = e
+    return {
+      family,
+      bytes: () => {
+        try {
+          return extractFace(readFileSync(path), offset)
+        } catch {
+          return null
+        }
+      },
+    }
+  }
   return {
     metrics: (style) => inner.metrics(style),
     // Complex scripts (ligatures/contextual forms) prefer HarfBuzz shaped metrics — opentype's
     // per-glyph accumulation measures isolated forms, drifting from actual drawing; falls back
     // to the original path when not ready or no font
     measure: (text, style) =>
-      shapedMeasure(text, style.fontSizePx, style.bold, style.italic) ?? inner.measure(text, style),
+      shapedMeasure(text, style.fontSizePx, style.bold, style.italic, prefFaceFor(style, text)) ??
+      inner.measure(text, style),
     // Substituted fonts return the substitute family; the renderer draws with it (same font file for measuring/drawing)
     displayFamily: (style, text) =>
-      (text != null ? shapedFamily(text) : null) ?? resolveEntry(style)?.family ?? style.fontFamily,
+      (text != null
+        ? shapedFamily(text, prefFaceFor(style, text), style.bold, style.italic)
+        : null) ??
+      resolveEntry(style)?.family ??
+      style.fontFamily,
+    substituted: (style) => resolveEntry(style)?.substituted === true,
   }
 }

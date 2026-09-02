@@ -90,11 +90,19 @@ describe('native editable tables', () => {
           charSpacingTwips: null,
           charScaleEm: null,
           highlight: null,
+          shading: null,
           vertAlign: null,
           em: null,
+          boldOff: null,
+          italicOff: null,
+          caps: null,
+          vanish: null,
+          cs: null,
+          rtl: null,
           styleId: null,
           rawRPr:
             '<w:rPr><w:rFonts w:ascii="Calibri" w:eastAsia="Calibri"/><w:b/><w:color w:val="1F4E78"/></w:rPr>',
+          themeRFonts: null,
         },
       },
     ])
@@ -188,6 +196,23 @@ describe('native editable tables', () => {
     editor.destroy()
   })
 
+  it('persists a table alignment change (tblAlign → w:jc) through save and reload', async () => {
+    const { editor, parsed } = await openTable()
+    const table = editor.state.doc.firstChild!
+    // the Table Layout ribbon sets tblAlign via updateAttributes('docTable', …)
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(0, undefined, { ...table.attrs, tblAlign: 'center' }),
+    )
+
+    const plan = pmDocToSavePlan(editor.getJSON() as PmNode, parsed.blocks)
+    expect(plan.changedCount).toBe(1)
+    const reparsed = await parseDocx(await saveDocx(parsed, plan.saveBlocks))
+    expect(reparsed.blocks[0].table?.align).toBe('center')
+    expect(reparsed.blocks[0].originalXml).toContain('<w:jc w:val="center"/>')
+    expect(reparsed.blocks[0].originalXml).toContain('<w:tblStyle w:val="TableGrid"/>')
+    editor.destroy()
+  })
+
   it('round-trips clamped Ribbon and drag-resized column grids', async () => {
     const { editor, parsed } = await openTable()
     const firstCell = cellPositions(editor)[0]
@@ -226,9 +251,106 @@ describe('native editable tables', () => {
       Record<string, string>,
       [string, Record<string, string>, ...Array<[string, Record<string, string>]>],
     ]
-    expect(spec[1].style).toContain('width:min(1200px,calc(100% + var(--doc-margin-right,0px)))')
+    expect(spec[1].style).toContain(
+      'width:min(1200px,calc(var(--doc-content-w,100%) + var(--doc-margin-right,0px)))',
+    )
     const cols = spec[2].slice(2) as Array<[string, Record<string, string>]>
     expect(cols.map((col) => col[1].style)).toEqual(['width:50.00%', 'width:50.00%'])
+    editor.destroy()
+  })
+
+  it('resolves a pct table width against its own section column', async () => {
+    // w:tblW type="pct" is a share of the section's TEXT COLUMN. The canvas pads by
+    // the first section's margins, so a bare 100% made every table of a document
+    // with a full-bleed cover section (w:pgMar w:left="0") span the whole paper and
+    // hang off its right edge once the section's own left inset is applied.
+    const { editor } = await openTable()
+    const table = editor.state.doc.firstChild!
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(0, undefined, {
+        ...table.attrs,
+        tblAutoFit: 'fixed',
+        widthPx: null,
+        widthPct: 100,
+      }),
+    )
+    const spec = editor.schema.nodes.docTable.spec.toDOM!(editor.state.doc.firstChild!) as [
+      string,
+      Record<string, string>,
+    ]
+    expect(spec[1].style).toContain('width:calc(var(--doc-content-w,100%) * 1)')
+    expect(spec[1].style).not.toContain('width:100%')
+    editor.destroy()
+  })
+
+  it('resolves an AutoFit-to-Window table against its own section column', async () => {
+    // the imported shape the bug came in on: <w:tblLayout w:type="autofit"/> +
+    // <w:tblW w:w="5000" w:type="pct"/> parses as AutoFit to Window
+    const pctTable =
+      '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/>' +
+      '<w:tblW w:w="5000" w:type="pct"/><w:tblLayout w:type="autofit"/></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+    const source = await buildDocx({ bodyXml: pctTable })
+    const parsed = await parseDocx(source)
+    expect(parsed.blocks[0].table?.autoFit).toBe('window')
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: blocksToPmDoc(parsed.blocks) as never,
+    })
+    const spec = editor.schema.nodes.docTable.spec.toDOM!(editor.state.doc.firstChild!) as [
+      string,
+      Record<string, string>,
+    ]
+    expect(spec[1].style).toContain('width:var(--doc-content-w,100%)')
+    expect(spec[1].style).not.toContain('width:100%')
+    editor.destroy()
+  })
+
+  it('takes a positive table indent out of the right-margin spill allowance', async () => {
+    const { editor } = await openTable()
+    const table = editor.state.doc.firstChild!
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(0, undefined, {
+        ...table.attrs,
+        widthPx: 1200,
+        indentTwips: 1450,
+      }),
+    )
+    const spec = editor.schema.nodes.docTable.spec.toDOM!(editor.state.doc.firstChild!) as [
+      string,
+      Record<string, string>,
+    ]
+    expect(spec[1].style).toContain(
+      'width:min(1200px,calc(var(--doc-content-w,100%) + var(--doc-margin-right,0px) - 96.7px))',
+    )
+    expect(spec[1].style).toContain('margin-left:96.7px')
+    editor.destroy()
+  })
+
+  it('a floating table (w:tblpPr) drops alignment/indent margins for the float gaps', async () => {
+    const { editor } = await openTable()
+    const table = editor.state.doc.firstChild!
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(0, undefined, {
+        ...table.attrs,
+        widthPx: 400,
+        tblFloat: 'right',
+        tblAlign: 'center',
+        indentTwips: 1450,
+      }),
+    )
+    const spec = editor.schema.nodes.docTable.spec.toDOM!(editor.state.doc.firstChild!) as [
+      string,
+      Record<string, string>,
+    ]
+    expect(spec[1].class).toContain('doc-table-float-right')
+    expect(spec[1].style ?? '').not.toContain('margin-left:')
+    expect(spec[1].style ?? '').not.toContain('margin-right:')
+    // the indent must not shrink the float width either
+    expect(spec[1].style ?? '').not.toContain('96.7px')
     editor.destroy()
   })
 

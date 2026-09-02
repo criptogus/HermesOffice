@@ -13,13 +13,14 @@ import type {
  */
 export interface IpcStreamChunk {
   requestId: string
-  /** 'ping' = wire-level keepalive; re-arms the silence watchdog and carries no payload */
-  type: 'delta' | 'tool-call' | 'done' | 'error' | 'ping'
+  /** 'ping' = wire-level keepalive; re-arms the silence watchdog and carries no payload;
+   * 'reasoning' = model thinking delta (text carries it) */
+  type: 'delta' | 'reasoning' | 'tool-call' | 'done' | 'error' | 'ping'
   text?: string
   toolCall?: AgentToolCall
   error?: string
-  /** machine-readable error cause; maps to the localized timeout/credits message */
-  errorCode?: 'timeout' | 'credits'
+  /** machine-readable error cause; maps to the localized timeout/credits/network/overloaded message */
+  errorCode?: 'timeout' | 'credits' | 'network' | 'overloaded'
   /** normalized stop reason on 'done' ('max_tokens' = cut off by the token limit) */
   stopReason?: string
 }
@@ -55,6 +56,10 @@ export interface IpcTransportOptions<S> {
   timeoutErrorText?(): string
   /** localized message for exhausted credits (errorCode 'credits') */
   creditsErrorText?(): string
+  /** localized message for network connectivity failures (errorCode 'network') */
+  networkErrorText?(): string
+  /** localized message for capacity/rate-limit failures (errorCode 'overloaded') */
+  overloadedErrorText?(): string
 }
 
 /**
@@ -93,6 +98,9 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         } else if (chunk.type === 'delta') {
           armSilence()
           cb.onDelta(chunk.text ?? '')
+        } else if (chunk.type === 'reasoning') {
+          armSilence()
+          if (chunk.text) cb.onReasoning?.(chunk.text)
         } else if (chunk.type === 'tool-call') {
           armSilence()
           if (chunk.toolCall) cb.onToolCall(chunk.toolCall)
@@ -107,7 +115,11 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
               ? timeoutText()
               : chunk.errorCode === 'credits'
                 ? (options.creditsErrorText?.() ?? chunk.error ?? options.unknownErrorText())
-                : (chunk.error ?? options.unknownErrorText()),
+                : chunk.errorCode === 'network'
+                  ? (options.networkErrorText?.() ?? chunk.error ?? options.unknownErrorText())
+                  : chunk.errorCode === 'overloaded'
+                    ? (options.overloadedErrorText?.() ?? chunk.error ?? options.unknownErrorText())
+                    : (chunk.error ?? options.unknownErrorText()),
           )
         }
       })
@@ -121,6 +133,8 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
             system: request.system,
             messages: request.messages,
             tools: request.tools,
+            // Fork: propagate the per-document session id so the gateway keeps continuity (fix 70374e0)
+            ...(request.sessionId ? { sessionId: request.sessionId } : {}),
           }),
         ).catch((err: unknown) => {
           fail(err instanceof Error ? err.message : options.unknownErrorText())

@@ -4,14 +4,27 @@
  * to avoid renderer CORS), search tools, and the slides-only ai:* channels
  * (image generation, media analysis, style templates).
  */
-import { app, ipcMain, shell } from 'electron'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { app, ipcMain, nativeImage, net, shell } from 'electron'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import {
   AiCreditsError,
   AiTimeoutError,
+  isAiNetworkError,
+  isAiOverloadedError,
   defaultAiSettings,
+  cloudToolsEnabled,
   resolveAiSettings,
+  setRescueFetch,
   streamForProvider,
   type AiSettings,
   type AiStreamChunk,
@@ -30,14 +43,22 @@ import {
   gskLoginInfo,
   hasGskAuth,
 } from '@hermesoffice/ai-search'
-import { addPicture, replacePictureBytes } from '@hermesoffice/pptx-engine'
+import { addPicture, editPictureSrcRect, replacePictureBytes } from '@hermesoffice/pptx-engine'
+import { matchesElementRef } from '@hermesoffice/pptx-engine/identity'
+import { coverCropFractions } from '../shared/cover-crop'
+import type { AiRunFailure } from '../shared/ipc'
 import { EMU_PER_PX_96 } from '@hermesoffice/pptx-render'
 import { tm } from './i18n-main'
-import { pushHistory, rebuildSlide, sessions } from './session-state'
+import { pushHistory, rebuildSlide, scheduleHistoryNotify, sessions } from './session-state'
 
 // ---- AI settings + streaming proxy (the main process does the networking to avoid renderer CORS; implementation shared via @hermesoffice/ai-provider) ----
 
 const AI_SETTINGS_PATH = () => join(app.getPath('userData'), 'ai-settings.json')
+
+/** live read: the shell settings pane writes the file; every tool call re-checks */
+function gskCloudToolsOn(): boolean {
+  return cloudToolsEnabled(readJson<Partial<AiSettings>>(AI_SETTINGS_PATH(), {}))
+}
 
 function readJson<T>(path: string, fallback: T): T {
   try {
@@ -55,11 +76,41 @@ function writeJson(path: string, value: unknown): void {
 
 const activeAiStreams = new Map<string, AbortController>()
 
+// ---- Post-mortem log for runs that produced no usable reply ----
+
+const AI_RUN_FAILURES_PATH = () => join(app.getPath('userData'), 'ai-run-failures.jsonl')
+/** Enough of a repetition blowup to recognize the pattern, without storing megabytes */
+const RUN_FAILURE_TEXT_MAX = 20_000
+/** Rotated (one generation kept) rather than grown without bound */
+const RUN_FAILURES_MAX_BYTES = 2_000_000
+
+function appendRunFailure(entry: AiRunFailure): void {
+  const path = AI_RUN_FAILURES_PATH()
+  try {
+    if (existsSync(path) && statSync(path).size > RUN_FAILURES_MAX_BYTES) {
+      renameSync(path, `${path}.1`)
+    }
+    const record = {
+      ts: new Date().toISOString(),
+      ...entry,
+      instruction: entry.instruction.slice(0, RUN_FAILURE_TEXT_MAX),
+      streamed: entry.streamed.slice(0, RUN_FAILURE_TEXT_MAX),
+      streamedChars: entry.streamed.length,
+    }
+    appendFileSync(path, JSON.stringify(record) + '\n', 'utf-8')
+  } catch {
+    /* Diagnostics must never break a run */
+  }
+}
+
 export function registerAiIpc(): void {
+  // Node fetch (undici) direct connections get reset under VPN/tun setups; retry over Chromium's stack
+  setRescueFetch((url, init) => net.fetch(url, init))
+
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); stored settings that chose another provider are normalized back
+    // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
     settings.provider = 'hermes'
     return settings
   })
@@ -81,6 +132,10 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
     writeJson(AI_SETTINGS_PATH(), settings)
+  })
+
+  ipcMain.handle('ai:log-run-failure', (_event, entry: AiRunFailure) => {
+    appendRunFailure(entry)
   })
 
   ipcMain.handle('ai:stream', async (event, request: AiStreamRequest) => {
@@ -122,6 +177,7 @@ export function registerAiIpc(): void {
       await streamForProvider(provider, config, system, messages, tools, maxTokens, {
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
+        onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
         onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
         onActivity: ping,
       })
@@ -140,7 +196,11 @@ export function registerAiIpc(): void {
             ? { errorCode: 'timeout' as const }
             : err instanceof AiCreditsError
               ? { errorCode: 'credits' as const }
-              : {}),
+              : isAiNetworkError(err)
+                ? { errorCode: 'network' as const }
+                : isAiOverloadedError(err)
+                  ? { errorCode: 'overloaded' as const }
+                  : {}),
         })
       }
     } finally {
@@ -155,7 +215,11 @@ export function registerAiIpc(): void {
   // Search tools (content + images), Serper with DuckDuckGo fallback
   ipcMain.handle('ai:web-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await webSearch(String(query), typeof maxResults === 'number' ? maxResults : 6)
+      return await webSearch(
+        String(query),
+        typeof maxResults === 'number' ? maxResults : 6,
+        gskCloudToolsOn(),
+      )
     } catch (err) {
       return { results: [], method: 'error', error: String(err) }
     }
@@ -163,7 +227,11 @@ export function registerAiIpc(): void {
 
   ipcMain.handle('ai:image-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await imageSearch(String(query), typeof maxResults === 'number' ? maxResults : 8)
+      return await imageSearch(
+        String(query),
+        typeof maxResults === 'number' ? maxResults : 8,
+        gskCloudToolsOn(),
+      )
     } catch (err) {
       return { images: [], method: 'error', error: String(err) }
     }
@@ -190,6 +258,11 @@ export function registerSlidesOnlyAiIpc(): void {
       },
     ) => {
       if (!hasGskAuth()) return { error: tm('errGskCli') }
+      if (!gskCloudToolsOn())
+        return {
+          error:
+            'Genspark cloud tools are turned off in Settings (AI Model); enable them to use this tool',
+        }
       try {
         const r = await gskGenerateImage({
           prompt: String(op.prompt),
@@ -211,6 +284,11 @@ export function registerSlidesOnlyAiIpc(): void {
     'ai:analyze-media',
     async (_event, op: { mediaUrls: string[]; requirements: string }) => {
       if (!hasGskAuth()) return { error: tm('errGskCli') }
+      if (!gskCloudToolsOn())
+        return {
+          error:
+            'Genspark cloud tools are turned off in Settings (AI Model); enable them to use this tool',
+        }
       try {
         const text = await gskAnalyzeMedia({
           mediaUrls: (op.mediaUrls ?? []).map(String),
@@ -268,8 +346,15 @@ export function registerSlidesOnlyAiIpc(): void {
         })
         if (!el) {
           session.undoStack.pop()
+          scheduleHistoryNotify(session)
           return null
         }
+        // The requested frame rarely matches the image's aspect ratio; never
+        // stretch — fill the frame and center-crop the overflow (object-fit:
+        // cover) so the layout box stays exactly where the model placed it.
+        const natural = nativeImage.createFromBuffer(buf).getSize()
+        const crop = coverCropFractions(natural.width, natural.height, op.wPx, op.hPx)
+        if (crop) editPictureSrcRect(slide, el.id, crop)
         session.fitWidthPx = op.fitWidthPx
         const rebuilt = rebuildSlide(session, op.slideIndex)
         return rebuilt ? { slide: rebuilt, sourceId: el.id } : null
@@ -288,6 +373,11 @@ export function registerSlidesOnlyAiIpc(): void {
       if (!session) return null
       const slide = session.opened.deck.slides[op.slideIndex]
       if (!slide) return null
+      // The AI layer may address the picture by its durable id — translate to the
+      // parse-time id the engine matches
+      const targetId =
+        slide.elements.find((el) => matchesElementRef(el, String(op.sourceId)))?.id ??
+        String(op.sourceId)
       try {
         const resp = await fetchRemoteImage(String(op.url))
         if (!resp || !resp.ok) return null
@@ -298,14 +388,26 @@ export function registerSlidesOnlyAiIpc(): void {
         const ok = replacePictureBytes(
           session.opened,
           slide,
-          String(op.sourceId),
+          targetId,
           new Uint8Array(buf),
           ext,
           op.keepSrcRect ? { keepSrcRect: true } : undefined,
         )
         if (!ok) {
           session.undoStack.pop()
+          scheduleHistoryNotify(session)
           return null
+        }
+        // A replacement with a different aspect ratio would be stretched into
+        // the surviving frame — center-crop it to cover the frame instead.
+        if (!op.keepSrcRect) {
+          const pic = slide.elements.find((el) => el.id === targetId && el.type === 'picture')
+          const frame = pic?.transform?.offset
+          if (frame) {
+            const natural = nativeImage.createFromBuffer(buf).getSize()
+            const crop = coverCropFractions(natural.width, natural.height, frame.cx, frame.cy)
+            if (crop) editPictureSrcRect(slide, targetId, crop)
+          }
         }
         return rebuildSlide(session, op.slideIndex)
       } catch {

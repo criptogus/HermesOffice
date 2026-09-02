@@ -82,6 +82,11 @@ jobs:
           fi
           npm run check:theme-colors
 
+      # Keep tracked code comments and contributor-facing documentation
+      # English-only; functional CJK strings and AI prompt examples are allowed.
+      - name: Check comments/docs are English-only
+        run: npm run check:english-comments
+
       - name: Lint
         run: npm run lint
 
@@ -154,6 +159,15 @@ jobs:
           else
             echo "kernel.apparmor_restrict_unprivileged_userns not present — skipping"
           fi
+
+      # Pixel baselines (docs-visual.spec.ts) depend on the font stack: pin
+      # Calibri/Cambria metric-compatible faces and CJK glyphs so renders are
+      # reproducible across runner images and contributor machines.
+      - name: Install document fonts (visual baselines)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fonts-crosextra-carlito fonts-crosextra-caladea fonts-noto-cjk
 
       # Electron needs a display server on Linux runners. DEBUG=pw:browser
       # forwards the Electron process stdout/stderr into the CI log so launch

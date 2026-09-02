@@ -8,13 +8,12 @@ function renderTable(model: TableModel): HTMLElement {
   return dom as HTMLElement
 }
 
-/** innerText equivalent (<br> → \n); jsdom does not implement innerText */
+/** innerText equivalent (paragraph divs → one line each); jsdom does not implement innerText */
 function cellText(td: Element): string {
-  let out = ''
-  td.childNodes.forEach((n) => {
-    out += n.nodeName === 'BR' ? '\n' : (n.textContent ?? '')
-  })
-  return out
+  return Array.from(td.children)
+    .filter((c) => c.tagName === 'DIV')
+    .map((c) => c.textContent ?? '')
+    .join('\n')
 }
 
 const cell = (paras: string[], richParas?: TableModel['rows'][0][0]['richParas']) => ({
@@ -75,9 +74,12 @@ describe('renderTableSpec rich cell content', () => {
     expect(cellText(td)).toBe('x\ny')
   })
 
-  it('keeps the nbsp placeholder for cells whose richParas hold no text', () => {
+  it('renders one empty line box for cells whose richParas hold no text', () => {
     const td = renderTable({ rows: [[cell([''], [{ runs: [] }])]] }).querySelector('td')!
-    expect(td.textContent).toBe('\u00a0')
+    const paras = td.querySelectorAll(':scope > div')
+    expect(paras).toHaveLength(1)
+    expect(paras[0].classList.contains('doc-p-empty')).toBe(true)
+    expect(paras[0].querySelector('br')).not.toBeNull()
   })
 
   it('leads with the cs font chain for complex-script run text', () => {
@@ -109,6 +111,41 @@ describe('renderTableSpec rich cell content', () => {
     expect(latin).not.toContain('Traditional Arabic')
   })
 
+  it('renders both the text and the picture of a text+drawing run', () => {
+    const model: TableModel = {
+      rows: [
+        [
+          cell(
+            ['label'],
+            [
+              {
+                runs: [
+                  {
+                    text: 'label',
+                    bold: true,
+                    image: {
+                      dataUrl: 'data:image/png;base64,AA==',
+                      widthPx: 24,
+                      xml: '<w:drawing/>',
+                    },
+                  },
+                ],
+              },
+            ],
+          ),
+        ],
+      ],
+    }
+    const td = renderTable(model).querySelector('td')!
+    const span = td.querySelector('span')!
+    expect(span.textContent).toBe('label')
+    expect(span.getAttribute('style')).toMatch(/font-weight:\s*700/)
+    const img = td.querySelector('img.doc-inline-img')!
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,AA==')
+    // text precedes the drawing (generate.ts / editable-path order)
+    expect(span.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('cell-level color/bold stay as td-level fallback', () => {
     const model: TableModel = {
       rows: [
@@ -126,5 +163,164 @@ describe('renderTableSpec rich cell content', () => {
     expect(tdStyle).toMatch(/color:\s*(#112233|rgb\(17,\s*34,\s*51\))/i)
     expect(tdStyle).toMatch(/font-weight:\s*600/)
     expect(td.querySelector('span')!.getAttribute('style')).toBeNull()
+  })
+})
+
+// jsdom's CSSOM drops min()/round() values on cssText assignment, so the
+// paragraph line-box styles are asserted on the raw spec
+type Spec = [string, Record<string, string>, ...unknown[]]
+const isSpec = (x: unknown): x is Spec => Array.isArray(x) && typeof x[0] === 'string'
+function findSpecs(spec: unknown, tag: string): Spec[] {
+  if (!isSpec(spec)) return []
+  const rest = spec.slice(2).flatMap((c) => findSpecs(c, tag))
+  return spec[0] === tag ? [spec, ...rest] : rest
+}
+const paraStyles = (model: TableModel): string[] =>
+  findSpecs(renderTableSpec(model), 'div').map((d) => d[1].style ?? '')
+
+const SINGLE_LH = 'line-height:var(--doc-line-grid,var(--doc-line-factor,1.2))'
+
+describe('renderTableSpec paragraph line box', () => {
+  it('gives each paragraph a run-size strut and its own single-spacing line height', () => {
+    const [style] = paraStyles({
+      rows: [
+        [
+          cell(
+            ['tiny'],
+            [
+              {
+                runs: [
+                  { text: 'ti', sizeHalfPoints: 14 },
+                  { text: 'ny', sizeHalfPoints: 12 },
+                ],
+                lineRule: 'auto',
+                lineRawTwips: 240,
+              },
+            ],
+          ),
+        ],
+      ],
+    })
+    expect(style).toContain('--doc-strut:7pt')
+    expect(style).toContain('font-size:min(var(--doc-strut), 1em)')
+    expect(style).toContain('--doc-line-factor:var(--doc-line-factor-latin,1.2)')
+    // explicit w:line=240 (single): re-evaluated at the paragraph's own strut size
+    expect(style).toContain(SINGLE_LH)
+  })
+
+  it('keeps the inherited strut when any run omits its size', () => {
+    const [style] = paraStyles({
+      rows: [[cell(['ab'], [{ runs: [{ text: 'a', sizeHalfPoints: 14 }, { text: 'b' }] }])]],
+    })
+    expect(style).not.toContain('--doc-strut')
+    expect(style).toContain(SINGLE_LH)
+  })
+
+  it('restores exact line rule and explicit paragraph spacing', () => {
+    const [style] = paraStyles({
+      rows: [
+        [
+          cell(
+            ['x'],
+            [
+              {
+                runs: [{ text: 'x' }],
+                lineRule: 'exact',
+                lineRawTwips: 200,
+                spaceBefore: 80,
+                spaceAfter: 20,
+              },
+            ],
+          ),
+        ],
+      ],
+    })
+    expect(style).toContain('line-height:10.0pt')
+    expect(style).toContain('margin-top:4.0pt')
+    expect(style).toContain('margin-bottom:1.0pt')
+  })
+
+  it('fully declared Latin run fonts drive the factor and the strut face', () => {
+    const [style] = paraStyles({
+      rows: [
+        [cell(['latin'], [{ runs: [{ text: 'latin', font: 'Calibri', fontAscii: 'Calibri' }] }])],
+      ],
+    })
+    expect(style).toContain('--doc-line-factor:1.22')
+    expect(style).toMatch(/font-family:'Calibri'/)
+  })
+
+  it('mixed declared/inherited Latin runs take max() and keep the inherited face', () => {
+    const [style] = paraStyles({
+      rows: [
+        [
+          cell(
+            ['ab'],
+            [{ runs: [{ text: 'a', font: 'Calibri', fontAscii: 'Calibri' }, { text: 'b' }] }],
+          ),
+        ],
+      ],
+    })
+    expect(style).toContain('--doc-line-factor:max(var(--doc-line-factor-latin,1.2), 1.22)')
+    expect(style).not.toContain('font-family')
+  })
+
+  it('eaSlotEmpty backfill is not a Latin font declaration', () => {
+    const [style] = paraStyles({
+      rows: [[cell(['x'], [{ runs: [{ text: 'x', font: 'SimSun', eaSlotEmpty: true }] }])]],
+    })
+    expect(style).toContain('--doc-line-factor:var(--doc-line-factor-latin,1.2)')
+  })
+
+  it('declared CJK run fonts drive the paragraph line factor', () => {
+    const [style] = paraStyles({
+      rows: [[cell(['宋体字'], [{ runs: [{ text: '宋体字', font: 'SimSun' }] }])]],
+    })
+    expect(style).toContain('--doc-line-factor:1.3029')
+  })
+
+  it('JP-variant Noto run fonts take the JA substitution factor', () => {
+    const [style] = paraStyles({
+      rows: [[cell(['日本語'], [{ runs: [{ text: '日本語', font: 'Noto Sans CJK JP' }] }])]],
+    })
+    expect(style).toContain('--doc-line-factor:1.3029')
+  })
+
+  it('plain-paras cells get script-based line factors per paragraph', () => {
+    const styles = paraStyles({ rows: [[cell(['中文', 'latin'])]] })
+    expect(styles).toHaveLength(2)
+    expect(styles[0]).toContain('--doc-line-factor:var(--doc-line-factor-cjk,1.7)')
+    expect(styles[1]).toContain('--doc-line-factor:var(--doc-line-factor-latin,1.2)')
+    expect(styles[1]).toContain(SINGLE_LH)
+  })
+})
+
+// bidiVisual mirrors column order via dir="rtl" on the <table>; each cell
+// paragraph's base direction stays its own (w:bidi / strong-script inference),
+// so weak-only text like "50,0 %" must not reorder to "% 50,0".
+describe('bidiVisual cell paragraph direction', () => {
+  it('cell paragraphs get explicit ltr unless their own content is RTL', () => {
+    const model: TableModel = {
+      bidiVisual: true,
+      rows: [
+        [
+          cell(['50,0 %'], [{ runs: [{ text: '50,0 %' }] }]),
+          cell(['مرحبا'], [{ runs: [{ text: 'مرحبا' }] }]),
+        ],
+      ],
+    }
+    const dom = renderTable(model)
+    expect(dom.getAttribute('dir')).toBe('rtl')
+    const paras = dom.querySelectorAll('td > div')
+    expect((paras[0] as HTMLElement).style.direction).toBe('ltr')
+    expect((paras[1] as HTMLElement).style.direction).toBe('rtl')
+  })
+
+  it('an explicit w:bidi cell paragraph stays rtl even with weak-only text', () => {
+    const model: TableModel = {
+      rows: [[cell(['50,0 %'], [{ runs: [{ text: '50,0 %' }], bidi: true }])]],
+    }
+    const paras = renderTable(model).querySelectorAll('td > div')
+    expect((paras[0] as HTMLElement).style.direction).toBe('rtl')
   })
 })

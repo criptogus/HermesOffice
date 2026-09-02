@@ -4,8 +4,9 @@
  * toDOM output, which ProseMirror reuses while typing).
  */
 import { Editor } from '@tiptap/core'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { editorExtensions } from '../src/renderer/editor/extensions'
+import { setDocFontTable } from '../src/renderer/line-metrics'
 
 const factorOf = (editor: Editor, index = 0): string => {
   const p = editor.view.dom.querySelectorAll('p')[index] as HTMLElement
@@ -67,6 +68,48 @@ describe('live line-height factor decorations', () => {
   })
 })
 
+describe('fontTable-driven per-block factor', () => {
+  afterEach(() => setDocFontTable(null))
+
+  const krParagraph = {
+    type: 'doc',
+    content: [
+      {
+        type: 'docParagraph',
+        content: [
+          {
+            type: 'text',
+            text: '한국어 본문',
+            marks: [{ type: 'docTextStyle', attrs: { font: '원신한 Light' } }],
+          },
+        ],
+      },
+    ],
+  } as never
+
+  it('a missing hangul-named run face with a sans PANOSE bakes the Malgun factor', () => {
+    // registry must be set before content, mirroring file-actions' open order
+    setDocFontTable([{ name: '원신한 Light', panose: '020B0303000000000000' }])
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: krParagraph,
+    })
+    expect(factorOf(editor)).toBe('1.7371')
+    editor.destroy()
+  })
+
+  it('without a fontTable the same face stays Batang-ward', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: krParagraph,
+    })
+    expect(factorOf(editor)).toBe('1.3029')
+    editor.destroy()
+  })
+})
+
 describe('live strut font-size decorations', () => {
   it('changing the run font size updates the paragraph strut font-size', () => {
     const editor = new Editor({
@@ -109,6 +152,201 @@ describe('live strut font-size decorations', () => {
     editor.commands.deleteRange({ from: 1, to: 6 })
     expect(fontSizeOf(editor)).toBe('')
 
+    editor.destroy()
+  })
+})
+
+describe('declared run fonts drive the Latin factor and the paragraph face', () => {
+  const fontParagraph = (runs: Array<{ text: string; font?: string }>) =>
+    ({
+      type: 'doc',
+      content: [
+        {
+          type: 'docParagraph',
+          content: runs.map((r) => ({
+            type: 'text',
+            text: r.text,
+            ...(r.font
+              ? { marks: [{ type: 'docTextStyle', attrs: { font: r.font, fontAscii: r.font } }] }
+              : {}),
+          })),
+        },
+      ],
+    }) as never
+
+  it('all runs declaring Calibri: run-font factor and the run face on the paragraph', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: fontParagraph([{ text: 'declared', font: 'Calibri' }]),
+    })
+    expect(factorOf(editor)).toBe('1.22')
+    const p = editor.view.dom.querySelector('p') as HTMLElement
+    expect(p.style.fontFamily).toContain('Calibri')
+    editor.destroy()
+  })
+
+  it('a run inheriting the body font keeps the doc var via max() and no paragraph face', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: fontParagraph([{ text: 'declared ', font: 'Calibri' }, { text: 'inherited' }]),
+    })
+    expect(factorOf(editor)).toBe('max(var(--doc-line-factor-latin,1.2), 1.22)')
+    const p = editor.view.dom.querySelector('p') as HTMLElement
+    expect(p.style.fontFamily).toBe('')
+    editor.destroy()
+  })
+
+  it('a Latin run declaring only an eastAsia face keeps the doc Latin var', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            content: [
+              {
+                type: 'text',
+                text: 'latin only',
+                // eastAsia-only rFonts: parse puts the EA name in `font` and
+                // leaves fontAscii unset (prod sample 13's bullets)
+                marks: [{ type: 'docTextStyle', attrs: { font: 'Arial Unicode MS' } }],
+              },
+            ],
+          },
+        ],
+      } as never,
+    })
+    expect(factorOf(editor)).toBe('var(--doc-line-factor-latin,1.2)')
+    editor.destroy()
+  })
+
+  it('CJK runs declaring a JP-variant Noto face take the JA substitution factor', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: fontParagraph([{ text: '日本語本文', font: 'Noto Sans CJK JP' }]),
+    })
+    expect(factorOf(editor)).toBe('1.3029')
+    editor.destroy()
+  })
+
+  it('unsetting the font mark live drops the factor override and the paragraph face', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: fontParagraph([{ text: 'declared', font: 'Calibri' }]),
+    })
+    expect(factorOf(editor)).toBe('1.22')
+
+    editor.commands.setTextSelection({ from: 1, to: 9 })
+    editor.commands.unsetMark('docTextStyle')
+    expect(factorOf(editor)).toBe('var(--doc-line-factor-latin,1.2)')
+    const p = editor.view.dom.querySelector('p') as HTMLElement
+    expect(p.style.fontFamily).toBe('')
+    editor.destroy()
+  })
+})
+
+describe('SimSun-substitution ・/〜 line lift decorations', () => {
+  const gapDoc = (text: string, font: string, attrs?: Record<string, unknown>) =>
+    ({
+      type: 'doc',
+      content: [
+        {
+          type: 'docParagraph',
+          ...(attrs ? { attrs } : {}),
+          content: [{ type: 'text', text, marks: [{ type: 'docTextStyle', attrs: { font } }] }],
+        },
+      ],
+    }) as never
+
+  const liftSpans = (editor: Editor): HTMLElement[] =>
+    Array.from(editor.view.dom.querySelectorAll('span')).filter(
+      (s) => (s as HTMLElement).style.lineHeight !== '',
+    ) as HTMLElement[]
+
+  it('wraps ・ and 〜 in a 1.7143 line-height span under a SimSun-substituted face', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: gapDoc('項目・内容〜まで', 'Noto Sans CJK JP'),
+    })
+    const spans = liftSpans(editor)
+    expect(spans.map((s) => s.textContent)).toEqual(['・', '〜'])
+    expect(spans[0].style.lineHeight).toBe(
+      'round(up, calc(1.7143 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px))',
+    )
+    editor.destroy()
+  })
+
+  it('scales the lift by an explicit line-spacing multiple', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: gapDoc('項目・内容', 'Noto Sans JP', { lineRule: 'auto', lineSpacing: 2 }),
+    })
+    expect(liftSpans(editor)[0].style.lineHeight).toBe(
+      'max(calc(var(--doc-grid-pitch,0.0001px) * 2), calc(round(up, calc(1.7143 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px)) * var(--doc-grid-single-mult,2)))',
+    )
+    editor.destroy()
+  })
+
+  it('does not lift under non-SimSun faces, without ・/〜, or with an exact rule', () => {
+    for (const content of [
+      gapDoc('項目・内容', 'Microsoft YaHei'),
+      gapDoc('바탕・본문', 'Batang'),
+      gapDoc('項目と内容', 'Noto Sans CJK JP'),
+      gapDoc('項目・内容', 'Noto Sans CJK JP', { lineRule: 'exact', lineRawTwips: 240 }),
+    ]) {
+      const editor = new Editor({
+        element: document.createElement('div'),
+        extensions: editorExtensions,
+        content,
+      })
+      expect(liftSpans(editor)).toEqual([])
+      editor.destroy()
+    }
+  })
+})
+
+describe('empty paragraph line size (emptyRunSize attr)', () => {
+  it('renders a run-less paragraph at its paragraph-mark size', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [{ type: 'docParagraph', attrs: { emptyRunSize: 2 } }],
+      } as never,
+    })
+    const p = editor.view.dom.querySelector('p') as HTMLElement
+    expect(p.style.fontSize).toBe('1pt')
+    editor.destroy()
+  })
+
+  it('lays the empty line with the paragraph-mark face metrics (CJK included)', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          { type: 'docParagraph', attrs: { emptyRunFont: 'Times New Roman' } },
+          { type: 'docParagraph', attrs: { emptyRunFont: '맑은 고딕' } },
+          { type: 'docParagraph', attrs: { emptyRunFont: '\u5b8b\u4f53' } },
+        ],
+      } as never,
+    })
+    const [tnr, malgun, simsun] = Array.from(editor.view.dom.querySelectorAll('p')) as HTMLElement[]
+    expect(tnr.style.getPropertyValue('--doc-line-factor')).toBe('1.15')
+    expect(tnr.style.fontFamily).toContain('Times New Roman')
+    // empty-line probe 2026-08-25: CJK marks size by their own face too
+    expect(malgun.style.getPropertyValue('--doc-line-factor')).toBe('1.7371')
+    expect(simsun.style.getPropertyValue('--doc-line-factor')).toBe('1.3029')
     editor.destroy()
   })
 })

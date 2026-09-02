@@ -9,10 +9,12 @@
     "paths": {
       "@hermesoffice/pptx-engine": ["../../packages/pptx-engine/src/index.ts"],
       "@hermesoffice/pptx-engine/table-grid": ["../../packages/pptx-engine/src/table-grid.ts"],
+      "@hermesoffice/pptx-engine/identity": ["../../packages/pptx-engine/src/identity.ts"],
       "@hermesoffice/pptx-engine/background-promote": [
         "../../packages/pptx-engine/src/background-promote.ts"
       ],
-      "@hermesoffice/pptx-render": ["../../packages/pptx-render/src/index.ts"]
+      "@hermesoffice/pptx-render": ["../../packages/pptx-render/src/index.ts"],
+      "@hermesoffice/docx-engine/metafile": ["../../packages/docx-engine/src/metafile.ts"]
     }
   },
   "include": ["src", "tests", "electron.vite.config.ts", "vitest.config.ts"]

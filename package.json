@@ -21,10 +21,12 @@
     "format": "node tools/format-changed.mjs --write",
     "format:check": "node tools/format-changed.mjs --check",
     "check:theme-colors": "node tools/check-theme-colors.mjs",
+    "check:english-comments": "node tools/check-english-comments.mjs",
     "lint": "eslint .",
     "fixtures": "npm run fixtures -w @hermesoffice/docx-engine",
-    "test": "npm run test -w @hermesoffice/i18n && npm run test -w @hermesoffice/electron-utils && npm run test -w @hermesoffice/docx-engine && npm run test -w @hermesoffice/file-parse && npm run test -w @hermesoffice/pptx-engine && npm run test -w @hermesoffice/pptx-render && npm run test -w @hermesoffice/ai-search && npm run test -w @hermesoffice/agent-core && npm run test -w @hermesoffice/ai-provider && npm run test -w @hermesoffice/project-store && npm run test -w @hermesoffice/docs && npm run test -w @hermesoffice/sheets && npm run test -w @hermesoffice/shell && npm run test -w @hermesoffice/slides && npm run test -w @hermesoffice/pdf && npm run test -w @hermesoffice/markdown",
-    "typecheck": "npm run typecheck -w @hermesoffice/i18n && npm run typecheck -w @hermesoffice/electron-utils && npm run typecheck -w @hermesoffice/docx-engine && npm run typecheck -w @hermesoffice/file-parse && npm run typecheck -w @hermesoffice/pptx-engine && npm run typecheck -w @hermesoffice/pptx-render && npm run typecheck -w @hermesoffice/ai-search && npm run typecheck -w @hermesoffice/agent-core && npm run typecheck -w @hermesoffice/ai-provider && npm run typecheck -w @hermesoffice/project-store && npm run typecheck -w @hermesoffice/ui && npm run typecheck -w @hermesoffice/docs && npm run typecheck -w @hermesoffice/sheets && npm run typecheck -w @hermesoffice/shell && npm run typecheck -w @hermesoffice/slides && npm run typecheck -w @hermesoffice/pdf && npm run typecheck -w @hermesoffice/markdown",
+    "test": "npm run test -w @hermesoffice/i18n && npm run test -w @hermesoffice/electron-utils && npm run test -w @hermesoffice/font-metrics && npm run test -w @hermesoffice/docx-engine && npm run test -w @hermesoffice/pdf2docx && npm run test -w @hermesoffice/file-parse && npm run test -w @hermesoffice/pptx-engine && npm run test -w @hermesoffice/pptx-render && npm run test -w @hermesoffice/ai-search && npm run test -w @hermesoffice/agent-core && npm run test -w @hermesoffice/ai-provider && npm run test -w @hermesoffice/project-store && npm run test -w @hermesoffice/docs && npm run test -w @hermesoffice/sheets && npm run test -w @hermesoffice/shell && npm run test -w @hermesoffice/slides && npm run test -w @hermesoffice/pdf && npm run test -w @hermesoffice/markdown",
+    "typecheck": "npm run typecheck -w @hermesoffice/i18n && npm run typecheck -w @hermesoffice/electron-utils && npm run typecheck -w @hermesoffice/font-metrics && npm run typecheck -w @hermesoffice/docx-engine && npm run typecheck -w @hermesoffice/pdf2docx && npm run typecheck -w @hermesoffice/file-parse && npm run typecheck -w @hermesoffice/pptx-engine && npm run typecheck -w @hermesoffice/pptx-render && npm run typecheck -w @hermesoffice/ai-search && npm run typecheck -w @hermesoffice/agent-core && npm run typecheck -w @hermesoffice/ai-provider && npm run typecheck -w @hermesoffice/project-store && npm run typecheck -w @hermesoffice/ui && npm run typecheck -w @hermesoffice/docs && npm run typecheck -w @hermesoffice/sheets && npm run typecheck -w @hermesoffice/shell && npm run typecheck -w @hermesoffice/slides && npm run typecheck -w @hermesoffice/pdf && npm run typecheck -w @hermesoffice/markdown",
+    "predev": "node tools/build-stale-preloads.mjs",
     "dev": "concurrently -k -n docs,sheets,slides,pdf,markdown,shell -c blue,green,yellow,red,cyan,magenta \"npm run dev:renderer -w @hermesoffice/docs\" \"npm run dev:renderer -w @hermesoffice/sheets\" \"npm run dev:renderer -w @hermesoffice/slides\" \"npm run dev:renderer -w @hermesoffice/pdf\" \"npm run dev:renderer -w @hermesoffice/markdown\" \"DOCS_RENDERER_URL=http://localhost:5173 SHEETS_RENDERER_URL=http://localhost:5174 SLIDES_RENDERER_URL=http://localhost:5175 PDF_RENDERER_URL=http://localhost:5176 MARKDOWN_RENDERER_URL=http://localhost:5177 npm run dev -w @hermesoffice/shell\"",
     "dev:docs": "npm run dev -w @hermesoffice/docs",
     "build": "npm run build -w @hermesoffice/docs",
@@ -39,6 +41,10 @@
   },
   "dependencies": {
     "ws": "^8.21.1"
+  },
+  "overrides": {
+    "nanoid@3": "^3.3.17",
+    "nanoid@5": "^5.1.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

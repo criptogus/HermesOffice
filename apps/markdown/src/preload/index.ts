@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Lang } from '@hermesoffice/i18n'
 import type { AiStreamChunk } from '@hermesoffice/ai-provider'
 import type { ProjectApi } from '@hermesoffice/project-store'
+import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
 import { AI_CHANNELS, MARKDOWN_CHANNELS } from '../shared/ipc'
 import type { ExportFormat, MarkdownApi, SaveMode, UiTheme } from '../shared/ipc'
 
@@ -35,6 +36,11 @@ const api: MarkdownApi = {
     ipcRenderer.on(MARKDOWN_CHANNELS.exportRequest, listener)
     return () => ipcRenderer.removeListener(MARKDOWN_CHANNELS.exportRequest, listener)
   },
+  onPrintRequest: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on(MARKDOWN_CHANNELS.printRequest, listener)
+    return () => ipcRenderer.removeListener(MARKDOWN_CHANNELS.printRequest, listener)
+  },
   exportDocx: (request) => ipcRenderer.invoke(MARKDOWN_CHANNELS.exportDocx, request),
   exportPdf: (request) => ipcRenderer.invoke(MARKDOWN_CHANNELS.exportPdf, request),
   getLanguage: () => ipcRenderer.invoke(MARKDOWN_CHANNELS.getLanguage),
@@ -49,6 +55,11 @@ const api: MarkdownApi = {
     ipcRenderer.on(MARKDOWN_CHANNELS.themeChanged, listener)
     return () => ipcRenderer.removeListener(MARKDOWN_CHANNELS.themeChanged, listener)
   },
+  onChromePressed: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('app:chrome-pressed', listener)
+    return () => ipcRenderer.removeListener('app:chrome-pressed', listener)
+  },
   getAiSettings: () => ipcRenderer.invoke(AI_CHANNELS.getSettings),
   aiStream: (request) => ipcRenderer.invoke(AI_CHANNELS.stream, request),
   aiStreamCancel: (requestId) => ipcRenderer.invoke(AI_CHANNELS.streamCancel, requestId),
@@ -58,6 +69,10 @@ const api: MarkdownApi = {
     return () => ipcRenderer.removeListener(AI_CHANNELS.streamChunk, listener)
   },
   webSearch: (query, maxResults) => ipcRenderer.invoke(AI_CHANNELS.webSearch, query, maxResults),
+  imageSearch: (query, maxResults) =>
+    ipcRenderer.invoke(AI_CHANNELS.imageSearch, query, maxResults),
+  fetchImage: (url) => ipcRenderer.invoke(AI_CHANNELS.fetchImage, url),
+  aiGenerateImage: (op) => ipcRenderer.invoke(MARKDOWN_CHANNELS.aiGenerateImage, op),
 }
 
 /** Chat persistence: the shared project:* handlers are registered once by the shell (docs-main registerProjectIpc) */
@@ -70,3 +85,6 @@ const projectApi: Pick<ProjectApi, 'resolveChat' | 'appendChat' | 'loadChat' | '
 
 contextBridge.exposeInMainWorld('markdownApi', api)
 contextBridge.exposeInMainWorld('projectApi', projectApi)
+
+// open documents dragged from the OS onto this tab as a new shell tab
+installDropOpenBridge()

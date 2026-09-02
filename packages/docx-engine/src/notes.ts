@@ -66,11 +66,42 @@ export function parseNotesXml(xml: string, kind: NoteKind): NoteInfo[] {
     const richParas = noteRichParas(entryXml)
     const hasFormat = richParas.some((paras) =>
       paras.some(
-        (r) => r.bold || r.italic || r.underline || r.strike || r.color || r.sizeHalfPoints,
+        (r) =>
+          r.bold || r.italic || r.underline || r.strike || r.color || r.sizeHalfPoints || r.caps,
       ),
     )
-    return { id, text, ...(hasFormat ? { richParas } : {}) }
+    const styleId = /<w:pStyle w:val="([^"]+)"/.exec(entryXml)?.[1]
+    const spacing = noteDirectSpacing(entryXml)
+    return {
+      id,
+      text,
+      ...(hasFormat ? { richParas } : {}),
+      ...(styleId ? { styleId } : {}),
+      ...(spacing ? { spacing } : {}),
+    }
   })
+}
+
+/** direct w:spacing attrs of the first note paragraph (they override the style chain) */
+function noteDirectSpacing(entryXml: string): NoteInfo['spacing'] {
+  const pPr = /<w:pPr>[\s\S]*?<\/w:pPr>/.exec(entryXml)?.[0]
+  const sp = pPr && /<w:spacing [^>]*\/>/.exec(pPr)?.[0]
+  if (!sp) return undefined
+  const num = (attr: string): number | undefined => {
+    const v = new RegExp(`w:${attr}="(-?\\d+)"`).exec(sp)?.[1]
+    return v === undefined ? undefined : parseInt(v, 10)
+  }
+  const rule = /w:lineRule="(auto|atLeast|exact)"/.exec(sp)?.[1] as
+    'auto' | 'atLeast' | 'exact' | undefined
+  const before = num('before')
+  const after = num('after')
+  const line = num('line')
+  if (before === undefined && after === undefined && line === undefined) return undefined
+  return {
+    ...(before !== undefined ? { beforeTwips: before } : {}),
+    ...(after !== undefined ? { afterTwips: after } : {}),
+    ...(line !== undefined ? { lineRawTwips: line, lineRule: rule ?? 'auto' } : {}),
+  }
 }
 
 /** Display runs per paragraph (bold/italic/underline/strike, color, size); the footnote self-reference mark run is skipped */
@@ -101,12 +132,18 @@ function noteRichParas(entryXml: string): NoteRun[][] {
       if (color) run.color = color.toUpperCase()
       const sz = /<w:sz [^>]*w:val="(\d+)"/.exec(rPr)?.[1]
       if (sz) run.sizeHalfPoints = parseInt(sz, 10)
+      if (flag(rPr, 'caps')) run.caps = 'all'
+      else if (flag(rPr, 'smallCaps')) run.caps = 'small'
       runs.push(run)
     }
     out.push(runs)
   }
-  // Strip the first paragraph's leading space (spacer after the self-reference mark)
-  if (out[0]?.[0]) out[0][0].text = out[0][0].text.replace(/^\s+/, '')
+  // Strip the first paragraph's leading space (spacer after the self-reference
+  // mark); a spacer that was its own run empties out and is dropped entirely
+  if (out[0]?.[0]) {
+    out[0][0].text = out[0][0].text.replace(/^\s+/, '')
+    if (out[0][0].text === '') out[0].shift()
+  }
   return out
 }
 
@@ -158,9 +195,51 @@ function separatorEntries(kind: NoteKind): string {
   )
 }
 
+/** one rich display run → run XML (size/font/bold…; save-side of NoteRun) */
+function noteRunXml(run: NoteRun): string {
+  const props: string[] = []
+  const fonts: string[] = []
+  if (run.fontAscii) {
+    fonts.push(
+      `w:ascii="${escapeXmlAttr(run.fontAscii)}" w:hAnsi="${escapeXmlAttr(run.fontAscii)}"`,
+    )
+  }
+  if (run.font) fonts.push(`w:eastAsia="${escapeXmlAttr(run.font)}"`)
+  if (fonts.length > 0) props.push(`<w:rFonts ${fonts.join(' ')}/>`)
+  if (run.bold) props.push('<w:b/>')
+  if (run.italic) props.push('<w:i/>')
+  if (run.underline) props.push('<w:u w:val="single"/>')
+  if (run.strike) props.push('<w:strike/>')
+  if (run.color) props.push(`<w:color w:val="${escapeXmlAttr(run.color)}"/>`)
+  if (run.sizeHalfPoints) {
+    props.push(`<w:sz w:val="${run.sizeHalfPoints}"/><w:szCs w:val="${run.sizeHalfPoints}"/>`)
+  }
+  const rPr = props.length > 0 ? `<w:rPr>${props.join('')}</w:rPr>` : ''
+  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXmlText(run.text)}</w:t></w:r>`
+}
+
 function noteEntryXml(kind: NoteKind, note: NoteInfo): string {
   const entry = ENTRY[kind]
   const refTag = kind === 'footnote' ? 'w:footnoteRef' : 'w:endnoteRef'
+  if (note.richParas?.length) {
+    // rich rebuild (P17): runs keep their measured size/font, the reference
+    // mark + spacer shrink to the first run's size, and the paragraph pins
+    // single spacing — a note rendered from measured source content must not
+    // inflate past its source area via template docDefaults (after=120,
+    // line=276) or a body-sized marker run
+    const paras = note.richParas.map((runs, i) => {
+      const sz = runs[0]?.sizeHalfPoints
+      const szXml = sz ? `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>` : ''
+      const refRun =
+        i === 0
+          ? `<w:r><w:rPr><w:vertAlign w:val="superscript"/>${szXml}</w:rPr><${refTag}/></w:r>` +
+            `<w:r>${sz ? `<w:rPr>${szXml}</w:rPr>` : ''}<w:t xml:space="preserve"> </w:t></w:r>`
+          : ''
+      const pPr = '<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+      return `<w:p>${pPr}${refRun}${runs.map(noteRunXml).join('')}</w:p>`
+    })
+    return `<${entry} w:id="${escapeXmlAttr(note.id)}">${paras.join('')}</${entry}>`
+  }
   const paras = note.text.split('\n').map((line, i) => {
     // OOXML convention: the note body starts with the self-reference mark
     const refRun =

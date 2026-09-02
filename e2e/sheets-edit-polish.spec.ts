@@ -17,7 +17,7 @@ async function waitForWorkbook(page: Page): Promise<void> {
 
 test.describe('sheets: manual visual inserts are undoable', () => {
   test('undo removes an icon inserted from the ribbon', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-polish-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-polish-e2e-'))
     const workbook = join(scratch, 'undo.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -62,7 +62,7 @@ test.describe('sheets: manual visual inserts are undoable', () => {
 
 test.describe('sheets: freeze journal follows undo', () => {
   test('freezing then undoing leaves no pane in the saved file', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-polish-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-polish-e2e-'))
     const workbook = join(scratch, 'freeze.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -112,7 +112,7 @@ test.describe('sheets: freeze journal follows undo', () => {
 
 test.describe('sheets: Data → From Text/CSV', () => {
   test('imports a CSV file at the selection and saves the values', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-polish-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-polish-e2e-'))
     const workbook = join(scratch, 'csv.xlsx')
     await copyFile(FIXTURE, workbook)
     const csvPath = join(scratch, 'data.csv')
@@ -150,7 +150,7 @@ test.describe('sheets: Data → From Text/CSV', () => {
 
 test.describe('sheets: comment navigation', () => {
   test('previous/next surface the empty-sheet message without notes', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-polish-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-polish-e2e-'))
     const workbook = join(scratch, 'notes.xlsx')
     await copyFile(FIXTURE, workbook)
 

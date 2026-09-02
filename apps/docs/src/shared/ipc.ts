@@ -5,7 +5,26 @@ export interface OpenFileResult {
   data: ArrayBuffer
   /** sha256 of the original file; original archived under this hash */
   hash: string
+  /** the on-disk file is password protected (opened via decrypt; saves re-encrypt) */
+  encrypted?: boolean
+  /** content came from a newer crash-recovery copy and still needs an explicit save */
+  recovered?: boolean
 }
+
+/** Password-protected (ECMA-376 encrypted) docx: the renderer prompts for the
+ *  open password and retries via openDocxDecrypt. */
+export interface OpenFileNeedsPassword {
+  needsPassword: true
+  path: string
+  name: string
+}
+
+export type OpenDocxResult = OpenFileResult | OpenFileNeedsPassword | null
+
+/** result of an openDocxDecrypt attempt; wrong-password keeps the prompt open */
+export type DecryptOpenResult =
+  | { ok: true; result: OpenFileResult }
+  | { ok: false; reason: 'wrong-password' | 'unsupported' | 'error'; error?: string }
 
 export interface PickImageResult {
   /** raw image bytes, base64 encoded */
@@ -22,8 +41,11 @@ import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
-  GatewayAccountStatus,
+  GenSparkAccountStatus,
 } from '@hermesoffice/ai-provider'
+import type { FaceVerticalMetrics } from '@hermesoffice/font-metrics'
+
+export type { FaceVerticalMetrics }
 
 export type {
   AiChatRequest,
@@ -130,8 +152,34 @@ export type MenuCommand =
   | 'print'
   | 'export-pdf'
   | 'word-count'
+  | 'ai-proofread'
+  | 'shortcuts'
 
 export type UiTheme = 'light' | 'dark' | 'system'
+
+/** target file type of the AI create_document tool */
+export type CreateDocumentType = 'docx' | 'pdf' | 'md'
+
+export interface CreateDocumentRequest {
+  type: CreateDocumentType
+  /** file name stem (sanitized main-side) */
+  title: string
+  /** docx/pdf: restricted HTML; md: Markdown source */
+  content: string
+}
+
+export interface CreateDocumentResult {
+  ok: boolean
+  /** the created file, when it is written directly (pdf/md); docx opens as a new tab that saves itself */
+  path?: string
+  error?: string
+}
+
+/** AI-authored content queued for a docs tab spawned by create_document */
+export interface AiDocContent {
+  title: string
+  html: string
+}
 
 export interface DesktopApi {
   /** current UI language (persisted by the shell in app-settings.json) */
@@ -146,14 +194,30 @@ export interface DesktopApi {
   getTheme(): Promise<UiTheme>
   /** theme switched from the shell home page */
   onThemeChanged(handler: (theme: UiTheme) => void): () => void
-  openDocx(): Promise<OpenFileResult | null>
-  openDocxPath(path: string): Promise<OpenFileResult | null>
+  /** press on the shell chrome (tab strip is a sibling WebContentsView whose
+   *  clicks produce no DOM event here) — dismiss open popovers */
+  onChromePressed(handler: () => void): () => void
+  openDocx(): Promise<OpenDocxResult>
+  openDocxPath(path: string): Promise<OpenDocxResult>
+  /** decrypt-and-open a password-protected docx (path from a needsPassword result) */
+  openDocxDecrypt(path: string, password: string): Promise<DecryptOpenResult>
+  /** Review > Protect: set (or clear with null) the desired next-save password;
+   *  filePath null = document not saved yet, applied on its first successful save */
+  setDocPassword(filePath: string | null, password: string | null): Promise<{ ok: boolean }>
+  /** snapshot the current intent sequence before replacement cleanup is queued */
+  docPasswordIntentRevision(): Promise<number>
+  /** discard prior-document intents through a captured revision */
+  discardDocPasswordIntents(throughRevision: number): Promise<{ ok: boolean }>
   /** mark the renderer ready and consume a file passed by Finder/Explorer at launch */
-  consumePendingOpenDocx(): Promise<OpenFileResult | null>
+  consumePendingOpenDocx(): Promise<OpenDocxResult>
   /** returns true when this tab was created via "New Document" and should start blank */
   consumeNewBlankDoc(): Promise<boolean>
+  /** AI-authored content queued for this tab by create_document; one-shot, null when none */
+  consumeAiDocContent(): Promise<AiDocContent | null>
+  /** AI create_document: build a new standalone file and open it in a new tab */
+  createDocument(request: CreateDocumentRequest): Promise<CreateDocumentResult>
   /** receive documents opened from Finder/Explorer while the app is running */
-  onOpenDocx(handler: (result: OpenFileResult) => void): () => void
+  onOpenDocx(handler: (result: Exclude<OpenDocxResult, null>) => void): () => void
   /** File was renamed externally (renamed in the shell Home list) — pushes old and new paths; renderer syncs its save path and title bar */
   onRenamedDocx(handler: (paths: { oldPath: string; newPath: string }) => void): () => void
   /** auto=true marks an autosave: an externally modified file then fails with
@@ -163,36 +227,37 @@ export interface DesktopApi {
     path: string,
     data: ArrayBuffer,
     auto?: boolean,
-  ): Promise<{ ok: boolean; error?: string; reason?: 'external-modified' }>
+  ): Promise<{
+    ok: boolean
+    error?: string
+    reason?: 'external-modified'
+    /** a newer password choice arrived after this save's snapshot */
+    passwordIntentPending?: boolean
+  }>
   /** crash-recovery copy of a dirty document, stored under userData */
   writeRecoveryCopy(path: string, data: ArrayBuffer): Promise<{ ok: boolean }>
   /** tab closed but webContents kept alive (shell freeze workaround) — stop background timers */
   onTeardown(handler: () => void): () => void
+  /** sourcePath: the document's current path — Save As uses its desired next-save
+   *  password and commits that state to the chosen path only after success */
   saveDocxAs(
     defaultName: string,
     data: ArrayBuffer,
-  ): Promise<{ ok: boolean; path?: string; error?: string }>
+    sourcePath?: string | null,
+  ): Promise<{ ok: boolean; path?: string; error?: string; passwordIntentPending?: boolean }>
   /** first save of a new document: silently writes into the default folder, no dialog */
   saveDocxNew(
     defaultName: string,
     data: ArrayBuffer,
-  ): Promise<{ ok: boolean; path?: string; error?: string }>
-  /** fork: record the on-disk file the doc was opened from (external-change detection baseline) */
-  trackDocxFile(path: string): Promise<void>
-  /** fork: notified when the on-disk file changed outside the app (e.g. MCP/agent edit) */
-  onDocxExternalChange(handler: (path: string) => void): () => void
-  /** fork: reveal/open a path in the system */
-  openPath(path: string): Promise<boolean>
+  ): Promise<{ ok: boolean; path?: string; error?: string; passwordIntentPending?: boolean }>
   getRecentFiles(): Promise<string[]>
   pickImage(): Promise<PickImageResult | null>
+  /** vertical metrics of an installed family (exact name match), null when missing */
+  fontMetrics(family: string): Promise<FaceVerticalMetrics | null>
   getAiSettings(): Promise<AiSettings>
   setAiSettings(settings: AiSettings): Promise<void>
-  /** fork: Hermes gateway status probe (no remote gsk account) */
-  aiGatewayStatus(withEmail?: boolean): Promise<GatewayAccountStatus>
-  /** fork: no remote login — re-checks the gateway (fire-and-forget) */
-  aiGatewayLogin(): Promise<void>
-  /** system print dialog for the current window */
-  print(): Promise<void>
+  /** system print dialog for the current window; ok=false without error = canceled */
+  print(): Promise<{ ok: boolean; error?: string }>
   /** render the document to PDF and ask where to save; size in twips.
    *  outPath is only honored when a previous export dialog chose that exact path */
   exportPdf(
@@ -213,13 +278,14 @@ export interface DesktopApi {
     base64Parts: string[],
     outPath?: string,
   ): Promise<{ ok: boolean; path?: string; error?: string }>
-  /** fork: convert the open document to Markdown (anydoc, local) and save the
-   *  .md next to the source file */
-  exportMarkdown(filePath: string): Promise<{ ok: boolean; path?: string; error?: string }>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
   /** start a streaming AI call; deltas arrive via onAiStream with the same requestId */
   aiStream(request: AiStreamRequest): Promise<void>
   aiStreamCancel(requestId: string): Promise<void>
+  /** Genspark account status (gsk login state); withEmail also returns the email (needs a network request, slower) */
+  aiGskStatus(withEmail?: boolean): Promise<GenSparkAccountStatus>
+  /** Open the browser to log in to Genspark (fire-and-forget; aiGskStatus flips to logged-in when done) */
+  aiGskLogin(): Promise<void>
   webSearch(
     query: string,
     maxResults?: number,
@@ -247,12 +313,20 @@ export interface DesktopApi {
     error?: string
   }>
   fetchImage(url: string): Promise<{ base64: string; mime: string } | null>
+  /** AI image generation via the Genspark cloud channel (requires login + cloud tools) */
+  aiGenerateImage(op: {
+    prompt: string
+    aspectRatio?: string
+  }): Promise<{ url?: string; error?: string }>
   /** file picker for chat attachments (multi-select) */
   pickAttachments(): Promise<AttachmentAddResult | null>
   /** validate dropped paths and return attachment metadata */
   addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
   /** persist a pasted clipboard image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
+  /** copy an embedded picture to the OS clipboard as a real bitmap + <img>
+   *  html (r136: copying an image exported only the protected placeholder) */
+  copyImageToClipboard(dataUrl: string, metaJson?: string): Promise<boolean>
   /** read a slice of the extracted text of an attachment */
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /** read an image attachment as base64 for multimodal input (≤5MB) */

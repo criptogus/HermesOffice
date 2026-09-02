@@ -11,6 +11,7 @@ import type {
   EditChartOp,
   EditTableStyleOp,
   GetLayoutsResult,
+  GradientFillSpec,
   InsertKind,
   TransitionKind,
 } from '../../shared/ipc'
@@ -93,6 +94,46 @@ export const TEXT_COLORS = [
   '#0F9ED5',
   '#0A50A1',
   '#7030A0',
+]
+
+/** Accent colors for the shape style presets (chromatic TEXT_COLORS subset + neutral) */
+const STYLE_ACCENTS = [
+  '#5A5A5A',
+  '#C43E1C',
+  '#E97132',
+  '#FFC000',
+  '#4EA72E',
+  '#0F9ED5',
+  '#0A50A1',
+  '#7030A0',
+]
+
+/** Blend a hex color toward white (f > 0) or black (f < 0) */
+function shade(hex: string, f: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  const ch = (v: number) => Math.round(f >= 0 ? v + (255 - v) * f : v * (1 + f))
+  const rgb = (ch((n >> 16) & 255) << 16) | (ch((n >> 8) & 255) << 8) | ch(n & 255) | (1 << 24)
+  return `#${rgb.toString(16).slice(1).toUpperCase()}`
+}
+
+export interface ShapeStylePreset {
+  fill: string
+  stroke: string
+  /** OOXML prstDash preset; absent = solid */
+  dash?: string
+}
+
+/** WPS/PowerPoint-like shape style presets: outlined / soft fill / solid rows */
+export const SHAPE_STYLE_PRESETS: ShapeStylePreset[] = [
+  ...STYLE_ACCENTS.map((c) => ({ fill: '#FFFFFF', stroke: c })),
+  ...STYLE_ACCENTS.map((c) => ({ fill: shade(c, 0.8), stroke: c })),
+  ...STYLE_ACCENTS.map((c) => ({ fill: c, stroke: shade(c, -0.35) })),
+]
+
+/** Ribbon shape-style gallery: the base presets plus a dashed-outline row */
+export const RIBBON_SHAPE_STYLES: ShapeStylePreset[] = [
+  ...SHAPE_STYLE_PRESETS,
+  ...STYLE_ACCENTS.map((c) => ({ fill: '#FFFFFF', stroke: c, dash: 'dash' })),
 ]
 
 /** Thin dropdown chevron (replaces the ▾ text glyph) */
@@ -198,6 +239,9 @@ export type RibbonPanelKey =
   | 'slideSize'
   | 'transparency'
   | 'pictureBorder'
+  | 'changeShape'
+  | 'shapeStyle'
+  | 'shapeFill'
   | 'table'
   | 'layout'
   | 'translate'
@@ -274,6 +318,9 @@ export interface Props {
   hasDoc: boolean
   /** True when no slide has real content — the one-click AI actions grey out then */
   deckEmpty: boolean
+  /** Undo/redo stack occupancy (pushed from the main process): the QAT buttons grey out when empty */
+  canUndo: boolean
+  canRedo: boolean
   /** Open file name (shown on the right of the tab row; the title bar row was removed) */
   dirty: boolean
   editing: boolean
@@ -299,14 +346,16 @@ export interface Props {
   /** Push a preset instruction to the AI panel and expand it (autoRun executes immediately) */
   /** slideShot: attach the current slide's rendering so the model sees the page (AI Beautify) */
   onAiPreset: (text: string, opts?: { slideShot?: boolean }) => void
+  /** Annotate the current selection with an AI edit (queued in the AI panel) */
+  onAskSelection: () => void
   /** Insert an element on the current page */
   onInsert: (kind: InsertKind) => void
   /** Shape gallery pick: enter canvas draw mode (crosshair; click = default size, drag = custom, Esc cancels) */
   onPickShape: (kind: InsertKind) => void
   /** Open the image picker dialog and insert into the current page */
   onInsertImage: () => void
-  /** Set the page background solid color; allSlides=true applies to all pages */
-  onBackground: (color: string, allSlides: boolean) => void
+  /** Open the format-background pane (solid/gradient/picture background, hide background graphics, apply to all, reset) */
+  onFormatBackground: () => void
   /** Apply a built-in theme (colors + font scheme, applied to all pages) */
   onApplyTheme: (preset: SlideThemePreset) => void
   /** New blank slide (inherits the current page's layout background, empty content) */
@@ -347,11 +396,15 @@ export interface Props {
   curBulletChar: string | null
   /** Current paragraph alignment of the selection ('left' when unset; null = mixed/no text, nothing highlighted) */
   curAlign: 'left' | 'center' | 'right' | 'justify' | null
+  /** Effective base direction of the selection's paragraphs (null = mixed/no text, nothing highlighted) */
+  curRtl: boolean | null
   /** Editing: change the selection's font / set size (pt) */
   onFontFamily: (family: string) => void
   onFontSize: (pt: number) => void
   /** Paragraph alignment: execCommand while editing, element-level op when elements are selected */
   onAlign: (align: 'left' | 'center' | 'right' | 'justify') => void
+  /** Paragraph base direction toggle (selection while editing, element-level otherwise) */
+  onDirection: (rtl: boolean) => void
   /** Strikethrough: element-level toggle when selected but not editing (editing goes through onFormat) */
   onStrike: () => void
   /** B/I/U element-level toggle (when selected but not editing) */
@@ -473,8 +526,6 @@ export interface Props {
   /** Document page count / current page (for the Zoom dropdown) */
   slideCount: number
   currentSlide: number
-  /** Current slide's solid background color (undefined = gradient/image/none); syncs the Design tab swatch */
-  currentBgColor?: string
   /** Open the header & footer dialog */
   onOpenHeaderFooter: () => void
   /** Open the equation dialog */
@@ -487,8 +538,8 @@ export interface Props {
   recording: boolean
   onToggleScreenRecord: () => void
   // ── Contextual tabs: table design / chart design / picture format ────────────────
-  /** Current single-selection element type (undefined = none/multi-select; 'table'|'chart'|'picture' shows the contextual tab) */
-  contextElementType?: 'table' | 'chart' | 'picture' | 'shape' | null
+  /** Current selection category used to expose and activate contextual tabs */
+  contextElementType?: 'table' | 'chart' | 'picture' | 'shape' | 'textShape' | 'mixed' | null
   /** Currently selected element sourceId (for contextual tab operation callbacks) */
   contextElementId?: string
   /** Current page index (for contextual tab operations) */
@@ -512,10 +563,21 @@ export interface Props {
   contextPictureStroke?: { color: string; widthPt: number; dashPreset?: string } | null
   /** Picture border (null clears it) */
   onPictureStroke?: (stroke: { color: string; widthPt: number; dash?: string } | null) => void
+  /** Replace the selected shape's preset geometry while preserving its formatting and text */
+  onChangeShape?: (prst: string) => void
+  /** Shape style preset: fill + outline applied together (dash absent = solid) */
+  onShapeStyle?: (style: ShapeStylePreset) => void
+  /** Shape fill: color ('none' clears the fill) or gradient */
+  onShapeFill?: (fill: string | GradientFillSpec) => void
+  /** Shape picture/texture fill: stretch or tile onto the selection; source = bundled
+      texture preset bytes (base64), absent = system picker */
+  onShapeFillImage?: (mode: 'stretch' | 'tile', source?: { base64: string; ext: string }) => void
+  /** Selected shape's current fill (#RRGGBB, 'none' = no fill, null = non-solid): picker highlight + gradient preset base */
+  contextShapeFill?: string | null
   /** Execute a table style operation */
   onEditTableStyle?: (op: Omit<EditTableStyleOp, 'slideIndex' | 'sourceId'>) => void
   /** Selected table's header-row/banded-rows current state (toggle display) */
-  tableStyleFlags?: { firstRow: boolean; bandRow: boolean } | null
+  tableStyleFlags?: { firstRow: boolean; bandRow: boolean; rtl?: boolean } | null
   /** Cell being edited in the selected table; shading applies to just this cell */
   tableActiveCell?: { row: number; col: number } | null
   /** Execute a chart edit operation */
@@ -549,6 +611,7 @@ export interface RibbonTabCtx extends Pick<
   | 'canPaste'
   | 'curBulletChar'
   | 'curAlign'
+  | 'curRtl'
   | 'curFontFamily'
   | 'curFontSizeMixed'
   | 'curFontSizePt'
@@ -566,7 +629,9 @@ export interface RibbonTabCtx extends Pick<
   | 'onAddSlide'
   | 'onAddSlideWithLayout'
   | 'onAiPreset'
+  | 'onAskSelection'
   | 'onAlign'
+  | 'onDirection'
   | 'onArrange'
   | 'onFlip'
   | 'onCopy'
@@ -637,7 +702,6 @@ export interface RibbonTabCtx extends Pick<
   onCustomBulletColor: (value: string) => void
   onCustomTextColor: (value: string) => void
   paraOpen: boolean
-  recentColors: string[]
   setArrangeOpen: Dispatch<SetStateAction<boolean>>
   setCollapseOpen: Dispatch<SetStateAction<string | null>>
   setColorOpen: Dispatch<SetStateAction<boolean>>

@@ -222,6 +222,69 @@ describe('applyEditParagraphs: srcPara/srcRun tracing + unedited fields preserve
     expect(out[0]!.runs[0]!.bold).toBe(false)
   })
 
+  it('editor un-underline/un-strike sets the explicit-none markers so rebuilds keep the override', () => {
+    const oldParas: Paragraph[] = [
+      {
+        runs: [
+          {
+            text: 'u',
+            underline: true,
+            underlineStyle: 'dbl',
+            strike: true,
+            strikeStyle: 'sngStrike',
+          },
+        ],
+      },
+    ]
+    const out = applyEditParagraphs(oldParas, [
+      {
+        runs: [
+          { text: 'u', srcRun: 0, bold: false, italic: false, underline: false, strike: false },
+        ],
+        srcPara: 0,
+      },
+    ])
+    const r = out[0]!.runs[0]!
+    expect(r.underline).toBe(false)
+    expect(r.underlineExplicitNone).toBe(true)
+    expect(r.strikeExplicitNone).toBe(true)
+    // unchanged resolved-false values must NOT bake an override in
+    const out2 = applyEditParagraphs(
+      [{ runs: [{ text: 'p' }] }],
+      [
+        {
+          runs: [
+            { text: 'p', srcRun: 0, bold: false, italic: false, underline: false, strike: false },
+          ],
+          srcPara: 0,
+        },
+      ],
+    )
+    expect(out2[0]!.runs[0]!.underlineExplicitNone).toBeUndefined()
+    expect(out2[0]!.runs[0]!.strikeExplicitNone).toBeUndefined()
+    // link-derived underline (underlineImplicit): dropping it via unlink keeps
+    // omitting u — no explicit none baked in
+    const out3 = applyEditParagraphs(
+      [
+        {
+          runs: [
+            { text: 'l', underline: true, underlineImplicit: true, hyperlink: 'https://a.com' },
+          ],
+        },
+      ],
+      [
+        {
+          runs: [
+            { text: 'l', srcRun: 0, bold: false, italic: false, underline: false, link: null },
+          ],
+          srcPara: 0,
+        },
+      ],
+    )
+    expect(out3[0]!.runs[0]!.underline).toBe(false)
+    expect(out3[0]!.runs[0]!.underlineExplicitNone).toBeUndefined()
+  })
+
   it('no srcPara/srcRun (newly typed paragraph) falls back to position without crashing', () => {
     const oldParas: Paragraph[] = [{ runs: [{ text: 'a', fontSize: 20 }] }]
     const out = applyEditParagraphs(oldParas, [
@@ -350,6 +413,66 @@ describe('theme colors: schemeClr is not needlessly baked into srgbClr by edits'
   })
 })
 
+describe('implicit bold/italic/color: inherited values are not stamped into rewritten runs', () => {
+  // Model shape after parse of <a:r><a:rPr sz="1800"/>…</a:r> under a bold master style:
+  // resolved booleans plus the implicit markers, color resolved with colorInherited
+  const INHERIT_XML =
+    '<p:sp><p:nvSpPr><p:cNvPr id="7" name="T"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/>' +
+    '<p:txBody><a:bodyPr/><a:lstStyle/>' +
+    '<a:p><a:r><a:rPr lang="en-US" sz="1800"/><a:t>inherited style</a:t></a:r></a:p>' +
+    '</p:txBody></p:sp>'
+  const inheritParas: Paragraph[] = [
+    {
+      runs: [
+        {
+          text: 'inherited style',
+          bold: true,
+          boldImplicit: true,
+          italic: false,
+          italicImplicit: true,
+          fontSize: 18,
+          color: '#FFFFFF',
+          colorFollowsTheme: true,
+          colorInherited: true,
+        },
+      ],
+    },
+  ]
+
+  function patch(paras: Paragraph[]): string {
+    const el = { id: 'e7', type: 'text', text: { paragraphs: paras } } as unknown as TextElement
+    return patchTextElementXml(el, INHERIT_XML)
+  }
+
+  it('identity rewrite keeps b/i/solidFill out of the rPr (master linkage intact)', () => {
+    const out = patch(
+      applyEditParagraphs(inheritParas, [
+        { runs: [{ text: 'inherited style', srcRun: 0, bold: true, italic: false }], srcPara: 0 },
+      ]),
+    )
+    expect(out).not.toContain(' b="')
+    expect(out).not.toContain(' i="')
+    expect(out).not.toContain('solidFill')
+  })
+
+  it('a real bold/italic toggle clears the markers and writes explicit overrides', () => {
+    const out = patch(
+      applyEditParagraphs(inheritParas, [
+        { runs: [{ text: 'inherited style', srcRun: 0, bold: false, italic: true }], srcPara: 0 },
+      ]),
+    )
+    expect(out).toContain(' b="0"')
+    expect(out).toContain(' i="1"')
+  })
+
+  it('generateParagraphXml (rebuild path) also omits implicit b/i', () => {
+    const xml = generateParagraphXml(inheritParas[0]!)
+    expect(xml).not.toContain(' b="')
+    expect(xml).not.toContain(' i="')
+    expect(xml).not.toContain('solidFill')
+  })
+})
+
 describe('normAutofit fontScale: files already shrunk by PowerPoint render at the stored scale', () => {
   it('stored fontScale is used as-is (no scaling back up even if content fits)', () => {
     const body = {
@@ -360,11 +483,11 @@ describe('normAutofit fontScale: files already shrunk by PowerPoint render at th
     }
     const out = layoutText({ body, boxWidthPx: 800, boxHeightPx: 400, metrics, vp })
     expect(out.fontScale).toBeCloseTo(0.625, 3)
-    // 20pt × 96/72 × 0.625 ≈ 16.67px
-    expect(out.lines[0]!.runs[0]!.fontSizePx).toBeCloseTo(20 * (96 / 72) * 0.625, 1)
+    // 20pt × 0.625 = 12.5pt → PPT quantizes autofit sizes to whole points (13pt = 17.33px)
+    expect(out.lines[0]!.runs[0]!.fontSizePx).toBeCloseTo(13 * (96 / 72), 1)
   })
 
-  it('content still overflows at the stored scale: keep bisecting downward, never exceed the stored scale', () => {
+  it('stored scale renders as-is; refitAutofit (edit flow) bisects downward below it', () => {
     const body = {
       paragraphs: Array.from({ length: 20 }, () => ({
         runs: [{ text: '很长的一行文字内容', fontSize: 20 }],
@@ -373,8 +496,18 @@ describe('normAutofit fontScale: files already shrunk by PowerPoint render at th
       autofit: 'shrink' as const,
       fontScale: 0.8,
     }
-    const out = layoutText({ body, boxWidthPx: 400, boxHeightPx: 120, metrics, vp })
-    expect(out.fontScale).toBeLessThan(0.8)
+    // Probe-measured: PowerPoint renders the cached ratio as-is on open and overflows
+    const plain = layoutText({ body, boxWidthPx: 400, boxHeightPx: 120, metrics, vp })
+    expect(plain.fontScale).toBe(0.8)
+    const refit = layoutText({
+      body,
+      boxWidthPx: 400,
+      boxHeightPx: 120,
+      metrics,
+      vp,
+      refitAutofit: true,
+    })
+    expect(refit.fontScale).toBeLessThan(0.8)
   })
 
   it('lnSpcReduction compresses line spacing (fixed lineExact unaffected)', () => {
@@ -422,14 +555,14 @@ describe('edit-mode vertical metrics: line/paragraph spacing derived back from l
     div.remove()
   })
 
-  it('first paragraph spcBef also applies (measured from root padding)', () => {
+  it('first paragraph spcBef is dropped (PowerPoint ignores it at the frame top)', () => {
     const paras: Paragraph[] = [{ runs: [{ text: 'x', fontSize: 20 }], spaceBefore: 9 }]
     const out = layout(paras)
     const div = document.createElement('div')
     document.body.appendChild(div)
     populateEditorDom(div, out.lines)
-    expect(parseFloat((div.firstElementChild as HTMLElement).style.marginTop)).toBeCloseTo(12, 1)
-    expect(out.lines[0]!.top).toBeCloseTo(12, 1)
+    expect((div.firstElementChild as HTMLElement).style.marginTop || '0').toBe('0')
+    expect(out.lines[0]!.top).toBe(0)
     div.remove()
   })
 
@@ -875,5 +1008,85 @@ describe('run hyperlinks: overlay round-trip + merge semantics', () => {
       { runs: [{ text: 'x edited', srcRun: 0, link: null }], srcPara: 0 },
     ])
     expect(out[0]!.runs[0]!.hyperlinkRId).toBe('rId9')
+  })
+})
+
+describe('vertical text editing (bodyPr vert)', () => {
+  const vertLayout = (paragraphs: Paragraph[]) =>
+    layoutText({
+      body: { paragraphs, insets: NO_INSETS, vert: 'vert' },
+      boxWidthPx: 96,
+      boxHeightPx: 104,
+      metrics,
+      vp,
+    })
+
+  it('column fragments round-trip back to the source paragraph text', () => {
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    const text = '上建设潇洒历史'
+    const lines = vertLayout([{ runs: [{ text }] }]).lines
+    expect(lines.length).toBeGreaterThan(1) // the narrow box splits the paragraph into columns
+    populateEditorDom(div, lines, 0, undefined, true)
+    // One DOM paragraph per source paragraph, not one per layout column
+    expect(div.children.length).toBe(1)
+    const out = extractParagraphs(div, 1)
+    expect(out.map((p) => p.runs.map((r) => r.text).join('')).join('\n')).toBe(text)
+    div.remove()
+  })
+
+  it('skips horizontal-flow metric baking (line-height, gaps, fixed advances)', () => {
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    populateEditorDom(
+      div,
+      vertLayout([{ runs: [{ text: '上建设潇洒历史' }] }]).lines,
+      0,
+      undefined,
+      true,
+    )
+    const p = div.firstElementChild as HTMLElement
+    expect(p.style.lineHeight).toBe('')
+    expect(p.style.marginTop).toBe('')
+    const fragments = [...div.querySelectorAll<HTMLElement>('[data-layout-fragment]')]
+    expect(fragments.length).toBeGreaterThan(0)
+    expect(fragments.every((f) => f.style.width === '' && f.style.display === '')).toBe(true)
+    div.remove()
+  })
+})
+
+describe('paragraph direction rtl: overlay marks + patch collection', () => {
+  it('populateEditorDom sets explicit dir only when the effective base disagrees with inference', () => {
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    populateEditorDom(
+      div,
+      layout([
+        { runs: [{ text: 'plain latin' }] }, // inferred LTR, effective LTR
+        { runs: [{ text: 'forced rtl' }], rtl: true }, // inferred LTR, explicit RTL base
+        { runs: [{ text: 'שלום' }], rtl: false }, // inferred RTL, explicit LTR base
+      ]).lines,
+    )
+    const blocks = Array.from(div.children) as HTMLElement[]
+    expect(blocks.map((b) => b.getAttribute('dir'))).toEqual(['auto', 'rtl', 'ltr'])
+    div.remove()
+  })
+
+  it('untoggled paragraphs commit no rtl; a data-rtl mark reaches the format patch', () => {
+    const clean = roundTrip([{ runs: [{ text: 'hello' }] }, { runs: [{ text: 'שלום' }] }])
+    expect(clean.every((p) => p.rtl === undefined)).toBe(true)
+    expect(collectParagraphFormatPatches(clean)).toEqual([])
+
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    populateEditorDom(div, layout([{ runs: [{ text: 'a' }] }, { runs: [{ text: 'b' }] }]).lines)
+    const second = div.children[1] as HTMLElement
+    second.dataset.rtl = '1'
+    second.dir = 'rtl'
+    const out = extractParagraphs(div, 1)
+    div.remove()
+    expect(out[0]!.rtl).toBeUndefined()
+    expect(out[1]!.rtl).toBe(true)
+    expect(collectParagraphFormatPatches(out)).toEqual([{ index: 1, patch: { rtl: true } }])
   })
 })

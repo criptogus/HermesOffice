@@ -1,10 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { DEFAULT_HEADER_FOOTER, DEFAULT_WATERMARK } from './stamps'
 import type { HeaderFooterConfig, WatermarkConfig } from './stamps'
 import type { TFunc } from './i18n/locale'
-
-const WM_COLORS = ['#d0342c', '#8a8a8a', '#2b66ff', '#217346']
+import { ColorPickerPopover } from './ColorPicker'
 
 /** Watermark / header-footer config dialog; on confirm App generates stamps and marks unsaved changes */
 export function StampDialog({
@@ -19,18 +18,40 @@ export function StampDialog({
   const [tab, setTab] = useState<'watermark' | 'hf'>('watermark')
   const [wm, setWm] = useState<WatermarkConfig>(DEFAULT_WATERMARK)
   const [hf, setHf] = useState<HeaderFooterConfig>(DEFAULT_HEADER_FOOTER)
+  const [colorOpen, setColorOpen] = useState(false)
+  const colorWrapRef = useRef<HTMLSpanElement>(null)
+
+  // outside-click / Escape close for the color popover (no blur close: the
+  // native "More Colors" dialog blurs the window while it is open)
+  useEffect(() => {
+    if (!colorOpen) return
+    const onDown = (event: MouseEvent): void => {
+      if (!colorWrapRef.current?.contains(event.target as Node)) setColorOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setColorOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [colorOpen])
 
   const hfUsed =
     hf.pageNumber ||
-    [hf.headerLeft, hf.headerCenter, hf.headerRight, hf.footerLeft, hf.footerCenter, hf.footerRight].some((s) =>
-      s.trim(),
-    )
+    [
+      hf.headerLeft,
+      hf.headerCenter,
+      hf.headerRight,
+      hf.footerLeft,
+      hf.footerCenter,
+      hf.footerRight,
+    ].some((s) => s.trim())
   const canApply = wm.text.trim().length > 0 || hfUsed
 
-  const field = (
-    key: keyof HeaderFooterConfig,
-    label: string,
-  ): ReactElement => (
+  const field = (key: keyof HeaderFooterConfig, label: string): ReactElement => (
     <label className="pdf-field">
       <span>{label}</span>
       <input
@@ -46,10 +67,16 @@ export function StampDialog({
       <div className="pdf-modal pdf-modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="pdf-modal-title">{t('stampTitle')}</div>
         <div className="pdf-sign-tabs">
-          <button className={`pdf-sign-tab${tab === 'watermark' ? ' active' : ''}`} onClick={() => setTab('watermark')}>
+          <button
+            className={`pdf-sign-tab${tab === 'watermark' ? ' active' : ''}`}
+            onClick={() => setTab('watermark')}
+          >
             {t('watermark')}
           </button>
-          <button className={`pdf-sign-tab${tab === 'hf' ? ' active' : ''}`} onClick={() => setTab('hf')}>
+          <button
+            className={`pdf-sign-tab${tab === 'hf' ? ' active' : ''}`}
+            onClick={() => setTab('hf')}
+          >
             {t('headerFooter')}
           </button>
         </div>
@@ -99,24 +126,40 @@ export function StampDialog({
               />
               <em>{Math.round(wm.sizeRatio * 100)}%</em>
             </label>
-            <label className="pdf-field">
+            <div className="pdf-field">
               <span>{t('drawColor')}</span>
-              <span className="pdf-color-row">
-                {WM_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    className={`pdf-color-dot${wm.color === c ? ' active' : ''}`}
-                    style={{ background: c }}
-                    onClick={() => setWm({ ...wm, color: c })}
+              <span ref={colorWrapRef} className="pdf-color-well-wrap">
+                <button
+                  type="button"
+                  className="pdf-color-well"
+                  style={{ background: wm.color }}
+                  aria-label={t('drawColor')}
+                  aria-haspopup="dialog"
+                  aria-expanded={colorOpen}
+                  onClick={() => setColorOpen((v) => !v)}
+                />
+                {colorOpen && (
+                  <ColorPickerPopover
+                    className="pdf-color-well-pop"
+                    value={wm.color}
+                    onPick={(hex) => setWm((prev) => ({ ...prev, color: hex }))}
+                    onClose={() => setColorOpen(false)}
                   />
-                ))}
+                )}
               </span>
-            </label>
+            </div>
             <div
               className="pdf-wm-preview"
               style={{ color: wm.color, opacity: Math.max(wm.opacity, 0.25) }}
             >
-              <span style={{ transform: `rotate(${-wm.angle}deg)` }}>{wm.text || t('watermarkPlaceholder')}</span>
+              <span
+                style={{
+                  transform: `rotate(${-wm.angle}deg)`,
+                  fontSize: Math.round(wm.sizeRatio * 236),
+                }}
+              >
+                {wm.text || t('watermarkPlaceholder')}
+              </span>
             </div>
           </>
         ) : (
@@ -145,7 +188,9 @@ export function StampDialog({
                   type="number"
                   min={1}
                   value={hf.startAt}
-                  onChange={(e) => setHf({ ...hf, startAt: Math.max(1, Number(e.target.value) || 1) })}
+                  onChange={(e) =>
+                    setHf({ ...hf, startAt: Math.max(1, Number(e.target.value) || 1) })
+                  }
                 />
               </label>
             )}

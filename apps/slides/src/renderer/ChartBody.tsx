@@ -4,13 +4,51 @@
  * top-left, the outer Group handles positioning.
  */
 import React from 'react'
-import { Rect, Text, Line, Circle, Arc } from 'react-konva'
+import { Rect, Text, Line, Circle, Arc, Path } from 'react-konva'
 import type { ChartRenderNode } from '@hermesoffice/pptx-render'
-import { smoothTension } from './konva-adapter'
+import { fillToKonva, smoothTension } from './konva-adapter'
 
-export function ChartBody({ chart }: { chart: ChartRenderNode }) {
+export function ChartBody({
+  chart,
+  images,
+}: {
+  chart: ChartRenderNode
+  images?: Map<string, HTMLImageElement>
+}) {
   return (
     <>
+      {chart.bgFill && (
+        <Rect
+          x={0}
+          y={0}
+          width={chart.box.w}
+          height={chart.box.h}
+          {...fillToKonva(chart.bgFill, chart.box.w, chart.box.h, images, {
+            x: chart.box.x,
+            y: chart.box.y,
+          })}
+        />
+      )}
+      {chart.plotRect && (
+        <Rect
+          x={chart.plotRect.x}
+          y={chart.plotRect.y}
+          width={chart.plotRect.w}
+          height={chart.plotRect.h}
+          {...(chart.plotRect.fill
+            ? fillToKonva(chart.plotRect.fill, chart.plotRect.w, chart.plotRect.h, images, {
+                x: chart.box.x + chart.plotRect.x,
+                y: chart.box.y + chart.plotRect.y,
+              })
+            : {})}
+          {...(chart.plotRect.borderColor
+            ? {
+                stroke: chart.plotRect.borderColor,
+                strokeWidth: chart.plotRect.borderWidthPx ?? 1,
+              }
+            : {})}
+        />
+      )}
       {(chart.wedges ?? []).map((wd, i) => (
         <Arc
           key={`w${i}`}
@@ -30,7 +68,7 @@ export function ChartBody({ chart }: { chart: ChartRenderNode }) {
           key={`g${i}`}
           points={[g.x1, g.y1, g.x2, g.y2]}
           stroke={g.color}
-          strokeWidth={1}
+          strokeWidth={g.widthPx ?? 1}
           {...(g.dash ? { dash: g.dash } : {})}
         />
       ))}
@@ -40,6 +78,15 @@ export function ChartBody({ chart }: { chart: ChartRenderNode }) {
           points={[a.x1, a.y1, a.x2, a.y2]}
           stroke={a.color}
           strokeWidth={a.widthPx}
+        />
+      ))}
+      {(chart.paths ?? []).map((p, i) => (
+        <Path
+          key={`pp${i}`}
+          data={p.d}
+          y={p.dy ?? 0}
+          fill={p.fill}
+          {...(p.stroke ? { stroke: p.stroke, strokeWidth: 1 } : {})}
         />
       ))}
       {chart.bars.map((b, i) => (
@@ -56,6 +103,7 @@ export function ChartBody({ chart }: { chart: ChartRenderNode }) {
           tension={smoothTension(p.smooth)}
           {...(p.closed ? { closed: true } : {})}
           {...(p.fill ? { fill: p.fill } : {})}
+          {...(p.dash ? { dash: p.dash } : {})}
         />
       ))}
       {chart.markers.map((m, i) => (
@@ -79,12 +127,22 @@ export function ChartBody({ chart }: { chart: ChartRenderNode }) {
           y={l.y}
           text={l.text}
           fontSize={l.fontSizePx}
-          fontFamily="Arial"
+          fontFamily="Calibri, Carlito, Arial, sans-serif"
           fill={l.color}
-          fontStyle={l.bold ? 'bold' : 'normal'}
+          fontStyle={[l.italic && 'italic', l.bold && 'bold'].filter(Boolean).join(' ') || 'normal'}
           {...(l.rotationDeg ? { rotation: l.rotationDeg } : {})}
         />
       ))}
+      {chart.border && (
+        <Rect
+          x={chart.border.widthPx / 2}
+          y={chart.border.widthPx / 2}
+          width={chart.box.w - chart.border.widthPx}
+          height={chart.box.h - chart.border.widthPx}
+          stroke={chart.border.color}
+          strokeWidth={chart.border.widthPx}
+        />
+      )}
     </>
   )
 }

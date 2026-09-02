@@ -5,8 +5,8 @@ import type { StringKey } from './locale'
 import './onboarding.css'
 
 interface OnboardingProps {
-  /** called when the user finishes the last slide or clicks skip */
-  onDone: () => void
+  /** persists completion; analytics remains enabled unless opted out in Settings */
+  onDone: () => Promise<boolean>
 }
 
 interface Slide {
@@ -17,74 +17,28 @@ interface Slide {
   bodyKey?: StringKey
   /** render the body in the dimmer footnote gray (slide 3's credits disclaimer) */
   bodyDim?: boolean
-  /** community slide shows the credits offer panel with the "Join GenTeam" call-to-action */
+  /** community slide shows the open-source offer panel with a "Contribute on GitHub" call-to-action */
   showOffer?: boolean
-  /** Hermes slide shows the live gateway status with a retry button */
-  showHermes?: boolean
-  art: 'logo' | 'gift' | 'check' | 'spark'
+  /** closing slide shows the "star us on GitHub" hint */
+  showStar?: boolean
+  /** closing slide explains default-on analytics and how to disable it */
+  showAnalyticsNotice?: boolean
+  art: 'logo' | 'gift' | 'check'
 }
 
 const SLIDES: readonly Slide[] = [
   { titleKey: 'onbTitle1', subtitleKey: 'onbSubtitle1', bodyKey: 'onbBody1', art: 'logo' },
-  { titleKey: 'onbHermesTitle', subtitleKey: 'onbHermesBody', showHermes: true, art: 'spark' },
   { titleKey: 'onbTitle2', subtitleKey: 'onbBody2', showOffer: true, art: 'gift' },
   {
     titleKey: 'onbTitle3',
     subtitleKey: 'onbBody3',
     bodyKey: 'onbNote3',
     bodyDim: true,
+    showStar: true,
+    showAnalyticsNotice: true,
     art: 'check',
   },
 ]
-
-/** Live gateway status for the "Connect to Hermes" slide: probe on mount, retry on demand */
-function HermesConnect({ active }: { active: boolean }) {
-  const { t } = useI18n()
-  const [status, setStatus] = useState<'checking' | 'ok' | 'offline'>('checking')
-  const probe = () => {
-    setStatus('checking')
-    window.aiOffice
-      .hermesStatus()
-      .then(setStatus)
-      .catch(() => setStatus('offline'))
-  }
-  // re-probe each time the slide becomes active, so starting the gateway
-  // mid-onboarding is picked up without a manual retry
-  useEffect(() => {
-    if (active) probe()
-  }, [active])
-  return (
-    <div className="onb-offer onb-hermes">
-      <p className={`onb-hermes-status ${status}`}>
-        <span className="onb-hermes-dot" aria-hidden="true" />
-        {status === 'checking'
-          ? '…'
-          : status === 'ok'
-            ? t('onbHermesConnected')
-            : t('onbHermesOffline')}
-      </p>
-      <div className="onb-hermes-actions">
-        {status === 'offline' && (
-          <button className="onb-join" onClick={probe}>
-            {t('onbHermesRetry')}
-          </button>
-        )}
-        <button className="onb-join" onClick={() => void window.aiOffice.openGenTeam()}>
-          {t('onbHermesGuide')}
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <path
-              d="M3.5 8.5 8.5 3.5M4.5 3.5h4v4"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-      </div>
-    </div>
-  )
-}
 
 /** render `**emphasized**` segments of a localized string as <strong> */
 function renderEmphasis(text: string) {
@@ -98,21 +52,6 @@ function renderEmphasis(text: string) {
 function SlideArt({ kind }: { kind: Slide['art'] }) {
   if (kind === 'logo') {
     return <img className="onb-art onb-art-logo" src={appIcon} alt="" />
-  }
-  if (kind === 'spark') {
-    // four-point sparkle echoing the Hermes mark, same 60px visual mass
-    return (
-      <span className="onb-art onb-art-badge onb-art-spark" aria-hidden="true">
-        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="3.2">
-          <path
-            d="M24 5c2.2 9.8 5.2 12.8 15 15-9.8 2.2-12.8 5.2-15 15-2.2-9.8-5.2-12.8-15-15 9.8-2.2 12.8-5.2 15-15Z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path d="M38.5 33.5c1 4.4 2.3 5.7 6.5 6.5-4.2.8-5.5 2.1-6.5 6.5-1-4.4-2.3-5.7-6.5-6.5 4.2-.8 5.5-2.1 6.5-6.5Z" />
-        </svg>
-      </span>
-    )
   }
   if (kind === 'gift') {
     // hand-drawn gift kept over the spec vector deliberately; 48 canvas at
@@ -156,13 +95,22 @@ function SlideArt({ kind }: { kind: Slide['art'] }) {
 export function Onboarding({ onDone }: OnboardingProps) {
   const { t } = useI18n()
   const [index, setIndex] = useState(0)
+  const [submitting, setSubmitting] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
   const slide = SLIDES[index]
   const isLast = index === SLIDES.length - 1
 
+  const finish = () => {
+    if (submitting) return
+    setSubmitting(true)
+    void onDone()
+      .catch(() => false)
+      .finally(() => setSubmitting(false))
+  }
+
   const next = () => {
-    if (isLast) onDone()
-    else setIndex(index + 1)
+    if (isLast) finish()
+    else setIndex((current) => current + 1)
   }
 
   // move focus into the dialog on mount so keyboard users start inside it
@@ -172,7 +120,7 @@ export function Onboarding({ onDone }: OnboardingProps) {
   }, [])
 
   // slide changes can strip focus from the active control (leaving slide 2
-  // makes its GenTeam button inert, which blurs it) — pull focus back onto the
+  // makes its GitHub button inert, which blurs it) — pull focus back onto the
   // card so it never drops to body
   useEffect(() => {
     const card = cardRef.current
@@ -186,7 +134,7 @@ export function Onboarding({ onDone }: OnboardingProps) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onDone()
+        finish()
         return
       }
       if (event.key === 'Tab') {
@@ -244,12 +192,39 @@ export function Onboarding({ onDone }: OnboardingProps) {
               {s.bodyKey && (
                 <p className={`onb-body${s.bodyDim ? ' onb-body-dim' : ''}`}>{t(s.bodyKey)}</p>
               )}
-              {s.showHermes && <HermesConnect active={i === index} />}
+              {s.showStar && (
+                <div className="onb-star">
+                  <p className="onb-star-hint">{t('onbStarHint')}</p>
+                  <button
+                    className="onb-star-btn"
+                    onClick={() => void window.aiOffice.openGitHubRepo()}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.3l-5.8 3.1 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
+                    </svg>
+                    {t('starOnGitHub')}
+                  </button>
+                </div>
+              )}
+              {s.showAnalyticsNotice && (
+                <div className="onb-consent">
+                  <span className="onb-consent-copy">
+                    <span className="onb-consent-title">{t('setAnalytics')}</span>
+                    <span className="onb-consent-desc">{t('setAnalyticsDesc')}</span>
+                  </span>
+                </div>
+              )}
               {s.showOffer && (
                 <div className="onb-offer">
-                  <p className="onb-credits">{renderEmphasis(t('onbCredits'))}</p>
-                  <button className="onb-join" onClick={() => void window.aiOffice.openGenTeam()}>
-                    {t('onbJoinGenTeam')}
+                  <p className="onb-credits">{renderEmphasis(t('onbOpenSource'))}</p>
+                  <button className="onb-join" onClick={() => void window.aiOffice.openGitHub()}>
+                    {t('onbJoinGitHub')}
                     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path
                         d="M3.5 8.5 8.5 3.5M4.5 3.5h4v4"
@@ -279,15 +254,19 @@ export function Onboarding({ onDone }: OnboardingProps) {
             ))}
           </div>
           <div className="onb-nav">
-            <button className="onb-skip" onClick={onDone}>
+            <button className="onb-skip" disabled={submitting} onClick={finish}>
               {t('onbSkip')}
             </button>
             {index > 0 && (
-              <button className="onb-back" onClick={() => setIndex(index - 1)}>
+              <button
+                className="onb-back"
+                disabled={submitting}
+                onClick={() => setIndex(index - 1)}
+              >
                 {t('onbBack')}
               </button>
             )}
-            <button className="onb-next" onClick={next}>
+            <button className="onb-next" disabled={submitting} onClick={next}>
               {isLast ? t('onbStart') : t('onbNext')}
             </button>
           </div>

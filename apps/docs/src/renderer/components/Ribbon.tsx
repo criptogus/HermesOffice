@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { ChainedCommands, Editor } from '@tiptap/core'
 import type { Command } from '@tiptap/pm/state'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import type { Mark, Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import {
   addColumnAfter,
   addColumnBefore,
@@ -22,22 +22,38 @@ import type {
   CustomNumberingLevel,
   DocDefaults,
   HeaderFooter,
+  Run,
   SectionSettings,
   SourceInfo,
   StyleInfo,
+  TableAutoFitMode,
+  TableLook,
   TextboxDisplay,
+  TextboxParaDisplay,
   ThemeColors,
   ThemeFonts,
 } from '@hermesoffice/docx-engine'
+import { ColorPicker, Dropdown, isSymbolFontFamily, useDismissablePopover } from '@hermesoffice/ui'
 import { HIGHLIGHT_CSS } from '../editor/extensions'
+import { applyCase, type CaseMode } from '../editor/case-transform'
 import { setParagraphDirection, setSelectionAlign } from '../editor/direction'
+import { setInactiveSelectionShown } from '../editor/inactive-selection'
 import { stepParagraphIndent } from '../editor/indent'
 import { formatNumber } from '../editor/numbering'
 import type { InkTool } from '../editor/ink'
 import type { RibbonFormatState } from './ribbon-format-state'
 import { setSelectedColumnWidth } from '../editor/table-sizing'
+import {
+  applyTablePreset,
+  repeatHeaderState,
+  setTableAutoFit,
+  setTableLookOption,
+  toggleRepeatHeaderRows,
+  updateSelectedTableAttrs,
+} from '../editor/table-properties'
 import { useI18n, type StringKey } from '../i18n/locale'
 import { fontFamiliesFor, isEastAsianFontName } from '../font-list'
+import { useSystemFontFamilies } from '../system-fonts'
 import { cssFontFamily } from '../line-metrics'
 import {
   DesignTab,
@@ -51,15 +67,18 @@ import {
   type InkPenSettings,
   type RevisionDisplayMode,
   type ViewMode,
+  insertImageFromDataUrl,
+  applyParagraphStyle,
 } from './ribbon-tabs'
 import { WRAP_OPTIONS } from './ContextMenu'
 import { CropDialog, CutoutDialog } from './PictureDialogs'
 import {
-  HermesMark,
+  GensparkMark,
   IconAlignCenter,
   IconAlignJustify,
   IconAlignLeft,
   IconAlignRight,
+  IconAutoFit,
   IconBorderAll,
   IconBorderInner,
   IconBorderNone,
@@ -87,21 +106,35 @@ import {
   IconLineSpacing,
   IconMergeCells,
   IconNumbered,
-  IconPalette,
   IconPaste,
   IconPilcrow,
+  IconFlipH,
+  IconFlipV,
   IconRemoveBg,
   IconReplacePicture,
+  IconRotateLeft,
+  IconRotateRight,
   IconRowDelete,
   IconRowInsertAbove,
   IconRowInsertBelow,
   IconShading,
+  IconChangeCase,
+  IconFontColorA,
   IconShrinkFont,
   IconSort,
   IconSplitCells,
+  IconSubscript,
+  IconSuperscript,
   IconTableDelete,
+  IconRepeatHeader,
+  IconTableProperties,
 } from './icons'
 interface RibbonProps {
+  /** App keyboard shortcuts reuse ribbon closures through here (font-size stepping keeps its coalescing) */
+  actionsRef?: React.MutableRefObject<{
+    stepFontSize?: (dir: 1 | -1) => void
+    nudgeFontSize?: (dir: 1 | -1) => void
+  }>
   /** Quick-access area on the tab row's left (save/undo-redo/autosave), matching the WPS/Office QAT */
   quickActions?: React.ReactNode
   /** Right side of the tab row (file name, etc.) */
@@ -183,6 +216,8 @@ interface RibbonProps {
   showNav: boolean
   onShowNav: (v: boolean) => void
   commentCount: number
+  /** unresolved root comments (drives the AI resolve-comments action) */
+  openCommentCount: number
   onShowComments: () => void
   /** Review → comments / revisions / compare / protection */
   canComment: boolean
@@ -196,7 +231,13 @@ interface RibbonProps {
   onRejectRevision: (all: boolean) => void
   onGotoRevision: (dir: 1 | -1) => void
   isProtected: boolean
-  onToggleProtection: () => void
+  /** comments restriction: adding comments stays allowed although the body is read-only */
+  commentsAllowed: boolean
+  /** trackedChanges restriction: the recorder is forced on (toggle and accept/reject disabled) */
+  trackChangesForced: boolean
+  /** any protection is configured (highlights the Protect Document button) */
+  protectActive: boolean
+  onProtectDoc: () => void
   onCompare: () => void
   /** current document path (View → New Window opens it in another window) */
   filePath: string | null
@@ -213,20 +254,43 @@ interface RibbonProps {
 
 interface PainterState {
   marks: Array<{ type: string; attrs: Record<string, unknown> }>
-  para: Record<string, unknown>
+  /** source paragraph's node type + formatting attrs (null when the caret is not in a paintable block) */
+  block: { type: string; attrs: Record<string, unknown> } | null
 }
 
-function transformCase(s: string, mode: 'upper' | 'lower' | 'title' | 'sentence'): string {
-  switch (mode) {
-    case 'upper':
-      return s.toUpperCase()
-    case 'lower':
-      return s.toLowerCase()
-    case 'title':
-      return s.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m) => m.toUpperCase())
-    case 'sentence':
-      return s.toLowerCase().replace(/(^\s*\p{L})|([.!?。!?]\s*\p{L})/gu, (m) => m.toUpperCase())
-  }
+/** Character-formatting marks the painter transfers; semantic marks (links,
+ *  comments, revisions, fields) are neither picked up nor stripped from the target. */
+const PAINTER_MARK_TYPES = ['bold', 'italic', 'underline', 'strike', 'docTextStyle']
+
+/** Paragraph-formatting attrs the painter transfers. Identity/anchor attrs
+ *  (docxIndex, bookmarks, comment ranges, revisions, sdtShell…) stay with the target. */
+const PAINTER_PARA_KEYS = [
+  'styleId',
+  'align',
+  'lineSpacing',
+  'lineRule',
+  'lineRawTwips',
+  'snapToGrid',
+  'indentLeft',
+  'indentRight',
+  'indentFirstLine',
+  'spaceBefore',
+  'spaceAfter',
+  'pageBreakBefore',
+  'bidi',
+  'autoSpace',
+  'shadingFill',
+  'emptyRunSize',
+  'borders',
+  'borderLines',
+  'tabStops',
+]
+
+/** Per-block-type attrs that define the block's identity as formatting (heading level, list numbering) */
+const PAINTER_BLOCK_EXTRA: Record<string, string[]> = {
+  docParagraph: [],
+  docHeading: ['level'],
+  docListItem: ['kind', 'numId', 'ilvl'],
 }
 
 // Word for Mac has no File ribbon tab: file actions live in the native menu
@@ -248,6 +312,56 @@ type RibbonTab =
   | (typeof TABLE_TABS)[number]
   | (typeof IMAGE_TABS)[number]
   | (typeof SHAPE_TABS)[number]
+
+const TABLE_PRESETS = [
+  {
+    label: 'ribbonTablePresetGrid',
+    headerFill: null,
+    band1Fill: null,
+    band2Fill: null,
+    borderColor: '808080',
+  },
+  {
+    label: 'ribbonTablePresetBlueHeader',
+    headerFill: 'D9EAF7',
+    band1Fill: null,
+    band2Fill: null,
+    borderColor: '5B9BD5',
+  },
+  {
+    label: 'ribbonTablePresetBlueBanded',
+    headerFill: 'BDD7EE',
+    band1Fill: 'DDEBF7',
+    band2Fill: 'FFFFFF',
+    borderColor: '9DC3E6',
+  },
+  {
+    label: 'ribbonTablePresetGrayBanded',
+    headerFill: 'D9E1F2',
+    band1Fill: 'E7E6E6',
+    band2Fill: 'FFFFFF',
+    borderColor: 'A5A5A5',
+  },
+  {
+    label: 'ribbonTablePresetGreenHeader',
+    headerFill: 'E2F0D9',
+    band1Fill: null,
+    band2Fill: null,
+    borderColor: '70AD47',
+  },
+] as const satisfies ReadonlyArray<{
+  label: StringKey
+  headerFill: string | null
+  band1Fill: string | null
+  band2Fill: string | null
+  borderColor: string
+}>
+
+const TABLE_AUTO_FIT_OPTIONS: Array<[TableAutoFitMode, StringKey]> = [
+  ['contents', 'ribbonAutoFitContents'],
+  ['window', 'ribbonAutoFitWindow'],
+  ['fixed', 'ribbonFixedColumnWidth'],
+]
 
 // tab values double as internal-state / external tabRequest keys; translated for display via these string keys
 const TAB_LABEL_KEYS: Record<string, StringKey> = {
@@ -303,69 +417,6 @@ const THEME_COLORS: Array<{ nameKey: StringKey; hex: string }> = [
   { nameKey: 'ribbonColorLightGreenAlt', hex: '4EA72E' },
 ]
 
-const THEME_COLOR_SHADES = [
-  [
-    'F2F2F2',
-    '7F7F7F',
-    'D0CECE',
-    'DDEBF7',
-    'DDEBF7',
-    'FCE4D6',
-    'E2F0D9',
-    'DDEBF7',
-    'E4DFEC',
-    'E2F0D9',
-  ],
-  [
-    'D9D9D9',
-    '595959',
-    'AEAAAA',
-    'BDD7EE',
-    '9DC3E6',
-    'F8CBAD',
-    'C6E0B4',
-    '9DC3E6',
-    'D9E1F2',
-    'C6E0B4',
-  ],
-  [
-    'BFBFBF',
-    '3F3F3F',
-    '757171',
-    '8EA9DB',
-    '5B9BD5',
-    'F4B084',
-    'A9D18E',
-    '5B9BD5',
-    'B4C6E7',
-    'A9D18E',
-  ],
-  [
-    'A6A6A6',
-    '262626',
-    '3A3838',
-    '4472C4',
-    '2E75B6',
-    'C65911',
-    '70AD47',
-    '00B0F0',
-    '8064A2',
-    '70AD47',
-  ],
-  [
-    '808080',
-    '0D0D0D',
-    '171616',
-    '203864',
-    '1F4E78',
-    '843C0C',
-    '375623',
-    '0070C0',
-    '5B315E',
-    '385723',
-  ],
-]
-
 /** Word standard colors */
 const COLORS: Array<{ nameKey: StringKey; hex: string }> = [
   { nameKey: 'ribbonColorDarkRed', hex: 'C00000' },
@@ -380,7 +431,12 @@ const COLORS: Array<{ nameKey: StringKey; hex: string }> = [
   { nameKey: 'ribbonColorPurple', hex: '7030A0' },
 ]
 
-/** Theme + standard color palette for shape fill/outline (Shape Format tab) */
+/** Translated tooltip names for the shared picker's named swatches */
+const COLOR_NAME_KEYS: Record<string, StringKey> = Object.fromEntries(
+  [...THEME_COLORS, ...COLORS].map((c) => [c.hex, c.nameKey]),
+)
+
+/** Word-style theme + standard color palette (shared panel, docs anchor positioning) */
 function ShapeColorPalette({
   current,
   noneLabel,
@@ -391,62 +447,27 @@ function ShapeColorPalette({
   onPick: (hex: string | null) => void
 }) {
   const { t } = useI18n()
+  // data-rb-panel marks the picker as "inside" for the unified dismissal
+  // guard; display:contents keeps the wrapper out of layout so the panel's
+  // anchor positioning still resolves against the trigger wrap.
   return (
-    <div className="color-palette color-palette-word">
-      <button
-        className={`color-automatic ${!current ? 'selected' : ''}`}
-        onClick={() => onPick(null)}
-      >
-        {noneLabel}
-      </button>
-      <div className="color-section-title">{t('ribbonThemeColorsSection')}</div>
-      <div className="color-theme-base">
-        {THEME_COLORS.map((c) => (
-          <button
-            key={c.hex}
-            className={`color-swatch color-swatch-large ${current === c.hex ? 'selected' : ''}`}
-            title={t(c.nameKey)}
-            style={{ background: `#${c.hex}` }}
-            onClick={() => onPick(c.hex)}
-          />
-        ))}
-      </div>
-      <div className="color-theme-shades">
-        {THEME_COLOR_SHADES.flatMap((row, rowIndex) =>
-          row.map((hex, columnIndex) => (
-            <button
-              key={`${rowIndex}-${columnIndex}-${hex}`}
-              className={`color-swatch color-swatch-large ${current === hex ? 'selected' : ''}`}
-              title={t('ribbonThemeColorShadeTip', { r: rowIndex + 1, c: columnIndex + 1 })}
-              style={{ background: `#${hex}` }}
-              onClick={() => onPick(hex)}
-            />
-          )),
-        )}
-      </div>
-      <div className="color-section-title color-standard-title">{t('ribbonStandardColors')}</div>
-      <div className="color-standard-row">
-        {COLORS.map((c) => (
-          <button
-            key={c.hex}
-            className={`color-swatch color-swatch-large ${current === c.hex ? 'selected' : ''}`}
-            title={t(c.nameKey)}
-            style={{ background: `#${c.hex}` }}
-            onClick={() => onPick(c.hex)}
-          />
-        ))}
-      </div>
-      <label className="color-more">
-        <span className="color-more-icon">
-          <IconPalette size={16} />
-        </span>
-        {t('ribbonMoreColors')}
-        <input
-          type="color"
-          value={`#${current ?? '4472C4'}`}
-          onChange={(e) => onPick(e.target.value.slice(1).toUpperCase())}
-        />
-      </label>
+    <div data-rb-panel="" style={{ display: 'contents' }}>
+      <ColorPicker
+        className="docs-color-pop"
+        value={current ? `#${current}` : null}
+        strings={{
+          auto: noneLabel,
+          themeColors: t('ribbonThemeColorsSection'),
+          standardColors: t('ribbonStandardColors'),
+          moreColors: t('ribbonMoreColors'),
+          shadeTip: (r, c) => t('ribbonThemeColorShadeTip', { r, c }),
+          colorName: (s) => {
+            const key = COLOR_NAME_KEYS[s.hex]
+            return key ? t(key) : s.name
+          },
+        }}
+        onPick={(hex) => onPick(hex ? hex.slice(1) : null)}
+      />
     </div>
   )
 }
@@ -577,6 +598,7 @@ function findNumIdOfKind(blocks: Block[], kind: 'bullet' | 'ordered'): string | 
 }
 
 function RibbonInner({
+  actionsRef,
   quickActions,
   trailingActions,
   editor,
@@ -641,6 +663,7 @@ function RibbonInner({
   showNav,
   onShowNav,
   commentCount,
+  openCommentCount,
   onShowComments,
   canComment,
   onNewComment,
@@ -653,7 +676,10 @@ function RibbonInner({
   onRejectRevision,
   onGotoRevision,
   isProtected,
-  onToggleProtection,
+  commentsAllowed,
+  trackChangesForced,
+  protectActive,
+  onProtectDoc,
   onCompare,
   filePath,
   viewMode,
@@ -674,7 +700,6 @@ function RibbonInner({
   const [penColor, setPenColor] = useState('C00000')
   const [penHighlight, setPenHighlight] = useState('yellow')
   const [painter, setPainter] = useState<PainterState | null>(null)
-  const ribbonRef = useRef<HTMLDivElement>(null)
   const fontStepRef = useRef<{
     pending: number | null
     applied: number | null
@@ -684,12 +709,16 @@ function RibbonInner({
     head: number
     doc: PMNode | null
   }>({ pending: null, applied: null, timer: null, anchor: -1, head: -1, doc: null })
+  /** Enter pressed in a font combobox: the coming blur is an explicit commit,
+   *  which applies even an unchanged value (normalizes mixed selections, r121) */
+  const fontCommitRef = useRef(false)
   const lastRegularTab = useRef<(typeof TABS)[number]>('home')
   const wasInTable = useRef(false)
   const wasInImage = useRef(false)
   /** Picture Format → remove background / crop dialogs */
   const [pictureDialog, setPictureDialog] = useState<'cutout' | 'crop' | null>(null)
   const [listDialog, setListDialog] = useState(false)
+  const [tablePropertiesOpen, setTablePropertiesOpen] = useState(false)
 
   useEffect(() => {
     if (tabRequest && (TABS as readonly string[]).includes(tabRequest.tab)) {
@@ -700,13 +729,19 @@ function RibbonInner({
     }
   }, [tabRequest])
 
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (ribbonRef.current && !ribbonRef.current.contains(e.target as Node)) setDropdown(null)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [])
+  // Unified dismissal: a press anywhere outside the open panel closes it (plus
+  // window blur / shell chrome presses). The [data-rb-panel] element exists in
+  // the DOM only while a dropdown is open, and its parent element is the wrap
+  // that also holds the trigger button — so a press on the open dropdown's own
+  // trigger counts as "inside" and falls through to the trigger's onClick
+  // toggle (closing it) instead of being treated as an outside press.
+  useDismissablePopover(dropdown != null, () => setDropdown(null), {
+    inside: () =>
+      Array.from(document.querySelectorAll('[data-rb-panel]')).flatMap((panel) => [
+        panel,
+        panel.parentElement,
+      ]),
+  })
 
   // leaving the Draw tab always drops back to text editing, so the drawing
   // overlay never swallows clicks while its controls are off-screen
@@ -758,7 +793,11 @@ function RibbonInner({
   }, [inImage])
 
   // ---- Shape Format (contextual tab when a floating box is selected, same mechanism) ----
-  const inShape = !sub && fs.textboxSelected
+  // Unlike the picture tab this one survives `sub`: double-clicking into the
+  // shape's text keeps the object selected in the main editor, and Word leaves
+  // Shape Format standing throughout — dropping it there is what forced a trip
+  // back to Home to change so much as the weight of the text just typed.
+  const inShape = fs.textboxSelected
   const shapeIsLine = !!fs.shapePrst?.startsWith('line')
   const wasInShape = useRef(false)
 
@@ -797,11 +836,84 @@ function RibbonInner({
   }
 
   /**
+   * Rewrite every run and paragraph of the selected shape. Only for object mode:
+   * with the shape selected there is no text selection for a mark command to act
+   * on, so Word reformats the whole shape and `editRun`/`editPara` see each part
+   * of it in turn. While a sub-editor holds focus the ordinary mark and alignment
+   * commands already target the text, and shapeTextCommand routes there instead.
+   *
+   * Confined to the first box like setShapeStyle: a paragraph anchoring several
+   * shapes packs them into one docProtected node, and the ribbon reads and writes
+   * only that one — reformatting the rest would hit shapes it is not showing.
+   *
+   * The node view re-feeds its sub-editors from the new attrs, so the shape
+   * repaints even while its text is being edited.
+   */
+  const setShapeText = (
+    editRun?: (run: Run) => Run,
+    editPara?: (para: TextboxParaDisplay) => TextboxParaDisplay,
+  ) => {
+    if (!canEdit) return
+    const attrs = editor.getAttributes('docProtected')
+    const boxes = attrs?.textboxes as TextboxDisplay[] | null
+    if (!Array.isArray(boxes) || boxes.length === 0 || boxes[0].readOnly) return
+    const box = {
+      ...boxes[0],
+      paras: boxes[0].paras.map((para) => {
+        const withRuns = editRun ? { ...para, runs: para.runs.map(editRun) } : para
+        return editPara ? editPara(withRuns) : withRuns
+      }),
+    }
+    editor
+      .chain()
+      .focus()
+      .updateAttributes('docProtected', { textboxes: [box, ...boxes.slice(1)] })
+      .run()
+  }
+
+  /** drop a run property rather than storing an explicit "off" Word would have to write out */
+  const withRunFlag = (run: Run, key: 'bold' | 'italic' | 'underline', on: boolean): Run => {
+    const next = { ...run }
+    if (on) next[key] = true
+    else delete next[key]
+    return next
+  }
+
+  /** Shape Format text buttons: the sub-editor when inside the text, the whole shape otherwise */
+  const shapeTextCommand = {
+    toggleMark: (name: 'bold' | 'italic' | 'underline', active: boolean) => {
+      if (sub) chain().toggleMark(name).run()
+      else setShapeText((run) => withRunFlag(run, name, !active))
+    },
+    setColor: (hex: string | null) => {
+      if (sub) setTextStyle({ color: hex })
+      else
+        setShapeText((run) => {
+          const next = { ...run }
+          if (hex) next.color = hex
+          else delete next.color
+          return next
+        })
+    },
+    setAlign: (align: 'left' | 'center' | 'right' | 'justify') => {
+      if (sub) setSelectionAlign(ed, align)
+      else setShapeText(undefined, (para) => ({ ...para, align }))
+    },
+  }
+
+  const shapeTextActive = {
+    bold: sub ? fs.bold : fs.shapeTextBold,
+    italic: sub ? fs.italic : fs.shapeTextItalic,
+    underline: sub ? fs.underline : fs.shapeTextUnderline,
+    color: sub ? fs.textColor : fs.shapeTextColor,
+    align: sub ? fs.align : fs.shapeTextAlign,
+  }
+
+  /**
    * Replace the selected image's bytes (shared by Replace Picture / remove background / crop).
-   * The original image's patch-save only supports size/alignment/wrap; swapping bytes must go
-   * through the genImage new-image embed branch, so docxIndex is cleared (on save the old
-   * block is treated as deleted, the new image is written at the same position, and
-   * alignment/wrap are inherited from attributes).
+   * Original images (docxIndex set) swap bytes in place via the imageReplace patch: the
+   * drawing XML survives, so wrap/position/docxIndex — and with them the Position gallery —
+   * keep working. Images not yet saved (genImage) just update their pending payload.
    * Display size keeps the current width; height adapts to the new image's aspect ratio.
    */
   const applyPictureBytes = async (dataUrl: string) => {
@@ -815,6 +927,7 @@ function RibbonInner({
       const currentW = Number(attrs.imageWidthPx) || Math.min(natural.width, 620)
       const w = Math.max(1, Math.round(currentW))
       const h = Math.max(1, Math.round((currentW * natural.height) / natural.width))
+      const isOriginal = attrs.docxIndex !== null && attrs.docxIndex !== undefined
       editor
         .chain()
         .focus()
@@ -822,8 +935,14 @@ function RibbonInner({
           imageDataUrl: dataUrl,
           imageWidthPx: w,
           imageHeightPx: h,
-          genImage: { base64: m[2], mime: m[1], widthPx: w, heightPx: h },
-          docxIndex: null,
+          // The new bytes are the full picture (crop/cutout bake destructively) and
+          // the replace pipeline strips a:srcRect on save — drop a Word-authored
+          // crop/fill window or it would keep clipping the new image until reload
+          imageCrop: null,
+          imageFillRect: null,
+          ...(isOriginal
+            ? { imageReplace: { base64: m[2], mime: m[1] } }
+            : { genImage: { base64: m[2], mime: m[1], widthPx: w, heightPx: h } }),
         })
         .run()
     } catch {
@@ -835,6 +954,30 @@ function RibbonInner({
     const picked = await window.desktop.pickImage()
     if (!picked) return
     await applyPictureBytes(`data:${picked.mime};base64,${picked.base64}`)
+  }
+
+  const rotatePicture = (deltaDeg: number) => {
+    if (!canEdit) return
+    const attrs = editor.getAttributes('docProtected')
+    if (attrs?.blockType !== 'image') return
+    const next = ((((Number(attrs.imageRotDeg) || 0) + deltaDeg) % 360) + 360) % 360
+    editor
+      .chain()
+      .focus()
+      .updateAttributes('docProtected', { imageRotDeg: next || null })
+      .run()
+  }
+
+  const flipPicture = (axis: 'h' | 'v') => {
+    if (!canEdit) return
+    const attrs = editor.getAttributes('docProtected')
+    if (attrs?.blockType !== 'image') return
+    const key = axis === 'h' ? 'imageFlipH' : 'imageFlipV'
+    editor
+      .chain()
+      .focus()
+      .updateAttributes('docProtected', { [key]: !attrs[key] })
+      .run()
   }
 
   /** Set the image display size proportionally (cm input; either side drives the other) */
@@ -974,6 +1117,87 @@ function RibbonInner({
           vAlign: fs.cellVAlign,
         }
 
+  const tableAttrs = inTable ? editor.getAttributes('docTable') : {}
+  const tableHeader = inTable ? repeatHeaderState(editor.state) : { enabled: false, active: false }
+  const tableLook = (tableAttrs.tblLook as TableLook | null) ?? {
+    firstRow: true,
+    lastRow: false,
+    firstColumn: true,
+    lastColumn: false,
+    bandedRows: true,
+    bandedColumns: false,
+  }
+  const tableAutoFitMode: TableAutoFitMode =
+    tableAttrs.tblAutoFit === 'contents' || tableAttrs.tblAutoFit === 'window'
+      ? tableAttrs.tblAutoFit
+      : 'fixed'
+  const tableAutoFitLabel =
+    TABLE_AUTO_FIT_OPTIONS.find(([mode]) => mode === tableAutoFitMode)?.[1] ??
+    'ribbonFixedColumnWidth'
+
+  const applyTableProperties = (value: TablePropertiesValue) => {
+    if (!canEdit || !inTable) return
+    let measuredWidthPx = Number(tableAttrs.widthPx) || 0
+    if (!(measuredWidthPx > 0)) {
+      try {
+        const rect = selectedRect(editor.state)
+        const tableDom = editor.view.nodeDOM(rect.tableStart - 1)
+        if (tableDom instanceof HTMLElement) {
+          const zoomEl = document.querySelector('.doc-zoom') as HTMLElement | null
+          const zoom = zoomEl ? parseFloat(getComputedStyle(zoomEl).zoom || '1') || 1 : 1
+          measuredWidthPx = tableDom.getBoundingClientRect().width / zoom
+        }
+      } catch {
+        // A malformed table falls back to the section width below.
+      }
+    }
+    measuredWidthPx = Math.max(1, Math.round(measuredWidthPx || sectionContentWidthPx))
+    const positionedWidthPx =
+      value.autoFit === 'window' ? Math.round(sectionContentWidthPx) : measuredWidthPx
+    runTableCommand(setTableAutoFit(value.autoFit, sectionContentWidthPx))
+    const twips = (cm: number) => Math.max(0, Math.round(cm * TWIPS_PER_CM))
+    const signedTwips = (cm: number) => Math.round(cm * TWIPS_PER_CM)
+    const floatX =
+      value.wrap === 'right' && Math.abs(value.positionXCm) < 0.001
+        ? value.autoFit === 'window'
+          ? 0
+          : Math.max(0, Math.round((sectionContentWidthPx - positionedWidthPx) * 15))
+        : signedTwips(value.positionXCm)
+    const keepFloatSuppressed = value.floatSuppressed && value.wrap !== 'none'
+    runTableCommand(
+      updateSelectedTableAttrs({
+        tblFloatWidthPx: value.wrap === 'right' ? positionedWidthPx : null,
+        cellMar: {
+          top: twips(value.marginTopCm),
+          right: twips(value.marginRightCm),
+          bottom: twips(value.marginBottomCm),
+          left: twips(value.marginLeftCm),
+        },
+        cellMarEdited: true,
+        tblFloat: keepFloatSuppressed ? null : value.wrap,
+        tblFloatSource: value.wrap,
+        tblFloatSuppressed: keepFloatSuppressed,
+        tblFloatXTwips: value.wrap === 'none' ? null : floatX,
+        tblFloatYTwips: value.wrap === 'none' ? null : signedTwips(value.positionYCm),
+        tblFloatHorzAnchor:
+          value.wrap === 'none' ? null : (tableAttrs.tblFloatHorzAnchor ?? 'margin'),
+        tblFloatVertAnchor:
+          value.wrap === 'none' ? null : (tableAttrs.tblFloatVertAnchor ?? 'margin'),
+        tblFloatDistance:
+          value.wrap === 'none'
+            ? null
+            : {
+                top: twips(value.distanceCm),
+                right: twips(value.distanceCm),
+                bottom: twips(value.distanceCm),
+                left: twips(value.distanceCm),
+              },
+        tblFloatEdited: true,
+      }),
+    )
+    setTablePropertiesOpen(false)
+  }
+
   const activeCharStyleId = fs.charStyleId
   const presetAccent = themeColors?.accent1?.trim().toUpperCase() || DEFAULT_PRESET_ACCENT
 
@@ -1029,20 +1253,37 @@ function RibbonInner({
             ? 'char:__preset_emphasis'
             : 'p'
 
-  // Style gallery overflow: the inline row clips (the ribbon row cannot grow),
-  // so a "more styles" expander must appear whenever cards are cut off.
+  // Style gallery overflow: cards that don't fit wrap onto a second row that
+  // the fixed-height gallery clips (whole cards only, never a half-cut one),
+  // and a "more styles" expander appears whenever cards are hidden. The
+  // gallery is then capped right after the last visible card so the expander
+  // hugs it instead of floating at the group's far edge.
   const styleGalleryRef = useRef<HTMLDivElement | null>(null)
   const [styleGalleryOverflow, setStyleGalleryOverflow] = useState(false)
   useLayoutEffect(() => {
     const el = styleGalleryRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
-    const check = () => setStyleGalleryOverflow(el.scrollWidth - el.clientWidth > 1)
+    const check = () => {
+      // measure the natural (uncapped) layout at the current wrapper width
+      el.style.maxWidth = ''
+      const cards = Array.from(el.children) as HTMLElement[]
+      const firstRow = cards.filter((c) => c.offsetTop === cards[0]?.offsetTop)
+      const overflow = firstRow.length < cards.length
+      if (overflow) {
+        const last = firstRow[firstRow.length - 1]
+        el.style.maxWidth = `${last.offsetLeft - firstRow[0].offsetLeft + last.offsetWidth}px`
+      }
+      setStyleGalleryOverflow(overflow)
+    }
     check()
     const ro = new ResizeObserver(check)
-    ro.observe(el)
+    // observe the wrapper, not the gallery: once capped, the gallery no longer
+    // resizes with the window, so it would never re-trigger the observer
+    ro.observe(el.parentElement ?? el)
     return () => ro.disconnect()
-    // scrollWidth changes don't fire the observer: re-check when the card set can change
-  }, [tab, charStyleItems.length, lang])
+    // re-check when the card set can change, and after the expander mounts or
+    // unmounts (it takes row width, which can change how many cards fit)
+  }, [tab, charStyleItems.length, lang, styleGalleryOverflow])
 
   const currentSize = fs.fontSizePt
   const currentFont = fs.fontFamily
@@ -1053,6 +1294,7 @@ function RibbonInner({
   // computed unconditionally (not inside the dropdown render): cheap, and the
   // render-isolation test uses fontFamiliesFor calls as its render probe
   const fontFamilies = fontFamiliesFor(lang)
+  const { families: systemFontFamilies, load: loadSystemFonts } = useSystemFontFamilies()
   // unset align follows the paragraph direction: start is left in LTR, right in RTL
   const activeAlign = fs.align ?? (fs.bidi ? 'right' : 'left')
   const activeSpacing = fs.lineSpacing
@@ -1118,51 +1360,8 @@ function RibbonInner({
       }
       return
     }
-    if (sub) return // textboxes have no heading styles
-    let c = chain()
-    if (key === 'p') c = c.setNode('docParagraph')
-    else c = c.setNode('docHeading', { level: Number(key.slice(1)) })
-    // Word-like: applying a paragraph style sheds the runs' direct font/size/color.
-    // Those render as inline span styles and would otherwise mask the style's look
-    // entirely (the click would seem to do nothing on documents whose body runs
-    // carry explicit rPr, common in CJK templates).
-    c.command(({ tr }) => {
-      const { from, to } = tr.selection
-      let start = from
-      let end = to
-      tr.doc.nodesBetween(from, to, (node, pos) => {
-        if (node.isTextblock) {
-          start = Math.min(start, pos + 1)
-          end = Math.max(end, pos + node.nodeSize - 1)
-        }
-      })
-      const type = editor.schema.marks.docTextStyle
-      const jobs: Array<{ from: number; to: number; attrs: Record<string, unknown> | null }> = []
-      tr.doc.nodesBetween(start, end, (node, pos) => {
-        if (!node.isText) return
-        const m = node.marks.find((mm) => mm.type === type)
-        if (!m) return
-        if (
-          m.attrs.color == null &&
-          m.attrs.sizeHalfPoints == null &&
-          m.attrs.font == null &&
-          m.attrs.fontAscii == null
-        )
-          return
-        const attrs = { ...m.attrs, color: null, sizeHalfPoints: null, font: null, fontAscii: null }
-        const keep = Object.values(attrs).some((v) => v !== null)
-        jobs.push({
-          from: Math.max(pos, start),
-          to: Math.min(pos + node.nodeSize, end),
-          attrs: keep ? attrs : null,
-        })
-      })
-      for (const job of jobs) {
-        tr.removeMark(job.from, job.to, type)
-        if (job.attrs) tr.addMark(job.from, job.to, type.create(job.attrs))
-      }
-      return true
-    }).run()
+    if (sub || !canEdit) return // textboxes have no heading styles
+    applyParagraphStyle(editor, key as 'p' | 'h1' | 'h2' | 'h3')
   }
 
   /** Style cards, shared by the inline gallery and its overflow menu */
@@ -1189,7 +1388,7 @@ function RibbonInner({
             key={s.key}
             className={`style-card style-card-char ${activeStyleKey === s.key ? 'active' : ''}`}
             disabled={!canEdit}
-            title={s.label}
+            data-tip={s.label}
             onClick={() => apply(s.key)}
           >
             <span className="style-card-preview" style={s.previewStyle}>
@@ -1213,6 +1412,12 @@ function RibbonInner({
     chain().setNode('docListItem', { kind, numId, ilvl: 0 }).run()
   }
 
+  /** the gallery "None" card: drop list formatting, back to a plain paragraph */
+  const clearList = () => {
+    if (sub) return
+    if (editor.isActive('docListItem')) chain().setNode('docParagraph').run()
+  }
+
   /** Custom levels picked in the gallery/dialog → create a definition and apply it to the current paragraph */
   const applyListPreset = (levels: CustomNumberingLevel[]) => {
     if (sub) return
@@ -1230,18 +1435,7 @@ function RibbonInner({
     stepParagraphIndent(editor, delta)
   }
 
-  const stepFontSize = (dir: 1 | -1) => {
-    const step = (base: number): number => {
-      const idx = FONT_SIZES.findIndex((s) => s >= base)
-      if (dir === 1)
-        return FONT_SIZES[
-          Math.min(
-            idx === -1 ? FONT_SIZES.length : idx + (FONT_SIZES[idx] === base ? 1 : 0),
-            FONT_SIZES.length - 1,
-          )
-        ]
-      return FONT_SIZES[Math.max(idx === -1 ? FONT_SIZES.length - 1 : idx - 1, 0)]
-    }
+  const applyFontStep = (step: (base: number) => number) => {
     // Every applied size change re-paginates the whole document synchronously —
     // ~700ms per click on table-heavy documents — so clicking A+/A- in a burst
     // froze the UI for seconds. Apply the first click immediately (a single
@@ -1286,6 +1480,30 @@ function RibbonInner({
     }, FONT_STEP_COALESCE_MS)
   }
 
+  /** A+/A- and ⇧⌘. / ⇧⌘,: walk Word's preset size list */
+  const stepFontSize = (dir: 1 | -1) =>
+    applyFontStep((base) => {
+      const idx = FONT_SIZES.findIndex((s) => s >= base)
+      if (dir === 1)
+        return FONT_SIZES[
+          Math.min(
+            idx === -1 ? FONT_SIZES.length : idx + (FONT_SIZES[idx] === base ? 1 : 0),
+            FONT_SIZES.length - 1,
+          )
+        ]
+      return FONT_SIZES[Math.max(idx === -1 ? FONT_SIZES.length - 1 : idx - 1, 0)]
+    })
+
+  /** Word's ⌘] / ⌘[: exactly one point, within Word's 1–1638pt range */
+  const nudgeFontSize = (dir: 1 | -1) =>
+    applyFontStep((base) => Math.min(Math.max(Math.round(base) + dir, 1), 1638))
+
+  useEffect(() => {
+    if (!actionsRef) return
+    actionsRef.current.stepFontSize = stepFontSize
+    actionsRef.current.nudgeFontSize = nudgeFontSize
+  })
+
   const toggleVertAlign = (kind: 'superscript' | 'subscript') => {
     setTextStyle({ vertAlign: fs.vertAlign === kind ? null : kind })
   }
@@ -1297,101 +1515,307 @@ function RibbonInner({
       return
     }
     if (!canEdit) return
-    const marks = editor.state.selection.$head
-      .marks()
-      .map((m) => ({ type: m.type.name, attrs: { ...m.attrs } }))
-    setPainter({
-      marks,
-      para: {
-        align: fs.align,
-        lineSpacing: fs.lineSpacing,
-        shadingFill: fs.shadingFill,
-        borders: fs.paraBorders ?? null,
-        bidi: fs.bidi,
-      },
-    })
+    const { state } = editor
+    const { $from, $head, from, to, empty } = state.selection
+    // Word picks up the FIRST character's formatting of a range selection (a
+    // triple-clicked paragraph whose last run is plain must still pick up the
+    // leading run's look); a collapsed caret reads the marks at the caret.
+    const picked: Mark[] = []
+    if (empty) {
+      picked.push(...$head.marks())
+    } else {
+      let found = false
+      state.doc.nodesBetween(from, to, (node) => {
+        if (found) return false
+        if (node.isText) {
+          found = true
+          picked.push(...node.marks)
+          return false
+        }
+        return true
+      })
+    }
+    // Paragraph formatting is picked up per Word's ¶-mark rule: a caret pickup
+    // or a cross-paragraph selection carries the block identity (heading
+    // level / list numbering / styleId) — which then applies to whole target
+    // paragraphs. A PARTIAL in-paragraph drag copies character formatting
+    // only — but a selection covering the paragraph's ENTIRE content counts
+    // as including the ¶ mark, exactly like Word's triple-click (alpha ledger
+    // r134: "select whole paragraph → painter" dropped line spacing/indents
+    // while a caret pickup carried them — backwards to any user).
+    const { $to } = state.selection
+    const coversWholeParagraph =
+      !empty &&
+      $from.parent.isTextblock && // AllSelection's parent is the doc (bugbot)
+      $from.sameParent($to) &&
+      $from.parentOffset === 0 &&
+      $to.parentOffset === $to.parent.content.size
+    const includesParaMark = empty || !$from.sameParent($to) || coversWholeParagraph
+    const marks = picked
+      .filter((m) => PAINTER_MARK_TYPES.includes(m.type.name) && m.type.name !== 'docTextStyle')
+      .map((m) => ({ type: m.type.name, attrs: { ...m.attrs } as Record<string, unknown> }))
+    const tsMark = picked.find((m) => m.type.name === 'docTextStyle')
+    const ts: Record<string, unknown> = { ...(tsMark?.attrs ?? {}) }
+    // raw rPr pass-through belongs to the source run; stamping it on foreign
+    // runs would smuggle unmodeled properties across the document
+    delete ts.rawRPr
+    if (!includesParaMark) {
+      // Char-only brush: resolve the EFFECTIVE character formatting (direct
+      // marks → character style → paragraph style → docDefaults) and record it
+      // as direct formatting, so the brush reproduces what the source LOOKS
+      // like even when that look comes from a style. Without this, picking up
+      // plain body text (no marks at all) and brushing heading-styled text
+      // changes nothing. When the block travels (¶ pickup) it carries the
+      // style itself, so no resolved values are stamped there.
+      const styleDisplayOf = (id: unknown) =>
+        typeof id === 'string' && id ? styles?.get(id)?.display : undefined
+      const charStyle = styleDisplayOf(tsMark?.attrs.styleId)
+      const paraStyle = styleDisplayOf($from.parent.attrs.styleId)
+      for (const t of ['bold', 'italic', 'underline', 'strike'] as const) {
+        const styleFlag =
+          charStyle?.[t] ??
+          paraStyle?.[t] ??
+          (t === 'bold' ? docDefaults?.bold : t === 'italic' ? docDefaults?.italic : undefined)
+        if (styleFlag && !picked.some((m) => m.type.name === t)) marks.push({ type: t, attrs: {} })
+      }
+      ts.sizeHalfPoints ??=
+        charStyle?.sizeHalfPoints ??
+        paraStyle?.sizeHalfPoints ??
+        docDefaults?.sizeHalfPoints ??
+        null
+      ts.color ??= charStyle?.color ?? paraStyle?.color ?? docDefaults?.color ?? null
+      ts.fontAscii ??=
+        charStyle?.fontAscii ?? paraStyle?.fontAscii ?? docDefaults?.asciiFont ?? null
+      if (ts.font == null) {
+        // an empty-EA-theme-slot backfill face is not a document font choice — don't stamp it
+        if (charStyle?.font && !charStyle.eaSlotEmpty) ts.font = charStyle.font
+        else if (paraStyle?.font && !paraStyle.eaSlotEmpty) ts.font = paraStyle.font
+        else if (docDefaults?.eastAsiaFont && !docDefaults.eaSlotEmpty)
+          ts.font = docDefaults.eastAsiaFont
+      }
+      ts.csFont ??= charStyle?.csFont ?? paraStyle?.csFont ?? null
+      ts.charSpacingTwips ??= charStyle?.charSpacingTwips ?? paraStyle?.charSpacingTwips ?? null
+    }
+    if (Object.values(ts).some((v) => v != null)) marks.push({ type: 'docTextStyle', attrs: ts })
+    const para = $from.parent
+    let block: PainterState['block'] = null
+    const extra = PAINTER_BLOCK_EXTRA[para.type.name]
+    if (includesParaMark && extra) {
+      const attrs: Record<string, unknown> = {}
+      for (const k of [...PAINTER_PARA_KEYS, ...extra]) attrs[k] = para.attrs[k]
+      block = { type: para.type.name, attrs }
+    }
+    setPainter({ marks, block })
   }
 
   useEffect(() => {
     if (!painter) return
     let selectingWithMouse = false
+    let downAt: { x: number; y: number } | null = null
     let finished = false
     let keyboardTimer: ReturnType<typeof setTimeout> | null = null
 
-    const applyFinalSelection = () => {
+    /** the sentence containing the clicked position (a painter click brushes
+     *  that sentence; a drag brushes the selection) */
+    const sentenceRangeAt = ($pos: ResolvedPos): { from: number; to: number } | null => {
+      const para = $pos.parent
+      if (!para.isTextblock) return null
+      // leaf nodes (images, breaks) become one placeholder char so offsets line up
+      const text = para.textBetween(0, para.content.size, undefined, '￼')
+      const END = /[。．！？!?…]/
+      const CLOSE = /[”』」）)》〉】'"]/
+      // '.' ends a sentence unless a digit follows (1.5, 3.14 stay intact)
+      const at = (k: number) =>
+        END.test(text[k]) || (text[k] === '.' && !/\d/.test(text[k + 1] ?? ''))
+      // A straight quote is ambiguous: it counts as a CLOSING quote only when
+      // it directly follows a terminator (or another closer, `…。”"`) — so the
+      // opening quote of `"Hi…` / `。 "next sentence` stays inside the brushed
+      // range.
+      // The CJK/paired closers are unambiguous.
+      const closingAt = (k: number): boolean => {
+        const ch = text[k] ?? ''
+        if (!CLOSE.test(ch)) return false
+        if (!/['"]/.test(ch)) return true
+        return at(k - 1) || (k > 0 && closingAt(k - 1))
+      }
+      // A click landing in a sentence's trailing closers/spaces (`…。」▏ next`)
+      // belongs to THAT sentence, not the next one: re-anchor on its terminator
+      let anchor = $pos.parentOffset
+      {
+        let j = anchor
+        while (j > 0 && (closingAt(j) || /[ \t]/.test(text[j] ?? ''))) j--
+        if (j < anchor && at(j)) anchor = j
+      }
+      let start = anchor
+      while (start > 0 && !at(start - 1)) start--
+      while (start < text.length && closingAt(start)) start++
+      // Word convention: the trailing space belongs to the sentence, the
+      // leading one to the previous sentence
+      while (start < text.length && /\s/.test(text[start])) start++
+      let end = anchor
+      while (end < text.length && !at(end)) end++
+      if (end < text.length) end++
+      while (end < text.length && closingAt(end)) end++
+      while (end < text.length && /[ \t]/.test(text[end])) end++
+      if (start >= end) {
+        // clicked in the empty tail after the final delimiter (or an empty
+        // paragraph): nothing to mark, but the paragraph format still applies
+        start = end = $pos.parentOffset
+      }
+      const base = $pos.start()
+      return { from: base + start, to: base + end }
+    }
+
+    const applyRange = (from: number, to: number, caretAfter: number | null) => {
       if (finished || !editor.isEditable) return
-      const { from, to } = editor.state.selection
-      if (from === to) return
       finished = true
       if (keyboardTimer) clearTimeout(keyboardTimer)
       setPainter(null)
-      let c = editor.chain().focus().unsetAllMarks()
-      for (const m of painter.marks) c = c.setMark(m.type, m.attrs)
-      c.updateAttributes('docParagraph', painter.para)
-        .updateAttributes('docHeading', painter.para)
-        .updateAttributes('docListItem', painter.para)
-        .run()
+      let c = editor.chain().focus().setTextSelection({ from, to })
+      if (to > from) {
+        // strip only formatting marks, then re-add the picked-up ones: semantic
+        // marks on the target (links, comments, revisions) survive the brush
+        for (const t of PAINTER_MARK_TYPES) c = c.unsetMark(t)
+        for (const m of painter.marks) c = c.setMark(m.type, m.attrs)
+      }
+      c = c.command(({ tr }) => {
+        const block = painter.block
+        if (!block) return true
+        const type = editor.schema.nodes[block.type]
+        if (!type) return true
+        const sel = tr.selection
+        const jobs: Array<{ pos: number; attrs: Record<string, unknown> }> = []
+        tr.doc.nodesBetween(sel.from, sel.to, (node, pos) => {
+          if (!(node.type.name in PAINTER_BLOCK_EXTRA)) return true
+          // keep the target's identity attrs, overwrite every formatting attr
+          // (explicit nulls in block.attrs reset what the source didn't set)
+          jobs.push({ pos, attrs: { ...node.attrs, ...block.attrs } })
+          return false
+        })
+        for (const job of jobs) tr.setNodeMarkup(job.pos, type, job.attrs)
+        return true
+      })
+      if (caretAfter != null) c = c.setTextSelection(caretAfter)
+      c.run()
     }
 
     const onMouseDown = (event: MouseEvent) => {
       if (!editor.view.dom.contains(event.target as globalThis.Node)) return
       selectingWithMouse = true
+      downAt = { x: event.clientX, y: event.clientY }
       if (keyboardTimer) clearTimeout(keyboardTimer)
     }
-    const onMouseUp = () => {
-      if (!selectingWithMouse) return
+    const onMouseUp = (event: MouseEvent) => {
+      if (!selectingWithMouse || !downAt) return
       selectingWithMouse = false
-      requestAnimationFrame(applyFinalSelection)
+      const press = downAt
+      downAt = null
+      const dist = Math.abs(event.clientX - press.x) + Math.abs(event.clientY - press.y)
+      requestAnimationFrame(() => {
+        if (finished || !editor.isEditable) return
+        const { from, to } = editor.state.selection
+        const moved = from !== initial.from || to !== initial.to
+        if (from !== to && moved) {
+          applyRange(from, to, null)
+          return
+        }
+        if (dist >= 5) return
+        // A plain click brushes the clicked sentence. The position comes from
+        // the press coordinates, not the selection: a fast click into a blurred
+        // editor can reach this frame before ProseMirror has placed the caret,
+        // and reading the stale selection here used to brush the source itself.
+        const hit = editor.view.posAtCoords({ left: press.x, top: press.y })
+        if (!hit) return
+        const sentence = sentenceRangeAt(editor.state.doc.resolve(hit.pos))
+        if (sentence) applyRange(sentence.from, sentence.to, hit.pos)
+      })
     }
+    // The pickup selection is still live when the painter is armed; only a
+    // selection that has since MOVED is a target gesture (without this, any
+    // stray selectionUpdate right after arming brushes the source itself)
+    const initial = { from: editor.state.selection.from, to: editor.state.selection.to }
     const onSelectionUpdate = () => {
       if (selectingWithMouse || finished) return
       if (keyboardTimer) clearTimeout(keyboardTimer)
-      keyboardTimer = setTimeout(applyFinalSelection, 180)
+      keyboardTimer = setTimeout(() => {
+        const { from, to } = editor.state.selection
+        if (from === initial.from && to === initial.to) return
+        if (from !== to) applyRange(from, to, null)
+      }, 180)
     }
 
+    // Word-style paintbrush cursor over the text area while the painter is armed
+    editor.view.dom.classList.add('doc-painter-cursor')
     editor.view.dom.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mouseup', onMouseUp)
     editor.on('selectionUpdate', onSelectionUpdate)
     return () => {
       if (keyboardTimer) clearTimeout(keyboardTimer)
+      editor.view.dom.classList.remove('doc-painter-cursor')
       editor.view.dom.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mouseup', onMouseUp)
       editor.off('selectionUpdate', onSelectionUpdate)
     }
   }, [painter, editor])
 
-  const changeCase = (mode: 'upper' | 'lower' | 'title' | 'sentence') => {
+  const changeCase = (mode: CaseMode) => {
     if (!canEdit) return
-    const { from, to } = ed.state.selection
-    if (from === to) return
-    ed.chain()
-      .focus()
-      .command(({ state, tr }) => {
-        state.doc.nodesBetween(from, to, (node, pos) => {
-          if (!node.isText || !node.text) return
-          const start = Math.max(from, pos)
-          const end = Math.min(to, pos + node.nodeSize)
-          const slice = node.text.slice(start - pos, end - pos)
-          const next = transformCase(slice, mode)
-          if (next !== slice) {
-            tr.replaceWith(
-              tr.mapping.map(start),
-              tr.mapping.map(end),
-              state.schema.text(next, node.marks),
-            )
-          }
-        })
-        return true
-      })
-      .run()
+    applyCase(ed, mode)
     setDropdown(null)
   }
 
   const clipboard = async (action: 'cut' | 'copy' | 'paste') => {
     if (action !== 'copy' && !canEdit) return
     if (action === 'paste') {
+      // Same pipeline as Ctrl+V: pasteHTML/pasteText run the editor's full
+      // paste machinery, where readText + insertContent flattened everything
+      // to plain text (r127). The synthesized event carries a real
+      // clipboardData so App's handlePaste branches (empty-paragraph
+      // wholesale replace, markdown conversion, image priority) behave
+      // exactly as on a native paste.
+      const pasteEvent = (html: string | null, text: string): ClipboardEvent => {
+        const data = new DataTransfer()
+        if (html) data.setData('text/html', html)
+        if (text) data.setData('text/plain', text)
+        return new ClipboardEvent('paste', { clipboardData: data })
+      }
+      try {
+        for (const item of await navigator.clipboard.read()) {
+          const text = item.types.includes('text/plain')
+            ? await (await item.getType('text/plain')).text()
+            : ''
+          if (item.types.includes('text/html')) {
+            const html = await (await item.getType('text/html')).text()
+            if (html) {
+              ed.view.pasteHTML(html, pasteEvent(html, text))
+              ed.commands.focus()
+              return
+            }
+          }
+          // image priority mirrors Ctrl+V: an image wins over missing or
+          // whitespace-only plain text (OS clipboards often advertise an
+          // empty text/plain beside image/png)
+          const imageType = item.types.find((type) => type.startsWith('image/'))
+          if (imageType && !text.trim()) {
+            const blob = await item.getType(imageType)
+            const reader = new FileReader()
+            reader.onload = () => {
+              if (typeof reader.result === 'string') {
+                void insertImageFromDataUrl(ed, reader.result, 'Image (pasted)')
+              }
+            }
+            reader.readAsDataURL(blob)
+            return
+          }
+        }
+      } catch {
+        /* clipboard.read unavailable/denied: plain-text fallback below */
+      }
       const text = await navigator.clipboard.readText()
-      if (text) chain().insertContent(text).run()
+      if (text) {
+        ed.view.pasteText(text, pasteEvent(null, text))
+        ed.commands.focus()
+      }
     } else {
       document.execCommand(action)
       ed.commands.focus()
@@ -1402,15 +1826,49 @@ function RibbonInner({
     <button
       className={`rb-icon ${active ? 'active' : ''}`}
       disabled={!canEdit}
-      title={title}
+      data-tip={title}
+      aria-label={title}
       onClick={() => chain().toggleMark(name).run()}
     >
       {label}
     </button>
   )
 
+  const shapeMarkBtn = (
+    name: 'bold' | 'italic' | 'underline',
+    active: boolean,
+    title: string,
+    label: ReactNode,
+  ) => (
+    <button
+      className={`rb-icon ${active ? 'active' : ''}`}
+      disabled={!canEdit}
+      data-tip={title}
+      aria-label={title}
+      onClick={() => shapeTextCommand.toggleMark(name, active)}
+    >
+      {label}
+    </button>
+  )
+
+  const shapeAlignBtn = (
+    align: 'left' | 'center' | 'right' | 'justify',
+    title: string,
+    icon: ReactNode,
+  ) => (
+    <button
+      className={`rb-icon ${shapeTextActive.align === align ? 'active' : ''}`}
+      disabled={!canEdit}
+      data-tip={title}
+      aria-label={title}
+      onClick={() => shapeTextCommand.setAlign(align)}
+    >
+      {icon}
+    </button>
+  )
+
   return (
-    <div className="ribbon" ref={ribbonRef}>
+    <div className="ribbon">
       <div
         className={`ribbon-tabs ${IN_TAB ? '' : IS_MAC ? 'ribbon-tabs-mac' : 'ribbon-tabs-win'}`}
       >
@@ -1423,7 +1881,7 @@ function RibbonInner({
               {t('ribbonTabFile')}
             </button>
             {dropdown === 'file' && (
-              <div className="file-menu">
+              <div data-rb-panel="" className="file-menu">
                 <button
                   onClick={() => {
                     setDropdown(null)
@@ -1522,7 +1980,7 @@ function RibbonInner({
                     <button
                       className="rb-big"
                       disabled={!canEdit}
-                      title={t('ribbonShapeFillTip')}
+                      data-tip={t('ribbonShapeFillTip')}
                       onClick={() => setDropdown((v) => (v === 'shapeFill' ? null : 'shapeFill'))}
                     >
                       <span className="rb-big-icon">
@@ -1550,7 +2008,7 @@ function RibbonInner({
                   <button
                     className="rb-big"
                     disabled={!canEdit}
-                    title={t('ribbonShapeOutlineTip')}
+                    data-tip={t('ribbonShapeOutlineTip')}
                     onClick={() =>
                       setDropdown((v) => (v === 'shapeOutline' ? null : 'shapeOutline'))
                     }
@@ -1582,6 +2040,69 @@ function RibbonInner({
               </div>
               <div className="ribbon-group-label">{t('ribbonGroupShapeStyles')}</div>
             </div>
+            {fs.shapeHasText && (
+              <div className="ribbon-group">
+                <div className="ribbon-group-items">
+                  <div className="rb-col">
+                    <div className="rb-row">
+                      {shapeMarkBtn('bold', shapeTextActive.bold, t('ribbonBoldTip'), <b>B</b>)}
+                      {shapeMarkBtn(
+                        'italic',
+                        shapeTextActive.italic,
+                        t('ribbonItalicTip'),
+                        <i>I</i>,
+                      )}
+                      {shapeMarkBtn(
+                        'underline',
+                        shapeTextActive.underline,
+                        t('ribbonUnderlineTip'),
+                        <u>U</u>,
+                      )}
+                      <div className="rb-split-wrap">
+                        <button
+                          className="rb-icon rb-color-btn"
+                          disabled={!canEdit}
+                          data-tip={t('ribbonFontColor')}
+                          aria-label={t('ribbonFontColor')}
+                          onClick={() =>
+                            setDropdown((v) => (v === 'shapeTextColor' ? null : 'shapeTextColor'))
+                          }
+                        >
+                          <span className="rb-color-glyph rb-color-glyph-svg">
+                            <IconFontColorA />
+                            <span
+                              className="rb-color-bar"
+                              style={{
+                                background: shapeTextActive.color
+                                  ? `#${shapeTextActive.color}`
+                                  : 'transparent',
+                              }}
+                            />
+                          </span>
+                        </button>
+                        {dropdown === 'shapeTextColor' && (
+                          <ShapeColorPalette
+                            current={shapeTextActive.color}
+                            noneLabel={t('ribbonAutomatic')}
+                            onPick={(hex) => {
+                              shapeTextCommand.setColor(hex)
+                              setDropdown(null)
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className="rb-row">
+                      {shapeAlignBtn('left', t('ribbonAlignLeftTip'), <IconAlignLeft />)}
+                      {shapeAlignBtn('center', t('ribbonAlignCenterTip'), <IconAlignCenter />)}
+                      {shapeAlignBtn('right', t('ribbonAlignRightTip'), <IconAlignRight />)}
+                      {shapeAlignBtn('justify', t('ribbonJustifyTip'), <IconAlignJustify />)}
+                    </div>
+                  </div>
+                </div>
+                <div className="ribbon-group-label">{t('ribbonGroupText')}</div>
+              </div>
+            )}
           </div>
         ) : tab === 'pictureFormat' && inImage ? (
           <div className="table-ribbon-body">
@@ -1591,7 +2112,7 @@ function RibbonInner({
                 <button
                   className="rb-big"
                   disabled={!canEdit}
-                  title={t('ribbonRemoveBgTip')}
+                  data-tip={t('ribbonRemoveBgTip')}
                   onClick={() => setPictureDialog('cutout')}
                 >
                   <span className="rb-big-icon">
@@ -1602,7 +2123,7 @@ function RibbonInner({
                 <button
                   className="rb-big"
                   disabled={!canEdit}
-                  title={t('ribbonCropTip')}
+                  data-tip={t('ribbonCropTip')}
                   onClick={() => setPictureDialog('crop')}
                 >
                   <span className="rb-big-icon">
@@ -1613,7 +2134,7 @@ function RibbonInner({
                 <button
                   className="rb-big"
                   disabled={!canEdit}
-                  title={t('ribbonReplacePictureTip')}
+                  data-tip={t('ribbonReplacePictureTip')}
                   onClick={() => void replacePicture()}
                 >
                   <span className="rb-big-icon">
@@ -1628,26 +2149,24 @@ function RibbonInner({
             {/* ---- Arrange: wrap text / align ---- */}
             <div className="table-tool-group">
               <div className="table-tool-row">
-                <select
-                  className="rb-select"
+                <Dropdown
+                  className="rb-wrap-dd"
                   disabled={!canEdit}
-                  title={t('ribbonWrapText')}
+                  tip={t('ribbonWrapText')}
                   value={fs.imageWrap ?? ''}
-                  onChange={(e) => {
+                  options={WRAP_OPTIONS.map((opt) => ({
+                    value: opt.value ?? '',
+                    label: t(opt.labelKey),
+                  }))}
+                  onPick={(v) => {
                     if (!canEdit) return
                     editor
                       .chain()
                       .focus()
-                      .updateAttributes('docProtected', { imageWrap: e.target.value || null })
+                      .updateAttributes('docProtected', { imageWrap: v || null })
                       .run()
                   }}
-                >
-                  {WRAP_OPTIONS.map((opt) => (
-                    <option key={String(opt.value)} value={opt.value ?? ''}>
-                      {t(opt.labelKey)}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="table-tool-row">
                 {(
@@ -1665,7 +2184,8 @@ function RibbonInner({
                         : 'table-tool-button'
                     }
                     disabled={!canEdit}
-                    title={label}
+                    data-tip={label}
+                    aria-label={label}
                     onClick={() => {
                       if (!canEdit) return
                       editor
@@ -1680,6 +2200,44 @@ function RibbonInner({
                     {icon}
                   </button>
                 ))}
+              </div>
+              <div className="table-tool-row">
+                <button
+                  className="table-tool-button"
+                  disabled={!canEdit}
+                  data-tip={t('ribbonRotateRight')}
+                  aria-label={t('ribbonRotateRight')}
+                  onClick={() => rotatePicture(90)}
+                >
+                  <IconRotateRight />
+                </button>
+                <button
+                  className="table-tool-button"
+                  disabled={!canEdit}
+                  data-tip={t('ribbonRotateLeft')}
+                  aria-label={t('ribbonRotateLeft')}
+                  onClick={() => rotatePicture(-90)}
+                >
+                  <IconRotateLeft />
+                </button>
+                <button
+                  className={fs.imageFlipH ? 'table-tool-button active' : 'table-tool-button'}
+                  disabled={!canEdit}
+                  data-tip={t('ribbonFlipH')}
+                  aria-label={t('ribbonFlipH')}
+                  onClick={() => flipPicture('h')}
+                >
+                  <IconFlipH />
+                </button>
+                <button
+                  className={fs.imageFlipV ? 'table-tool-button active' : 'table-tool-button'}
+                  disabled={!canEdit}
+                  data-tip={t('ribbonFlipV')}
+                  aria-label={t('ribbonFlipV')}
+                  onClick={() => flipPicture('v')}
+                >
+                  <IconFlipV />
+                </button>
               </div>
               <div className="ribbon-group-label">{t('ribbonGroupArrange')}</div>
             </div>
@@ -1752,7 +2310,7 @@ function RibbonInner({
                 </label>
               </div>
               <div className="table-tool-row">
-                <button title={t('ribbonResetSizeTip')} onClick={() => void resetPictureSize()}>
+                <button data-tip={t('ribbonResetSizeTip')} onClick={() => void resetPictureSize()}>
                   {t('ribbonResetSize')}
                 </button>
               </div>
@@ -1765,20 +2323,41 @@ function RibbonInner({
               <div className="table-style-gallery">
                 <button
                   className="table-style-card"
-                  title={t('ribbonRemoveTableStyleTip')}
+                  data-tip={t('ribbonRemoveTableStyleTip')}
                   onClick={() => chain().updateAttributes('docTable', { tblStyleId: null }).run()}
                 >
                   <span className="table-style-card-grid plain" />
                   <span>{t('ribbonNoStyle')}</span>
                 </button>
+                {TABLE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    className="table-style-card"
+                    data-tip={t(preset.label)}
+                    onClick={() => runTableCommand(applyTablePreset(preset))}
+                  >
+                    <span
+                      className="table-style-card-grid"
+                      style={{
+                        borderColor: `#${preset.borderColor}`,
+                        borderTopColor: `#${preset.headerFill ?? 'FFFFFF'}`,
+                        background: `repeating-linear-gradient(to bottom,#${preset.band1Fill ?? 'FFFFFF'} 0 50%,#${preset.band2Fill ?? preset.band1Fill ?? 'FFFFFF'} 50% 100%)`,
+                      }}
+                    />
+                    <span>{t(preset.label)}</span>
+                  </button>
+                ))}
                 {[...(styles?.values() ?? [])]
                   .filter((info) => info.type === 'table' && info.styleId !== 'TableNormal')
-                  .slice(0, 8)
                   .map((info) => (
                     <button
                       key={info.styleId}
-                      className="table-style-card"
-                      title={t('ribbonApplyTableStyleTip', { name: info.name })}
+                      className={
+                        tableAttrs.tblStyleId === info.styleId
+                          ? 'table-style-card active'
+                          : 'table-style-card'
+                      }
+                      data-tip={t('ribbonApplyTableStyleTip', { name: info.name })}
                       onClick={() =>
                         chain().updateAttributes('docTable', { tblStyleId: info.styleId }).run()
                       }
@@ -1802,12 +2381,43 @@ function RibbonInner({
             </div>
             <div className="ribbon-sep" />
             <div className="table-tool-group">
+              <div className="table-style-options">
+                {(
+                  [
+                    ['firstRow', 'ribbonTableFirstRow'],
+                    ['lastRow', 'ribbonTableLastRow'],
+                    ['bandedRows', 'ribbonTableBandedRows'],
+                    ['firstColumn', 'ribbonTableFirstColumn'],
+                    ['lastColumn', 'ribbonTableLastColumn'],
+                    ['bandedColumns', 'ribbonTableBandedColumns'],
+                  ] as Array<[keyof TableLook, StringKey]>
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    className={
+                      tableLook[key]
+                        ? 'table-option-toggle table-tool-button active'
+                        : 'table-option-toggle table-tool-button'
+                    }
+                    aria-pressed={tableLook[key]}
+                    onClick={() => runTableCommand(setTableLookOption(key, !tableLook[key]))}
+                  >
+                    <span className="table-option-check" aria-hidden="true" />
+                    <span>{t(label)}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="ribbon-group-label">{t('ribbonTableStyleOptions')}</div>
+            </div>
+            <div className="ribbon-sep" />
+            <div className="table-tool-group">
               <div className="table-style-swatches">
                 {['FFFFFF', 'D9EAF7', 'FFF2CC', 'E2F0D9', 'FCE4D6', 'E4DFEC'].map((hex) => (
                   <button
                     key={hex}
                     className="table-style-swatch"
-                    title={t('ribbonCellShadingTip', { hex })}
+                    data-tip={t('ribbonCellShadingTip', { hex })}
+                    aria-label={t('ribbonCellShadingTip', { hex })}
                     style={{ background: `#${hex}` }}
                     onClick={() => runTableCommand(setCellAttr('fill', hex))}
                   />
@@ -1824,25 +2434,28 @@ function RibbonInner({
             <div className="ribbon-sep" />
             <div className="table-tool-group">
               <div className="table-tool-grid table-tool-grid-four">
-                <button title={t('ribbonAllBordersTip')} onClick={() => applyCellBorders('all')}>
+                <button data-tip={t('ribbonAllBordersTip')} onClick={() => applyCellBorders('all')}>
                   <IconBorderAll />
                   {t('ribbonAllBorders')}
                 </button>
                 <button
-                  title={t('ribbonOuterBordersTip')}
+                  data-tip={t('ribbonOuterBordersTip')}
                   onClick={() => applyCellBorders('outer')}
                 >
                   <IconBorderOuter />
                   {t('ribbonOuterBorders')}
                 </button>
                 <button
-                  title={t('ribbonInnerBordersTip')}
+                  data-tip={t('ribbonInnerBordersTip')}
                   onClick={() => applyCellBorders('inner')}
                 >
                   <IconBorderInner />
                   {t('ribbonInnerBorders')}
                 </button>
-                <button title={t('ribbonClearBordersTip')} onClick={() => applyCellBorders('none')}>
+                <button
+                  data-tip={t('ribbonClearBordersTip')}
+                  onClick={() => applyCellBorders('none')}
+                >
                   <IconBorderNone />
                   {t('ribbonNoBorders')}
                 </button>
@@ -1850,21 +2463,19 @@ function RibbonInner({
               <div className="table-tool-row table-border-opts">
                 <input
                   type="color"
-                  title={t('ribbonBorderColor')}
+                  data-tip={t('ribbonBorderColor')}
                   value={`#${borderColor}`}
                   onChange={(e) => setBorderColor(e.target.value.slice(1).toUpperCase())}
                 />
-                <select
-                  title={t('ribbonBorderWidth')}
-                  value={borderSz}
-                  onChange={(e) => setBorderSz(Number(e.target.value))}
-                >
-                  <option value={4}>{t('ribbonPtValue', { n: 0.5 })}</option>
-                  <option value={8}>{t('ribbonPtValue', { n: 1 })}</option>
-                  <option value={12}>{t('ribbonPtValue', { n: 1.5 })}</option>
-                  <option value={18}>{t('ribbonPtValue', { n: 2.25 })}</option>
-                  <option value={24}>{t('ribbonPtValue', { n: 3 })}</option>
-                </select>
+                <Dropdown
+                  tip={t('ribbonBorderWidth')}
+                  value={String(borderSz)}
+                  options={[4, 8, 12, 18, 24].map((sz) => ({
+                    value: String(sz),
+                    label: t('ribbonPtValue', { n: sz / 8 }),
+                  }))}
+                  onPick={(v) => setBorderSz(Number(v))}
+                />
               </div>
               <div className="ribbon-group-label">{t('ribbonGroupBorders')}</div>
             </div>
@@ -1959,6 +2570,34 @@ function RibbonInner({
             </div>
             <div className="ribbon-sep" />
             <div className="table-tool-group">
+              <div className="table-tool-row">
+                {(
+                  [
+                    ['left', t('appAlignLeft'), IconAlignLeft],
+                    ['center', t('appAlignCenter'), IconAlignCenter],
+                    ['right', t('appAlignRight'), IconAlignRight],
+                  ] as const
+                ).map(([v, label, Icon]) => (
+                  <button
+                    key={v}
+                    className={
+                      (editor.getAttributes('docTable').tblAlign ?? 'left') === v
+                        ? 'table-tool-button active'
+                        : 'table-tool-button'
+                    }
+                    title={label}
+                    // explicit 'left' (not null): the save path must strip an existing w:jc
+                    onClick={() => chain().updateAttributes('docTable', { tblAlign: v }).run()}
+                  >
+                    <Icon />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="ribbon-group-label">{t('ribbonGroupTableAlign')}</div>
+            </div>
+            <div className="ribbon-sep" />
+            <div className="table-tool-group">
               <div
                 className="table-tool-row table-size-inputs"
                 key={activeCellInfo?.key ?? 'nosel'}
@@ -2025,26 +2664,96 @@ function RibbonInner({
               </div>
               <div className="ribbon-group-label">{t('ribbonGroupCellSize')}</div>
             </div>
+            <div className="ribbon-sep" />
+            <div className="table-tool-group table-tool-autofit">
+              <div className="table-tool-row">
+                <div className="rb-split-wrap table-autofit-wrap">
+                  <button
+                    className={`table-command-button${dropdown === 'tableAutoFit' ? ' active' : ''}`}
+                    data-tip={t('ribbonAutoFit')}
+                    aria-expanded={dropdown === 'tableAutoFit'}
+                    onClick={() =>
+                      setDropdown((current) => (current === 'tableAutoFit' ? null : 'tableAutoFit'))
+                    }
+                  >
+                    <IconAutoFit size={18} />
+                    <span className="table-command-copy">
+                      <span>{t('ribbonAutoFit')}</span>
+                      <small>{t(tableAutoFitLabel)}</small>
+                    </span>
+                    <IconCaret size={12} />
+                  </button>
+                  {dropdown === 'tableAutoFit' && (
+                    <div data-rb-panel="" className="layout-menu table-autofit-menu">
+                      {TABLE_AUTO_FIT_OPTIONS.map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          className={tableAutoFitMode === mode ? 'active' : ''}
+                          onClick={() => {
+                            runTableCommand(setTableAutoFit(mode, sectionContentWidthPx))
+                            setDropdown(null)
+                          }}
+                        >
+                          <IconAutoFit size={17} />
+                          <span>{t(label)}</span>
+                          <span className="table-menu-state" aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="ribbon-group-label">{t('ribbonAutoFit')}</div>
+            </div>
+            <div className="ribbon-sep" />
+            <div className="table-tool-group table-tool-advanced">
+              <div className="table-tool-stack">
+                <button
+                  className={
+                    tableHeader.active
+                      ? 'table-command-row table-tool-button active'
+                      : 'table-command-row table-tool-button'
+                  }
+                  disabled={!tableHeader.enabled}
+                  aria-pressed={tableHeader.active}
+                  onClick={() => runTableCommand(toggleRepeatHeaderRows())}
+                >
+                  <IconRepeatHeader size={17} />
+                  <span>{t('ribbonRepeatHeaderRows')}</span>
+                </button>
+                <button
+                  className="table-command-row"
+                  onClick={() => {
+                    setDropdown(null)
+                    setTablePropertiesOpen(true)
+                  }}
+                >
+                  <IconTableProperties size={17} />
+                  <span>{t('ribbonTableProperties')}</span>
+                </button>
+              </div>
+              <div className="ribbon-group-label">{t('ribbonTableData')}</div>
+            </div>
           </div>
         ) : tab === 'home' ? (
           <>
-            {/* ---- Hermes AI (first slot: entry + one-click AI actions) ---- */}
+            {/* ---- Genspark AI (first slot: entry + one-click AI actions) ---- */}
             <div className="ribbon-group">
               <div className="ribbon-group-items">
                 <button
                   className={`rb-big ai-entry ${showAi ? 'active' : ''}`}
-                  title={t('aiOpenAssistant')}
+                  data-tip={t('aiOpenAssistant')}
                   onClick={onToggleAi}
                 >
                   <span className="rb-big-icon">
-                    <HermesMark size={26} />
+                    <GensparkMark size={26} />
                   </span>
-                  <span>Hermes AI</span>
+                  <span>Genspark AI</span>
                 </button>
                 <button
                   className="rb-big ai-entry"
                   disabled={docEmpty}
-                  title={t('aiSummarizePrompt')}
+                  data-tip={t('aiSummarizeBtn')}
                   onClick={() => onAiPreset(t('aiSummarizePrompt'))}
                 >
                   <span className="rb-big-icon">
@@ -2076,8 +2785,14 @@ function RibbonInner({
                 <button
                   className="rb-big ai-entry"
                   disabled={docEmpty}
-                  title={t('aiPolishPrompt')}
-                  onClick={() => onAiPreset(t('aiPolishPrompt'))}
+                  data-tip={t('aiPolishBtn')}
+                  onClick={() =>
+                    onAiPreset(
+                      t(
+                        editor.state.selection.empty ? 'aiPolishPrompt' : 'aiPolishSelectionPrompt',
+                      ),
+                    )
+                  }
                 >
                   <span className="rb-big-icon">
                     <span className="ai-feature-icon" aria-hidden="true">
@@ -2106,7 +2821,7 @@ function RibbonInner({
                 <button
                   className="rb-big ai-entry"
                   disabled={docEmpty}
-                  title={t('aiTidyPrompt')}
+                  data-tip={t('aiTidyBtn')}
                   onClick={() => onAiPreset(t('aiTidyPrompt'))}
                 >
                   <span className="rb-big-icon">
@@ -2133,7 +2848,7 @@ function RibbonInner({
                   <span>{t('aiTidyBtn')}</span>
                 </button>
               </div>
-              <div className="ribbon-group-label">Hermes AI</div>
+              <div className="ribbon-group-label">Genspark AI</div>
             </div>
 
             <div className="ribbon-sep" />
@@ -2155,7 +2870,8 @@ function RibbonInner({
                   <button
                     className="rb-small"
                     disabled={!canEdit}
-                    title={t('ribbonCutTip')}
+                    data-tip={t('ribbonCutTip')}
+                    aria-label={t('ribbonCutTip')}
                     onClick={() => void clipboard('cut')}
                   >
                     <IconCut />
@@ -2163,7 +2879,8 @@ function RibbonInner({
                   <button
                     className="rb-small"
                     disabled={!hasDoc}
-                    title={t('ribbonCopyTip')}
+                    data-tip={t('ribbonCopyTip')}
+                    aria-label={t('ribbonCopyTip')}
                     onClick={() => void clipboard('copy')}
                   >
                     <IconCopy />
@@ -2171,7 +2888,8 @@ function RibbonInner({
                   <button
                     className={`rb-small ${painter ? 'active' : ''}`}
                     disabled={!canEdit || !!sub}
-                    title={painter ? t('ribbonPainterActiveTip') : t('ribbonPainterTip')}
+                    data-tip={painter ? t('ribbonPainterActiveTip') : t('ribbonPainterTip')}
+                    aria-label={painter ? t('ribbonPainterActiveTip') : t('ribbonPainterTip')}
                     onClick={togglePainter}
                   >
                     <IconFormatPainter />
@@ -2197,25 +2915,47 @@ function RibbonInner({
                       key={`f:${currentFont}:${hasDoc}`}
                       defaultValue={currentFont}
                       placeholder={t('ribbonFontBodyNamed', { font: bodyFontName })}
-                      title={t('ribbonFontFamilyTip')}
+                      data-tip={t('ribbonFontFamilyTip')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                        if (e.key === 'Enter') {
+                          fontCommitRef.current = true
+                          ;(e.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      // focusing the input relocates the DOM selection into it,
+                      // hiding the document highlight — the decoration keeps the
+                      // target text visibly selected, like Word (r119)
+                      onFocus={(e) => {
+                        e.currentTarget.select()
+                        setInactiveSelectionShown(ed, true)
                       }}
                       onBlur={(e) => {
+                        const committed = fontCommitRef.current
+                        fontCommitRef.current = false
+                        setInactiveSelectionShown(ed, false)
                         const v = e.target.value.trim()
+                        // Enter always applies, even an unchanged name: over a
+                        // mixed-font selection the shown value is just the first
+                        // run's font, and committing it must normalize the rest
+                        // (r121). Plain click-away keeps the no-op guard.
                         if (v !== currentFont) setFont(v || null)
+                        else if (committed && v) setFont(v)
                       }}
                     />
                     <button
                       className="rb-caret rb-combo-caret"
                       disabled={!canEdit}
-                      title={t('ribbonFontFamilyTip')}
-                      onClick={() => setDropdown((v) => (v === 'fontFamily' ? null : 'fontFamily'))}
+                      data-tip={t('ribbonFontFamilyTip')}
+                      aria-label={t('ribbonFontFamilyTip')}
+                      onClick={() => {
+                        if (dropdown !== 'fontFamily') loadSystemFonts()
+                        setDropdown((v) => (v === 'fontFamily' ? null : 'fontFamily'))
+                      }}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'fontFamily' && (
-                      <div className="spacing-menu rb-font-family-menu">
+                      <div data-rb-panel="" className="spacing-menu rb-font-family-menu">
                         <button
                           className={!currentFont ? 'active' : ''}
                           style={{ fontFamily: cssFontFamily(bodyFontName) }}
@@ -2235,6 +2975,28 @@ function RibbonInner({
                               {f}
                             </button>
                           ))}
+                        {systemFontFamilies.length > 0 && (
+                          <>
+                            <div className="rb-menu-group-label">{t('ribbonFontsSystem')}</div>
+                            {systemFontFamilies
+                              .filter((f) => f !== bodyFontName)
+                              .map((f) => (
+                                <button
+                                  key={f}
+                                  className={f === currentFont ? 'active' : ''}
+                                  // symbol fonts would render their own name as pictographs
+                                  style={{
+                                    fontFamily: isSymbolFontFamily(f)
+                                      ? undefined
+                                      : cssFontFamily(f),
+                                  }}
+                                  onClick={() => setFont(f)}
+                                >
+                                  {f}
+                                </button>
+                              ))}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2248,28 +3010,41 @@ function RibbonInner({
                       disabled={!canEdit}
                       key={`s:${currentSize}:${hasDoc}`}
                       defaultValue={currentSize}
-                      title={t('ribbonFontSizeTip')}
+                      data-tip={t('ribbonFontSizeTip')}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                        if (e.key === 'Enter') {
+                          fontCommitRef.current = true
+                          ;(e.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.select()
+                        setInactiveSelectionShown(ed, true)
                       }}
                       onBlur={(e) => {
+                        const committed = fontCommitRef.current
+                        fontCommitRef.current = false
+                        setInactiveSelectionShown(ed, false)
                         const v = Number(e.target.value)
                         if (!Number.isFinite(v) || v <= 0) return
                         const half = Math.round(Math.min(1638, Math.max(1, v)) * 2)
-                        if (half !== Math.round(currentSize * 2))
+                        // same r121 rule as the family box: Enter normalizes a
+                        // mixed-size selection to the shown value
+                        if (half !== Math.round(currentSize * 2) || committed)
                           setTextStyle({ sizeHalfPoints: half })
                       }}
                     />
                     <button
                       className="rb-caret rb-combo-caret"
                       disabled={!canEdit}
-                      title={t('ribbonFontSizeTip')}
+                      data-tip={t('ribbonFontSizeTip')}
+                      aria-label={t('ribbonFontSizeTip')}
                       onClick={() => setDropdown((v) => (v === 'fontSize' ? null : 'fontSize'))}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'fontSize' && (
-                      <div className="spacing-menu rb-font-size-menu">
+                      <div data-rb-panel="" className="spacing-menu rb-font-size-menu">
                         {FONT_SIZES.map((s) => (
                           <button
                             key={s}
@@ -2287,7 +3062,8 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled={!canEdit}
-                    title={t('ribbonGrowFont')}
+                    data-tip={t('ribbonGrowFont')}
+                    aria-label={t('ribbonGrowFont')}
                     onClick={() => stepFontSize(1)}
                   >
                     <IconGrowFont />
@@ -2295,7 +3071,8 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled={!canEdit}
-                    title={t('ribbonShrinkFont')}
+                    data-tip={t('ribbonShrinkFont')}
+                    aria-label={t('ribbonShrinkFont')}
                     onClick={() => stepFontSize(-1)}
                   >
                     <IconShrinkFont />
@@ -2305,16 +3082,16 @@ function RibbonInner({
                     <button
                       className="rb-icon"
                       disabled={!canEdit}
-                      title={t('ribbonChangeCase')}
+                      data-tip={t('ribbonChangeCase')}
                       onClick={() => setDropdown((v) => (v === 'case' ? null : 'case'))}
                     >
-                      Aa
+                      <IconChangeCase />
                       <span className="rb-caret-inline">
                         <IconCaret />
                       </span>
                     </button>
                     {dropdown === 'case' && (
-                      <div className="spacing-menu case-menu">
+                      <div data-rb-panel="" className="spacing-menu case-menu">
                         <button onClick={() => changeCase('sentence')}>
                           {t('ribbonCaseSentence')}
                         </button>
@@ -2327,7 +3104,8 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled={!canEdit}
-                    title={t('ribbonClearFormatting')}
+                    data-tip={t('ribbonClearFormatting')}
+                    aria-label={t('ribbonClearFormatting')}
                     onClick={() => chain().unsetAllMarks().run()}
                   >
                     <IconClearFormat />
@@ -2339,20 +3117,20 @@ function RibbonInner({
                   {markBtn('underline', fs.underline, t('ribbonUnderlineTip'), <u>U</u>)}
                   {markBtn('strike', fs.strike, t('ribbonStrikethrough'), <s>ab</s>)}
                   <button
-                    className={`rb-icon rb-script ${fs.vertAlign === 'subscript' ? 'active' : ''}`}
+                    className={`rb-icon ${fs.vertAlign === 'subscript' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonSubscript')}
+                    data-tip={t('ribbonSubscript')}
                     onClick={() => toggleVertAlign('subscript')}
                   >
-                    x<sub>2</sub>
+                    <IconSubscript />
                   </button>
                   <button
-                    className={`rb-icon rb-script ${fs.vertAlign === 'superscript' ? 'active' : ''}`}
+                    className={`rb-icon ${fs.vertAlign === 'superscript' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonSuperscript')}
+                    data-tip={t('ribbonSuperscript')}
                     onClick={() => toggleVertAlign('superscript')}
                   >
-                    x<sup>2</sup>
+                    <IconSuperscript />
                   </button>
                   <span className="rb-mini-sep" />
                   {/* highlight: main button applies pen color, caret opens palette */}
@@ -2360,28 +3138,34 @@ function RibbonInner({
                     <button
                       className={`rb-icon rb-color-btn ${fs.highlight ? 'active' : ''}`}
                       disabled={!canEdit}
-                      title={t('ribbonTextHighlightColor')}
+                      data-tip={t('ribbonTextHighlightColor')}
+                      aria-label={t('ribbonTextHighlightColor')}
                       onClick={() =>
                         setTextStyle({
                           highlight: fs.highlight === penHighlight ? null : penHighlight,
                         })
                       }
                     >
-                      <IconHighlight />
-                      <span
-                        className="rb-color-bar"
-                        style={{ background: HIGHLIGHT_CSS[penHighlight] }}
-                      />
+                      <span className="rb-color-glyph rb-color-glyph-svg">
+                        <IconHighlight />
+                        <span
+                          className="rb-color-bar"
+                          style={{ background: HIGHLIGHT_CSS[penHighlight] }}
+                        />
+                      </span>
                     </button>
                     <button
-                      className="rb-caret rb-color-caret"
+                      className={`rb-caret rb-color-caret${dropdown === 'highlight' ? ' active' : ''}`}
                       disabled={!canEdit}
                       onClick={() => setDropdown((v) => (v === 'highlight' ? null : 'highlight'))}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'highlight' && (
-                      <div className="color-palette color-palette-highlight color-palette-highlight-word">
+                      <div
+                        data-rb-panel=""
+                        className="color-palette color-palette-highlight color-palette-highlight-word"
+                      >
                         <div className="color-section-title color-highlight-title">
                           {t('ribbonHighlightColors')}
                         </div>
@@ -2390,7 +3174,8 @@ function RibbonInner({
                             <button
                               key={h}
                               className={`color-swatch color-highlight-swatch ${fs.highlight === h ? 'selected' : ''}`}
-                              title={h}
+                              data-tip={h}
+                              aria-label={h}
                               style={{ background: HIGHLIGHT_CSS[h] }}
                               onClick={() => {
                                 setPenHighlight(h)
@@ -2413,99 +3198,37 @@ function RibbonInner({
                     <button
                       className="rb-icon rb-color-btn"
                       disabled={!canEdit}
-                      title={t('ribbonFontColor')}
+                      data-tip={t('ribbonFontColor')}
                       onClick={() =>
                         setTextStyle({ color: penColor === '000000' ? null : penColor })
                       }
                     >
-                      <span className="rb-color-a">A</span>
-                      <span className="rb-color-bar" style={{ background: `#${penColor}` }} />
+                      <span className="rb-color-glyph rb-color-glyph-svg">
+                        <IconFontColorA />
+                        <span className="rb-color-bar" style={{ background: `#${penColor}` }} />
+                      </span>
                     </button>
                     <button
-                      className="rb-caret rb-color-caret"
+                      className={`rb-caret rb-color-caret${dropdown === 'color' ? ' active' : ''}`}
                       disabled={!canEdit}
                       onClick={() => setDropdown((v) => (v === 'color' ? null : 'color'))}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'color' && (
-                      <div className="color-palette color-palette-word">
-                        <button
-                          className={`color-automatic ${!fs.textColor ? 'selected' : ''}`}
-                          onClick={() => {
+                      <ShapeColorPalette
+                        current={fs.textColor}
+                        noneLabel={t('ribbonAutomatic')}
+                        onPick={(hex) => {
+                          if (!hex) {
                             setPenColor('000000')
                             setTextStyle({ color: null })
-                          }}
-                        >
-                          {t('ribbonAutomatic')}
-                        </button>
-                        <div className="color-section-title">{t('ribbonThemeColorsSection')}</div>
-                        <div className="color-theme-base">
-                          {THEME_COLORS.map((c) => (
-                            <button
-                              key={c.hex}
-                              className={`color-swatch color-swatch-large ${fs.textColor === c.hex ? 'selected' : ''}`}
-                              title={t(c.nameKey)}
-                              style={{ background: `#${c.hex}` }}
-                              onClick={() => {
-                                setPenColor(c.hex)
-                                setTextStyle({ color: c.hex === '000000' ? null : c.hex })
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <div className="color-theme-shades">
-                          {THEME_COLOR_SHADES.flatMap((row, rowIndex) =>
-                            row.map((hex, columnIndex) => (
-                              <button
-                                key={`${rowIndex}-${columnIndex}-${hex}`}
-                                className={`color-swatch color-swatch-large ${fs.textColor === hex ? 'selected' : ''}`}
-                                title={t('ribbonThemeColorShadeTip', {
-                                  r: rowIndex + 1,
-                                  c: columnIndex + 1,
-                                })}
-                                style={{ background: `#${hex}` }}
-                                onClick={() => {
-                                  setPenColor(hex)
-                                  setTextStyle({ color: hex })
-                                }}
-                              />
-                            )),
-                          )}
-                        </div>
-                        <div className="color-section-title color-standard-title">
-                          {t('ribbonStandardColors')}
-                        </div>
-                        <div className="color-standard-row">
-                          {COLORS.map((c) => (
-                            <button
-                              key={c.hex}
-                              className={`color-swatch color-swatch-large ${fs.textColor === c.hex ? 'selected' : ''}`}
-                              title={t(c.nameKey)}
-                              style={{ background: `#${c.hex}` }}
-                              onClick={() => {
-                                setPenColor(c.hex)
-                                setTextStyle({ color: c.hex })
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <label className="color-more">
-                          <span className="color-more-icon">
-                            <IconPalette size={16} />
-                          </span>
-                          {t('ribbonMoreColors')}
-                          <input
-                            type="color"
-                            value={`#${penColor}`}
-                            onChange={(event) => {
-                              const hex = event.currentTarget.value.slice(1).toUpperCase()
-                              setPenColor(hex)
-                              setTextStyle({ color: hex })
-                            }}
-                          />
-                        </label>
-                      </div>
+                          } else {
+                            setPenColor(hex)
+                            setTextStyle({ color: hex === '000000' ? null : hex })
+                          }
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -2523,25 +3246,37 @@ function RibbonInner({
                     <button
                       className={`rb-icon ${fs.listBullet ? 'active' : ''}`}
                       disabled={!canEdit || !!sub}
-                      title={t('ribbonBullets')}
+                      data-tip={t('ribbonBullets')}
+                      aria-label={t('ribbonBullets')}
                       onClick={() => toggleList('bullet')}
                     >
                       <IconBullets />
                     </button>
                     <button
-                      className="rb-caret"
+                      className={`rb-caret${dropdown === 'bulletLib' ? ' active' : ''}`}
                       disabled={!canEdit || !!sub}
-                      title={t('ribbonBullets')}
+                      data-tip={t('ribbonBullets')}
+                      aria-label={t('ribbonBullets')}
                       onClick={() => setDropdown((v) => (v === 'bulletLib' ? null : 'bulletLib'))}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'bulletLib' && (
-                      <div className="layout-menu list-gallery">
+                      <div data-rb-panel="" className="layout-menu list-gallery list-gallery-word">
+                        <div className="list-gallery-title">{t('ribbonBulletLibTitle')}</div>
+                        <button
+                          className={`list-gallery-card list-gallery-none${!fs.listBullet && !fs.listOrdered ? ' selected' : ''}`}
+                          onClick={() => {
+                            clearList()
+                            setDropdown(null)
+                          }}
+                        >
+                          {t('ribbonListNone')}
+                        </button>
                         {BULLET_LIBRARY.map((glyph) => (
                           <button
                             key={glyph}
-                            className="list-gallery-card"
+                            className="list-gallery-card list-gallery-glyph"
                             onClick={() => {
                               applyListPreset(bulletPresetLevels(glyph))
                               setDropdown(null)
@@ -2550,6 +3285,15 @@ function RibbonInner({
                             {glyph}
                           </button>
                         ))}
+                        <button
+                          className="list-gallery-define"
+                          onClick={() => {
+                            setListDialog(true)
+                            setDropdown(null)
+                          }}
+                        >
+                          {t('ribbonDefineNewBullet')}…
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2557,38 +3301,64 @@ function RibbonInner({
                     <button
                       className={`rb-icon ${fs.listOrdered ? 'active' : ''}`}
                       disabled={!canEdit || !!sub}
-                      title={t('ribbonNumbering')}
+                      data-tip={t('ribbonNumbering')}
+                      aria-label={t('ribbonNumbering')}
                       onClick={() => toggleList('ordered')}
                     >
                       <IconNumbered />
                     </button>
                     <button
-                      className="rb-caret"
+                      className={`rb-caret${dropdown === 'numberLib' ? ' active' : ''}`}
                       disabled={!canEdit || !!sub}
-                      title={t('ribbonNumbering')}
+                      data-tip={t('ribbonNumbering')}
+                      aria-label={t('ribbonNumbering')}
                       onClick={() => setDropdown((v) => (v === 'numberLib' ? null : 'numberLib'))}
                     >
                       <IconCaret />
                     </button>
                     {dropdown === 'numberLib' && (
-                      <div className="layout-menu list-gallery">
+                      <div data-rb-panel="" className="layout-menu list-gallery list-gallery-word">
+                        <div className="list-gallery-title">{t('ribbonNumberLibTitle')}</div>
+                        <button
+                          className={`list-gallery-card list-gallery-none${!fs.listBullet && !fs.listOrdered ? ' selected' : ''}`}
+                          onClick={() => {
+                            clearList()
+                            setDropdown(null)
+                          }}
+                        >
+                          {t('ribbonListNone')}
+                        </button>
                         {NUMBER_LIBRARY.map((n, i) => {
                           const levels = numberPresetLevels(n.numFmt, n.pattern)
                           return (
                             <button
                               key={i}
-                              className="list-gallery-card"
+                              className="list-gallery-card list-gallery-preview"
                               onClick={() => {
                                 applyListPreset(levels)
                                 setDropdown(null)
                               }}
                             >
-                              {[1, 2, 3]
-                                .map((v) => n.pattern.replace('%1', formatNumber(v, n.numFmt)))
-                                .join(' ')}
+                              {[1, 2, 3].map((v) => (
+                                <span key={v} className="list-gallery-preview-row">
+                                  <span className="list-gallery-preview-prefix">
+                                    {n.pattern.replace('%1', formatNumber(v, n.numFmt))}
+                                  </span>
+                                  <span className="list-gallery-preview-line" />
+                                </span>
+                              ))}
                             </button>
                           )
                         })}
+                        <button
+                          className="list-gallery-define"
+                          onClick={() => {
+                            setListDialog(true)
+                            setDropdown(null)
+                          }}
+                        >
+                          {t('ribbonDefineNewNumber')}…
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2596,13 +3366,14 @@ function RibbonInner({
                     <button
                       className="rb-icon"
                       disabled={!canEdit || !!sub}
-                      title={t('ribbonMultilevelTip')}
+                      data-tip={t('ribbonMultilevelTip')}
+                      aria-label={t('ribbonMultilevelTip')}
                       onClick={() => setDropdown((v) => (v === 'multiLib' ? null : 'multiLib'))}
                     >
                       <IconMultilevel />
                     </button>
                     {dropdown === 'multiLib' && (
-                      <div className="layout-menu list-gallery list-gallery-multi">
+                      <div data-rb-panel="" className="layout-menu list-gallery list-gallery-multi">
                         {MULTILEVEL_LIBRARY.map((levels, i) => (
                           <button
                             key={i}
@@ -2635,7 +3406,8 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled={!canEdit || !!sub}
-                    title={t('ribbonDecreaseIndent')}
+                    data-tip={t('ribbonDecreaseIndent')}
+                    aria-label={t('ribbonDecreaseIndent')}
                     onClick={() => changeIndent(-1)}
                   >
                     <IconIndentDec />
@@ -2643,7 +3415,8 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled={!canEdit || !!sub}
-                    title={t('ribbonIncreaseIndent')}
+                    data-tip={t('ribbonIncreaseIndent')}
+                    aria-label={t('ribbonIncreaseIndent')}
                     onClick={() => changeIndent(1)}
                   >
                     <IconIndentInc />
@@ -2652,14 +3425,16 @@ function RibbonInner({
                   <button
                     className="rb-icon"
                     disabled
-                    title={t('ribbonNotSupportedSuffix', { label: t('ribbonSort') })}
+                    data-tip={t('ribbonNotSupportedSuffix', { label: t('ribbonSort') })}
+                    aria-label={t('ribbonNotSupportedSuffix', { label: t('ribbonSort') })}
                   >
                     <IconSort />
                   </button>
                   <button
                     className={`rb-icon ${showMarks ? 'active' : ''}`}
                     disabled={!hasDoc}
-                    title={t('ribbonShowMarks')}
+                    data-tip={t('ribbonShowMarks')}
+                    aria-label={t('ribbonShowMarks')}
                     onClick={() => onShowMarks(!showMarks)}
                   >
                     <IconPilcrow />
@@ -2669,7 +3444,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${activeAlign === 'left' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonAlignLeftTip')}
+                    data-tip={t('ribbonAlignLeftTip')}
+                    aria-label={t('ribbonAlignLeftTip')}
                     onClick={() => setSelectionAlign(ed, 'left')}
                   >
                     <IconAlignLeft />
@@ -2677,7 +3453,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${activeAlign === 'center' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonAlignCenterTip')}
+                    data-tip={t('ribbonAlignCenterTip')}
+                    aria-label={t('ribbonAlignCenterTip')}
                     onClick={() => setSelectionAlign(ed, 'center')}
                   >
                     <IconAlignCenter />
@@ -2685,7 +3462,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${activeAlign === 'right' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonAlignRightTip')}
+                    data-tip={t('ribbonAlignRightTip')}
+                    aria-label={t('ribbonAlignRightTip')}
                     onClick={() => setSelectionAlign(ed, 'right')}
                   >
                     <IconAlignRight />
@@ -2693,7 +3471,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${activeAlign === 'justify' ? 'active' : ''}`}
                     disabled={!canEdit}
-                    title={t('ribbonJustifyTip')}
+                    data-tip={t('ribbonJustifyTip')}
+                    aria-label={t('ribbonJustifyTip')}
                     onClick={() => setSelectionAlign(ed, 'justify')}
                   >
                     <IconAlignJustify />
@@ -2702,7 +3481,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${!fs.bidi ? 'active' : ''}`}
                     disabled={!canEdit || !!sub}
-                    title={t('ribbonDirLtrTip')}
+                    data-tip={t('ribbonDirLtrTip')}
+                    aria-label={t('ribbonDirLtrTip')}
                     onClick={() => setParagraphDirection(editor, 'ltr')}
                   >
                     <IconDirLtr />
@@ -2710,7 +3490,8 @@ function RibbonInner({
                   <button
                     className={`rb-icon ${fs.bidi ? 'active' : ''}`}
                     disabled={!canEdit || !!sub}
-                    title={t('ribbonDirRtlTip')}
+                    data-tip={t('ribbonDirRtlTip')}
+                    aria-label={t('ribbonDirRtlTip')}
                     onClick={() => setParagraphDirection(editor, 'rtl')}
                   >
                     <IconDirRtl />
@@ -2720,7 +3501,8 @@ function RibbonInner({
                     <button
                       className={`rb-icon ${activeSpacing ? 'active' : ''}`}
                       disabled={!canEdit}
-                      title={t('ribbonLineSpacing')}
+                      data-tip={t('ribbonLineSpacing')}
+                      aria-label={t('ribbonLineSpacing')}
                       onClick={() => setDropdown((v) => (v === 'spacing' ? null : 'spacing'))}
                     >
                       <IconLineSpacing />
@@ -2729,7 +3511,7 @@ function RibbonInner({
                       </span>
                     </button>
                     {dropdown === 'spacing' && (
-                      <div className="spacing-menu">
+                      <div data-rb-panel="" className="spacing-menu">
                         {LINE_SPACINGS.map((s) => (
                           <button
                             key={s}
@@ -2766,7 +3548,8 @@ function RibbonInner({
                     <button
                       className={`rb-icon ${fs.shadingFill ? 'active' : ''}`}
                       disabled={!canEdit}
-                      title={t('ribbonParagraphShading')}
+                      data-tip={t('ribbonParagraphShading')}
+                      aria-label={t('ribbonParagraphShading')}
                       onClick={() => setDropdown((v) => (v === 'shading' ? null : 'shading'))}
                     >
                       <IconShading />
@@ -2775,13 +3558,14 @@ function RibbonInner({
                       </span>
                     </button>
                     {dropdown === 'shading' && (
-                      <div className="color-palette">
+                      <div data-rb-panel="" className="color-palette">
                         {COLORS.map((c) => (
                           <button
                             key={c.hex}
                             className="color-swatch"
                             style={{ background: `#${c.hex}` }}
-                            title={t(c.nameKey)}
+                            data-tip={t(c.nameKey)}
+                            aria-label={t(c.nameKey)}
                             onClick={() => setParaAttr({ shadingFill: c.hex })}
                           />
                         ))}
@@ -2798,7 +3582,8 @@ function RibbonInner({
                     <button
                       className={`rb-icon ${fs.paraBorders ? 'active' : ''}`}
                       disabled={!canEdit}
-                      title={t('ribbonParagraphBorders')}
+                      data-tip={t('ribbonParagraphBorders')}
+                      aria-label={t('ribbonParagraphBorders')}
                       onClick={() => setDropdown((v) => (v === 'borders' ? null : 'borders'))}
                     >
                       <IconBorderAll />
@@ -2807,7 +3592,7 @@ function RibbonInner({
                       </span>
                     </button>
                     {dropdown === 'borders' && (
-                      <div className="spacing-menu borders-menu">
+                      <div data-rb-panel="" className="spacing-menu borders-menu">
                         <button onClick={() => setParaAttr({ borders: 'b' })}>
                           {t('ribbonBorderBottom')}
                         </button>
@@ -2846,7 +3631,7 @@ function RibbonInner({
                 {styleGalleryOverflow && (
                   <button
                     className="style-gallery-more"
-                    title={t('ribbonMoreStyles')}
+                    data-tip={t('ribbonMoreStyles')}
                     aria-label={t('ribbonMoreStyles')}
                     aria-expanded={dropdown === 'styleGallery'}
                     onClick={() =>
@@ -2857,7 +3642,9 @@ function RibbonInner({
                   </button>
                 )}
                 {dropdown === 'styleGallery' && (
-                  <div className="style-gallery-menu">{renderStyleCards(true)}</div>
+                  <div data-rb-panel="" className="style-gallery-menu">
+                    {renderStyleCards(true)}
+                  </div>
                 )}
               </div>
               <div className="ribbon-group-label">{t('ribbonGroupStyles')}</div>
@@ -2941,6 +3728,7 @@ function RibbonInner({
             setDropdown={setDropdown}
             onAiPreset={onAiPreset}
             commentCount={commentCount}
+            openCommentCount={openCommentCount}
             onShowComments={onShowComments}
             canComment={canComment}
             onNewComment={onNewComment}
@@ -2953,7 +3741,10 @@ function RibbonInner({
             onRejectRevision={onRejectRevision}
             onGotoRevision={onGotoRevision}
             isProtected={isProtected}
-            onToggleProtection={onToggleProtection}
+            commentsAllowed={commentsAllowed}
+            trackChangesForced={trackChangesForced}
+            protectActive={protectActive}
+            onProtectDoc={onProtectDoc}
             onCompare={onCompare}
           />
         ) : (
@@ -3013,6 +3804,13 @@ function RibbonInner({
           onClose={() => setListDialog(false)}
         />
       )}
+      {tablePropertiesOpen && (
+        <TablePropertiesDialog
+          initial={tablePropertiesFromAttrs(tableAttrs)}
+          onApply={applyTableProperties}
+          onClose={() => setTablePropertiesOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -3045,6 +3843,222 @@ const LIST_FMT_SAMPLES: Record<string, string> = {
 
 const TWIPS_PER_CM = 567
 
+type TableWrapMode = 'none' | 'left' | 'right'
+
+interface TablePropertiesValue {
+  autoFit: TableAutoFitMode
+  wrap: TableWrapMode
+  floatSuppressed: boolean
+  positionXCm: number
+  positionYCm: number
+  distanceCm: number
+  marginTopCm: number
+  marginRightCm: number
+  marginBottomCm: number
+  marginLeftCm: number
+}
+
+function tablePropertiesFromAttrs(attrs: Record<string, unknown>): TablePropertiesValue {
+  const cm = (value: unknown, fallback = 0) =>
+    +((Number.isFinite(Number(value)) ? Number(value) : fallback) / TWIPS_PER_CM).toFixed(2)
+  const margins = (attrs.cellMar as Record<string, number> | null) ?? {}
+  const distance = (attrs.tblFloatDistance as Record<string, number> | null) ?? {}
+  const wrap: TableWrapMode =
+    attrs.tblFloat === 'left' || attrs.tblFloat === 'right'
+      ? attrs.tblFloat
+      : attrs.tblFloatSource === 'left' || attrs.tblFloatSource === 'right'
+        ? attrs.tblFloatSource
+        : 'none'
+  return {
+    autoFit:
+      attrs.tblAutoFit === 'contents' || attrs.tblAutoFit === 'window' ? attrs.tblAutoFit : 'fixed',
+    wrap,
+    floatSuppressed: attrs.tblFloatSuppressed === true,
+    positionXCm: cm(attrs.tblFloatXTwips),
+    positionYCm: cm(attrs.tblFloatYTwips),
+    distanceCm: cm(distance.right ?? distance.left ?? distance.top ?? distance.bottom, 180),
+    marginTopCm: cm(margins.top),
+    marginRightCm: cm(margins.right, 108),
+    marginBottomCm: cm(margins.bottom),
+    marginLeftCm: cm(margins.left, 108),
+  }
+}
+
+function TablePropertiesDialog({
+  initial,
+  onApply,
+  onClose,
+}: {
+  initial: TablePropertiesValue
+  onApply: (value: TablePropertiesValue) => void
+  onClose: () => void
+}) {
+  const { t } = useI18n()
+  const [value, setValue] = useState(initial)
+  const update = (patch: Partial<TablePropertiesValue>) =>
+    setValue((current) => ({ ...current, ...patch }))
+  const numberInput = (
+    key:
+      | 'positionXCm'
+      | 'positionYCm'
+      | 'distanceCm'
+      | 'marginTopCm'
+      | 'marginRightCm'
+      | 'marginBottomCm'
+      | 'marginLeftCm',
+  ) => (
+    <input
+      type="number"
+      min={key === 'positionXCm' || key === 'positionYCm' ? -50 : 0}
+      max={50}
+      step={0.1}
+      value={value[key]}
+      onChange={(event) => update({ [key]: Number(event.target.value) || 0 })}
+    />
+  )
+  const wrapLabel: StringKey =
+    value.wrap === 'left'
+      ? 'appWrapSquareLeft'
+      : value.wrap === 'right'
+        ? 'appWrapSquareRight'
+        : 'appWrapInline'
+  const autoFitLabel =
+    TABLE_AUTO_FIT_OPTIONS.find(([mode]) => mode === value.autoFit)?.[1] ?? 'ribbonFixedColumnWidth'
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal gs-form table-properties-dialog">
+        <div className="table-properties-header">
+          <span className="table-properties-header-icon" aria-hidden="true">
+            <IconTableProperties size={22} />
+          </span>
+          <div>
+            <h2>{t('ribbonTableProperties')}</h2>
+            <p className="modal-desc">
+              {t(autoFitLabel)} · {t(wrapLabel)}
+            </p>
+          </div>
+        </div>
+
+        <section className="table-properties-card">
+          <h3>{t('ribbonAutoFit')}</h3>
+          <div className="table-properties-segments">
+            {TABLE_AUTO_FIT_OPTIONS.map(([mode, label]) => (
+              <label key={mode} className="table-properties-segment">
+                <input
+                  type="radio"
+                  name="table-autofit"
+                  checked={value.autoFit === mode}
+                  onChange={() => update({ autoFit: mode })}
+                />
+                <span>{t(label)}</span>
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="table-properties-card">
+          <h3>{t('ribbonWrapText')}</h3>
+          <div className="table-properties-segments">
+            {(
+              [
+                ['none', 'appWrapInline'],
+                ['left', 'appWrapSquareLeft'],
+                ['right', 'appWrapSquareRight'],
+              ] as Array<[TableWrapMode, StringKey]>
+            ).map(([mode, label]) => (
+              <label key={mode} className="table-properties-segment">
+                <input
+                  type="radio"
+                  name="table-wrap"
+                  checked={value.wrap === mode}
+                  onChange={() => update({ wrap: mode })}
+                />
+                <span>{t(label)}</span>
+              </label>
+            ))}
+          </div>
+          {value.wrap !== 'none' && (
+            <div className="table-properties-grid">
+              <label>
+                {t('ribbonHorizontalPosition')}
+                <span>
+                  {numberInput('positionXCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+              <label>
+                {t('ribbonVerticalPosition')}
+                <span>
+                  {numberInput('positionYCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+              <label>
+                {t('ribbonDistanceFromText')}
+                <span>
+                  {numberInput('distanceCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+            </div>
+          )}
+        </section>
+
+        <section className="table-properties-card table-properties-margins">
+          <h3>{t('ribbonCellMargins')}</h3>
+          <div className="table-properties-margin-layout">
+            <div className="table-properties-grid">
+              <label>
+                {t('ribbonMarginTop')}
+                <span>
+                  {numberInput('marginTopCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+              <label>
+                {t('ribbonMarginBottom')}
+                <span>
+                  {numberInput('marginBottomCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+              <label>
+                {t('ribbonMarginLeft')}
+                <span>
+                  {numberInput('marginLeftCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+              <label>
+                {t('ribbonMarginRight')}
+                <span>
+                  {numberInput('marginRightCm')}
+                  {t('ribbonCm')}
+                </span>
+              </label>
+            </div>
+            <div className="table-margin-preview" aria-hidden="true">
+              <span className="table-margin-value top">{value.marginTopCm}</span>
+              <span className="table-margin-value right">{value.marginRightCm}</span>
+              <span className="table-margin-value bottom">{value.marginBottomCm}</span>
+              <span className="table-margin-value left">{value.marginLeftCm}</span>
+              <span className="table-margin-preview-cell" />
+            </div>
+          </div>
+        </section>
+
+        <div className="modal-actions">
+          <button onClick={onClose}>{t('ribbonCancel')}</button>
+          <button className="primary" onClick={() => onApply(value)}>
+            {t('ribbonOk')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ListDefineDialog({
   onApply,
   onClose,
@@ -3071,10 +4085,11 @@ function ListDefineDialog({
           {levels.map((l, i) => (
             <div key={i} className="list-define-row">
               <span>{i + 1}</span>
-              <select
+              <Dropdown
                 value={l.numFmt}
-                onChange={(e) => {
-                  const numFmt = e.target.value
+                ariaLabel={t('ribbonListNumStyle')}
+                options={LIST_NUM_FMTS.map((f) => ({ value: f, label: LIST_FMT_SAMPLES[f] }))}
+                onPick={(numFmt) => {
                   update(i, {
                     numFmt,
                     lvlText:
@@ -3085,13 +4100,7 @@ function ListDefineDialog({
                           : `%${i + 1}.`,
                   })
                 }}
-              >
-                {LIST_NUM_FMTS.map((f) => (
-                  <option key={f} value={f}>
-                    {LIST_FMT_SAMPLES[f]}
-                  </option>
-                ))}
-              </select>
+              />
               <input value={l.lvlText} onChange={(e) => update(i, { lvlText: e.target.value })} />
               <input
                 type="number"

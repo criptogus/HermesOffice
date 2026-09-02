@@ -13,6 +13,8 @@ const workspaceAlias = {
     here,
     '../../packages/pptx-engine/src/table-grid.ts',
   ),
+  '@hermesoffice/pptx-engine/identity': resolve(here, '../../packages/pptx-engine/src/identity.ts'),
+  '@hermesoffice/pptx-engine/custgeom': resolve(here, '../../packages/pptx-engine/src/custgeom.ts'),
   '@hermesoffice/pptx-engine/background-promote': resolve(
     here,
     '../../packages/pptx-engine/src/background-promote.ts',
@@ -23,6 +25,8 @@ const workspaceAlias = {
     '../../packages/pptx-render/src/preset-geometry.ts',
   ),
   '@hermesoffice/pptx-render': resolve(here, '../../packages/pptx-render/src/index.ts'),
+  // Metafile (EMF/WMF) rasterizer shared with the docs engine (renderer-only: needs canvas)
+  '@hermesoffice/docx-engine/metafile': resolve(here, '../../packages/docx-engine/src/metafile.ts'),
 }
 
 export default defineConfig({
@@ -46,7 +50,8 @@ export default defineConfig({
     ],
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    // electron-utils ships raw TS source — must be bundled, not left external
+    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils'] })],
   },
   renderer: {
     resolve: { alias: workspaceAlias },

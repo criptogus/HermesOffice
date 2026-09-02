@@ -11,6 +11,8 @@ import { LocalImage } from './localImage'
 import { BlockDragHandle } from './blockDragHandle'
 import { BlockKeymap } from './blockKeymap'
 import { AiHighlight } from './aiHighlight'
+import { AiQueueAnchors } from './aiQueueAnchors'
+import { buildMathExtensions } from './math'
 import { SlashCommand } from './slashCommand'
 import type { SlashController, SlashItem } from './slashCommand'
 import { t } from '../i18n/locale'
@@ -44,10 +46,13 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     TableKit.configure({ table: { resizable: false, renderWrapper: true } }),
     TaskList,
     TaskItem.configure({ nested: true }),
+    // KaTeX-rendered $...$ / $$...$$ formulas (issue #100)
+    ...buildMathExtensions(),
     LocalImage,
     BlockDragHandle,
     BlockKeymap,
     AiHighlight,
+    AiQueueAnchors,
     Placeholder.configure({ placeholder: () => t('placeholder') }),
     SlashCommand.configure({
       controller: options.slashController,

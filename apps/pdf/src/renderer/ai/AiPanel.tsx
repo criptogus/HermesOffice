@@ -10,25 +10,36 @@ import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
 import { createPdfSkill } from './pdf-skill'
 import { createElectronTransport } from './transport'
+import { PDF_NAV_SCHEME, parsePdfNavHref } from './pdf-nav'
 import type { PdfAiDeps } from './tools'
 
-// Fork: convenções do agente Hermes — invocação de skills e relatórios de documentos
-const HERMES_COMMANDS = `
-# Hermes commands
-- Skill invocation: when the user writes /<skill-name> or @<skill-name> (e.g. /board-intelligence), load that skill with skill_view (use skills_list to find it when the name is approximate) and follow its instructions for the current task. Prefer the exact match; resolve ambiguity with the closest available skill.
-- Document reports: when the user asks you to read a document (pdf/pptx/docx/xlsx) and produce a report, follow this flow: (1) read the document with hermesoffice_extract_text; (2) write the report as a new .docx with hermesoffice_docx_create; (3) open it in the app with hermesoffice_app_open_file so it opens in a new tab; (4) reply with the report file path in the chat.
-- Use these hermesoffice_* tools for file I/O even when the app-specific tools (block/page tools) are unavailable.`
+// Word-parity count (same as docs/markdown): Asian chars one by one + non-Asian words
+const ASIAN_RE =
+  /[ᄀ-ᇿ⺀-⿟、-〿぀-ヿ㄀-ㄯ㄰-㆏㇀-ㇿ㐀-䶿一-鿿가-힯豈-﫿！-｠￠-￦]|[\uD840-\uD87F][\uDC00-\uDFFF]/g
+const NON_ASIAN_WORD_RE = /[A-Za-z0-9À-ɏ]+(?:['-][A-Za-z0-9À-ɏ]+)*/g
+
+function countWords(text: string): number {
+  return (text.match(ASIAN_RE) ?? []).length + (text.match(NON_ASIAN_WORD_RE) ?? []).length
+}
+
 const PANEL_WIDTH_KEY = 'pdf-ai-panel-width'
 const PANEL_WIDTH_DEFAULT = 360
 const PANEL_WIDTH_MIN = 280
 
 function clampPanelWidth(w: number): number {
-  return Math.min(Math.max(w, PANEL_WIDTH_MIN), Math.min(720, Math.round(window.innerWidth * 0.6)))
+  // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
+  // shell lays it out), so never let the ceiling drop below the minimum
+  const max = Math.max(PANEL_WIDTH_MIN, Math.min(720, Math.round(window.innerWidth * 0.6)))
+  return Math.min(Math.max(w, PANEL_WIDTH_MIN), max)
 }
 
 function loadPanelWidth(): number {
   const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-  return Number.isFinite(saved) && saved > 0 ? clampPanelWidth(saved) : PANEL_WIDTH_DEFAULT
+  // static bounds only — clamping against the window here would bake a
+  // transiently small viewport into the restored preference
+  return Number.isFinite(saved) && saved > 0
+    ? Math.min(Math.max(saved, PANEL_WIDTH_MIN), 720)
+    : PANEL_WIDTH_DEFAULT
 }
 
 interface ToolActivity {
@@ -52,22 +63,166 @@ type Phase = 'thinking' | 'replying' | 'working'
 
 export function AiPanel({
   api,
+  filePath,
   onCollapse,
   preset,
+  onRunDone,
+  onClearSelection,
 }: {
   api: PdfAiDeps
+  /** Absolute path of the open PDF (chat history is keyed to it) */
+  filePath?: string
   onCollapse: () => void
   /** Ribbon AI buttons push a one-shot prompt; a new nonce triggers an auto-run */
   preset?: { text: string; nonce: number } | null
+  /** Fired when a run that mutated the document finishes (drives the untitled-blank auto-save) */
+  onRunDone?: () => void
+  /** The × on the scope chip: drop the cached selection so runs target the whole document */
+  onClearSelection?: () => void
 }): ReactElement {
   const { lang, t } = useI18n()
   const [chat, setChat] = useState<ChatEntry[]>([])
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [phase, setPhase] = useState<Phase>('thinking')
+  /** the scope chip's expandable preview of the selected text */
+  const [scopePreviewOpen, setScopePreviewOpen] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
-  const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
+
+  // ── Chat-history persistence (r142): same shared store Docs/Sheets use ──
+  const chatIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
+  /** current turn's streamed text; completed turns collect into runTextsRef */
+  const segTextRef = useRef('')
+  /** whole-run accumulation: one stored assistant message per run (consecutive
+      assistant rows would break restore() on strict-alternation providers) */
+  const runTextsRef = useRef<string[]>([])
+  const runToolsRef = useRef<ToolActivity[]>([])
+  const chatStore = () =>
+    (
+      window as Window & {
+        projectApi?: {
+          resolveChat(args: {
+            filePath: string | null
+            tempChatId?: string
+          }): Promise<{ projectId: string; chatId: string }>
+          appendChat(args: {
+            projectId: string
+            chatId: string
+            role: 'user' | 'assistant'
+            text: string
+            tools?: Array<{ name: string; summary: string; isError?: boolean; output?: string }>
+          }): Promise<void>
+          loadChat(args: { projectId: string; chatId: string; limit?: number }): Promise<
+            Array<{
+              role: 'user' | 'assistant'
+              text: string
+              tools?: Array<{ name: string; summary: string; isError?: boolean; output?: string }>
+            }>
+          >
+          rebindChat(args: {
+            projectId: string
+            tempChatId: string
+            newFilePath: string
+          }): Promise<{ projectId: string; chatId: string } | null>
+        }
+      }
+    ).projectApi
+  const persistMessage = (
+    role: 'user' | 'assistant',
+    text: string,
+    tools?: ToolActivity[],
+  ): void => {
+    const ids = chatIdsRef.current
+    const store = chatStore()
+    if (!ids || !store || (!text && !tools?.length)) return
+    void store
+      .appendChat({
+        projectId: ids.projectId,
+        chatId: ids.chatId,
+        role,
+        text,
+        ...(tools && tools.length > 0
+          ? {
+              tools: tools.map((tool) => ({
+                name: tool.name,
+                summary: tool.summary,
+                isError: tool.isError,
+                output: tool.output,
+              })),
+            }
+          : {}),
+      })
+      .catch(() => {
+        /* silent */
+      })
+  }
+  /** persist the whole run as ONE assistant message (docs parity: restore()
+      feeds these back verbatim, and providers require user/assistant
+      alternation; cancelled runs persist nothing — the unanswered user
+      message is filtered out by restore()) */
+  const persistRun = (): void => {
+    const texts = [...runTextsRef.current, segTextRef.current].filter(Boolean)
+    const tools = runToolsRef.current
+    segTextRef.current = ''
+    runTextsRef.current = []
+    runToolsRef.current = []
+    if (texts.length > 0 || tools.length > 0) {
+      persistMessage('assistant', texts.join('\n\n'), tools)
+    }
+  }
+  useEffect(() => {
+    const store = chatStore()
+    if (!store) return
+    const tempChatId = `unsaved-${Date.now()}`
+    void store
+      .resolveChat({ filePath: filePath || null, tempChatId })
+      .then((ids) => {
+        chatIdsRef.current = ids
+        return store.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
+      })
+      .then((msgs) => {
+        if (msgs.length === 0) return
+        setChat((prev) => [
+          ...msgs.map((m) => ({
+            role: m.role,
+            text: m.text,
+            tools: m.tools?.map((tool) => ({
+              name: tool.name,
+              summary: tool.summary,
+              isError: tool.isError,
+              output: tool.output,
+            })),
+          })),
+          ...prev,
+        ])
+        // follow-ups after reopening continue the previous conversation
+        loopRef.current?.restore(msgs.map((m) => ({ role: m.role, text: m.text })))
+      })
+      .catch(() => {
+        /* history load failures are silent */
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only, like Docs
+  }, [])
+  /** blank/generated PDFs get a path on first save: bind the unsaved-* history to it */
+  useEffect(() => {
+    const ids = chatIdsRef.current
+    const store = chatStore()
+    if (!store || !ids || !filePath || !ids.chatId.startsWith('unsaved-')) return
+    void store
+      .rebindChat({ projectId: ids.projectId, tempChatId: ids.chatId, newFilePath: filePath })
+      .then((rebound) => {
+        if (rebound?.chatId) chatIdsRef.current = rebound
+      })
+      .catch(() => {
+        /* silent */
+      })
+  }, [filePath])
+  // preferred = the user's chosen width (the only value persisted); panelWidth =
+  // what fits the current window. Deriving the display width from the preference
+  // means a transiently small window never permanently shrinks the panel.
+  const preferredWidthRef = useRef(loadPanelWidth())
+  const [panelWidth, setPanelWidth] = useState(() => clampPanelWidth(preferredWidthRef.current))
   const [resizing, setResizing] = useState(false)
   const asideRef = useRef<HTMLElement>(null)
 
@@ -78,10 +233,34 @@ export function AiPanel({
     dock?.style.setProperty('--ai-panel-width', `${panelWidth}px`)
   }, [panelWidth])
   const settingsRef = useRef<AiSettings | null>(null)
+
+  /** gsk login state for the cloud-tools gate (refreshed on mount and window focus) */
+  const gskLoggedInRef = useRef(false)
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      void window.pdfApi
+        ?.gskStatus()
+        .then((s) => {
+          if (alive) gskLoggedInRef.current = !!s?.loggedIn
+        })
+        .catch(() => {})
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const langRef = useRef(lang)
   langRef.current = lang
   const apiRef = useRef(api)
   apiRef.current = api
+  const onRunDoneRef = useRef(onRunDone)
+  onRunDoneRef.current = onRunDone
+  /** Any tool in the current run reported mutated: true */
+  const runMutatedRef = useRef(false)
 
   const patchLast = (patch: Partial<ChatEntry> | ((last: ChatEntry) => Partial<ChatEntry>)) => {
     setChat((prev) => {
@@ -102,12 +281,22 @@ export function AiPanel({
       pageCount: () => apiRef.current.pageCount(),
       currentPage: () => apiRef.current.currentPage(),
       readOnly: () => apiRef.current.readOnly(),
+      ocrText: (idx) => apiRef.current.ocrText(idx),
+      selection: () => apiRef.current.selection(),
+      pendingSummary: () => apiRef.current.pendingSummary(),
       outline: () => apiRef.current.outline(),
       searchIndex: () => apiRef.current.searchIndex(),
       isDeleted: (i) => apiRef.current.isDeleted(i),
       gotoPage: (p) => apiRef.current.gotoPage(p),
-      addMarkup: (type, idx, rects) => apiRef.current.addMarkup(type, idx, rects),
+      addMarkup: (type, idx, rects, color) => apiRef.current.addMarkup(type, idx, rects, color),
+      annotationSummary: () => apiRef.current.annotationSummary(),
+      createDocument: (request) => apiRef.current.createDocument(request),
+      annotationsOn: (idx) => apiRef.current.annotationsOn(idx),
+      addNote: (idx, at, contents) => apiRef.current.addNote(idx, at, contents),
+      findNoteRoot: (idx, key) => apiRef.current.findNoteRoot(idx, key),
+      replyToThread: (idx, root, contents) => apiRef.current.replyToThread(idx, root, contents),
       editText: (input) => apiRef.current.editText(input),
+      insertText: (input) => apiRef.current.insertText(input),
       editFonts: () => apiRef.current.editFonts(),
       formEdits: () => apiRef.current.formEdits(),
       applyFormEdit: (v) => apiRef.current.applyFormEdit(v),
@@ -123,29 +312,28 @@ export function AiPanel({
       deleteImage: (ref) => apiRef.current.deleteImage(ref),
       searchImages: (query, max) => apiRef.current.searchImages(query, max),
       generateImage: (op) => apiRef.current.generateImage(op),
+      gskTools: () => gskLoggedInRef.current && settingsRef.current?.gskToolsEnabled !== false,
       fetchImage: (url) => apiRef.current.fetchImage(url),
-      // Fork: capacidades do agente Hermes (leitura via engine, web search, rollback, anotações)
-      filePath: () => apiRef.current.filePath(),
-      webSearch: (query, maxResults) => apiRef.current.webSearch(query, maxResults),
-      captureEditState: () => apiRef.current.captureEditState(),
-      restoreEditState: (state) => apiRef.current.restoreEditState(state),
-      addNote: (origIdx, text, at) => apiRef.current.addNote(origIdx, text, at),
-      setWatermark: (cfg) => apiRef.current.setWatermark(cfg),
-      setHeaderFooter: (cfg) => apiRef.current.setHeaderFooter(cfg),
-      movePage: (fromPos, toPos) => apiRef.current.movePage(fromPos, toPos),
-      visiblePageCount: () => apiRef.current.visiblePageCount(),
     }
     loopRef.current = new AgentLoop({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
-      systemSuffix: () => aiLangDirective(langRef.current) + HERMES_COMMANDS,
+      systemSuffix: () => aiLangDirective(langRef.current),
       events: {
         onText: (text) => {
           setPhase('replying')
+          segTextRef.current = text
           patchLast({ text })
         },
         onToolExecuted: ({ call, execution }) => {
           setPhase('working')
+          if (execution.mutated) runMutatedRef.current = true
+          runToolsRef.current.push({
+            name: call.name,
+            summary: execution.summary,
+            isError: execution.isError,
+            output: execution.output?.slice(0, 2000),
+          })
           patchLast((last) => ({
             tools: [
               ...(last.tools ?? []),
@@ -160,6 +348,8 @@ export function AiPanel({
         },
         onTurnEnd: () => {
           setPhase('thinking')
+          runTextsRef.current.push(segTextRef.current)
+          segTextRef.current = ''
           patchLast({ streaming: false })
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
@@ -167,11 +357,23 @@ export function AiPanel({
           const final = turnLimit
             ? [text, tGlobal('aiTurnLimit')].filter(Boolean).join('\n\n')
             : text || (cancelled ? tGlobal('aiStopped') : '')
+          if (cancelled) {
+            segTextRef.current = ''
+            runTextsRef.current = []
+            runToolsRef.current = []
+          } else {
+            segTextRef.current = final || segTextRef.current
+            persistRun()
+          }
           patchLast((last) => ({
             streaming: false,
             text: final || (last.tools?.length ? last.text : tGlobal('aiNoReply')),
           }))
           setBusy(false)
+          if (runMutatedRef.current) {
+            runMutatedRef.current = false
+            onRunDoneRef.current?.()
+          }
         },
         onError: (error) => {
           setChat((prev) => {
@@ -213,6 +415,10 @@ export function AiPanel({
     const loop = loopRef.current
     if (!instruction || !loop || loop.busy) return
     stickToBottomRef.current = true
+    persistMessage('user', instruction)
+    segTextRef.current = ''
+    runTextsRef.current = []
+    runToolsRef.current = []
     setChat((prev) => [
       ...prev,
       { role: 'user', text: instruction },
@@ -221,6 +427,7 @@ export function AiPanel({
     setPrompt('')
     setBusy(true)
     setPhase('thinking')
+    runMutatedRef.current = false
     void (async () => {
       try {
         settingsRef.current = await window.pdfApi.getAiSettings()
@@ -238,15 +445,19 @@ export function AiPanel({
 
   const stop = (): void => loopRef.current?.cancel()
 
-  // One-click AI actions from the ribbon (same pattern as the docs ribbon presets)
+  // One-click AI actions from the ribbon / Ask popover; while a run is active the
+  // preset lands in the composer instead of being dropped silently (markdown parity)
   useEffect(() => {
-    if (preset) send(preset.text)
+    if (!preset) return
+    if (loopRef.current?.busy) setPrompt(preset.text)
+    else send(preset.text)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per nonce
   }, [preset?.nonce])
 
-  // Re-clamp the persisted width when the window shrinks (max is 60% of the window)
+  // Re-derive the display width on window resize (max is 60% of the window);
+  // growing the window back restores the preferred width
   useEffect(() => {
-    const onResize = (): void => setPanelWidth((w) => clampPanelWidth(w))
+    const onResize = (): void => setPanelWidth(clampPanelWidth(preferredWidthRef.current))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -262,7 +473,9 @@ export function AiPanel({
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent): void => {
-      setPanelWidth(clampPanelWidth(ev.clientX))
+      const w = clampPanelWidth(ev.clientX)
+      preferredWidthRef.current = w
+      setPanelWidth(w)
     }
     let done = false
     const cleanup = (): void => {
@@ -276,10 +489,7 @@ export function AiPanel({
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       setResizing(false)
-      setPanelWidth((w) => {
-        localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(w)))
-        return w
-      })
+      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(preferredWidthRef.current)))
     }
     resizeCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
@@ -292,6 +502,24 @@ export function AiPanel({
 
   const typingLabel =
     phase === 'replying' ? t('aiReplying') : phase === 'working' ? t('aiWorking') : t('aiThinking')
+
+  // scope chip data, read per render (App re-renders on every selection change)
+  const scopeSel = api.selection()
+  const hasScopeSelection = !!scopeSel && scopeSel.text.trim().length > 0
+
+  // the selection can vanish without the × (click-away, another file): close the preview too
+  useEffect(() => {
+    if (!hasScopeSelection) setScopePreviewOpen(false)
+  }, [hasScopeSelection])
+
+  /** [p.N](pdfnav://page/N) links in replies scroll the reading view to that page */
+  const pdfNav = {
+    scheme: PDF_NAV_SCHEME,
+    onNavigate: (href: string) => {
+      const page = parsePdfNavHref(href)
+      if (page !== null) apiRef.current.gotoPage(page)
+    },
+  }
 
   return (
     <aside
@@ -344,10 +572,22 @@ export function AiPanel({
             <div className="ai-chat-empty-title">{t('aiEmptyTitle')}</div>
             <div className="ai-chat-empty-body">{t('aiEmptyBody')}</div>
             <div className="ai-quick-actions">
-              <button className="ai-quick-btn" onClick={() => send(t('aiQuickSummaryPrompt'))}>
+              <button
+                className="ai-quick-btn"
+                onClick={() =>
+                  send(t(hasScopeSelection ? 'aiQuickSummarySelPrompt' : 'aiQuickSummaryPrompt'))
+                }
+              >
                 {t('aiQuickSummary')}
               </button>
-              <button className="ai-quick-btn" onClick={() => send(t('aiQuickKeyPointsPrompt'))}>
+              <button
+                className="ai-quick-btn"
+                onClick={() =>
+                  send(
+                    t(hasScopeSelection ? 'aiQuickKeyPointsSelPrompt' : 'aiQuickKeyPointsPrompt'),
+                  )
+                }
+              >
                 {t('aiQuickKeyPoints')}
               </button>
             </div>
@@ -379,7 +619,7 @@ export function AiPanel({
               className={`ai-msg ai-msg-assistant${entry.isError ? ' ai-msg-error' : ''}`}
             >
               {hasTools && <ToolChipList tools={entry.tools!} />}
-              {entry.text && <Markdown text={entry.text} />}
+              {entry.text && <Markdown text={entry.text} nav={pdfNav} />}
             </div>
           )
         })}
@@ -391,6 +631,54 @@ export function AiPanel({
         <AiComposer
           value={prompt}
           busy={busy}
+          header={
+            hasScopeSelection && (
+              <div className="ai-scope-row">
+                <span className="ai-scope-hint">
+                  <button
+                    className="ai-scope-label"
+                    onClick={() => setScopePreviewOpen((v) => !v)}
+                    aria-expanded={scopePreviewOpen}
+                    data-tip={t('aiScopeSelectionTip')}
+                  >
+                    {t('aiScopeSelection', {
+                      page:
+                        scopeSel!.lastPage > scopeSel!.page
+                          ? `${scopeSel!.page}-${scopeSel!.lastPage}`
+                          : scopeSel!.page,
+                      words: countWords(scopeSel!.text),
+                    })}
+                  </button>
+                  <button
+                    className="ai-scope-clear"
+                    onClick={() => {
+                      setScopePreviewOpen(false)
+                      onClearSelection?.()
+                    }}
+                    data-tip={t('aiScopeClearTitle')}
+                    aria-label={t('aiScopeClearTitle')}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden>
+                      <path
+                        d="M4 4l8 8M12 4l-8 8"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </span>
+                {scopePreviewOpen && (
+                  <div className="ai-scope-preview">
+                    {scopeSel!.text.length > 400
+                      ? `${scopeSel!.text.slice(0, 400)}…`
+                      : scopeSel!.text}
+                  </div>
+                )}
+              </div>
+            )
+          }
           placeholder={t('aiComposerPlaceholder')}
           hintIdle={t('aiHintIdle')}
           hintBusy={t('aiHintBusy')}

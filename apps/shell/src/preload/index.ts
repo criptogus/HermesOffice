@@ -1,8 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
+import { AI_PROVIDERS, getProviderAdapter } from '@hermesoffice/ai-provider'
+import type { AiSettings } from '@hermesoffice/ai-provider'
+import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
 import type {
   AccountLoginEvent,
   AccountStatus,
+  CloudProjectsSnapshot,
   HomeApi,
   RecentEntry,
   RecentPage,
@@ -15,14 +19,6 @@ import type {
 import { HOME_CHANNELS, PROJECT_CHANNELS } from '../shared/home-api'
 import type { TabsApi, TabSummary } from '../shared/tabs-api'
 import { TABS_CHANNELS } from '../shared/tabs-api'
-import {
-  CLOUD_CHANNELS,
-  type CloudApi,
-  type CloudConfig,
-  type CloudFileState,
-  type ConnectResult,
-  type DriveAuthState,
-} from '../shared/cloud-api'
 
 const UI_LANGUAGES: readonly UiLanguage[] = [
   'zh',
@@ -92,6 +88,9 @@ const homeApi: HomeApi = {
   },
   async newMarkdown(opts) {
     await ipcRenderer.invoke(HOME_CHANNELS.newMarkdown, opts)
+  },
+  async newPdf(opts) {
+    await ipcRenderer.invoke(HOME_CHANNELS.newPdf, opts)
   },
   async removeRecent(paths) {
     await ipcRenderer.invoke(HOME_CHANNELS.removeRecent, paths)
@@ -163,7 +162,8 @@ const homeApi: HomeApi = {
     return result === true
   },
   async setOnboardingSeen() {
-    await ipcRenderer.invoke(HOME_CHANNELS.setOnboardingSeen)
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.setOnboardingSeen)
+    return result === true
   },
   async getTheme() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getTheme)
@@ -173,6 +173,15 @@ const homeApi: HomeApi = {
     if (theme !== 'light' && theme !== 'dark' && theme !== 'system')
       throw new Error('Invalid theme.')
     await ipcRenderer.invoke(HOME_CHANNELS.setTheme, theme)
+  },
+  async getAnalyticsEnabled() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getAnalyticsEnabled)
+    return result !== false
+  },
+  async setAnalyticsEnabled(enabled) {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid analytics consent.')
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.setAnalyticsEnabled, enabled)
+    return result === true
   },
   async getDefaultSaveDir() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.getDefaultSaveDir)
@@ -189,13 +198,91 @@ const homeApi: HomeApi = {
     ipcRenderer.on('app:theme-changed', listener)
     return () => ipcRenderer.removeListener('app:theme-changed', listener)
   },
-  async openGenTeam() {
-    await ipcRenderer.invoke(HOME_CHANNELS.openGenTeam)
+  async openGitHub() {
+    await ipcRenderer.invoke(HOME_CHANNELS.openGitHub)
   },
   async openCreditUsage() {
     await ipcRenderer.invoke(HOME_CHANNELS.openCreditUsage)
   },
-  hermesStatus: () => ipcRenderer.invoke(HOME_CHANNELS.hermesStatus),
+  async openGitHubRepo() {
+    await ipcRenderer.invoke(HOME_CHANNELS.openGitHubRepo)
+  },
+  async githubStars() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.githubStars)
+    return typeof result === 'number' && Number.isFinite(result) ? result : null
+  },
+  async starPromptShouldShow() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.starPromptShouldShow)
+    const raw = (result ?? {}) as { show?: unknown; docOpens?: unknown }
+    return {
+      show: raw.show === true,
+      docOpens:
+        typeof raw.docOpens === 'number' && Number.isFinite(raw.docOpens) ? raw.docOpens : 0,
+    }
+  },
+  async starPromptAction(action) {
+    if (action !== 'starred' && action !== 'later') throw new Error('Invalid star prompt action.')
+    await ipcRenderer.invoke(HOME_CHANNELS.starPromptAction, action)
+  },
+  async cloudProjectsCached() {
+    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.cloudProjectsCached)
+    return asCloudProjectsSnapshot(result)
+  },
+  async cloudProjectsSync() {
+    // failures (network / CLI) resolve to null so the renderer keeps whatever it has
+    try {
+      const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.cloudProjects)
+      return asCloudProjectsSnapshot(result)
+    } catch {
+      return null
+    }
+  },
+  async openCloudProject(projectUrl) {
+    if (typeof projectUrl !== 'string' || !projectUrl) throw new Error('Invalid project URL.')
+    await ipcRenderer.invoke(HOME_CHANNELS.openCloudProject, projectUrl)
+  },
+  // AI settings channels are registered once by the shell's aggregated docs handlers
+  async getAiSettings() {
+    return (await ipcRenderer.invoke('ai:get-settings')) as AiSettings
+  },
+  async setAiSettings(settings) {
+    await ipcRenderer.invoke('ai:set-settings', settings)
+  },
+  getAiProviders() {
+    return AI_PROVIDERS.map((meta) => {
+      let defaultBaseUrl = ''
+      // genspark routes by model and custom has no default — both stay ''
+      if (meta.id !== 'genspark' && !meta.needsBaseUrl) {
+        defaultBaseUrl = getProviderAdapter(meta.id).resolveEndpoint({
+          apiKey: '',
+          model: meta.defaultModel,
+        }).baseUrl
+      }
+      return { ...meta, defaultBaseUrl }
+    })
+  },
+  async testAiSettings(settings) {
+    const result: unknown = await ipcRenderer.invoke('ai:chat', {
+      settings,
+      system: 'You are a connectivity test. Reply with the single word OK.',
+      user: 'ping',
+    })
+    const raw = (result ?? {}) as { ok?: unknown; error?: unknown }
+    return raw.ok === true
+      ? { ok: true }
+      : { ok: false, error: typeof raw.error === 'string' ? raw.error : 'Connection failed' }
+  },
+}
+
+function asCloudProjectsSnapshot(result: unknown): CloudProjectsSnapshot | null {
+  if (
+    result &&
+    typeof result === 'object' &&
+    Array.isArray((result as CloudProjectsSnapshot).projects)
+  ) {
+    return result as CloudProjectsSnapshot
+  }
+  return null
 }
 
 contextBridge.exposeInMainWorld('aiOffice', homeApi)
@@ -263,45 +350,14 @@ const tabsApi: TabsApi = {
   notifyChromePressed() {
     ipcRenderer.send(TABS_CHANNELS.chromePressed)
   },
-  async shareActive() {
-    await ipcRenderer.invoke(TABS_CHANNELS.shareActive)
+  onChromePressed(handler) {
+    const listener = () => handler()
+    ipcRenderer.on('app:chrome-pressed', listener)
+    return () => ipcRenderer.removeListener('app:chrome-pressed', listener)
   },
 }
 
 contextBridge.exposeInMainWorld('aiOfficeTabs', tabsApi)
 
-const cloudApi: CloudApi = {
-  async getConfig() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getConfig)) as CloudConfig
-  },
-  async setConfig(config) {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.setConfig, config)) as CloudConfig
-  },
-  async uploadNow(filePath) {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.uploadNow, filePath)) as CloudFileState
-  },
-  async getStates() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getStates)) as CloudFileState[]
-  },
-  onStatesChanged(handler) {
-    const listener = (_event: IpcRendererEvent, states: CloudFileState[]) => handler(states)
-    ipcRenderer.on(CLOUD_CHANNELS.statesChanged, listener)
-    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.statesChanged, listener)
-  },
-  async connect() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.connect)) as ConnectResult
-  },
-  async disconnect() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.disconnect)) as boolean
-  },
-  async getAuthState() {
-    return (await ipcRenderer.invoke(CLOUD_CHANNELS.getAuthState)) as DriveAuthState
-  },
-  onAuthChanged(handler) {
-    const listener = (_event: IpcRendererEvent, state: DriveAuthState) => handler(state)
-    ipcRenderer.on(CLOUD_CHANNELS.authChanged, listener)
-    return () => ipcRenderer.removeListener(CLOUD_CHANNELS.authChanged, listener)
-  },
-}
-
-contextBridge.exposeInMainWorld('aiOfficeCloud', cloudApi)
+// open documents dragged from the OS anywhere over Home or the tab strip
+installDropOpenBridge()

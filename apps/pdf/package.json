@@ -19,6 +19,7 @@
     "@hermesoffice/ai-provider": "*",
     "@hermesoffice/ai-search": "*",
     "@hermesoffice/electron-utils": "*",
+    "@hermesoffice/font-metrics": "*",
     "@hermesoffice/i18n": "*",
     "@hermesoffice/ui": "*",
     "@types/react": "^19.2.14",

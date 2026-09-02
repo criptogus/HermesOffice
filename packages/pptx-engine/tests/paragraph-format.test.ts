@@ -151,6 +151,30 @@ describe('setElementParagraphFormat', () => {
   })
 })
 
+describe('paragraph direction rtl', () => {
+  it('rtl=true injects rtl="1" on pPr, run bytes untouched', () => {
+    const RUN = '<a:r><a:rPr sz="1800"/><a:t>Hi</a:t></a:r>'
+    const { slide, el } = parseOne(`<a:bodyPr/><a:p>${RUN}</a:p>`)
+    expect(setElementParagraphFormat(slide, el.id, { rtl: true })).toBe(true)
+    const out = patchedElementXml(el)
+    expect(out).toContain('rtl="1"')
+    expect(out).toContain(RUN)
+    expect(el.text!.paragraphs[0]!.rtl).toBe(true)
+  })
+
+  it('rtl=false rewrites an existing rtl="1" to rtl="0" (explicit LTR base)', () => {
+    const { slide, el } = parseOne(
+      '<a:bodyPr/><a:p><a:pPr rtl="1" algn="r"/><a:r><a:t>x</a:t></a:r></a:p>',
+    )
+    setElementParagraphFormat(slide, el.id, { rtl: false })
+    const out = patchedElementXml(el)
+    expect(out).toContain('rtl="0"')
+    expect(out).not.toContain('rtl="1"')
+    expect(out).toContain('algn="r"') // untouched sibling attribute
+    expect(el.text!.paragraphs[0]!.rtl).toBe(false)
+  })
+})
+
 describe('multi-level indentation indentDelta', () => {
   it('increasing level writes lvl, own bullet hanging indent grows with the level', () => {
     const { slide, el } = parseOne('<a:bodyPr/><a:p><a:r><a:t>x</a:t></a:r></a:p>')
@@ -211,5 +235,39 @@ describe('per-paragraph paraIndices (editing-mode selection)', () => {
     const { slide, el } = parseOne(TWO_PARAS)
     expect(setElementParagraphFormat(slide, el.id, { bullet: 'char' }, [9])).toBe(false)
     expect(el.dirtyPPr).toBeUndefined()
+  })
+})
+
+describe('empty paragraph endParaRPr', () => {
+  it('empty paragraph takes its line style from endParaRPr (marker run)', () => {
+    const { el } = parseOne(
+      '<a:bodyPr/><a:p><a:r><a:rPr sz="2000"/><a:t>X</a:t></a:r></a:p>' +
+        '<a:p><a:endParaRPr sz="8000" b="1"/></a:p>',
+    )
+    const p = el.text!.paragraphs[1]!
+    expect(p.runs.length).toBe(1)
+    expect(p.runs[0]!.text).toBe('')
+    expect(p.runs[0]!.fontSize).toBe(80)
+    expect(p.runs[0]!.bold).toBe(true)
+  })
+
+  it("endParaRPr overrides an empty run's own rPr (probe-measured PowerPoint rule)", () => {
+    const { el } = parseOne(
+      '<a:bodyPr/><a:p><a:r><a:rPr sz="1400"/><a:t></a:t></a:r>' +
+        '<a:endParaRPr sz="8000"/></a:p>',
+    )
+    const p = el.text!.paragraphs[0]!
+    expect(p.runs.length).toBe(1)
+    expect(p.runs[0]!.fontSize).toBe(80)
+  })
+
+  it('a paragraph with real text keeps its runs (endParaRPr ignored)', () => {
+    const { el } = parseOne(
+      '<a:bodyPr/><a:p><a:r><a:rPr sz="2000"/><a:t>Hello</a:t></a:r>' +
+        '<a:endParaRPr sz="8000"/></a:p>',
+    )
+    const p = el.text!.paragraphs[0]!
+    expect(p.runs[0]!.text).toBe('Hello')
+    expect(p.runs[0]!.fontSize).toBe(20)
   })
 })

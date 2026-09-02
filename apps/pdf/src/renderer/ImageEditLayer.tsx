@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { pdfRectToCss, viewToPdf } from './annotations'
 import type { PageGeom } from './annotations'
-import type { ImageEditInput, PageImageRef } from '../shared/ipc'
+import type { ImageEditInput, PageImageRef, StaticFormFillRecord } from '../shared/ipc'
 
 type Rect = [number, number, number, number]
 
@@ -13,6 +13,12 @@ export interface LocalImageEdit {
   png?: string | null
   /** Z-band the existing image had before this op (labels the layer toggle) */
   origAbove?: boolean
+  /** Editable source metadata when this image is a static form fill. */
+  staticFill?: StaticFormFillRecord
+  /** Pre-transparency pixels of the op's current bytes: transparency presets re-bake
+      from this so they set an absolute level instead of compounding. Cleared by any
+      other pixel edit (flip/crop/cutout/replace/insert-rotate). */
+  opacityBase?: string
 }
 
 /** Existing images are addressed by their listed rect; stable across renders, not saves */
@@ -251,25 +257,16 @@ export function ImageEditLayer({
   }
 
   const underImgs: ReactElement[] = []
+  // Hit targets of untouched existing images; rendered below the pending-op elements so
+  // an invisible page-sized image cannot swallow clicks meant for delete markers/ghosts
+  const existingEls: ReactElement[] = []
   const mainEls: ReactElement[] = []
   for (const e of edits) {
     const sel = e.id === selectedId
     const target: DragTarget = { kind: 'edit', id: e.id }
-    if (e.input.kind === 'deleteImage') {
-      mainEls.push(
-        <div
-          key={e.id}
-          className={`pdf-imgedit-del${sel ? ' pdf-imgedit-selected' : ''}`}
-          style={css(e.input.oldRect)}
-          data-tip={editHint}
-          onClick={(ev) => {
-            ev.stopPropagation()
-            onSelectEdit(e.id, ev.clientX, ev.clientY)
-          }}
-        />,
-      )
-      continue
-    }
+    // Deleted images vanish via the live page preview (Acrobat/WPS behavior):
+    // no marker is painted, restore is the undo stack
+    if (e.input.kind === 'deleteImage') continue
     if (
       (e.input.kind === 'transformImage' || e.input.kind === 'replaceImage') &&
       imageRectKey(e.input.oldRect) !== imageRectKey(e.input.rect)
@@ -312,8 +309,21 @@ export function ImageEditLayer({
     }
   }
 
-  for (const ref of existing) {
-    const key = imageRectKey(ref.rect)
+  // Big images (page-sized backgrounds) go first = underneath, so their hit target
+  // cannot swallow clicks meant for the smaller pictures sitting on top of them
+  const byAreaDesc = [...existing].sort(
+    (a, b) =>
+      (b.rect[2] - b.rect[0]) * (b.rect[3] - b.rect[1]) -
+      (a.rect[2] - a.rect[0]) * (a.rect[3] - a.rect[1]),
+  )
+  // Same-rect duplicates (repeated watermark strips) need the occurrence index to keep
+  // React keys unique, or whole hit targets get dropped
+  const seenKeys = new Map<string, number>()
+  for (const ref of byAreaDesc) {
+    const rectKey = imageRectKey(ref.rect)
+    const dup = seenKeys.get(rectKey) ?? 0
+    seenKeys.set(rectKey, dup + 1)
+    const key = dup === 0 ? rectKey : `${rectKey}#${dup}`
     const target: DragTarget = { kind: 'existing', ref }
     // While an untouched image is being dragged/resized, paint its prefetched pixels
     // in the moving box so the picture follows the hand (the raster copy underneath
@@ -336,10 +346,10 @@ export function ImageEditLayer({
       if (ref.aboveText) mainEls.push(img)
       else underImgs.push(img)
     }
-    mainEls.push(
+    existingEls.push(
       <div
         key={key}
-        className={`pdf-imgedit-hit${key === selectedKey ? ' pdf-imgedit-selected' : ''}`}
+        className={`pdf-imgedit-hit${rectKey === selectedKey ? ' pdf-imgedit-selected' : ''}`}
         style={dragStyle(target, ref.rect)}
         data-tip={editHint}
         {...pointerProps(target, ref.rect)}
@@ -351,6 +361,7 @@ export function ImageEditLayer({
     <>
       {underImgs.length > 0 && <div className="pdf-imgedit-under">{underImgs}</div>}
       <div ref={layerRef} className="pdf-imgedit-layer">
+        {existingEls}
         {mainEls}
         {selectedTarget &&
           !drag &&

@@ -8,17 +8,12 @@ release/
 .env
 .env.*
 electron-builder.env
-# Local OAuth client credentials for the embedded Drive sync (never committed)
-packages/hermes-cloud/src/oauth-credentials.ts
 ~$*
 
 # Local ad-hoc e2e driver scripts (not pushed); the folder and README are tracked, the scripts are not
 /scripts/drivers/driver.*.mjs
 /probe*.mjs
 /apps/shell/build/THIRD-PARTY-NOTICES.txt
-# generated at build time with the local HEAD commit (never version it — it
-# always diverges from origin/main the moment a new commit lands)
-/apps/shell/build/build-info.json
 /example/
 /.task/
 /docs-archive/
@@ -38,3 +33,11 @@ packages/hermes-cloud/src/oauth-credentials.ts
 __pycache__/
 /notes/
 /MEMORY.md
+
+# Local fidelity-run scratch space: production repro documents and pack caches.
+# Never committable — a stray `git add -A` would push user files public.
+/working_dir/
+
+# One-off verification tests kept while chasing a fix; promote to a real test
+# file (or delete) instead of committing them under this name.
+_scratch-*

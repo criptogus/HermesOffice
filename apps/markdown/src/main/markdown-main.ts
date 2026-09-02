@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync } from 'node:fs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   BrowserWindow,
@@ -24,7 +24,23 @@ import {
   showSaveDialogWithMemory,
 } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang } from '@hermesoffice/i18n'
+import { cloudToolsEnabled, type AiSettings } from '@hermesoffice/ai-provider'
+import { gskGenerateImage, hasGskAuth } from '@hermesoffice/ai-search'
 import { atomicWriteFile } from './atomic-write'
+import {
+  copyImageIntoOwnedAssets,
+  discardPendingOwnedAssets,
+  extractMarkdownImageSources,
+  pendingOwnedAssetsForDocument,
+  prepareAssetsForSaveAs,
+  reconcileOwnedAssets,
+  renameOwnedAssetDocument,
+  resolveSafeRelativeImagePath,
+  resolveSourcePendingAfterSaveAs,
+  rollbackPreparedSaveAsAssets,
+  writeImageIntoOwnedAssets,
+} from './asset-lifecycle'
+import { createMarkdownConversionSession, writeMarkdownConversion } from './conversion-lifecycle'
 import { MARKDOWN_CHANNELS } from '../shared/ipc'
 import type {
   ExportDocxRequest,
@@ -284,12 +300,26 @@ interface RuntimePaths {
   preloadPath: string
   rendererUrl?: string
   rendererFile?: string
+  /** Shell router used to open exported PDFs in a new HermesOffice tab. */
+  openGeneratedPath?: (path: string) => boolean
 }
 
 let runtime: RuntimePaths = { preloadPath: '' }
 
 export function configureMarkdownRuntime(paths: RuntimePaths): void {
   runtime = paths
+}
+
+/** After a successful Markdown → PDF export: open the file in a PDF tab (shell)
+ * or reveal it in the folder (standalone). Tab-opening failure must not
+ * report the export itself as failed — the file is already persisted. */
+function openExportedPdf(path: string): void {
+  try {
+    if (runtime.openGeneratedPath?.(path)) return
+  } catch (err) {
+    console.warn('[markdown] Failed to open exported PDF:', err)
+  }
+  shell.showItemInFolder(path)
 }
 
 /** Open path per view, queued at tab creation; the renderer consumes it after mount.
@@ -314,14 +344,28 @@ export function setMarkdownFileSavedHook(hook: (wc: WebContents, path: string) =
 
 /** Fired after a "convert & open in Docs" export — the shell routes the new .docx to a docs tab */
 let docxExportedHook: ((path: string) => void) | null = null
+/** One marked cache session per app process. Old crash leftovers are removed after seven days. */
+let conversionSessionPromise: Promise<string> | null = null
 
 export function setMarkdownDocxExportedHook(hook: (path: string) => void): void {
   docxExportedHook = hook
 }
 
+function markdownConversionSession(): Promise<string> {
+  conversionSessionPromise ??= createMarkdownConversionSession(
+    join(app.getPath('userData'), 'markdown-conversions'),
+  )
+  return conversionSessionPromise
+}
+
 /** Shell menu export entry: ask the renderer to serialize and run the export flow */
 export function sendMarkdownExportRequest(contents: WebContents, format: ExportFormat): void {
   if (!contents.isDestroyed()) contents.send(MARKDOWN_CHANNELS.exportRequest, format)
+}
+
+/** Shell menu Print: ask the renderer to build the print HTML and open the system dialog */
+export function sendMarkdownPrintRequest(contents: WebContents): void {
+  if (!contents.isDestroyed()) contents.send(MARKDOWN_CHANNELS.printRequest)
 }
 
 export function markdownIsDirty(webContentsId: number): boolean {
@@ -339,6 +383,9 @@ export function markdownFileRenamed(contents: WebContents, oldPath: string, newP
   if (openPathByWc.get(wcId) === oldPath) openPathByWc.set(wcId, newPath)
   const allowed = allowedByWc.get(wcId)
   if (allowed?.has(oldPath)) allowed.add(newPath)
+  void renameOwnedAssetDocument(oldPath, newPath).catch((error) => {
+    console.warn('[markdown] asset manifest rename sync failed:', error)
+  })
   if (!contents.isDestroyed()) contents.send(MARKDOWN_CHANNELS.fileRenamed, newPath)
 }
 
@@ -366,7 +413,16 @@ export async function requestMarkdownClose(
       ? await dialog.showMessageBox(parent, options)
       : await dialog.showMessageBox(options)
   if (response === 2) return false
-  if (response === 1) return true
+  if (response === 1) {
+    const documentPath = savePathByWc.get(contents.id)
+    if (documentPath) {
+      const discarded = await discardPendingOwnedAssets(documentPath)
+      if (discarded.errors.length > 0) {
+        console.warn('[markdown] pending asset discard incomplete:', discarded.errors)
+      }
+    }
+    return true
+  }
   return new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => {
       closeSaveWaiters.delete(contents.id)
@@ -455,7 +511,7 @@ const DISPLAY_IMAGE_EXTS = new Set([
  * open document's directory are served.
  */
 function registerImageProtocol(): void {
-  protocol.handle('md-asset', (request) => {
+  protocol.handle('md-asset', async (request) => {
     let target: string
     try {
       target = decodeURIComponent(new URL(request.url).pathname)
@@ -467,12 +523,15 @@ function registerImageProtocol(): void {
     if (!DISPLAY_IMAGE_EXTS.has(extname(target).toLowerCase()) || !existsSync(target)) {
       return new Response(null, { status: 404 })
     }
-    const inDocDir = [...new Set([...openPathByWc.values(), ...savePathByWc.values()])].some(
-      (doc) => {
-        const dir = resolve(dirname(doc))
-        return target === dir || target.startsWith(dir + sep)
-      },
-    )
+    let inDocDir = false
+    for (const doc of new Set([...openPathByWc.values(), ...savePathByWc.values()])) {
+      const dir = resolve(dirname(doc))
+      if (target === dir || !target.startsWith(dir + sep)) continue
+      if (await resolveSafeRelativeImagePath(doc, relative(dir, target))) {
+        inDocDir = true
+        break
+      }
+    }
     if (!inDocDir) return new Response(null, { status: 403 })
     return net.fetch(pathToFileURL(target).toString())
   })
@@ -507,15 +566,45 @@ function registerMarkdownIpc(): void {
       if (typeof request?.text !== 'string') {
         return done({ ok: false, error: 'markdown: bad save request' })
       }
+      if (
+        request.imageSources !== undefined &&
+        (!Array.isArray(request.imageSources) ||
+          request.imageSources.some((source) => typeof source !== 'string'))
+      ) {
+        return done({ ok: false, error: 'markdown: bad image references' })
+      }
       const mode: SaveMode = request.mode === 'saveAs' ? 'saveAs' : 'save'
+      const pathAtRequest = savePathByWc.get(e.sender.id)
+      const pendingAtRequest = pathAtRequest
+        ? await pendingOwnedAssetsForDocument(pathAtRequest)
+        : []
       try {
         const suggestedName =
           typeof request.suggestedName === 'string' ? request.suggestedName : undefined
         const target = await resolveSaveTarget(e, mode, suggestedName)
         if (target === 'canceled') return done({ ok: true, canceled: true })
         if (!target) return done({ ok: false, error: 'markdown: no save target' })
-        const isNewPath = savePathByWc.get(e.sender.id) !== target
-        await writeTextAtomic(target, request.text)
+        const currentPath = pathAtRequest
+        const isNewPath = currentPath !== target
+        const imageSources = [...(request.imageSources ?? [])]
+        const knownImageSources = new Set(imageSources)
+        for (const source of extractMarkdownImageSources(request.text)) {
+          if (knownImageSources.has(source)) continue
+          knownImageSources.add(source)
+          imageSources.push(source)
+        }
+        const prepared =
+          currentPath && resolve(dirname(currentPath)) !== resolve(dirname(target))
+            ? await prepareAssetsForSaveAs(currentPath, target, request.text, imageSources)
+            : null
+        const textToWrite = prepared?.text ?? request.text
+        const savedImageSources = prepared?.imageSources ?? imageSources
+        try {
+          await writeTextAtomic(target, textToWrite)
+        } catch (error) {
+          if (prepared) await rollbackPreparedSaveAsAssets(prepared).catch(() => {})
+          throw error
+        }
         savePathByWc.set(e.sender.id, target)
         // keep the reload path in sync — a stale openPathByWc would make a
         // reloaded renderer load the OLD file and then save it over the new one
@@ -524,8 +613,33 @@ function registerMarkdownIpc(): void {
         allowed.add(target)
         allowedByWc.set(e.sender.id, allowed)
         dirtyByWc.delete(e.sender.id)
+        const pendingNames = prepared
+          ? prepared.created.map((record) => record.name)
+          : currentPath && resolve(currentPath) === resolve(target)
+            ? pendingAtRequest
+            : []
+        const reconciled = await reconcileOwnedAssets(target, savedImageSources, { pendingNames })
+        if (reconciled.errors.length > 0) {
+          console.warn('[markdown] asset reconciliation incomplete:', reconciled.errors)
+        }
+        if (mode === 'saveAs' && currentPath && resolve(currentPath) !== resolve(target)) {
+          const sourceResolved = await resolveSourcePendingAfterSaveAs(
+            currentPath,
+            pendingAtRequest,
+          )
+          if (sourceResolved.errors.length > 0) {
+            console.warn(
+              '[markdown] source asset reconciliation incomplete:',
+              sourceResolved.errors,
+            )
+          }
+        }
         if (isNewPath) fileSavedHook?.(e.sender, target)
-        return done({ ok: true, path: target })
+        return done({
+          ok: true,
+          path: target,
+          ...(prepared?.rewrites.length ? { imageRewrites: prepared.rewrites } : {}),
+        })
       } catch (err) {
         return done({ ok: false, error: err instanceof Error ? err.message : String(err) })
       }
@@ -545,14 +659,7 @@ function registerMarkdownIpc(): void {
     })
     const source = picked.filePaths[0]
     if (picked.canceled || !source) return null
-    const assetsDir = join(dirname(docPath), 'assets')
-    await mkdir(assetsDir, { recursive: true })
-    const ext = extname(source)
-    const base = basename(source, ext).replace(/[/\\:*?"<>|]/g, '_')
-    let name = `${base}${ext}`
-    for (let n = 1; existsSync(join(assetsDir, name)); n++) name = `${base}-${n}${ext}`
-    await copyFile(source, join(assetsDir, name))
-    return `assets/${name}`
+    return copyImageIntoOwnedAssets(docPath, source)
   })
 
   ipcMain.handle(
@@ -563,12 +670,45 @@ function registerMarkdownIpc(): void {
       if (!docPath || typeof data?.base64 !== 'string' || !data.base64) return null
       // keep in sync with readImage's MIME map — every authored asset must stay DOCX-exportable
       if (!['png', 'jpg', 'jpeg', 'gif'].includes(ext)) return null
-      const assetsDir = join(dirname(docPath), 'assets')
-      await mkdir(assetsDir, { recursive: true })
-      let name = `image.${ext}`
-      for (let n = 1; existsSync(join(assetsDir, name)); n++) name = `image-${n}.${ext}`
-      await writeFile(join(assetsDir, name), Buffer.from(data.base64, 'base64'))
-      return `assets/${name}`
+      return writeImageIntoOwnedAssets(docPath, `image.${ext}`, Buffer.from(data.base64, 'base64'))
+    },
+  )
+
+  /** live read: the shell settings pane writes the file; every tool call re-checks */
+  const gskCloudToolsOn = (): boolean => {
+    try {
+      const raw = readFileSync(join(app.getPath('userData'), 'ai-settings.json'), 'utf8')
+      return cloudToolsEnabled(JSON.parse(raw) as Partial<AiSettings>)
+    } catch {
+      return false
+    }
+  }
+
+  // markdown-owned (like docs:ai-generate-image): the shared ai:* handlers are
+  // shell-registered, but image generation is gated per app
+  ipcMain.handle(
+    MARKDOWN_CHANNELS.aiGenerateImage,
+    async (_e, op: { prompt?: unknown; aspectRatio?: unknown }) => {
+      if (!hasGskAuth())
+        return {
+          error: 'Genspark account is not logged in on this machine; ask the user to log in first',
+        }
+      if (!gskCloudToolsOn())
+        return {
+          error:
+            'Genspark cloud tools are turned off in Settings (AI Model); enable them to use this tool',
+        }
+      const prompt = String(op?.prompt ?? '').trim()
+      if (!prompt) return { error: 'prompt must not be empty' }
+      try {
+        const r = await gskGenerateImage({
+          prompt,
+          aspectRatio: op?.aspectRatio ? String(op.aspectRatio) : undefined,
+        })
+        return { url: r.url }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
     },
   )
 
@@ -584,10 +724,8 @@ function registerMarkdownIpc(): void {
     async (e, src: unknown): Promise<ImageData | null> => {
       const docPath = savePathByWc.get(e.sender.id)
       if (!docPath || typeof src !== 'string' || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null
-      const docDir = resolve(dirname(docPath))
-      const target = resolve(docDir, src)
-      // images must live inside the document's directory (assets/ convention)
-      if (target !== docDir && !target.startsWith(docDir + sep)) return null
+      const target = await resolveSafeRelativeImagePath(docPath, src)
+      if (!target) return null
       const mime = MIME_BY_EXT[extname(target).toLowerCase()]
       if (!mime || !existsSync(target)) return null
       try {
@@ -612,12 +750,14 @@ function registerMarkdownIpc(): void {
       try {
         const bytes = Buffer.from(request.base64, 'base64')
         if (request.mode === 'openInDocs') {
-          // silent convert next to the .md (untitled documents go to the default save folder)
-          const docPath = savePathByWc.get(e.sender.id)
-          const dir = docPath ? dirname(docPath) : configuredDefaultSaveDir(app)
-          let target = join(dir, `${safeName}.docx`)
-          for (let n = 1; existsSync(target); n++) target = join(dir, `${safeName}-${n}.docx`)
-          await writeFile(target, bytes)
+          // Each conversion gets an app-owned cache file. A marked session is
+          // retained for the life of open Docs tabs; crash leftovers expire
+          // after the explicit TTL enforced when the next session starts.
+          const target = await writeMarkdownConversion(
+            await markdownConversionSession(),
+            safeName,
+            bytes,
+          )
           docxExportedHook?.(target)
           return { ok: true, path: target }
         }
@@ -665,7 +805,7 @@ function registerMarkdownIpc(): void {
       )
       if (picked.canceled || !picked.filePath) return { ok: true, canceled: true }
       // sheets-style: render the print HTML in a hidden scripting-disabled window
-      const workDir = await mkdtemp(join(tmpdir(), 'genoffice-md-pdf-'))
+      const workDir = await mkdtemp(join(tmpdir(), 'hermesoffice-md-pdf-'))
       const printWin = new BrowserWindow({
         show: false,
         webPreferences: { sandbox: true, javascript: false },
@@ -680,6 +820,7 @@ function registerMarkdownIpc(): void {
           margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 },
         })
         await writeFile(picked.filePath, pdf)
+        openExportedPdf(picked.filePath)
         return { ok: true, path: picked.filePath }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }

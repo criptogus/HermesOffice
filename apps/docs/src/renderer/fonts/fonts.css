@@ -155,6 +155,45 @@
   font-style: normal;
 }
 
+/* Chromium never system-falls-back for Private Use codepoints: unmapped PUA
+ * renders the chain's primary font's .notdef. Chains headed by a real face
+ * (Calibri, Carlito GO) draw tofu boxes for AI-residue PUA tokens, while Word
+ * and subset-headed chains (blank subsetted .notdef) show nothing. This tiny
+ * generated font (tools/build-pua-blank-font.py) maps all of U+E000-F8FF to a
+ * blank 1em glyph so PUA stays invisible in the chains that carry it. */
+@font-face {
+  font-family: 'HermesOffice PUA Blank';
+  src: url('./HermesOfficePUABlank.woff2') format('woff2');
+  unicode-range: U+E000-F8FF;
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* CJK-range-only views of the same subsets, for unknown *Latin-named* fonts
+ * (Aptos-era cloud faces etc.): the full subsets cover U+2018/2019/201C/201D
+ * at a 1em advance and would swallow Latin punctuation ahead of the generic
+ * face, shifting every wrap. CJK-named unknown fonts keep the full subsets
+ * (fullwidth quotes are correct inside CJK body text). Same ranges as the
+ * 'HermesOffice Hiragino/Batang…' local() aliases below. */
+@font-face {
+  font-family: 'Noto Sans CJK GO';
+  src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Noto Serif CJK GO';
+  src: url('./NotoSerifCJKsc-Regular-subset.woff2') format('woff2');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+
 /*
  * Korean fallback: Noto Sans/Serif CJK KR subsets (KS X 1001 syllables + jamo),
  * renamed per OFL since advances are normalized to the Windows faces Word
@@ -162,14 +201,54 @@
  * sans Basic Latin matches Malgun (tools/normalize-kr-sans-hmtx.py).
  */
 @font-face {
-  font-family: 'GenOffice Sans KR';
-  src: url('./GenOfficeSansKR-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Sans KR';
+  src: url('./HermesOfficeSansKR-Regular-subset.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Serif KR';
-  src: url('./GenOfficeSerifKR-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Serif KR';
+  src: url('./HermesOfficeSerifKR-Regular-subset.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Missing KR font names (Noto/Source Han KR variants): Word keeps hangul on
+ * Batang but renders Latin/digits with the theme Latin face (M3 probe sample
+ * 13: Batang-metric Latin measures 1.13–1.19× Cambria/Calibri). Claims
+ * printable ASCII only — U+0020 stays on the Batang-normalized KR subsets so
+ * hangul word spacing is untouched. Serif class only: the missing-KR chain is
+ * always Batang-ward (cssFontFamily). */
+@font-face {
+  font-family: 'KR Theme Latin GO';
+  src: local('Cambria'), url('./Caladea-Regular.ttf');
+  unicode-range: U+0021-007E;
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Documents declaring NanumGothic: mac Word lays out with the OS *downloadable*
+ * source asset Chromium cannot see (M3 probe sample 19: hangul 0.94em, space
+ * 0.28, digits 0.606 vs the Batang-normalized subset's 1.0/0.333/0.596 —
+ * +6.4% per hangul line, +19% per space). Real-metric source subset
+ * (tools/build-gothic-kr-font.py), advances unmodified; renamed per OFL
+ * ("Nanum" is a Reserved Font Name and subsetting is a modification). */
+@font-face {
+  font-family: 'HermesOffice Gothic KR';
+  src: url('./HermesOfficeGothicKR-Regular-subset.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* -Che (fixed-pitch) KR faces: Word renders the real BatangChe/GulimChe/
+ * DotumChe/GungsuhChe whose Latin is 0.5 em fixed (probe 2026-08-24). ASCII
+ * rides this bundled half-width face (tools/build-kr-che-latin-font.py:
+ * Sans KR outlines reshaped to DotumChe ink boxes); hangul falls through to
+ * the KR chains. */
+@font-face {
+  font-family: 'HermesOffice Che Latin KR';
+  src: url('./HermesOfficeCheLatinKR.woff2') format('woff2');
+  unicode-range: U+0020-007E;
   font-weight: normal;
   font-style: normal;
 }
@@ -192,13 +271,186 @@
   font-weight: normal;
   font-style: normal;
 }
+/* Stand-in for Traditional/Simplified Arabic (compact Windows naskh faces):
+ * unscaled Noto Naskh substitution wraps ~10% earlier than Word (measured
+ * 11 lines vs 10 on regression sample 15), so pagination drifts. 90%
+ * (~1/1.10) is calibrated from that screenshot regression; canvas
+ * measureText resolves the same @font-face, so metrics follow automatically. */
+@font-face {
+  font-family: 'Noto Naskh Arabic TA';
+  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
+  size-adjust: 90%;
+  font-weight: normal;
+  font-style: normal;
+}
+/* Documents declaring Noto Naskh/Sans Arabic by name resolve to the bundled
+ * subsets, which run ~13% wider than Word's rendering of those faces; kept
+ * separate from the 90% TA alias (different calibration source). */
+@font-face {
+  font-family: 'Noto Naskh Arabic W';
+  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
+  size-adjust: 87%;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Noto Sans Arabic W';
+  src: url('./NotoSansArabic-Regular-subset.woff2') format('woff2');
+  size-adjust: 87%;
+  font-weight: normal;
+  font-style: normal;
+}
+/* Missing Arabic serif names (incl. Persian B/XB/IR faces) substitute wholesale
+ * to Times New Roman in Word; the bundled Naskh subset shapes 1.125× (Arabic) /
+ * 1.074× (Persian) wider than Times (M3 probe 2026-08-14, whole-sentence shaped
+ * R). 90% splits the difference; same value as the TA alias above but from a
+ * different calibration source, so they stay separate (like the W alias). */
+@font-face {
+  font-family: 'Noto Naskh Arabic TNR';
+  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
+  size-adjust: 90%;
+  font-weight: normal;
+  font-style: normal;
+}
+/* Arabic-Indic digits already run narrower than Times' (R≈0.855, same probe);
+ * scaling them another 10% would overshoot, so they stay unscaled ahead of the
+ * TNR alias in the missing-serif chain. */
+@font-face {
+  font-family: 'Naskh Digits GO';
+  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
+  unicode-range: U+0660-0669, U+06F0-06F9;
+  font-weight: normal;
+  font-style: normal;
+}
+/* cs runs with a missing naskh font route ASCII punctuation/digits to the
+ * substituted Times shapes (Word renders them there after wholesale TNR
+ * substitution; the Naskh subset's forms sit sunken on the Arabic baseline).
+ * Only non-letter ASCII is claimed, so Latin letters keep resolving in the
+ * run's ascii slot and Arabic in the Naskh subset behind this alias.
+ * local() needs the PostScript name in Chromium; the bundled Liberation file
+ * backstops hosts without a system Times. */
+@font-face {
+  font-family: 'Times Punct GO';
+  src: local('TimesNewRomanPSMT'), local('Times New Roman'), url('./LiberationSerif-Regular.ttf');
+  unicode-range: U+0020-0040, U+005B-0060, U+007B-007E;
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Nunito Sans is an Office cloud font Word downloads and renders real (probe
+ * 2026-08-23). Its advances run 4.4% wider than Helvetica (272.93 vs 261.5pt
+ * per probe string @12pt, measured from Word's cached NunitoSans-Regular), so
+ * the size-adjusted alias keeps line wraps aligned with Word. A locally
+ * installed Nunito still precedes this alias in the chain. */
+@font-face {
+  font-family: 'Nunito Sans GO';
+  src: local('Helvetica'), local('ArialMT'), url('./LiberationSans-Regular.ttf');
+  size-adjust: 104.4%;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Nunito Sans GO';
+  src: local('Helvetica-Bold'), local('Arial-BoldMT'), url('./LiberationSans-Bold.ttf');
+  size-adjust: 104.4%;
+  font-weight: bold;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Nunito Sans GO';
+  src: local('Helvetica-Oblique'), local('Arial-ItalicMT'), url('./LiberationSans-Italic.ttf');
+  size-adjust: 104.4%;
+  font-weight: normal;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Nunito Sans GO';
+  src:
+    local('Helvetica-BoldOblique'), local('Arial-BoldItalicMT'),
+    url('./LiberationSans-BoldItalic.ttf');
+  size-adjust: 104.4%;
+  font-weight: bold;
+  font-style: italic;
+}
+
+/* Latin-range backstops closing dual-slot / eastAsia-only chains: Word
+ * substitutes a missing w:ascii face with a Latin font and never draws Latin
+ * glyphs from the eastAsia slot (probe 2026-08-23). The range covers letters,
+ * digits and ASCII punctuation only — no general punctuation or Latin-1
+ * symbols (quotes, x/÷, °±) so ambiguous-width characters keep resolving
+ * through the East Asian font like Word. local() needs PostScript names in
+ * Chromium; the bundled Liberation files backstop other hosts. */
+@font-face {
+  font-family: 'Latin Serif GO';
+  src: local('TimesNewRomanPSMT'), local('Times New Roman'), url('./LiberationSerif-Regular.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Latin Serif GO';
+  src:
+    local('TimesNewRomanPS-BoldMT'), local('Times New Roman Bold'),
+    url('./LiberationSerif-Bold.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: bold;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Latin Serif GO';
+  src:
+    local('TimesNewRomanPS-ItalicMT'), local('Times New Roman Italic'),
+    url('./LiberationSerif-Italic.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: normal;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Latin Serif GO';
+  src:
+    local('TimesNewRomanPS-BoldItalicMT'), local('Times New Roman Bold Italic'),
+    url('./LiberationSerif-BoldItalic.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: bold;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Latin Sans GO';
+  src: local('Helvetica'), local('ArialMT'), url('./LiberationSans-Regular.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Latin Sans GO';
+  src: local('Helvetica-Bold'), local('Arial-BoldMT'), url('./LiberationSans-Bold.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: bold;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Latin Sans GO';
+  src: local('Helvetica-Oblique'), local('Arial-ItalicMT'), url('./LiberationSans-Italic.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: normal;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Latin Sans GO';
+  src:
+    local('Helvetica-BoldOblique'), local('Arial-BoldItalicMT'),
+    url('./LiberationSans-BoldItalic.ttf');
+  unicode-range: U+0020-007E, U+00C0-00D6, U+00D8-00F6, U+00F8-024F, U+1E00-1EFF, U+FB00-FB06;
+  font-weight: bold;
+  font-style: italic;
+}
 
 /* macOS's PMingLiU stand-in (Songti TC) draws these fullwidth glyphs at
  * ~0.2-0.5em of ink inside the 1em advance — U+FF0F looks like a spaced
  * half-width slash. Serve them from the bundled Noto subset (ink matches
  * PMingLiU); real PMingLiU still precedes this face in the TC serif chain. */
 @font-face {
-  font-family: 'GenOffice Fullwidth TC';
+  font-family: 'HermesOffice Fullwidth TC';
   src: url('./NotoSerifCJKsc-Regular-subset.woff2') format('woff2');
   unicode-range: U+FF0D, U+FF0F, U+FF3C, U+FF3F, U+FF5E;
   font-weight: normal;
@@ -210,8 +462,136 @@
  * at weight normal only, forces Blink to synthesize bold at >=600. On Windows the
  * local() sources don't resolve and the chain falls through to SimSun. */
 @font-face {
-  font-family: 'GenOffice Songti SC';
+  font-family: 'HermesOffice Songti SC';
   src: local('STSongti-SC-Regular'), local('Songti SC Regular');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* East Asian system faces used as chain fallbacks (Hiragino Sans/Mincho,
+ * MS Mincho/Gothic, AppleMyungjo, Batang, Heiti TC, (P)MingLiU) draw Cyrillic
+ * and Greek as JIS fullwidth glyphs (Т measures 1em), exploding advances in
+ * Russian/Mongolian text that falls through a CJK chain. These local() aliases
+ * expose only the CJK ranges; other scripts continue down the chain to
+ * proportional faces. Registered weight-normal (bold synthesized, like
+ * 'HermesOffice Songti SC') except Hiragino, which has real W6 faces. */
+@font-face {
+  font-family: 'HermesOffice Hiragino Sans';
+  src: local('Hiragino Sans'), local('HiraginoSans-W3'), local('MS Gothic');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Hiragino Sans';
+  src: local('HiraginoSans-W6'), local('Hiragino Sans W6');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: bold;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Hiragino Mincho';
+  src: local('Hiragino Mincho ProN'), local('HiraMinProN-W3');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Hiragino Mincho';
+  src: local('HiraMinProN-W6'), local('Hiragino Mincho ProN W6');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: bold;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice MS Mincho';
+  src: local('MS Mincho'), local('MS PMincho');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Batang';
+  src: local('Batang'), local('BatangChe');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Myungjo';
+  src: local('AppleMyungjo');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice Heiti TC';
+  src: local('Heiti TC'), local('Heiti TC Light'), local('STHeitiTC-Light');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'HermesOffice MingLiU';
+  src: local('PMingLiU'), local('MingLiU');
+  unicode-range:
+    U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Ethiopic faces (Nyala/Ebrima/Abyssinica) are missing on macOS and fall back
+ * to Kefa, 1.35-1.4x wider than Word's Nyala. Only routed when an Ethiopic
+ * face is declared, so no unicode-range needed; on Windows the declared name
+ * itself resolves ahead of this alias. */
+@font-face {
+  font-family: 'HermesOffice Ethiopic';
+  /* Chromium local() matches PostScript/full names, not family names */
+  src: local('Kefa-Regular'), local('Kefa Regular'), local('Kefa');
+  /* verified on regression sample 39: line breaks match Word at 72%; the
+     residual page-4 spill is line-height, not width */
+  size-adjust: 72%;
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Tamil: Word substitutes missing Tamil families with Latha; Chromium's macOS
+ * fallback (Tamil Sangam MN) shapes ~27% narrower (M3 probe: sentence R 0.728,
+ * space 0.39x) — too far for size-adjust (137% would inflate glyph ink). Noto
+ * Sans Tamil with advances rewritten to Latha's (tools/build-tamil-font.py;
+ * shaped sentence R 0.994, all probe sentences within ±2.3%). */
+@font-face {
+  font-family: 'HermesOffice Tamil';
+  src: url('./HermesOfficeTamil-Regular.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Caladea has no box-drawing glyphs, so U+2500 separator rules fall to the CJK
+ * subset at 1em fullwidth and an 80-char rule overflows the column (Word draws
+ * it ~0.65em on a single line). Menlo/Consolas keep them ~0.6em. */
+@font-face {
+  font-family: 'HermesOffice Box Drawing';
+  /* Chromium local() matches PostScript/full names, not family names */
+  src: local('Menlo-Regular'), local('Menlo Regular'), local('Menlo'), local('Consolas');
+  unicode-range: U+2500-257F;
   font-weight: normal;
   font-style: normal;
 }
@@ -220,14 +600,14 @@
  * through to AppleMyungjo, whose U+2082 is a full-width (1.0em) glyph —
  * "Cu₂O" rendered as "Cu₂ O". Serve them from bundled latin faces instead. */
 @font-face {
-  font-family: 'GenOffice Sans KR';
+  font-family: 'HermesOffice Sans KR';
   src: url('./Carlito-Regular.ttf') format('truetype');
   unicode-range: U+2070-209F, U+00B2-00B3, U+00B9;
   font-weight: normal;
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Serif KR';
+  font-family: 'HermesOffice Serif KR';
   /* Carlito, not Caladea/LiberationSerif: only Carlito covers the whole block */
   src: url('./Carlito-Regular.ttf') format('truetype');
   unicode-range: U+2070-209F, U+00B2-00B3, U+00B9;

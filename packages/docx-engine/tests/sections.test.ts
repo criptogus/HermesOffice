@@ -60,6 +60,46 @@ describe('readSections enumerates all sections', () => {
     expect(sections[1].firstBlockIndex).toBe(sections[0].lastBlockIndex + 1)
   })
 
+  it('a section-break paragraph with visible text stays an editable paragraph (tdf#159032)', async () => {
+    const withText =
+      '<w:p><w:pPr><w:spacing w:after="0"/><w:sectPr>' +
+      '<w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>' +
+      '<w:r><w:t>section one tail</w:t></w:r></w:p>'
+    const source = await buildDocx({ bodyXml: P('a') + withText + P('b') })
+    const parsed = await parseDocx(source)
+    const blk = parsed.blocks[1]
+    expect(blk.type).toBe('paragraph')
+    expect(blk.runs).toEqual([{ text: 'section one tail' }])
+    expect(blk.rawPPr).toContain('<w:sectPr')
+    // section boundary still closes at this block
+    const sections = readSections(parsed)
+    expect(sections.length).toBe(2)
+    expect(sections[0].lastBlockIndex).toBe(1)
+
+    // unedited: byte-identical
+    const visible = parsed.blocks.filter((b) => !b.hidden).map((b) => b.docxIndex!)
+    const asIs: SaveBlock[] = visible.map((docxIndex) => ({ kind: 'original', docxIndex }))
+    expect(await saveDocx(parsed, asIs)).toBe(source)
+
+    // edited text: the sectPr must survive regeneration
+    const edited: SaveBlock[] = visible.map((docxIndex) =>
+      docxIndex === blk.docxIndex
+        ? {
+            kind: 'generated',
+            block: {
+              type: 'paragraph',
+              rawPPr: blk.rawPPr,
+              runs: [{ text: 'edited tail' }],
+            },
+          }
+        : { kind: 'original', docxIndex },
+    )
+    const saved = await saveDocx(parsed, edited)
+    const reparsed = await parseDocx(saved)
+    expect(readSections(reparsed).length).toBe(2)
+    expect(JSON.stringify(reparsed.blocks)).toContain('edited tail')
+  })
+
   it('parses startType/titlePg/pgNumType/header-footer references per section', async () => {
     const extra =
       '<w:headerReference w:type="default" r:id="rId7"/>' +
@@ -320,6 +360,81 @@ describe('sectionHf per-section headers/footers', () => {
   })
 })
 
+describe('column widths + section bidi (P3 pdf2docx support)', () => {
+  const BASE =
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>'
+
+  it('colWidths emits explicit unequal w:col children', async () => {
+    const { sectionSettingsFromXml } = await import('../src/index')
+    const base = sectionSettingsFromXml(BASE)
+    const xml = applySectionSettings(BASE, {
+      ...base,
+      columns: 2,
+      colSpace: 400,
+      colWidths: [3000, 6000],
+    })
+    expect(xml).toContain(
+      '<w:cols w:num="2" w:space="400" w:equalWidth="0"><w:col w:w="3000" w:space="400"/><w:col w:w="6000"/></w:cols>',
+    )
+  })
+
+  it('parse reads colWidths and bidi back; re-applying identical values is byte-stable', async () => {
+    const { sectionSettingsFromXml } = await import('../src/index')
+    const base = sectionSettingsFromXml(BASE)
+    const once = applySectionSettings(BASE, {
+      ...base,
+      columns: 2,
+      colSpace: 400,
+      colWidths: [3000, 6000],
+      bidi: true,
+    })
+    expect(once).toContain('<w:bidi/>')
+    const parsed = sectionSettingsFromXml(once)
+    expect(parsed.columns).toBe(2)
+    expect(parsed.colWidths).toEqual([3000, 6000])
+    expect(parsed.bidi).toBe(true)
+    // round-trip: parse → apply must not rewrite the element
+    expect(applySectionSettings(once, parsed)).toBe(once)
+  })
+
+  it('undefined bidi leaves an existing w:bidi untouched; false removes it', async () => {
+    const { sectionSettingsFromXml } = await import('../src/index')
+    const withBidi = BASE.replace('</w:sectPr>', '<w:bidi/></w:sectPr>')
+    const base = sectionSettingsFromXml(BASE)
+    const kept = applySectionSettings(withBidi, { ...base, bidi: undefined })
+    expect(kept).toContain('<w:bidi/>')
+    const removed = applySectionSettings(withBidi, { ...base, bidi: false })
+    expect(removed).not.toContain('<w:bidi/>')
+  })
+
+  it('NewImage posOffsetEmu positions a floating image numerically', async () => {
+    const parsed = await parseDocx(await buildDocx({ bodyXml: P('文字') }))
+    const blocks: SaveBlock[] = [
+      ...parsed.blocks
+        .filter((b) => !b.hidden && b.docxIndex !== null)
+        .map((b) => ({ kind: 'original' as const, docxIndex: b.docxIndex! })),
+      {
+        kind: 'image',
+        image: {
+          base64:
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          mime: 'image/png',
+          widthPx: 100,
+          heightPx: 80,
+          wrap: 'square-right',
+          posOffsetEmu: { x: 4165600, y: 0 },
+        },
+      },
+    ]
+    const saved = await saveDocx(parsed, blocks, {})
+    const reparsed = await parseDocx(saved)
+    const xml = reparsed.internal.documentXml
+    expect(xml).toContain('<wp:anchor')
+    expect(xml).toContain('<wp:posOffset>4165600</wp:posOffset>')
+    expect(xml).toContain('<wp:wrapSquare')
+  })
+})
+
 describe('pgNumType page numbering', () => {
   it('applyPageNumType inserts/replaces/removes', async () => {
     const { applyPageNumType } = await import('../src/index')
@@ -428,5 +543,38 @@ describe('SaveOptions.numbering write-back', () => {
     expect(numXml).toContain('<w:num w:numId="9"><w:abstractNumId w:val="4"/></w:num>')
     const reparsed = await parseDocx(saved)
     expect(reparsed.numbering.get('9')!.levels[0].numFmt).toBe('bullet')
+  })
+})
+
+describe('pgBorders details', () => {
+  it('parses display/offsetFrom/space/sz/color from the sides', async () => {
+    const { sectionSettingsFromXml } = await import('../src/section')
+    const s = sectionSettingsFromXml(
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+        '<w:pgMar w:top="1417" w:right="1134" w:bottom="1134" w:left="1417"/>' +
+        '<w:pgBorders w:display="firstPage" w:offsetFrom="page">' +
+        '<w:top w:val="single" w:sz="18" w:space="24" w:color="1F497D"/>' +
+        '<w:left w:val="single" w:sz="18" w:space="24" w:color="1F497D"/>' +
+        '<w:bottom w:val="single" w:sz="18" w:space="24" w:color="1F497D"/>' +
+        '<w:right w:val="single" w:sz="18" w:space="24" w:color="1F497D"/>' +
+        '</w:pgBorders></w:sectPr>',
+    )
+    expect(s.pageBorder).toBe(true)
+    expect(s.pageBorderProps).toEqual({
+      display: 'firstPage',
+      offsetFrom: 'page',
+      spacePt: 24,
+      widthPt: 2.25,
+      color: '1F497D',
+    })
+  })
+
+  it('none-only sides leave pageBorderProps unset', async () => {
+    const { sectionSettingsFromXml } = await import('../src/section')
+    const s = sectionSettingsFromXml(
+      '<w:sectPr><w:pgBorders><w:top w:val="none"/></w:pgBorders></w:sectPr>',
+    )
+    expect(s.pageBorder).toBe(false)
+    expect(s.pageBorderProps).toBeUndefined()
   })
 })

@@ -13,6 +13,7 @@ export {
   windowMenuTemplate,
   type AppMenuLabels,
 } from './app-menu'
+export { GITHUB_REPO_URL } from './github-menu'
 export { showOpenDialogWithMemory, showSaveDialogWithMemory } from './dialog-memory'
 export {
   DEFAULT_SAVE_DIR_KEY,
@@ -23,6 +24,14 @@ export {
   type PathProvider,
 } from './default-save-dir'
 export { installNavigationGuard } from './navigation-guard'
+export {
+  DROP_OPEN_CHANNEL,
+  droppableFilePaths,
+  installDropOpenBridge,
+  KNOWN_UNSUPPORTED_DOC_RE,
+  OPENABLE_DOC_RE,
+  partitionDropPayload,
+} from './drop-open'
 export { safeExternalUrl, type SafeExternalUrlOptions } from './safe-external-url'
 export {
   fetchWithSsrfGuard,
@@ -31,3 +40,10 @@ export {
   type FetchWithSsrfGuardOptions,
 } from './safe-remote-url'
 export { fetchRemoteImage, remoteImageHeaders } from './remote-image'
+export {
+  buildPrintableHtml,
+  printHtmlToPdf,
+  sanitizePrintableBody,
+  type PrintableHtml,
+  type PrintWindow,
+} from './print-html-pdf'

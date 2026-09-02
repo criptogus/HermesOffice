@@ -4,8 +4,14 @@ import { App } from './App'
 import { LocaleProvider, setModuleLang } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
+import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/color-picker.css'
+import '@hermesoffice/ui/dropdown.css'
 import './styles.css'
 import './fonts/fonts.css'
+import { installScreenTips } from '@hermesoffice/ui'
+
+installScreenTips()
 
 function applyTheme(theme: UiTheme): void {
   if (theme === 'system') document.documentElement.removeAttribute('data-theme')

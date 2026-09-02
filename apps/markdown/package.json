@@ -1,6 +1,6 @@
 {
   "name": "@hermesoffice/markdown",
-  "productName": "GenOffice Markdown",
+  "productName": "HermesOffice Markdown",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -16,6 +16,7 @@
   "devDependencies": {
     "@hermesoffice/agent-core": "*",
     "@hermesoffice/ai-provider": "*",
+    "@hermesoffice/ai-search": "*",
     "@hermesoffice/docx-engine": "*",
     "@hermesoffice/electron-utils": "*",
     "@hermesoffice/i18n": "*",
@@ -44,5 +45,9 @@
     "vite": "^7.3.1",
     "vitest": "^4.1.10"
   },
-  "author": "GenOffice"
+  "author": "HermesOffice",
+  "dependencies": {
+    "@tiptap/extension-mathematics": "3.29.2",
+    "katex": "^0.16.47"
+  }
 }

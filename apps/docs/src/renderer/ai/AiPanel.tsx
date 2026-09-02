@@ -1,33 +1,30 @@
-/**
- * HermesOffice — fork de HermesOffice (genspark-ai/hermesoffice, Apache-2.0,
- * Copyright 2026 Mainfunc, Inc.). Modificações do fork por criptogus;
- * atribuição original preservada em NOTICE.
- */
 import { useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/core'
 import type { Block } from '@hermesoffice/docx-engine'
 import { AgentLoop, composeSkills, type AgentImage } from '@hermesoffice/agent-core'
-import { linkifyPaths } from '@hermesoffice/ui'
 import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import type { PmNode } from '../editor/convert'
-import { findNumId, type NumIds } from './protocol'
-import { markDocSeen } from './tools'
+import { countWords, findNumId, type NumIds } from './protocol'
+import { DOC_NAV_SCHEME, navigateToBlock, parseDocNavHref } from './doc-nav'
+import { markDocSeen, type AiCommentsAccess, type AiHeaderFooterAccess } from './tools'
 import { createDocsSkill } from './docs-skill'
+import { EditQueueCard } from './EditQueueCard'
+import {
+  buildQueueInstruction,
+  buildQueueSummary,
+  liveItems,
+  resolveQueue,
+  type DocsEditQueueItem,
+} from './edit-queue'
 import { applyRevisionsBy } from '../editor/revisions'
-import { DOCS_AGENT_MAX_TURNS, DOCS_CONTINUE_INSTRUCTION } from './continuation'
+import { DOCS_CONTINUE_INSTRUCTION } from './continuation'
 import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
 import { useI18n, t as tModule, aiLangDirective, type StringKey } from '../i18n/locale'
-
-const HERMES_COMMANDS = `
-# Hermes commands
-- Skill invocation: when the user writes /<skill-name> or @<skill-name> (e.g. /board-intelligence), load that skill with skill_view (use skills_list to find it when the name is approximate) and follow its instructions for the current task. Prefer the exact match; resolve ambiguity with the closest available skill.
-- Document reports: when the user asks you to read a document (pdf/pptx/docx/xlsx) and produce a report, follow this flow: (1) read the document with hermesoffice_extract_text; (2) write the report as a new .docx with hermesoffice_docx_create; (3) open it in the app with hermesoffice_app_open_file so it opens in a new tab; (4) reply with the report file path in the chat.
-- Use these hermesoffice_* tools for file I/O even when the app-specific tools (block/page tools) are unavailable.`
 import { Markdown } from '@hermesoffice/ui'
 import { AiComposer, AiTypingIndicator } from '@hermesoffice/ui'
-import { HermesMark } from '../components/icons'
+import { GensparkMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -75,9 +72,7 @@ interface ChatEntry {
   error?: string
   streaming?: boolean
   turnLimit?: boolean
-  /** the run failed and this user message was rolled back out of the model context */
-  undelivered?: boolean
-  /** the run failed because Hermes is signed out — render an inline sign-in button */
+  /** the run failed because Genspark is signed out — render an inline sign-in button */
   loginRequired?: boolean
   /** tool executions performed during this assistant turn */
   tools?: ToolActivity[]
@@ -98,6 +93,7 @@ const EDIT_STARTER_PROMPTS: StringKey[] = [
   'aiStarterSummarize',
   'aiStarterPolishAll',
   'aiStarterContinue',
+  'aiStarterFillTemplate',
 ]
 
 /** resizable panel width: persisted, clamped so neither pane collapses */
@@ -106,7 +102,9 @@ const PANEL_WIDTH_DEFAULT = 360
 const PANEL_WIDTH_MIN = 280
 
 function maxPanelWidth(): number {
-  return Math.min(720, Math.round(window.innerWidth * 0.6))
+  // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
+  // shell lays it out), so never let the ceiling drop below the minimum
+  return Math.max(PANEL_WIDTH_MIN, Math.min(720, Math.round(window.innerWidth * 0.6)))
 }
 
 function clampPanelWidth(w: number): number {
@@ -115,7 +113,11 @@ function clampPanelWidth(w: number): number {
 
 function loadPanelWidth(): number {
   const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-  return Number.isFinite(saved) && saved > 0 ? clampPanelWidth(saved) : PANEL_WIDTH_DEFAULT
+  // static bounds only — clamping against the window here would bake a
+  // transiently small viewport into the restored preference
+  return Number.isFinite(saved) && saved > 0
+    ? Math.min(Math.max(saved, PANEL_WIDTH_MIN), 720)
+    : PANEL_WIDTH_DEFAULT
 }
 
 /** persisted UI preference: highlight AI edits in yellow and ask for confirmation */
@@ -133,7 +135,7 @@ const PASTE_MIME_EXT: Record<string, string> = {
  *  attachment allowlist doesn't accept yet are mapped ahead so they light up when added */
 const ATTACHMENT_CARD_ICON_GROUPS: [icon: string, exts: string[]][] = [
   [fileWordIcon, ['doc', 'docx']],
-  [fileExcelIcon, ['xls', 'xlsx', 'csv', 'tsv']],
+  [fileExcelIcon, ['xls', 'xlsx', 'xlsm', 'csv', 'tsv']],
   [filePptIcon, ['ppt', 'pptx']],
   [filePdfIcon, ['pdf']],
   [fileImageIcon, ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'heic']],
@@ -268,6 +270,19 @@ interface AiPanelProps {
   onCollapse?: () => void
   /** Absolute path of the currently open file (used for chat-history persistence) */
   filePath?: string | null
+  /** queued selection-scoped edits (owned by App, which also owns the anchors) */
+  editQueue?: DocsEditQueueItem[]
+  onQueueEditInstruction?: (qid: string, instruction: string) => void
+  onQueueRemove?: (qid: string) => void
+  onQueueClear?: () => void
+  /** scroll to and select the anchored passage */
+  onQueueFocus?: (qid: string) => void
+  /** submission consumed these items: drop them and their anchors */
+  onQueueConsume?: (qids: string[]) => void
+  /** comments store for the AI comment tools (read/reply/resolve) */
+  commentsAccess?: AiCommentsAccess
+  /** header/footer state for the set_header_footer tool and per-turn context */
+  hfAccess?: AiHeaderFooterAccess
 }
 
 export function AiPanel({
@@ -281,6 +296,14 @@ export function AiPanel({
   onExpand,
   onCollapse,
   filePath,
+  editQueue = [],
+  onQueueEditInstruction,
+  onQueueRemove,
+  onQueueClear,
+  onQueueFocus,
+  onQueueConsume,
+  commentsAccess,
+  hfAccess,
 }: AiPanelProps) {
   const { t } = useI18n()
   const [input, setInput] = useState('')
@@ -347,7 +370,11 @@ export function AiPanel({
     attachScrollFadeRef.current = window.setTimeout(() => el.classList.remove('is-scrolling'), 800)
   }
   const [dragOver, setDragOver] = useState(false)
-  const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
+  // preferred = the user's chosen width (the only value persisted); panelWidth =
+  // what fits the current window. Deriving the display width from the preference
+  // means a transiently small window never permanently shrinks the panel.
+  const preferredWidthRef = useRef(loadPanelWidth())
+  const [panelWidth, setPanelWidth] = useState(() => clampPanelWidth(preferredWidthRef.current))
   const [resizing, setResizing] = useState(false)
   const asideRef = useRef<HTMLElement>(null)
 
@@ -359,14 +386,17 @@ export function AiPanel({
     dock?.style.setProperty('--ai-panel-width', `${panelWidth}px`)
   }, [panelWidth, open])
 
-  // Re-clamp the persisted width when the window shrinks (max is 60% of the window)
+  // Re-derive the display width on window resize (max is 60% of the window);
+  // growing the window back restores the preferred width
   useEffect(() => {
-    const onResize = () => setPanelWidth((w) => clampPanelWidth(w))
+    const onResize = () => setPanelWidth(clampPanelWidth(preferredWidthRef.current))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
   // bumped on selection/doc changes so the scope hint & quick actions stay fresh
   const [, setScopeTick] = useState(0)
+  /** the scope chip's expandable preview of the selected text */
+  const [scopePreviewOpen, setScopePreviewOpen] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   /** false once the user scrolls up to read; re-arms near the bottom */
@@ -396,6 +426,10 @@ export function AiPanel({
   }
   const trackChangesRef = useRef(trackChanges)
   trackChangesRef.current = trackChanges
+  const commentsAccessRef = useRef(commentsAccess)
+  commentsAccessRef.current = commentsAccess
+  const hfAccessRef = useRef(hfAccess)
+  hfAccessRef.current = hfAccess
 
   /** drop every aiChanged flag; silent = skip undo history (auto-accept path) */
   const clearAiHighlights = (silent = false) => {
@@ -544,20 +578,14 @@ export function AiPanel({
     })
     loopRef.current = new AgentLoop<PmNode>({
       transport: createElectronTransport(() => settingsRef.current),
-      systemSuffix: () => aiLangDirective() + HERMES_COMMANDS,
-      maxTurns: DOCS_AGENT_MAX_TURNS,
-      // Fork: stable per-document session id (project-store chatId = sha256 of file path).
-      // Sent as X-Hermes-Session-Id → the Hermes gateway keeps ONE session per document,
-      // so follow-up questions continue the same conversation instead of opening a new thread
-      // and re-reading the document from scratch.
-      sessionId: () => chatRefIds.current?.chatId,
+      systemSuffix: aiLangDirective,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(
           () => editorRef.current,
           numIds,
           () => (trackChangesRef.current ? { author: AI_REVISION_AUTHOR } : undefined),
-          // Fork: caminho do doc aberto — edição via MCP + auto-reload
-          () => filePath ?? '',
+          () => commentsAccessRef.current,
+          () => hfAccessRef.current,
         ),
         createFilesSkill(availableAttachments),
       ]),
@@ -642,14 +670,6 @@ export function AiPanel({
         onError: (error) => {
           setChat((prev) => {
             const next = [...prev]
-            // the loop rolled this run's user message out of the model context — surface that
-            for (let i = next.length - 1; i >= 0; i--) {
-              const entry = next[i]!
-              if (entry.role === 'user') {
-                next[i] = { ...entry, undelivered: true }
-                break
-              }
-            }
             const last = next.at(-1)
             if (last?.role === 'assistant') {
               next[next.length - 1] = {
@@ -663,12 +683,9 @@ export function AiPanel({
             return next
           })
           // Signed-out failures get an inline sign-in button; detected via
-          // gsk status rather than matching the localized error text. Only
-          // applies to the Hermes provider — the native Hermes provider
-          // never requires a Hermes login.
-          if (settingsRef.current.provider !== 'genspark') return
+          // gsk status rather than matching the localized error text
           void window.desktop
-            .aiGatewayStatus()
+            .aiGskStatus()
             .then((status) => {
               if (status.loggedIn) return
               setChat((prev) => {
@@ -699,7 +716,10 @@ export function AiPanel({
 
   // keep the scope hint & quick actions in sync with the editor selection
   useEffect(() => {
-    const bump = () => setScopeTick((t) => t + 1)
+    const bump = () => {
+      if (editor.state.selection.empty) setScopePreviewOpen(false)
+      setScopeTick((t) => t + 1)
+    }
     editor.on('selectionUpdate', bump)
     editor.on('update', bump)
     return () => {
@@ -707,6 +727,27 @@ export function AiPanel({
       editor.off('update', bump)
     }
   }, [editor])
+
+  // scope chip data, recomputed per render (the scope tick above keeps it fresh)
+  const liveSelection = editor.state.selection
+  const selectionText = liveSelection.empty
+    ? ''
+    : editor.state.doc.textBetween(liveSelection.from, liveSelection.to, '\n', ' ').trim()
+  const hasScopeSelection = selectionText.length > 0
+
+  /** the × on the scope chip: collapse the selection so the run targets the whole document */
+  const clearScopeSelection = () => {
+    editor.commands.setTextSelection(editor.state.selection.to)
+  }
+
+  /** [label](docnav://block/N) links in replies select and scroll to that block */
+  const docNav = {
+    scheme: DOC_NAV_SCHEME,
+    onNavigate: (href: string) => {
+      const index = parseDocNavHref(href)
+      if (index !== null) navigateToBlock(editorRef.current, index)
+    },
+  }
 
   // follow the stream, but stop yanking once the user scrolls up to read;
   // `open` dep: re-expanding lands on messages streamed while collapsed
@@ -796,6 +837,23 @@ export function AiPanel({
   }
 
   const cancel = () => loopRef.current?.cancel()
+
+  /** submit every still-anchored queued edit as one batch run */
+  const sendQueue = () => {
+    const loop = loopRef.current
+    if (!loop || loop.busy || editQueue.length === 0) return
+    const entries = liveItems(resolveQueue(editorRef.current, editQueue))
+    if (entries.length === 0) {
+      onQueueClear?.()
+      return
+    }
+    const instruction = buildQueueInstruction(entries)
+    const display = buildQueueSummary(t('aiQueueSubmitted', { count: entries.length }), entries)
+    // consumed at send: the run rewrites the anchored passages, which would
+    // orphan the anchors anyway; a failed run is retried via the retry action
+    onQueueConsume?.(editQueue.map((item) => item.qid))
+    runWith(instruction, display)
+  }
 
   const retry = () =>
     runWith(lastInstructionRef.current, lastInstructionRef.current, lastAttachmentsRef.current)
@@ -893,7 +951,9 @@ export function AiPanel({
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
-      setPanelWidth(clampPanelWidth(ev.clientX))
+      const w = clampPanelWidth(ev.clientX)
+      preferredWidthRef.current = w
+      setPanelWidth(w)
     }
     let done = false
     const cleanup = () => {
@@ -907,10 +967,7 @@ export function AiPanel({
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       setResizing(false)
-      setPanelWidth((w) => {
-        localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(w)))
-        return w
-      })
+      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(preferredWidthRef.current)))
     }
     resizeCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
@@ -924,8 +981,13 @@ export function AiPanel({
   // collapsed: rail only — after all hooks, so the instance and its state survive
   if (!open) {
     return (
-      <button className="ai-rail" title={t('appExpandAiPanel')} onClick={onExpand}>
-        <HermesMark size={22} />
+      <button
+        className="ai-rail"
+        data-tip={t('appExpandAiPanel')}
+        aria-label={t('appExpandAiPanel')}
+        onClick={onExpand}
+      >
+        <GensparkMark size={22} />
       </button>
     )
   }
@@ -956,17 +1018,27 @@ export function AiPanel({
       />
       <div className="ai-panel-header">
         <span className="ai-panel-title">
-          <HermesMark size={22} />
+          <GensparkMark size={22} />
           {t('aiPanelTitle')}
         </span>
         <div className="ai-panel-header-actions">
           {chat.length > 0 && (
-            <button className="ai-header-btn" onClick={newChat} title={t('aiNewChatTitle')}>
+            <button
+              className="ai-header-btn"
+              onClick={newChat}
+              data-tip={t('aiNewChatTitle')}
+              aria-label={t('aiNewChatTitle')}
+            >
               <IconNewChat size={16} />
             </button>
           )}
           {onCollapse && (
-            <button className="ai-header-btn" onClick={onCollapse} title={t('aiCollapseTitle')}>
+            <button
+              className="ai-header-btn"
+              onClick={onCollapse}
+              data-tip={t('aiCollapseTitle')}
+              aria-label={t('aiCollapseTitle')}
+            >
               <IconSidebarCollapse size={15} />
             </button>
           )}
@@ -983,12 +1055,7 @@ export function AiPanel({
                   <SentAttachments atts={entry.attachments} previews={attachmentPreviews} />
                 )}
                 {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && (
-                  <Markdown
-                    text={linkifyPaths(entry.text)}
-                    onLinkClick={(url) => void window.desktop.openPath(url)}
-                  />
-                )}
+                {entry.text && <Markdown text={entry.text} nav={docNav} />}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
@@ -1056,26 +1123,17 @@ export function AiPanel({
                   />
                 </span>
               ) : entry.role === 'assistant' ? (
-                <Markdown
-                  text={linkifyPaths(entry.text)}
-                  onLinkClick={(url) => void window.desktop.openPath(url)}
-                />
+                <Markdown text={entry.text} nav={docNav} />
               ) : (
                 entry.text
-              )}
-              {entry.role === 'user' && entry.undelivered && (
-                <div className="ai-msg-undelivered">{t('aiUndelivered')}</div>
               )}
               {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
               {entry.error && (
                 <div className="ai-msg-error">{t('aiErrorPrefix', { error: entry.error })}</div>
               )}
               {entry.loginRequired && (
-                <button
-                  className="ai-login-btn"
-                  onClick={() => void window.desktop.aiGatewayLogin()}
-                >
-                  {t('aiGatewayLoginBtn')}
+                <button className="ai-login-btn" onClick={() => void window.desktop.aiGskLogin()}>
+                  {t('aiGskLoginBtn')}
                 </button>
               )}
               {showToolbar && (
@@ -1161,66 +1219,118 @@ export function AiPanel({
 
       <div className="ai-composer">
         {attachNotice && <div className="ai-attach-notice">{attachNotice}</div>}
+        <EditQueueCard
+          items={editQueue}
+          editor={editor}
+          busy={busy}
+          onEditInstruction={(qid, text) => onQueueEditInstruction?.(qid, text)}
+          onRemove={(qid) => onQueueRemove?.(qid)}
+          onDiscardAll={() => onQueueClear?.()}
+          onSend={sendQueue}
+          onFocus={(qid) => onQueueFocus?.(qid)}
+        />
         <AiComposer
           header={
-            attachments.length > 0 && (
-              <div className="ai-attachments" onScroll={onAttachmentsScroll}>
-                {attachments.map((a) =>
-                  ATTACHMENT_IMAGE_EXTS.has(a.ext) ? (
-                    <span key={a.path} className="ai-attachment-thumb" title={a.path}>
-                      {attachmentPreviews[a.path] ? (
-                        <img src={attachmentPreviews[a.path]} alt={a.name} />
-                      ) : (
-                        <span className="ai-attachment-thumb-pending" aria-hidden>
-                          <img src={fileImageIcon} alt="" />
-                        </span>
-                      )}
+            (hasScopeSelection || attachments.length > 0) && (
+              <>
+                {hasScopeSelection && (
+                  <div className="ai-scope-row">
+                    <span className="ai-scope-hint">
                       <button
-                        className="ai-attachment-thumb-remove"
-                        onClick={() => removeAttachment(a.path)}
-                        title={t('aiRemoveAttachmentTitle')}
-                        aria-label={t('aiRemoveAttachmentTitle')}
+                        type="button"
+                        className="ai-scope-label"
+                        onClick={() => setScopePreviewOpen((v) => !v)}
+                        aria-expanded={scopePreviewOpen}
+                        data-tip={t('aiScopeSelectionTip')}
                       >
-                        <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                        {t('aiScopeSelection', { words: countWords(selectionText) })}
+                      </button>
+                      <button
+                        type="button"
+                        className="ai-scope-clear"
+                        onClick={clearScopeSelection}
+                        data-tip={t('aiScopeClearTitle')}
+                        aria-label={t('aiScopeClearTitle')}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 32 32" aria-hidden>
                           <path
                             d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
                             fill="currentColor"
-                            stroke="currentColor"
-                            strokeWidth="0.25"
                           />
                         </svg>
                       </button>
                     </span>
-                  ) : (
-                    <span key={a.path} className="ai-attachment-card" title={a.path}>
-                      <span className="ai-attachment-card-icon">
-                        <AttachmentCardIcon ext={a.ext} />
-                      </span>
-                      <span className="ai-attachment-card-meta">
-                        <span className="ai-attachment-card-name">{truncateCardName(a.name)}</span>
-                        <span className="ai-attachment-card-size">
-                          {formatAttachmentSize(a.sizeBytes)}
-                        </span>
-                      </span>
-                      <button
-                        className="ai-attachment-thumb-remove"
-                        onClick={() => removeAttachment(a.path)}
-                        title={t('aiRemoveAttachmentTitle')}
-                        aria-label={t('aiRemoveAttachmentTitle')}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
-                          <path
-                            d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
-                            fill="currentColor"
-                            stroke="currentColor"
-                            strokeWidth="0.25"
-                          />
-                        </svg>
-                      </button>
-                    </span>
-                  ),
+                    {scopePreviewOpen && (
+                      <div className="ai-scope-preview">
+                        {selectionText.length > 400
+                          ? `${selectionText.slice(0, 400)}…`
+                          : selectionText}
+                      </div>
+                    )}
+                  </div>
                 )}
-              </div>
+                {attachments.length > 0 && (
+                  <div className="ai-attachments" onScroll={onAttachmentsScroll}>
+                    {attachments.map((a) =>
+                      ATTACHMENT_IMAGE_EXTS.has(a.ext) ? (
+                        <span key={a.path} className="ai-attachment-thumb" data-tip={a.path}>
+                          {attachmentPreviews[a.path] ? (
+                            <img src={attachmentPreviews[a.path]} alt={a.name} />
+                          ) : (
+                            <span className="ai-attachment-thumb-pending" aria-hidden>
+                              <img src={fileImageIcon} alt="" />
+                            </span>
+                          )}
+                          <button
+                            className="ai-attachment-thumb-remove"
+                            onClick={() => removeAttachment(a.path)}
+                            data-tip={t('aiRemoveAttachmentTitle')}
+                            aria-label={t('aiRemoveAttachmentTitle')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                              <path
+                                d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
+                                fill="currentColor"
+                                stroke="currentColor"
+                                strokeWidth="0.25"
+                              />
+                            </svg>
+                          </button>
+                        </span>
+                      ) : (
+                        <span key={a.path} className="ai-attachment-card" data-tip={a.path}>
+                          <span className="ai-attachment-card-icon">
+                            <AttachmentCardIcon ext={a.ext} />
+                          </span>
+                          <span className="ai-attachment-card-meta">
+                            <span className="ai-attachment-card-name">
+                              {truncateCardName(a.name)}
+                            </span>
+                            <span className="ai-attachment-card-size">
+                              {formatAttachmentSize(a.sizeBytes)}
+                            </span>
+                          </span>
+                          <button
+                            className="ai-attachment-thumb-remove"
+                            onClick={() => removeAttachment(a.path)}
+                            data-tip={t('aiRemoveAttachmentTitle')}
+                            aria-label={t('aiRemoveAttachmentTitle')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                              <path
+                                d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
+                                fill="currentColor"
+                                stroke="currentColor"
+                                strokeWidth="0.25"
+                              />
+                            </svg>
+                          </button>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                )}
+              </>
             )
           }
           value={input}
@@ -1245,14 +1355,15 @@ export function AiPanel({
               <button
                 className="ai-attach-btn"
                 onClick={pickAttachments}
-                title={t('aiAttachTitle')}
+                data-tip={t('aiAttachTitle')}
+                aria-label={t('aiAttachTitle')}
               >
                 <img src={attachIcon} alt="" aria-hidden />
               </button>
               <button
                 className={`ai-track-btn${trackChanges ? ' on' : ''}`}
                 onClick={toggleTrackChanges}
-                title={trackChanges ? t('aiTrackOnTitle') : t('aiTrackOffTitle')}
+                data-tip={trackChanges ? t('aiTrackOnTitle') : t('aiTrackOffTitle')}
               >
                 <span className="ai-track-dot" aria-hidden />
                 {t('aiTrackChanges')}
@@ -1397,14 +1508,14 @@ function ToolChipList({ tools }: { tools: ToolActivity[] }) {
                     <button
                       type="button"
                       className="ai-step-title clickable"
-                      title={tool.name}
+                      data-tip={tool.name}
                       aria-expanded={isOpen}
                       onClick={() => toggle(j)}
                     >
                       {tool.summary}
                     </button>
                   ) : (
-                    <span className="ai-step-title" title={tool.name}>
+                    <span className="ai-step-title" data-tip={tool.name}>
                       {tool.summary}
                     </span>
                   )}
