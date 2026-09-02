@@ -34,7 +34,14 @@ export interface AgentImage {
 
 export type AgentMessage =
   | { role: 'user'; text: string; images?: AgentImage[] | undefined }
-  | { role: 'assistant'; text: string; toolCalls?: AgentToolCall[] | undefined }
+  /** reasoning: opaque vendor thinking captured during the turn; interleaved-thinking
+   * models (MiniMax M3, DeepSeek V4) degrade in tool loops unless it is echoed back */
+  | {
+      role: 'assistant'
+      text: string
+      toolCalls?: AgentToolCall[] | undefined
+      reasoning?: string | undefined
+    }
   | { role: 'tool'; results: AgentToolResult[] }
 
 /**
@@ -87,12 +94,17 @@ export interface AgentStreamRequest {
   system: string
   messages: AgentMessage[]
   tools: AgentToolDef[]
-  /** stable conversation id → forwarded as X-Hermes-Session-Id for gateway session continuity */
+  /**
+   * Fork: stable per-document session id forwarded as X-Hermes-Session-Id so the
+   * local Hermes gateway keeps one session per document (fix 70374e0).
+   */
   sessionId?: string
 }
 
 export interface AgentStreamCallbacks {
   onDelta(text: string): void
+  /** raw model reasoning delta; the loop stores it on the assistant message for interleaved-thinking echo */
+  onReasoning?(text: string): void
   /** complete parsed tool call (arguments finished streaming) */
   onToolCall(call: AgentToolCall): void
   /** Phase changes within the model stream (thinking / responding / tool-input); older transports may omit this */

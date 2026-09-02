@@ -11,8 +11,16 @@ import React, {
   useState,
   type ReactNode,
 } from 'react'
-import type { AnimEffectKind, AnimTrigger, TransitionKind } from '../../shared/ipc'
+import type { AnimEffectKind, GradientFillSpec, TransitionKind } from '../../shared/ipc'
 import type { ChartStyleInfo } from '@hermesoffice/pptx-render'
+import {
+  useDismissablePopover,
+  Dropdown,
+  THEME_COLORS,
+  THEME_COLOR_SHADES,
+  STANDARD_COLORS,
+} from '@hermesoffice/ui'
+import { getRecentColors, pushRecentColor } from '../recent-colors'
 import { ICON_COLORS } from '../insert-presets'
 import { THEME_PRESETS, type SlideThemePreset } from '../themes'
 import { restoreEditSelection } from '../TextEditOverlay'
@@ -31,6 +39,7 @@ import {
   IconNavPane,
   IconOutlineView,
   IconPageColor,
+  IconApplyAll,
   IconPageSize,
   IconPlayCurrent,
   IconPlayFromStart,
@@ -45,7 +54,7 @@ import {
   IconSetupShow,
   IconSparkle,
   IconUndo,
-  IconWholePage,
+  IconFitWindow,
   IconZoom100,
   IconZoomIn,
   IconZoomOut,
@@ -74,17 +83,29 @@ import {
   IconPathDiagonal,
   IconPathCircle,
   IconPathZigzag,
+  IconShapes,
+  IconShapeStyle,
+  IconFillColor,
 } from './icons'
 // brand-supplied Review AI icon art (44px = 22px @2x), color baked in
 import iconSpelling from '../assets/icon-spelling.png'
 import iconTranslate from '../assets/icon-translate.png'
 import iconTransparency from '../assets/icon-transparency.png'
+import texPaper from '../assets/textures/paper.png'
+import texCanvas from '../assets/textures/canvas.png'
+import texWood from '../assets/textures/wood.png'
+import texMarble from '../assets/textures/marble.png'
+import texGranite from '../assets/textures/granite.png'
+import texDenim from '../assets/textures/denim.png'
+import texCork from '../assets/textures/cork.png'
+import texParchment from '../assets/textures/parchment.png'
 import iconCrop from '../assets/icon-crop.png'
 import { ChartTypeDialog } from './ChartTypeDialog'
 import {
   BIG,
   Group,
   RbCaret,
+  RIBBON_SHAPE_STYLES,
   closeSiblingPanels,
   type Props,
   type RibbonPanelKey,
@@ -94,6 +115,8 @@ export type { FormatCmd, SlidesViewMode } from './ribbon-shared'
 import type { FormatCmd } from './ribbon-shared'
 import { RibbonHomeTab } from './RibbonHomeTab'
 import { RibbonInsertTab } from './RibbonInsertTab'
+import { ShapeGalleryContent } from './ShapeGalleryPopover'
+import { contextTabForElement, type ContextTab } from './context-tabs'
 
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 /** shell tab mode: the tab strip above owns traffic lights / caption buttons */
@@ -110,7 +133,6 @@ type MainTab =
   | 'slideShow'
   | 'review'
   | 'view'
-type ContextTab = 'tableDesign' | 'chartDesign' | 'pictureFormat'
 
 // Mac has no "File" tab (file operations go through the native menu), Windows does
 const TABS: readonly MainTab[] = IS_MAC
@@ -142,6 +164,7 @@ const TAB_LABEL: Record<MainTab | ContextTab, StringKey> = {
   tableDesign: 'ribbonTabTableDesign',
   chartDesign: 'ribbonTabChartDesign',
   pictureFormat: 'ribbonTabPictureFormat',
+  shapeFormat: 'ribbonTabShapeFormat',
 }
 
 // display names only — tp.name stays as written into theme*.xml
@@ -172,23 +195,6 @@ const TRANSLATE_TARGETS: StringKey[] = [
 
 /** One-time "AI rewrites the whole document" acknowledgement */
 const AI_REWRITE_ACK_KEY = 'slides-ai-rewrite-ack'
-
-/** Recently used custom font colors: persisted across sessions, newest first */
-const RECENT_TEXT_COLORS_KEY = 'slides-recent-text-colors'
-const RECENT_TEXT_COLORS_MAX = 5
-
-function loadRecentTextColors(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_TEXT_COLORS_KEY) ?? '[]')
-    return Array.isArray(raw)
-      ? raw
-          .filter((c): c is string => typeof c === 'string' && /^#[0-9A-F]{6}$/i.test(c))
-          .slice(0, RECENT_TEXT_COLORS_MAX)
-      : []
-  } catch {
-    return []
-  }
-}
 
 // Draw tab palettes/pen widths (same as apps/docs DrawTab)
 const INK_COLORS = [
@@ -471,7 +477,11 @@ const CHART_STYLE_PRESETS: ChartStylePreset[] = [
 function chartPresetActive(info: ChartStyleInfo | null | undefined, p: ChartStylePreset): boolean {
   if (!info) return false
   const s = p.style
-  const barKind = info.kind === 'bar' || info.kind === 'barStacked' || info.kind === 'comboBarLine'
+  const barKind =
+    info.kind === 'bar' ||
+    info.kind === 'bar3D' ||
+    info.kind === 'barStacked' ||
+    info.kind === 'comboBarLine'
   return (
     info.legendPos === s.legendPos &&
     info.dataLabels === s.dataLabels &&
@@ -506,7 +516,7 @@ function ChartStyleThumb({
   const family =
     kind === 'line' || kind === 'area' || kind === 'scatter' || kind === 'radar'
       ? 'line'
-      : kind === 'pie' || kind === 'doughnut'
+      : kind === 'pie' || kind === 'pie3D' || kind === 'doughnut'
         ? 'pie'
         : 'bar'
   if (style.gridlines && family !== 'pie') {
@@ -676,7 +686,6 @@ function DisabledBig({ icon, label }: { icon: ReactNode; label: string }) {
 /** per-tab priority for responsive collapse: when the ribbon
  * body overflows, these groups (in order) fold into a single dropdown button */
 const COLLAPSE_ORDER: Record<string, string[]> = {
-  home: ['slides'],
   animations: ['motionPaths', 'animation'],
 }
 
@@ -720,9 +729,352 @@ function RbCheck({
   )
 }
 
+/** Bundled seamless texture-fill presets (tiled at natural size when applied). */
+const FILL_TEXTURES: Array<{ url: string; tipKey: StringKey }> = [
+  { url: texPaper, tipKey: 'ribbonTexturePaper' },
+  { url: texCanvas, tipKey: 'ribbonTextureCanvas' },
+  { url: texWood, tipKey: 'ribbonTextureWood' },
+  { url: texMarble, tipKey: 'ribbonTextureMarble' },
+  { url: texGranite, tipKey: 'ribbonTextureGranite' },
+  { url: texDenim, tipKey: 'ribbonTextureDenim' },
+  { url: texCork, tipKey: 'ribbonTextureCork' },
+  { url: texParchment, tipKey: 'ribbonTextureParchment' },
+]
+
+/** Bundled asset → raw base64 (for shipping texture bytes over IPC). */
+async function urlToBase64(url: string): Promise<string> {
+  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
+/** Right-pointing chevron on the gradient/texture submenu rows. */
+/** Table border weight picker (the old <select> was uncontrolled; the picked value lives here). */
+function BorderWeightDropdown({
+  tip,
+  onPick,
+}: {
+  readonly tip?: string
+  readonly onPick: (pt: number) => void
+}) {
+  const [val, setVal] = useState('1')
+  return (
+    <Dropdown
+      className="rb-border-weight-dd"
+      value={val}
+      tip={tip}
+      options={['0.5', '1', '1.5', '2.25', '3'].map((v) => ({ value: v, label: `${v}pt` }))}
+      onPick={(v) => {
+        setVal(v)
+        onPick(Number(v))
+      }}
+    />
+  )
+}
+
+function RbSubCaret() {
+  return (
+    <svg
+      className="rbf-sub-caret"
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M9.25 5.5 15.75 12l-6.5 6.5"
+        stroke="currentColor"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** #RRGGBB blended toward `to` by t (0..1); gradient preset variants. */
+function mixHex(from: string, to: string, t: number): string {
+  const pf = parseInt(from.slice(1), 16)
+  const pt = parseInt(to.slice(1), 16)
+  const ch = (shift: number) => {
+    const a = (pf >> shift) & 255
+    const b = (pt >> shift) & 255
+    return Math.round(a + (b - a) * t)
+  }
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0').toUpperCase()}`
+}
+
+/**
+ * PowerPoint-style shape fill popup: no-fill, theme colors + shades, standard
+ * colors, recent colors, more-colors native picker, then picture / gradient
+ * variants / texture. Color sections reuse the shared picker's gcp-* styling
+ * (the popup root carries .gcp-palette); previews/values are document colors,
+ * set inline.
+ */
+function ShapeFillMenu({
+  currentFill,
+  onPickFill,
+  onPickImage,
+  onMoreGradient,
+  onClose,
+}: {
+  /** Selected shape's solid fill #RRGGBB, 'none' when the shape has no fill (null = non-solid) */
+  currentFill: string | null | undefined
+  onPickFill: (fill: string | GradientFillSpec) => void
+  onPickImage:
+    ((mode: 'stretch' | 'tile', source?: { base64: string; ext: string }) => void) | undefined
+  /** "More Gradients…": opens the format pane's gradient editor */
+  onMoreGradient: (() => void) | undefined
+  onClose: () => void
+}) {
+  const { t } = useI18n()
+  const recent = getRecentColors()
+  const isNoFill = currentFill === 'none'
+  const current = !currentFill || isNoFill ? null : currentFill.toUpperCase()
+  // Gradient/texture preset flyout: opens beside its row on hover, survives the
+  // pointer crossing the gap via a short close delay
+  const [flyout, setFlyout] = useState<{
+    kind: 'gradient' | 'texture'
+    x: number
+    y: number
+  } | null>(null)
+  const flyoutTimer = useRef<number | null>(null)
+  const cancelFlyoutClose = () => {
+    if (flyoutTimer.current) window.clearTimeout(flyoutTimer.current)
+    flyoutTimer.current = null
+  }
+  const scheduleFlyoutClose = () => {
+    cancelFlyoutClose()
+    flyoutTimer.current = window.setTimeout(() => setFlyout(null), 150)
+  }
+  const openFlyout = (kind: 'gradient' | 'texture', e: React.MouseEvent<HTMLElement>) => {
+    cancelFlyoutClose()
+    const r = e.currentTarget.getBoundingClientRect()
+    setFlyout({
+      kind,
+      x: Math.min(r.right + 4, window.innerWidth - 270),
+      y: Math.min(r.top - 8, window.innerHeight - (kind === 'texture' ? 160 : 190)),
+    })
+  }
+  useEffect(() => cancelFlyoutClose, [])
+  const pickHex = (hex: string) => {
+    onClose()
+    pushRecentColor(hex)
+    onPickFill(hex)
+  }
+  const swatch = (bare: string, title: string, key?: string) => (
+    <button
+      key={key ?? bare}
+      type="button"
+      className={`gcp-swatch ${current === `#${bare.toUpperCase()}` ? 'selected' : ''}`}
+      title={title}
+      style={{ background: `#${bare}` }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => pickHex(`#${bare}`)}
+    />
+  )
+  // Gradient variants: light/dark rows built from the shape's color (fallback: last used, then Office blue)
+  const base = current ?? recent[0] ?? '#4472C4'
+  const variants = [
+    { from: mixHex(base, '#FFFFFF', 0.7), to: base, tip: t('ribbonGradientLight') },
+    { from: base, to: mixHex(base, '#000000', 0.5), tip: t('ribbonGradientDark') },
+  ]
+  // OOXML angle (0°=left→right, 90°=top→bottom) with its CSS preview equivalent
+  const dirs: Array<{ angleDeg?: number; radial?: boolean; css: string; tip: string }> = [
+    { angleDeg: 90, css: 'linear-gradient(180deg', tip: t('ribbonGradientDirDown') },
+    { angleDeg: 0, css: 'linear-gradient(90deg', tip: t('ribbonGradientDirRight') },
+    { angleDeg: 45, css: 'linear-gradient(135deg', tip: t('ribbonGradientDirDiag') },
+    { radial: true, css: 'radial-gradient(circle', tip: t('ribbonGradientDirRadial') },
+  ]
+  return (
+    <div className="rb-drop gcp-palette rb-fill-menu" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className={`gcp-auto ${isNoFill ? 'selected' : ''}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          onClose()
+          onPickFill('none')
+        }}
+      >
+        {t('paneFormatNoFill')}
+      </button>
+      <div className="gcp-section-title">{t('ribbonThemeColorsSection')}</div>
+      <div className="gcp-theme-base">{THEME_COLORS.map((c) => swatch(c.hex, c.name))}</div>
+      <div className="gcp-theme-shades">
+        {THEME_COLOR_SHADES.flatMap((row, r) =>
+          row.map((hex, c) => swatch(hex, `#${hex}`, `${r}-${c}-${hex}`)),
+        )}
+      </div>
+      <div className="gcp-section-title">{t('ribbonStandardColors')}</div>
+      <div className="gcp-standard-row">{STANDARD_COLORS.map((c) => swatch(c.hex, c.name))}</div>
+      {recent.length > 0 && (
+        <>
+          <div className="gcp-section-title">{t('ribbonRecentColors')}</div>
+          <div className="gcp-standard-row">
+            {recent.map((hex, i) => swatch(hex.slice(1), hex, `recent-${i}-${hex}`))}
+          </div>
+        </>
+      )}
+      <div className="rbf-actions">
+        <label className="rbf-row">
+          {t('ribbonMoreFillColors')}
+          <input
+            type="color"
+            defaultValue={(current ?? '#ffffff').toLowerCase()}
+            onPointerDown={(e) => armColorInput(e.currentTarget)}
+            onChange={(e) => {
+              pushRecentColor(e.target.value)
+              onPickFill(e.target.value)
+            }}
+          />
+        </label>
+        {onPickImage && (
+          <button
+            type="button"
+            className="rbf-row"
+            onClick={() => {
+              onClose()
+              onPickImage('stretch')
+            }}
+          >
+            {t('ribbonFillPicture')}
+          </button>
+        )}
+        <button
+          type="button"
+          className="rbf-row rbf-row-sub"
+          onMouseEnter={(e) => openFlyout('gradient', e)}
+          onMouseLeave={scheduleFlyoutClose}
+          onClick={(e) => openFlyout('gradient', e)}
+        >
+          {t('paneFormatGradient')}
+          <RbSubCaret />
+        </button>
+        {onPickImage && (
+          <button
+            type="button"
+            className="rbf-row rbf-row-sub"
+            onMouseEnter={(e) => openFlyout('texture', e)}
+            onMouseLeave={scheduleFlyoutClose}
+            onClick={(e) => openFlyout('texture', e)}
+          >
+            {t('ribbonFillTexture')}
+            <RbSubCaret />
+          </button>
+        )}
+      </div>
+      {flyout && (
+        <div
+          className="rbf-flyout"
+          style={{ left: flyout.x, top: flyout.y }}
+          onMouseEnter={cancelFlyoutClose}
+          onMouseLeave={scheduleFlyoutClose}
+        >
+          {flyout.kind === 'gradient' ? (
+            <>
+              <div className="rbf-actions rbf-actions-top">
+                <button
+                  type="button"
+                  className="rbf-row"
+                  onClick={() => {
+                    onClose()
+                    onPickFill(base)
+                  }}
+                >
+                  {t('ribbonNoGradient')}
+                </button>
+              </div>
+              {variants.map((v, vi) => (
+                <React.Fragment key={vi}>
+                  <div className="gcp-section-title">{v.tip}</div>
+                  <div className="rbf-gradients">
+                    {dirs.map((d, di) => (
+                      <button
+                        key={`${vi}-${di}`}
+                        type="button"
+                        className="rbf-gradient-tile"
+                        title={d.tip}
+                        style={{ background: `${d.css}, ${v.from}, ${v.to})` }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          onClose()
+                          onPickFill({
+                            gradient: {
+                              from: v.from,
+                              to: v.to,
+                              ...(d.radial ? { radial: true } : { angleDeg: d.angleDeg! }),
+                            },
+                          })
+                        }}
+                      />
+                    ))}
+                  </div>
+                </React.Fragment>
+              ))}
+              {onMoreGradient && (
+                <div className="rbf-actions">
+                  <button
+                    type="button"
+                    className="rbf-row"
+                    onClick={() => {
+                      onClose()
+                      onMoreGradient()
+                    }}
+                  >
+                    {t('ribbonGradientMore')}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="rbf-textures">
+                {FILL_TEXTURES.map((tex) => (
+                  <button
+                    key={tex.tipKey}
+                    type="button"
+                    className="rbf-texture-tile"
+                    title={t(tex.tipKey)}
+                    style={{ backgroundImage: `url(${tex.url})`, backgroundSize: '64px 64px' }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onClose()
+                      void urlToBase64(tex.url).then((base64) =>
+                        onPickImage?.('tile', { base64, ext: 'png' }),
+                      )
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="rbf-actions">
+                <button
+                  type="button"
+                  className="rbf-row"
+                  onClick={() => {
+                    onClose()
+                    onPickImage?.('tile')
+                  }}
+                >
+                  {t('ribbonTextureMore')}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Ribbon({
   hasDoc,
   deckEmpty,
+  canUndo,
+  canRedo,
   dirty,
   editing,
   autoSave,
@@ -743,10 +1095,11 @@ export function Ribbon({
   aiOpen,
   onToggleAi,
   onAiPreset,
+  onAskSelection,
   onInsert,
   onPickShape,
   onInsertImage,
-  onBackground,
+  onFormatBackground,
   onApplyTheme,
   onAddSlide,
   onAddSlideWithLayout,
@@ -768,12 +1121,14 @@ export function Ribbon({
   onTextColor,
   curBulletChar,
   curAlign,
+  curRtl,
   curFontFamily,
   curFontSizePt,
   curFontSizeMixed,
   onFontFamily,
   onFontSize,
   onAlign,
+  onDirection,
   onStrike,
   onTextToggle,
   onElementTextColor,
@@ -839,7 +1194,6 @@ export function Ribbon({
   onInsertZoom,
   slideCount,
   currentSlide,
-  currentBgColor,
   onOpenHeaderFooter,
   onOpenEquation,
   onInsertMedia,
@@ -854,6 +1208,11 @@ export function Ribbon({
   contextPictureCanCutout,
   contextPictureStroke,
   onPictureStroke,
+  onChangeShape,
+  onShapeStyle,
+  onShapeFill,
+  onShapeFillImage,
+  contextShapeFill,
   onPictureCrop,
   cropActive,
   onPictureOpacity,
@@ -868,17 +1227,9 @@ export function Ribbon({
   canDistribute,
 }: Props) {
   const { t } = useI18n()
-  // Contextual tabs: table → table design; chart → chart design (imported charts auto-convert
-  // on first edit); picture/shape → picture tools (shapes share the tab: outline applies,
-  // picture-only tools disable)
-  const contextTab: ContextTab | null =
-    contextElementType === 'table'
-      ? 'tableDesign'
-      : contextElementType === 'chart'
-        ? 'chartDesign'
-        : contextElementType === 'picture' || contextElementType === 'shape'
-          ? 'pictureFormat'
-          : null
+  // Shapes get their own format tab; text-bearing shapes do not auto-activate it
+  // (users are usually after Home's text controls when selecting them).
+  const contextTab = contextTabForElement(contextElementType ?? null)
 
   const [tab, setTab] = useState<MainTab | ContextTab>('home')
   const [fileOpen, setFileOpen] = useState(false)
@@ -891,6 +1242,9 @@ export function Ribbon({
   const [slideSizeOpen, setSlideSizeOpen] = useState(false)
   const [transparencyOpen, setTransparencyOpen] = useState(false)
   const [pictureBorderOpen, setPictureBorderOpen] = useState(false)
+  const [changeShapeOpen, setChangeShapeOpen] = useState(false)
+  const [shapeStyleOpen, setShapeStyleOpen] = useState(false)
+  const [shapeFillOpen, setShapeFillOpen] = useState(false)
   // Debounced picture-border commit: color drags fire repeatedly, and a pending
   // color commit must not clobber a width click landing meanwhile
   const pictureBorderTimer = useRef<number | null>(null)
@@ -923,8 +1277,6 @@ export function Ribbon({
   const [sizeDraft, setSizeDraft] = useState<string | null>(null)
   // Font-family combobox draft: free-typed names cover weight variants absent from the list
   const [fontDraft, setFontDraft] = useState<string | null>(null)
-  // Custom font colors picked via the native picker, persisted for reuse
-  const [recentColors, setRecentColors] = useState<string[]>(loadRecentTextColors)
   const [tableOpen, setTableOpen] = useState(false)
   const [tableHover, setTableHover] = useState({ r: 0, c: 0 })
   const [tableCustom, setTableCustom] = useState({ r: 8, c: 5 })
@@ -969,6 +1321,9 @@ export function Ribbon({
     if (!keep.includes('slideSize')) setSlideSizeOpen(false)
     if (!keep.includes('transparency')) setTransparencyOpen(false)
     if (!keep.includes('pictureBorder')) setPictureBorderOpen(false)
+    if (!keep.includes('changeShape')) setChangeShapeOpen(false)
+    if (!keep.includes('shapeStyle')) setShapeStyleOpen(false)
+    if (!keep.includes('shapeFill')) setShapeFillOpen(false)
     if (!keep.includes('table')) setTableOpen(false)
     if (!keep.includes('layout')) setLayoutOpen(false)
     if (!keep.includes('translate')) setTranslateOpen(false)
@@ -980,59 +1335,46 @@ export function Ribbon({
     if (!keep.includes('slideShow')) setSlideShowOpen(false)
   }, [])
 
-  // Clicking elsewhere collapses the table picker (the font color palette uses onMouseDown without stealing focus, collapsing naturally when the edit commits)
-  useEffect(() => {
-    if (
-      !tableOpen &&
-      !colorOpen &&
-      !translateOpen &&
-      !insertDrop &&
-      !fontOpen &&
-      !sizeOpen &&
-      !layoutOpen &&
-      !chartDrop &&
-      !arrangeOpen &&
-      !slideShowOpen &&
-      !paraOpen
-    )
-      return
-    const close = () => {
-      setTableOpen(false)
-      setColorOpen(false)
-      setTranslateOpen(false)
-      setInsertDrop(null)
-      setFontOpen(false)
-      setSizeOpen(false)
-      setLayoutOpen(false)
-      setChartDrop(null)
-      setArrangeOpen(false)
-      setSlideShowOpen(false)
-      setParaOpen(false)
-      setCollapseOpen(null)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [
-    tableOpen,
-    colorOpen,
-    translateOpen,
-    insertDrop,
-    fontOpen,
-    sizeOpen,
-    layoutOpen,
-    chartDrop,
-    arrangeOpen,
-    slideShowOpen,
-    paraOpen,
-    collapseOpen,
-  ])
+  // Any ribbon popup open? Drives outside-press dismissal AND suspends the
+  // ribbon-tabs window drag region (drag regions swallow mousedown, so a
+  // press there could never dismiss otherwise)
+  const anyPanelOpen =
+    tableOpen ||
+    colorOpen ||
+    translateOpen ||
+    insertDrop != null ||
+    fontOpen ||
+    sizeOpen ||
+    layoutOpen ||
+    chartDrop != null ||
+    arrangeOpen ||
+    slideShowOpen ||
+    paraOpen ||
+    pictureBorderOpen ||
+    changeShapeOpen ||
+    shapeStyleOpen ||
+    shapeFillOpen ||
+    layoutPickOpen ||
+    slideSizeOpen ||
+    transparencyOpen ||
+    lineSpacingOpen ||
+    collapseOpen != null
 
-  // ── Responsive collapse: when the ribbon body overflows,
-  // whole groups fold into a single dropdown button (flyout = original controls).
-  // Groups collapse in COLLAPSE_ORDER; they expand back when their measured
-  // inline width fits again.
+  // Clicking elsewhere collapses every popup (the font color palette uses
+  // onMouseDown without stealing focus, collapsing naturally when the edit
+  // commits). The shared installer covers outside mousedown, window blur and
+  // the shell app:chrome-pressed relay; panels survive via stopPropagation.
+  useDismissablePopover(anyPanelOpen, closePanels)
+
+  // ── Responsive collapse (PowerPoint model): the collapsed set is a pure
+  // function of the current width, never of resize history — pick the fewest
+  // COLLAPSE_ORDER groups whose folding lets the full inline layout fit.
+  // Expanded/collapsed widths are cached per group so the required width is
+  // computable in every state (before the first fold the collapsed width is
+  // an estimate, corrected by measurement as soon as the group first folds).
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const inlineWidthsRef = useRef(new Map<string, number>())
+  const collapsedWidthsRef = useRef(new Map<string, number>())
   useLayoutEffect(() => {
     setCollapsedGroups([])
     setCollapseOpen(null)
@@ -1041,42 +1383,67 @@ export function Ribbon({
     const el = bodyRef.current
     if (!el) return
     const order = COLLAPSE_ORDER[tab] ?? []
+    if (!order.length) return
     const evaluate = () => {
-      const slack = el.clientWidth - el.scrollWidth
-      if (slack < 0) {
-        setCollapsedGroups((cur) => {
-          const next = order.find((g) => !cur.includes(g))
-          if (!next) return cur
-          const groupEl = el.querySelector<HTMLElement>(`[data-rbgroup="${next}"]`)
-          if (groupEl) inlineWidthsRef.current.set(next, groupEl.offsetWidth)
-          return [...cur, next]
-        })
-      } else {
-        setCollapsedGroups((cur) => {
-          if (!cur.length) return cur
-          const last = cur[cur.length - 1]!
-          const collapsedW =
-            el.querySelector<HTMLElement>(`[data-rbgroup="${last}"]`)?.offsetWidth ?? 60
-          const needed = (inlineWidthsRef.current.get(last) ?? 240) - collapsedW
-          // 16px hysteresis so a borderline width doesn't oscillate
-          if (slack > needed + 16) return cur.slice(0, -1)
-          return cur
-        })
+      const kids = Array.from(el.children) as HTMLElement[]
+      if (!kids.length) return
+      const first = kids[0]!
+      const last = kids[kids.length - 1]!
+      let fullWidth = last.offsetLeft + last.offsetWidth - first.offsetLeft
+      // refresh width caches and normalize the measured extent to "all expanded"
+      const saving = (g: string) =>
+        Math.max(
+          0,
+          (inlineWidthsRef.current.get(g) ?? 240) - (collapsedWidthsRef.current.get(g) ?? 68),
+        )
+      for (const g of order) {
+        const groupEl = el.querySelector<HTMLElement>(`[data-rbgroup="${g}"]`)
+        if (!groupEl) continue
+        if (collapsedGroups.includes(g)) {
+          collapsedWidthsRef.current.set(g, groupEl.offsetWidth)
+          fullWidth += saving(g)
+        } else {
+          inlineWidthsRef.current.set(g, groupEl.offsetWidth)
+        }
       }
+      // fewest folded groups whose savings make the layout fit `avail`
+      const fitCount = (avail: number) => {
+        let need = fullWidth
+        let k = 0
+        while (k < order.length && need > avail) {
+          need -= saving(order[k]!)
+          k++
+        }
+        return k
+      }
+      const mustCollapse = fitCount(el.clientWidth)
+      // integer offset* measurements make the normalized width jitter by a
+      // couple of px — demand a little real slack before unfolding so a
+      // borderline width can't oscillate
+      const next =
+        mustCollapse >= collapsedGroups.length
+          ? mustCollapse
+          : Math.min(Math.max(fitCount(el.clientWidth - 8), mustCollapse), collapsedGroups.length)
+      if (next !== collapsedGroups.length) setCollapsedGroups(order.slice(0, next))
     }
     evaluate()
     const ro = new ResizeObserver(evaluate)
     ro.observe(el)
+    // group contents can change width without the body resizing (font loads,
+    // locale, contextual controls) — watch every group as well
+    el.querySelectorAll<HTMLElement>('.ribbon-group').forEach((g) => ro.observe(g))
     return () => ro.disconnect()
   }, [tab, collapsedGroups])
 
-  // Contextual tab auto-switch: jump in when it appears, back to "Home" when it disappears
+  // Contextual tab auto-switch: selecting an object jumps to its format tab
+  // (shapes included, text-bearing or not); deselecting falls back to Home.
   const prevContextTab = useRef<ContextTab | null>(null)
   useEffect(() => {
-    if (contextTab && contextTab !== prevContextTab.current) {
+    const previousContextTab = prevContextTab.current
+    if (contextTab && contextTab !== previousContextTab) {
       setTab(contextTab)
-    } else if (!contextTab && prevContextTab.current) {
-      setTab((cur) => (cur === prevContextTab.current ? 'home' : cur))
+    } else if (!contextTab && previousContextTab) {
+      setTab((cur) => (cur === previousContextTab ? 'home' : cur))
     }
     prevContextTab.current = contextTab
   }, [contextTab])
@@ -1114,21 +1481,6 @@ export function Ribbon({
       )}
     </div>
   )
-  // Background color: the debounced picker only changes the current page; "apply to all" uses the most recently picked color
-  const bgInputRef = useRef<HTMLInputElement>(null)
-  const bgTimer = useRef<number | null>(null)
-  const [bgColor, setBgColor] = useState('#ffffff')
-  // Follow the current slide so the swatch and "apply to all" never fall back to a stale default white
-  useEffect(() => {
-    const hex = toPickerHex(currentBgColor)
-    if (hex) setBgColor(hex)
-  }, [currentBgColor])
-  const onBgChange = (value: string) => {
-    setBgColor(value)
-    if (bgTimer.current) window.clearTimeout(bgTimer.current)
-    bgTimer.current = window.setTimeout(() => onBackground(value, false), 200)
-  }
-
   // Apply a typed font size: any positive value, 0.5pt steps, clamped to 1-999.
   // While text-editing, restore the selection saved when the input took focus so the size applies
   // to the selection instead of element-level
@@ -1149,8 +1501,8 @@ export function Ribbon({
   }
 
   // Custom font color via the native picker: debounced (the picker fires onChange
-  // continuously while dragging), recorded into the recent-colors row. The picker steals focus,
-  // so while editing the saved selection is restored before each apply
+  // continuously while dragging). The picker steals focus, so while editing the
+  // saved selection is restored before each apply
   const customColorTimer = useRef<number | null>(null)
   const onCustomTextColor = (value: string) => {
     const hex = value.toUpperCase()
@@ -1161,15 +1513,6 @@ export function Ribbon({
         restoreEditSelection()
         onTextColor(hex)
       } else onElementTextColor(hex)
-      setRecentColors((prev) => {
-        const next = [hex, ...prev.filter((c) => c !== hex)].slice(0, RECENT_TEXT_COLORS_MAX)
-        try {
-          localStorage.setItem(RECENT_TEXT_COLORS_KEY, JSON.stringify(next))
-        } catch {
-          /* persistence is best-effort */
-        }
-        return next
-      })
     }, 200)
   }
 
@@ -1232,6 +1575,7 @@ export function Ribbon({
     closePanels,
     curBulletChar,
     curAlign,
+    curRtl,
     curFontFamily,
     curFontSizeMixed,
     curFontSizePt,
@@ -1249,7 +1593,9 @@ export function Ribbon({
     onAddSlide,
     onAddSlideWithLayout,
     onAiPreset,
+    onAskSelection,
     onAlign,
+    onDirection,
     onArrange,
     onFlip,
     onCopy,
@@ -1311,7 +1657,6 @@ export function Ribbon({
     onCustomBulletColor,
     onCustomTextColor,
     paraOpen,
-    recentColors,
     setArrangeOpen,
     setCollapseOpen,
     setColorOpen,
@@ -1343,7 +1688,9 @@ export function Ribbon({
   return (
     <div className="ribbon">
       <div
-        className={`ribbon-tabs ${IN_TAB ? '' : IS_MAC ? 'ribbon-tabs-mac' : 'ribbon-tabs-win'}`}
+        className={`ribbon-tabs ${IN_TAB ? '' : IS_MAC ? 'ribbon-tabs-mac' : 'ribbon-tabs-win'}${
+          anyPanelOpen ? ' ribbon-tabs-nodrag' : ''
+        }`}
       >
         {!IS_MAC && (
           <div className="file-tab-wrap">
@@ -1431,7 +1778,7 @@ export function Ribbon({
           className="qa-btn"
           data-tip={t('ribbonUndo')}
           aria-label={t('ribbonUndo')}
-          disabled={!hasDoc}
+          disabled={!hasDoc || (!canUndo && !editing)}
           onMouseDown={(e) => {
             e.preventDefault()
             onUndo()
@@ -1446,7 +1793,7 @@ export function Ribbon({
           className="qa-btn"
           data-tip={t('ribbonRedo')}
           aria-label={t('ribbonRedo')}
-          disabled={!hasDoc}
+          disabled={!hasDoc || (!canRedo && !editing)}
           onMouseDown={(e) => {
             e.preventDefault()
             onRedo()
@@ -1701,43 +2048,13 @@ export function Ribbon({
               <button
                 className="rb-big"
                 disabled={!hasDoc}
-                onClick={() => {
-                  const el = bgInputRef.current
-                  if (!el) return
-                  armColorInput(el)
-                  el.click()
-                }}
-                data-tip={t('ribbonBgFillTip')}
-              >
-                <span className="rb-big-icon rb-big-icon-colored">
-                  <IconPageColor size={BIG} />
-                  <span className="rb-color-bar" style={{ background: bgColor }} />
-                </span>
-                <span>{t('ribbonBgFill')}</span>
-                <input
-                  ref={bgInputRef}
-                  type="color"
-                  value={bgColor}
-                  onChange={(e) => onBgChange(e.target.value)}
-                  style={{
-                    position: 'absolute',
-                    width: 0,
-                    height: 0,
-                    opacity: 0,
-                    pointerEvents: 'none',
-                  }}
-                />
-              </button>
-              <button
-                className="rb-big"
-                disabled={!hasDoc}
-                onClick={() => onBackground(bgColor, true)}
-                data-tip={t('ribbonBgApplyAllTip', { color: bgColor })}
+                onClick={onFormatBackground}
+                data-tip={t('ribbonFormatBackgroundTip')}
               >
                 <span className="rb-big-icon">
-                  <IconPageSize size={BIG} />
+                  <IconPageColor size={BIG} />
                 </span>
-                <span>{t('ribbonApplyToAll')}</span>
+                <span>{t('ribbonFormatBackground')}</span>
               </button>
             </Group>
             <div className="ribbon-sep" />
@@ -1812,7 +2129,7 @@ export function Ribbon({
                 data-tip={t('ribbonTransApplyAllTip')}
               >
                 <span className="rb-big-icon">
-                  <IconPageSize size={BIG} />
+                  <IconApplyAll size={BIG} />
                 </span>
                 <span>{t('ribbonApplyToAll')}</span>
               </button>
@@ -1981,16 +2298,19 @@ export function Ribbon({
               <div className="rb-anim-timing">
                 <label>
                   {t('ribbonAnimStart')}
-                  <select
+                  <Dropdown
                     disabled={!timingAnim}
                     value={timingAnim?.trigger ?? 'onClick'}
-                    onChange={(e) => onAnimTiming({ trigger: e.target.value as AnimTrigger })}
-                    data-tip={t('ribbonAnimTriggerTip')}
-                  >
-                    <option value="onClick">{t('ribbonAnimOnClick')}</option>
-                    <option value="withPrev">{t('ribbonAnimWithPrev')}</option>
-                    <option value="afterPrev">{t('ribbonAnimAfterPrev')}</option>
-                  </select>
+                    tip={t('ribbonAnimTriggerTip')}
+                    options={(
+                      [
+                        ['onClick', t('ribbonAnimOnClick')],
+                        ['withPrev', t('ribbonAnimWithPrev')],
+                        ['afterPrev', t('ribbonAnimAfterPrev')],
+                      ] as const
+                    ).map(([k, label]) => ({ value: k, label }))}
+                    onPick={(trigger) => onAnimTiming({ trigger })}
+                  />
                 </label>
                 <label>
                   {t('ribbonAnimDuration')}
@@ -2262,7 +2582,7 @@ export function Ribbon({
             </Group>
             <div className="ribbon-sep" />
             <Group label={t('ribbonGroupShow')}>
-              <div className="rb-col rb-check-col">
+              <div className="rb-check-grid">
                 <RbCheck
                   label={t('ribbonRuler')}
                   on={showRuler}
@@ -2284,8 +2604,6 @@ export function Ribbon({
                   title={t('ribbonGuidesTip')}
                   onClick={onToggleGuides}
                 />
-              </div>
-              <div className="rb-col rb-check-col">
                 <RbCheck
                   label={t('ribbonNotes')}
                   on={showNotes}
@@ -2332,7 +2650,7 @@ export function Ribbon({
                 data-tip={t('ribbonFitWindowTip')}
               >
                 <span className="rb-big-icon">
-                  <IconWholePage size={BIG} />
+                  <IconFitWindow size={BIG} />
                 </span>
                 <span>{t('ribbonFitWindow')}</span>
               </button>
@@ -2371,6 +2689,13 @@ export function Ribbon({
                 disabled={!onEditTableStyle}
                 onClick={() => onEditTableStyle?.({ bandRow: true })}
                 offClick={() => onEditTableStyle?.({ bandRow: false })}
+              />
+              <TableToggleBtn
+                label={t('ribbonTableRtl')}
+                on={tableStyleFlags?.rtl ?? false}
+                disabled={!onEditTableStyle}
+                onClick={() => onEditTableStyle?.({ rtl: true })}
+                offClick={() => onEditTableStyle?.({ rtl: false })}
               />
             </Group>
             <div className="ribbon-sep" />
@@ -2450,18 +2775,10 @@ export function Ribbon({
                   onChange={(e) => onEditTableStyle?.({ borderColor: e.target.value })}
                 />
                 <span className="rb-label">{t('ribbonBorderWeightLabel')}</span>
-                <select
-                  className="rb-select-sm"
-                  defaultValue="1"
-                  data-tip={t('ribbonBorderWeightTip')}
-                  onChange={(e) => onEditTableStyle?.({ borderWidthPt: Number(e.target.value) })}
-                >
-                  <option value="0.5">0.5pt</option>
-                  <option value="1">1pt</option>
-                  <option value="1.5">1.5pt</option>
-                  <option value="2.25">2.25pt</option>
-                  <option value="3">3pt</option>
-                </select>
+                <BorderWeightDropdown
+                  tip={t('ribbonBorderWeightTip')}
+                  onPick={(pt) => onEditTableStyle?.({ borderWidthPt: pt })}
+                />
               </div>
             </Group>
           </>
@@ -2838,6 +3155,213 @@ export function Ribbon({
                 </span>
                 <span>{t('ribbonCrop')}</span>
               </button>
+            </Group>
+          </>
+        ) : tab === 'shapeFormat' ? (
+          <>
+            <Group label={t('ribbonShapes')}>
+              <div className="rb-drop-wrap">
+                <button
+                  className={`rb-big ${changeShapeOpen ? 'active' : ''}`}
+                  disabled={!onChangeShape}
+                  data-tip={t('ribbonChangeShape')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    closeSiblingPanels(e, closePanels, 'changeShape')
+                  }}
+                  onClick={() => setChangeShapeOpen((v) => !v)}
+                >
+                  <span className="rb-big-icon">
+                    <IconShapes size={BIG} />
+                    <RbCaret />
+                  </span>
+                  <span>{t('ribbonChangeShape')}</span>
+                </button>
+                {changeShapeOpen && (
+                  <div className="rb-drop" onMouseDown={(e) => e.stopPropagation()}>
+                    <ShapeGalleryContent
+                      onPick={(prst) => {
+                        setChangeShapeOpen(false)
+                        onChangeShape?.(prst)
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </Group>
+            <div className="ribbon-sep" />
+            <Group label={t('ribbonGroupShapeStyle')}>
+              <div className="rb-drop-wrap">
+                <button
+                  className={`rb-big ${shapeStyleOpen ? 'active' : ''}`}
+                  disabled={!onShapeStyle}
+                  data-tip={t('ribbonShapeStyleTip')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    closeSiblingPanels(e, closePanels, 'shapeStyle')
+                  }}
+                  onClick={() => setShapeStyleOpen((v) => !v)}
+                >
+                  <span className="rb-big-icon">
+                    <IconShapeStyle size={BIG} />
+                    <RbCaret />
+                  </span>
+                  <span>{t('ribbonGroupShapeStyle')}</span>
+                </button>
+                {shapeStyleOpen && (
+                  <div
+                    className="rb-drop rb-menu ctx-style-grid"
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    {RIBBON_SHAPE_STYLES.map((s, si) => (
+                      <button
+                        key={si}
+                        className="ctx-style-cell"
+                        style={{
+                          background: s.fill,
+                          borderColor: s.stroke,
+                          borderStyle: s.dash ? 'dashed' : 'solid',
+                        }}
+                        aria-label={`${s.fill} / ${s.stroke}${s.dash ? ` (${s.dash})` : ''}`}
+                        onClick={() => {
+                          setShapeStyleOpen(false)
+                          onShapeStyle?.(s)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Group>
+            <div className="ribbon-sep" />
+            <Group label={t('paneFormatFill')}>
+              <div className="rb-drop-wrap">
+                <button
+                  className={`rb-big ${shapeFillOpen ? 'active' : ''}`}
+                  disabled={!onShapeFill}
+                  data-tip={t('paneFormatFill')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    closeSiblingPanels(e, closePanels, 'shapeFill')
+                  }}
+                  onClick={() => setShapeFillOpen((v) => !v)}
+                >
+                  <span className="rb-big-icon">
+                    <IconFillColor size={BIG} />
+                    <RbCaret />
+                  </span>
+                  <span>{t('paneFormatFill')}</span>
+                </button>
+                {shapeFillOpen && (
+                  <ShapeFillMenu
+                    currentFill={contextShapeFill ?? null}
+                    onPickFill={(fill) => onShapeFill?.(fill)}
+                    onPickImage={onShapeFillImage}
+                    onMoreGradient={() => {
+                      if (!formatOpen) onToggleFormat()
+                    }}
+                    onClose={() => setShapeFillOpen(false)}
+                  />
+                )}
+              </div>
+            </Group>
+            <div className="ribbon-sep" />
+            <Group label={t('paneFormatOutline')}>
+              <div className="rb-drop-wrap">
+                <button
+                  className={`rb-big ${pictureBorderOpen ? 'active' : ''}`}
+                  disabled={!onPictureStroke}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    closeSiblingPanels(e, closePanels, 'pictureBorder')
+                  }}
+                  onClick={() => {
+                    pictureBorderDraft.current = null
+                    setPictureBorderOpen((v) => !v)
+                  }}
+                  data-tip={t('paneFormatOutline')}
+                >
+                  <span className="rb-big-icon">
+                    <IconPageBorders size={BIG} />
+                    <RbCaret />
+                  </span>
+                  <span>{t('paneFormatOutline')}</span>
+                </button>
+                {pictureBorderOpen && (
+                  <div className="rb-drop rb-menu" onMouseDown={(e) => e.stopPropagation()}>
+                    <label className="rb-menu-input">
+                      {t('paneFormatOutlineColor')}
+                      <input
+                        type="color"
+                        defaultValue={toPickerHex(contextPictureStroke?.color) ?? '#000000'}
+                        onPointerDown={(e) => armColorInput(e.currentTarget)}
+                        onChange={(e) => commitPictureBorder({ color: e.target.value })}
+                      />
+                    </label>
+                    <div className="rb-menu-sep" />
+                    {[0.5, 1, 1.5, 2.25, 3, 4.5, 6].map((pt) => (
+                      <button
+                        key={pt}
+                        className={contextPictureStroke?.widthPt === pt ? 'active' : ''}
+                        onClick={() => {
+                          setPictureBorderOpen(false)
+                          commitPictureBorder({ widthPt: pt }, true)
+                        }}
+                      >
+                        {pt} pt
+                      </button>
+                    ))}
+                    <div className="rb-menu-sep" />
+                    {(
+                      [
+                        ['solid', t('ribbonLineSolid')],
+                        ['dash', t('ribbonLineDash')],
+                        ['sysDot', t('ribbonLineDot')],
+                        ['dashDot', t('ribbonLineDashDot')],
+                      ] as const
+                    ).map(([dash, label]) => (
+                      <button
+                        key={dash}
+                        className={
+                          contextPictureStroke &&
+                          (dash === 'solid'
+                            ? !contextPictureStroke.dashPreset
+                            : contextPictureStroke.dashPreset === dash)
+                            ? 'active'
+                            : ''
+                        }
+                        onClick={() => {
+                          setPictureBorderOpen(false)
+                          onPictureStroke?.({
+                            color: toPickerHex(contextPictureStroke?.color) ?? '#000000',
+                            widthPt: contextPictureStroke?.widthPt ?? 1,
+                            dash,
+                          })
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <div className="rb-menu-sep" />
+                    <button
+                      className={!contextPictureStroke ? 'active' : ''}
+                      onClick={() => {
+                        setPictureBorderOpen(false)
+                        // A pending debounced color commit still holds the prior draft
+                        // in its closure and would re-apply the border after the clear
+                        if (pictureBorderTimer.current) {
+                          window.clearTimeout(pictureBorderTimer.current)
+                          pictureBorderTimer.current = null
+                        }
+                        pictureBorderDraft.current = null
+                        onPictureStroke?.(null)
+                      }}
+                    >
+                      {t('paneFormatNoOutline')}
+                    </button>
+                  </div>
+                )}
+              </div>
             </Group>
           </>
         ) : null}

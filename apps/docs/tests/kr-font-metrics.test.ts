@@ -9,10 +9,44 @@ import { describe, expect, it } from 'vitest'
 import { advanceEm, readWoff2 } from './helpers/woff2-metrics'
 
 const FONTS = join(__dirname, '../src/renderer/fonts')
-const sans = readWoff2(join(FONTS, 'GenOfficeSansKR-Regular-subset.woff2'))
-const serif = readWoff2(join(FONTS, 'GenOfficeSerifKR-Regular-subset.woff2'))
+const sans = readWoff2(join(FONTS, 'HermesOfficeSansKR-Regular-subset.woff2'))
+const serif = readWoff2(join(FONTS, 'HermesOfficeSerifKR-Regular-subset.woff2'))
 
-describe('GenOffice Sans KR (Malgun-normalized)', () => {
+const PRIMARY_NAME_IDS = new Set([1, 2, 3, 4, 6, 16, 17, 18, 20, 21, 22, 25])
+
+function decodeUtf16Be(value: Buffer): string {
+  const swapped = Buffer.alloc(value.length)
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    swapped[i] = value[i + 1]
+    swapped[i + 1] = value[i]
+  }
+  return swapped.toString('utf16le')
+}
+
+function primaryFontNames(font: ReturnType<typeof readWoff2>): Array<{
+  nameId: number
+  value: string
+}> {
+  const table = font.tables.get('name')
+  if (!table) throw new Error('font has no name table')
+  const count = table.readUInt16BE(2)
+  const storageOffset = table.readUInt16BE(4)
+  const names = []
+  for (let i = 0; i < count; i++) {
+    const recordOffset = 6 + i * 12
+    const platformId = table.readUInt16BE(recordOffset)
+    const nameId = table.readUInt16BE(recordOffset + 6)
+    if (!PRIMARY_NAME_IDS.has(nameId)) continue
+    const length = table.readUInt16BE(recordOffset + 8)
+    const offset = table.readUInt16BE(recordOffset + 10)
+    const raw = table.subarray(storageOffset + offset, storageOffset + offset + length)
+    const value = platformId === 0 || platformId === 3 ? decodeUtf16Be(raw) : raw.toString('latin1')
+    names.push({ nameId, value })
+  }
+  return names
+}
+
+describe('HermesOffice Sans KR (Malgun-normalized)', () => {
   it('hangul syllables and compatibility jamo stay 1.0em', () => {
     for (const cp of [0xac00, 0xae4e, 0xd558, 0x3131]) {
       expect(advanceEm(sans, cp), `U+${cp.toString(16)}`).toBe(1)
@@ -54,7 +88,7 @@ describe('GenOffice Sans KR (Malgun-normalized)', () => {
   })
 })
 
-describe('GenOffice Serif KR (Batang-normalized)', () => {
+describe('HermesOffice Serif KR (Batang-normalized)', () => {
   it('hangul 1.0em, digits 0.596em, space 0.333em', () => {
     expect(advanceEm(serif, 0xac00)).toBe(1)
     expect(advanceEm(serif, 0x3131)).toBe(1)
@@ -62,6 +96,52 @@ describe('GenOffice Serif KR (Batang-normalized)', () => {
     for (let cp = 0x30; cp <= 0x39; cp++) {
       expect(advanceEm(serif, cp), `digit ${cp - 0x30}`).toBeCloseTo(0.596, 3)
     }
+  })
+
+  it('letters carry Batang advances (probe 2026-08-24: Word renders real Batang)', () => {
+    const expected: Record<string, number> = { M: 0.895, W: 0.945, A: 0.736, o: 0.583 }
+    for (const [ch, adv] of Object.entries(expected)) {
+      expect(advanceEm(serif, ch.codePointAt(0)!), ch).toBeCloseTo(adv, 3)
+    }
+  })
+})
+
+describe('HermesOffice Che Latin KR (fixed-pitch half-width)', () => {
+  const che = readWoff2(join(FONTS, 'HermesOfficeCheLatinKR.woff2'))
+
+  it('every printable ASCII advance is exactly 0.5em (probe 2026-08-24: real -Che faces)', () => {
+    for (let cp = 0x20; cp <= 0x7e; cp++) {
+      expect(advanceEm(che, cp), `U+${cp.toString(16)}`).toBeCloseTo(0.5, 3)
+    }
+  })
+})
+
+describe('HermesOffice Gothic KR (real source metrics, unmodified)', () => {
+  const gothicKr = readWoff2(join(FONTS, 'HermesOfficeGothicKR-Regular-subset.woff2'))
+
+  it('keeps the M3 probe truth: hangul 0.94em, space 0.28em, digits 0.606em', () => {
+    for (const cp of [0xac00, 0xd55c, 0xae00]) {
+      expect(advanceEm(gothicKr, cp), `U+${cp.toString(16)}`).toBeCloseTo(0.94, 3)
+    }
+    expect(advanceEm(gothicKr, 0x20)).toBeCloseTo(0.28, 3)
+    for (let cp = 0x30; cp <= 0x39; cp++) {
+      expect(advanceEm(gothicKr, cp), `digit ${cp - 0x30}`).toBeCloseTo(0.606, 3)
+    }
+  })
+
+  it('covers KS X 1001 syllables and Basic Latin', () => {
+    expect(advanceEm(gothicKr, 0xd558)).toBeCloseTo(0.94, 3)
+    expect(advanceEm(gothicKr, 0x41)).toBeGreaterThan(0)
+  })
+
+  it('keeps every primary font identifier clear of Reserved Font Names', () => {
+    const names = primaryFontNames(gothicKr)
+    expect(names.length).toBeGreaterThan(0)
+    for (const { nameId, value } of names) {
+      expect(value, `name ID ${nameId}`).not.toMatch(/nanum/i)
+    }
+    expect(names).toContainEqual({ nameId: 1, value: 'HermesOffice Gothic KR' })
+    expect(names).toContainEqual({ nameId: 6, value: 'HermesOfficeGothicKR-Regular' })
   })
 })
 

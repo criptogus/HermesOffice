@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
 import {
   existsSync,
   mkdirSync,
@@ -7,26 +6,38 @@ import {
   readFileSync,
   statSync,
   unlinkSync,
-  watch,
   writeFileSync,
-  type FSWatcher,
 } from 'node:fs'
-import { copyFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
-import { BrowserWindow, Menu, WebContentsView, app, dialog, ipcMain, shell } from 'electron'
+import { copyFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import {
+  BrowserWindow,
+  Menu,
+  WebContentsView,
+  app,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  net,
+  shell,
+} from 'electron'
 import {
   appMenuLabels,
+  buildPrintableHtml,
   configuredDefaultSaveDir,
   contextMenuLabels,
   fetchRemoteImage,
   installContextMenu,
   installNavigationGuard,
+  printHtmlToPdf,
   safeExternalUrl,
   showOpenDialogWithMemory,
   showSaveDialogWithMemory,
   toggleDevToolsItem,
   windowMenuTemplate,
 } from '@hermesoffice/electron-utils'
+import { configureMetricsCache, familyVerticalMetrics } from '@hermesoffice/font-metrics'
 import { createI18n, getUiLang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
 import { ProjectStore } from '@hermesoffice/project-store'
 import type {
@@ -40,9 +51,14 @@ import { parseFileToText } from '@hermesoffice/file-parse'
 import {
   AiCreditsError,
   AiTimeoutError,
+  isAiNetworkError,
+  isAiOverloadedError,
   chatForProvider,
   defaultAiSettings,
+  activeProvider,
+  cloudToolsEnabled,
   resolveAiSettings,
+  setRescueFetch,
   streamForProvider,
   type AiChatRequest,
   type AiSettings,
@@ -54,23 +70,46 @@ import {
 import {
   ensureGenofficeLogin,
   gskApiKey,
+  gskGenerateImage,
   gskLoginInfo,
   hasGskAuth,
   webSearch,
   imageSearch,
 } from '@hermesoffice/ai-search'
 import type {
+  AiDocContent,
   AttachmentAddResult,
   AttachmentImageResult,
   AttachmentMeta,
   AttachmentReadResult,
+  CreateDocumentRequest,
+  CreateDocumentResult,
+  DecryptOpenResult,
   DocsTabInfo,
   MenuCommand,
-  OpenFileResult,
+  OpenDocxResult,
 } from '../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../shared/ipc'
 import { findDocxPath } from '../shared/open-file'
 import { atomicWriteFile, looksLikeZip } from './atomic-write'
+import {
+  commitDocPasswordSave,
+  currentDocPasswordIntentRevision,
+  decryptDocx,
+  decryptRecoveryCopy,
+  discardDocPasswordIntents,
+  DocxDecryptError,
+  docPasswordFor,
+  encryptDocx,
+  forgetDocPasswords,
+  isEncryptedDocx,
+  markDiskEncrypted,
+  prepareRecoveryDocx,
+  rememberDocPassword,
+  renameDocPassword,
+  setDocPassword,
+  snapshotDocPassword,
+} from './docx-encryption'
 import { isExternallyModified, type DiskFileState } from './external-change'
 import { initDocsAutoUpdater } from './updater'
 
@@ -119,6 +158,7 @@ const tMain = createI18n({
     errNotImage: '不是支持的图片类型',
     errGskNotLoggedIn: '未登录 Genspark:请点击下方「登录 Genspark」完成登录后重试',
     errNoApiKey: '未配置 {provider} 的 API Key',
+    errAiBusy: 'AI 服务当前繁忙，请稍后重试',
     errNoModel: '未配置模型名称',
     menuFile: '文件',
     menuNewDoc: '新建文档',
@@ -170,10 +210,10 @@ const tMain = createI18n({
     menuParagraph: '段落…',
     menuTools: '工具',
     menuWordCount: '字数统计…',
-    menuSpelling: '拼写和语法检查',
-    menuMacros: '宏',
+    menuAiProofread: 'AI 校对',
     menuWindow: '窗口',
     menuHelp: '帮助',
+    menuShortcuts: '键盘快捷键',
     menuDocsHelp: 'HermesOffice Docs 帮助',
   },
   en: {
@@ -213,6 +253,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Not signed in to Genspark: click “Sign in to Genspark” below, sign in, then retry',
     errNoApiKey: 'No API key configured for {provider}',
+    errAiBusy: 'The AI service is busy right now — please try again in a moment',
     errNoModel: 'No model name configured',
     menuFile: 'File',
     menuNewDoc: 'New Document',
@@ -264,10 +305,10 @@ const tMain = createI18n({
     menuParagraph: 'Paragraph…',
     menuTools: 'Tools',
     menuWordCount: 'Word Count…',
-    menuSpelling: 'Spelling and Grammar',
-    menuMacros: 'Macros',
+    menuAiProofread: 'AI Proofread',
     menuWindow: 'Window',
     menuHelp: 'Help',
+    menuShortcuts: 'Keyboard Shortcuts',
     menuDocsHelp: 'HermesOffice Docs Help',
   },
   ja: {
@@ -307,6 +348,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Genspark にサインインしていません。下の「Genspark にサインイン」からサインインして再試行してください',
     errNoApiKey: '{provider} の API キーが設定されていません',
+    errAiBusy: 'AI サービスが混み合っています。しばらくしてからもう一度お試しください',
     errNoModel: 'モデル名が設定されていません',
     menuFile: 'ファイル',
     menuNewDoc: '新規文書',
@@ -358,10 +400,10 @@ const tMain = createI18n({
     menuParagraph: '段落…',
     menuTools: 'ツール',
     menuWordCount: '文字カウント…',
-    menuSpelling: 'スペルチェックと文章校正',
-    menuMacros: 'マクロ',
+    menuAiProofread: 'AI 校正',
     menuWindow: 'ウィンドウ',
     menuHelp: 'ヘルプ',
+    menuShortcuts: 'キーボードショートカット',
     menuDocsHelp: 'HermesOffice Docs ヘルプ',
   },
   ko: {
@@ -402,6 +444,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Genspark에 로그인되어 있지 않습니다. 아래 "Genspark 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
     errNoApiKey: '{provider}의 API 키가 설정되지 않았습니다',
+    errAiBusy: 'AI 서비스가 혼잡합니다. 잠시 후 다시 시도해 주세요',
     errNoModel: '모델 이름이 설정되지 않았습니다',
     menuFile: '파일',
     menuNewDoc: '새 문서',
@@ -453,10 +496,10 @@ const tMain = createI18n({
     menuParagraph: '단락…',
     menuTools: '도구',
     menuWordCount: '단어 개수…',
-    menuSpelling: '맞춤법 및 문법 검사',
-    menuMacros: '매크로',
+    menuAiProofread: 'AI 교정',
     menuWindow: '창',
     menuHelp: '도움말',
+    menuShortcuts: '키보드 바로 가기',
     menuDocsHelp: 'HermesOffice Docs 도움말',
   },
   fr: {
@@ -498,6 +541,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Non connecté à Genspark : cliquez sur « Se connecter à Genspark » ci-dessous, connectez-vous puis réessayez',
     errNoApiKey: 'Aucune clé API configurée pour {provider}',
+    errAiBusy: "Le service d'IA est actuellement surchargé — réessayez dans un instant",
     errNoModel: 'Aucun nom de modèle configuré',
     menuFile: 'Fichier',
     menuNewDoc: 'Nouveau document',
@@ -549,10 +593,10 @@ const tMain = createI18n({
     menuParagraph: 'Paragraphe…',
     menuTools: 'Outils',
     menuWordCount: 'Statistiques…',
-    menuSpelling: 'Grammaire et orthographe',
-    menuMacros: 'Macros',
+    menuAiProofread: 'Relecture IA',
     menuWindow: 'Fenêtre',
     menuHelp: 'Aide',
+    menuShortcuts: 'Raccourcis clavier',
     menuDocsHelp: 'Aide HermesOffice Docs',
   },
   de: {
@@ -594,6 +638,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Nicht bei Genspark angemeldet: Klicken Sie unten auf „Bei Genspark anmelden“, melden Sie sich an und versuchen Sie es erneut',
     errNoApiKey: 'Kein API-Schlüssel für {provider} konfiguriert',
+    errAiBusy: 'Der KI-Dienst ist derzeit überlastet — bitte gleich erneut versuchen',
     errNoModel: 'Kein Modellname konfiguriert',
     menuFile: 'Datei',
     menuNewDoc: 'Neues Dokument',
@@ -645,10 +690,10 @@ const tMain = createI18n({
     menuParagraph: 'Absatz…',
     menuTools: 'Extras',
     menuWordCount: 'Wörter zählen…',
-    menuSpelling: 'Rechtschreibung und Grammatik',
-    menuMacros: 'Makros',
+    menuAiProofread: 'KI-Korrektur',
     menuWindow: 'Fenster',
     menuHelp: 'Hilfe',
+    menuShortcuts: 'Tastenkombinationen',
     menuDocsHelp: 'HermesOffice Docs-Hilfe',
   },
   es: {
@@ -689,6 +734,8 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'No has iniciado sesión en Genspark: pulsa «Iniciar sesión en Genspark» abajo, inicia sesión y vuelve a intentarlo',
     errNoApiKey: 'No hay clave de API configurada para {provider}',
+    errAiBusy:
+      'El servicio de IA está saturado en este momento; inténtalo de nuevo en unos instantes',
     errNoModel: 'No se ha configurado el nombre del modelo',
     menuFile: 'Archivo',
     menuNewDoc: 'Nuevo documento',
@@ -740,10 +787,10 @@ const tMain = createI18n({
     menuParagraph: 'Párrafo…',
     menuTools: 'Herramientas',
     menuWordCount: 'Contar palabras…',
-    menuSpelling: 'Ortografía y gramática',
-    menuMacros: 'Macros',
+    menuAiProofread: 'Corrección con IA',
     menuWindow: 'Ventana',
     menuHelp: 'Ayuda',
+    menuShortcuts: 'Atajos de teclado',
     menuDocsHelp: 'Ayuda de HermesOffice Docs',
   },
   th: {
@@ -783,6 +830,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'ยังไม่ได้ลงชื่อเข้าใช้ Genspark: แตะ “ลงชื่อเข้าใช้ Genspark” ด้านล่าง แล้วลองอีกครั้ง',
     errNoApiKey: 'ยังไม่ได้ตั้งค่า API Key ของ {provider}',
+    errAiBusy: 'บริการ AI มีผู้ใช้งานจำนวนมากในขณะนี้ โปรดลองอีกครั้งในอีกสักครู่',
     errNoModel: 'ยังไม่ได้ตั้งค่าชื่อโมเดล',
     menuFile: 'ไฟล์',
     menuNewDoc: 'เอกสารใหม่',
@@ -834,10 +882,10 @@ const tMain = createI18n({
     menuParagraph: 'ย่อหน้า…',
     menuTools: 'เครื่องมือ',
     menuWordCount: 'นับจำนวนคำ…',
-    menuSpelling: 'การสะกดและไวยากรณ์',
-    menuMacros: 'แมโคร',
+    menuAiProofread: 'พิสูจน์อักษรด้วย AI',
     menuWindow: 'หน้าต่าง',
     menuHelp: 'วิธีใช้',
+    menuShortcuts: 'แป้นพิมพ์ลัด',
     menuDocsHelp: 'วิธีใช้ HermesOffice Docs',
   },
   id: {
@@ -877,6 +925,7 @@ const tMain = createI18n({
     errNotImage: 'bukan jenis gambar yang didukung',
     errGskNotLoggedIn: 'Belum masuk ke Genspark: klik “Masuk ke Genspark” di bawah, lalu coba lagi',
     errNoApiKey: 'API Key untuk {provider} belum dikonfigurasi',
+    errAiBusy: 'Layanan AI sedang sibuk — silakan coba lagi sebentar lagi',
     errNoModel: 'Nama model belum dikonfigurasi',
     menuFile: 'File',
     menuNewDoc: 'Dokumen Baru',
@@ -928,10 +977,10 @@ const tMain = createI18n({
     menuParagraph: 'Paragraf…',
     menuTools: 'Alat',
     menuWordCount: 'Hitungan Kata…',
-    menuSpelling: 'Ejaan dan Tata Bahasa',
-    menuMacros: 'Makro',
+    menuAiProofread: 'Koreksi AI',
     menuWindow: 'Jendela',
     menuHelp: 'Bantuan',
+    menuShortcuts: 'Pintasan Papan Ketik',
     menuDocsHelp: 'Bantuan HermesOffice Docs',
   },
   ru: {
@@ -972,6 +1021,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Вы не вошли в Genspark: нажмите «Войти в Genspark» ниже, войдите и повторите попытку',
     errNoApiKey: 'API-ключ для {provider} не настроен',
+    errAiBusy: 'Сервис ИИ сейчас перегружен — повторите попытку чуть позже',
     errNoModel: 'Не указано имя модели',
     menuFile: 'Файл',
     menuNewDoc: 'Создать документ',
@@ -1023,10 +1073,10 @@ const tMain = createI18n({
     menuParagraph: 'Абзац…',
     menuTools: 'Сервис',
     menuWordCount: 'Статистика…',
-    menuSpelling: 'Правописание',
-    menuMacros: 'Макросы',
+    menuAiProofread: 'ИИ-корректура',
     menuWindow: 'Окно',
     menuHelp: 'Справка',
+    menuShortcuts: 'Сочетания клавиш',
     menuDocsHelp: 'Справка HermesOffice Docs',
   },
   ar: {
@@ -1067,6 +1117,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'لم تسجّل الدخول إلى Genspark: انقر على «تسجيل الدخول إلى Genspark» أدناه ثم أعد المحاولة',
     errNoApiKey: 'لم يتم تكوين مفتاح API لـ {provider}',
+    errAiBusy: 'خدمة الذكاء الاصطناعي مشغولة حاليًا — يرجى المحاولة مرة أخرى بعد قليل',
     errNoModel: 'لم يتم تكوين اسم النموذج',
     menuFile: 'ملف',
     menuNewDoc: 'مستند جديد',
@@ -1118,10 +1169,10 @@ const tMain = createI18n({
     menuParagraph: 'فقرة…',
     menuTools: 'أدوات',
     menuWordCount: 'عدد الكلمات…',
-    menuSpelling: 'تدقيق إملائي ونحوي',
-    menuMacros: 'وحدات الماكرو',
+    menuAiProofread: 'تدقيق بالذكاء الاصطناعي',
     menuWindow: 'نافذة',
     menuHelp: 'تعليمات',
+    menuShortcuts: 'اختصارات لوحة المفاتيح',
     menuDocsHelp: 'تعليمات HermesOffice Docs',
   },
   pt: {
@@ -1162,6 +1213,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Não conectado ao Genspark: clique em “Entrar no Genspark” abaixo, entre e tente novamente',
     errNoApiKey: 'Nenhuma chave de API configurada para {provider}',
+    errAiBusy: 'O serviço de IA está sobrecarregado no momento — tente novamente em instantes',
     errNoModel: 'Nenhum nome de modelo configurado',
     menuFile: 'Arquivo',
     menuNewDoc: 'Novo Documento',
@@ -1213,10 +1265,10 @@ const tMain = createI18n({
     menuParagraph: 'Parágrafo…',
     menuTools: 'Ferramentas',
     menuWordCount: 'Contagem de Palavras…',
-    menuSpelling: 'Ortografia e Gramática',
-    menuMacros: 'Macros',
+    menuAiProofread: 'Revisão com IA',
     menuWindow: 'Janela',
     menuHelp: 'Ajuda',
+    menuShortcuts: 'Atalhos de Teclado',
     menuDocsHelp: 'Ajuda do HermesOffice Docs',
   },
   it: {
@@ -1257,6 +1309,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Accesso a Genspark non effettuato: fai clic su “Accedi a Genspark” qui sotto, accedi e riprova',
     errNoApiKey: 'Nessuna chiave API configurata per {provider}',
+    errAiBusy: 'Il servizio IA è momentaneamente sovraccarico — riprova tra poco',
     errNoModel: 'Nessun nome di modello configurato',
     menuFile: 'File',
     menuNewDoc: 'Nuovo documento',
@@ -1308,10 +1361,10 @@ const tMain = createI18n({
     menuParagraph: 'Paragrafo…',
     menuTools: 'Strumenti',
     menuWordCount: 'Conteggio parole…',
-    menuSpelling: 'Ortografia e grammatica',
-    menuMacros: 'Macro',
+    menuAiProofread: 'Correzione IA',
     menuWindow: 'Finestra',
     menuHelp: 'Aiuto',
+    menuShortcuts: 'Scelte rapide da tastiera',
     menuDocsHelp: 'Guida di HermesOffice Docs',
   },
   pl: {
@@ -1352,6 +1405,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Nie zalogowano do Genspark: kliknij „Zaloguj się do Genspark” poniżej, zaloguj się i spróbuj ponownie',
     errNoApiKey: 'Nie skonfigurowano klucza API dla {provider}',
+    errAiBusy: 'Usługa AI jest obecnie przeciążona — spróbuj ponownie za chwilę',
     errNoModel: 'Nie skonfigurowano nazwy modelu',
     menuFile: 'Plik',
     menuNewDoc: 'Nowy dokument',
@@ -1403,10 +1457,10 @@ const tMain = createI18n({
     menuParagraph: 'Akapit…',
     menuTools: 'Narzędzia',
     menuWordCount: 'Statystyka wyrazów…',
-    menuSpelling: 'Pisownia i gramatyka',
-    menuMacros: 'Makra',
+    menuAiProofread: 'Korekta AI',
     menuWindow: 'Okno',
     menuHelp: 'Pomoc',
+    menuShortcuts: 'Skróty klawiaturowe',
     menuDocsHelp: 'Pomoc HermesOffice Docs',
   },
   nl: {
@@ -1447,6 +1501,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Niet aangemeld bij Genspark: klik hieronder op “Aanmelden bij Genspark”, meld u aan en probeer het opnieuw',
     errNoApiKey: 'Geen API-sleutel geconfigureerd voor {provider}',
+    errAiBusy: 'De AI-service is momenteel overbelast — probeer het zo opnieuw',
     errNoModel: 'Geen modelnaam geconfigureerd',
     menuFile: 'Bestand',
     menuNewDoc: 'Nieuw document',
@@ -1498,10 +1553,10 @@ const tMain = createI18n({
     menuParagraph: 'Alinea…',
     menuTools: 'Extra',
     menuWordCount: 'Woorden tellen…',
-    menuSpelling: 'Spelling en grammatica',
-    menuMacros: "Macro's",
+    menuAiProofread: 'AI-proeflezen',
     menuWindow: 'Venster',
     menuHelp: 'Help',
+    menuShortcuts: 'Sneltoetsen',
     menuDocsHelp: 'HermesOffice Docs Help',
   },
   ms: {
@@ -1542,6 +1597,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Belum log masuk ke Genspark: klik “Log masuk ke Genspark” di bawah, kemudian cuba lagi',
     errNoApiKey: 'Kunci API untuk {provider} belum dikonfigurasikan',
+    errAiBusy: 'Perkhidmatan AI sedang sibuk — sila cuba lagi sebentar lagi',
     errNoModel: 'Nama model belum dikonfigurasikan',
     menuFile: 'Fail',
     menuNewDoc: 'Dokumen Baharu',
@@ -1593,10 +1649,10 @@ const tMain = createI18n({
     menuParagraph: 'Perenggan…',
     menuTools: 'Alat',
     menuWordCount: 'Kiraan Perkataan…',
-    menuSpelling: 'Ejaan dan Tatabahasa',
-    menuMacros: 'Makro',
+    menuAiProofread: 'Pembacaan Pruf AI',
     menuWindow: 'Tetingkap',
     menuHelp: 'Bantuan',
+    menuShortcuts: 'Pintasan Papan Kekunci',
     menuDocsHelp: 'Bantuan HermesOffice Docs',
   },
   he: {
@@ -1635,6 +1691,7 @@ const tMain = createI18n({
     errNotImage: 'סוג תמונה שאינו נתמך',
     errGskNotLoggedIn: 'לא מחובר ל-Genspark: לחץ על "התחבר ל-Genspark" למטה, התחבר ונסה שוב',
     errNoApiKey: 'לא הוגדר מפתח API עבור {provider}',
+    errAiBusy: 'שירות ה-AI עמוס כרגע — נסו שוב בעוד רגע',
     errNoModel: 'לא הוגדר שם מודל',
     menuFile: 'קובץ',
     menuNewDoc: 'מסמך חדש',
@@ -1686,10 +1743,10 @@ const tMain = createI18n({
     menuParagraph: 'פסקה…',
     menuTools: 'כלים',
     menuWordCount: 'ספירת מילים…',
-    menuSpelling: 'איות ודקדוק',
-    menuMacros: 'פקודות מאקרו',
+    menuAiProofread: 'הגהת AI',
     menuWindow: 'חלון',
     menuHelp: 'עזרה',
+    menuShortcuts: 'קיצורי מקלדת',
     menuDocsHelp: 'עזרה של HermesOffice Docs',
   },
   hi: {
@@ -1730,6 +1787,7 @@ const tMain = createI18n({
     errGskNotLoggedIn:
       'Genspark में साइन इन नहीं है: नीचे “Genspark में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
     errNoApiKey: '{provider} के लिए कोई API कुंजी कॉन्फ़िगर नहीं है',
+    errAiBusy: 'AI सेवा अभी व्यस्त है — कृपया थोड़ी देर बाद फिर से प्रयास करें',
     errNoModel: 'कोई मॉडल नाम कॉन्फ़िगर नहीं है',
     menuFile: 'फ़ाइल',
     menuNewDoc: 'नया दस्तावेज़',
@@ -1781,10 +1839,10 @@ const tMain = createI18n({
     menuParagraph: 'अनुच्छेद…',
     menuTools: 'उपकरण',
     menuWordCount: 'शब्द गणना…',
-    menuSpelling: 'वर्तनी और व्याकरण',
-    menuMacros: 'मैक्रो',
+    menuAiProofread: 'AI प्रूफ़रीडिंग',
     menuWindow: 'विंडो',
     menuHelp: 'सहायता',
+    menuShortcuts: 'कीबोर्ड शॉर्टकट',
     menuDocsHelp: 'HermesOffice Docs सहायता',
   },
   'zh-TW': {
@@ -1822,6 +1880,7 @@ const tMain = createI18n({
     errNotImage: '不是支援的圖片類型',
     errGskNotLoggedIn: '未登入 Genspark:請點擊下方「登入 Genspark」完成登入後重試',
     errNoApiKey: '未設定 {provider} 的 API Key',
+    errAiBusy: 'AI 服務目前繁忙，請稍後重試',
     errNoModel: '未設定模型名稱',
     menuFile: '檔案',
     menuNewDoc: '新增文件',
@@ -1873,10 +1932,10 @@ const tMain = createI18n({
     menuParagraph: '段落…',
     menuTools: '工具',
     menuWordCount: '字數統計…',
-    menuSpelling: '拼字及文法檢查',
-    menuMacros: '巨集',
+    menuAiProofread: 'AI 校對',
     menuWindow: '視窗',
     menuHelp: '說明',
+    menuShortcuts: '鍵盤快速鍵',
     menuDocsHelp: 'HermesOffice Docs 說明',
   },
 })
@@ -1919,6 +1978,14 @@ const pendingNewBlankIds = new Set<number>()
 /** mark a docs webContents as "open blank on first consume" (called by the shell for home:new-doc) */
 export function markDocsNewBlank(wcId: number): void {
   pendingNewBlankIds.add(wcId)
+}
+
+/** AI-authored content waiting for its create_document tab, keyed by webContents id */
+const pendingAiDocContents = new Map<number, AiDocContent>()
+
+/** queue AI content for a fresh blank docs tab (called by the shell right after creating the view) */
+export function queueDocsAiContent(wcId: number, content: AiDocContent): void {
+  pendingAiDocContents.set(wcId, content)
 }
 
 /** the single real BrowserWindow hosting the tab strip, used as dialog parent in tab mode */
@@ -2054,6 +2121,9 @@ export function docsFileRenamed(wc: WebContents, oldPath: string, newPath: strin
     states.delete(oldPath)
     states.set(newPath, recorded)
   }
+  // an encrypted document's password must follow the path, or the next save
+  // finds no password under the new name and silently writes plaintext
+  renameDocPassword(wc.id, oldPath, newPath)
   wc.send('docs:renamed', { oldPath, newPath })
 }
 
@@ -2162,7 +2232,7 @@ function allowPdfWrite(wcId: number, filePath: string): void {
 // Fidelity-harness escape hatch: headless runs have no save dialog to authorize
 // paths, so an explicitly configured directory (set only by our test scripts)
 // is treated as pre-authorized for PDF export.
-const testExportDir = process.env.GENOFFICE_TEST_EXPORT_DIR || null
+const testExportDir = process.env.HERMESOFFICE_TEST_EXPORT_DIR || null
 
 function canPdfWrite(wcId: number, filePath: string): boolean {
   if (testExportDir && filePath.startsWith(testExportDir + '/')) return true
@@ -2218,7 +2288,6 @@ async function diskChangedExternally(wcId: number, filePath: string): Promise<bo
  * its 30s recovery loop resurrects content the user already discarded. */
 export function teardownDocsRenderer(contents: WebContents): void {
   tornDownWcIds.add(contents.id)
-  stopTrackingDocx(contents.id)
   // Sweep recovery copies for this renderer's documents: every non-crash close
   // either saved (docs:save already cleared it) or explicitly discarded, so a
   // copy still on disk here is a leftover from an in-flight recovery write.
@@ -2228,6 +2297,7 @@ export function teardownDocsRenderer(contents: WebContents): void {
   docWritablePaths.delete(contents.id)
   pdfWritablePaths.delete(contents.id)
   docDiskStates.delete(contents.id)
+  forgetDocPasswords(contents.id)
   if (!contents.isDestroyed()) contents.send('docs:teardown')
 }
 
@@ -2250,21 +2320,30 @@ function clearRecoveryCopy(filePath: string): void {
   }
 }
 
+interface MaybeRecoveredDocBytes {
+  bytes: Buffer
+  recovered: boolean
+}
+
 /** On open, if a recovery copy newer than the original exists, ask whether to restore
  * (still points at the original path; only save persists it). */
-async function maybeRecoverDocBytes(filePath: string, original: Buffer): Promise<Buffer> {
+async function maybeRecoverDocBytes(
+  filePath: string,
+  original: Buffer,
+): Promise<MaybeRecoveredDocBytes> {
   const asPath = recoveryPathFor(filePath)
   try {
-    if (!existsSync(asPath)) return original
+    if (!existsSync(asPath)) return { bytes: original, recovered: false }
     if (statSync(asPath).mtimeMs <= statSync(filePath).mtimeMs) {
-      // a crashed partial write bumps mtime yet corrupts the file — keep the copy then
-      if (looksLikeZip(original)) {
+      // a crashed partial write bumps mtime yet corrupts the file — keep the copy
+      // then (an encrypted original is a CFB container, not a zip: intact too)
+      if (looksLikeZip(original) || isEncryptedDocx(original)) {
         unlinkSync(asPath)
-        return original
+        return { bytes: original, recovered: false }
       }
     }
   } catch {
-    return original
+    return { bytes: original, recovered: false }
   }
   const options = {
     type: 'question' as const,
@@ -2281,23 +2360,56 @@ async function maybeRecoverDocBytes(filePath: string, original: Buffer): Promise
       : await dialog.showMessageBox(options)
   if (r.response === 0) {
     try {
-      return await readFile(asPath)
+      return { bytes: await readFile(asPath), recovered: true }
     } catch {
-      return original
+      return { bytes: original, recovered: false }
     }
   }
   clearRecoveryCopy(filePath)
-  return original
+  return { bytes: original, recovered: false }
 }
 
-async function loadDocx(filePath: string, wcId: number): Promise<OpenFileResult | null> {
+async function loadDocx(
+  filePath: string,
+  wcId: number,
+  password?: string,
+): Promise<OpenDocxResult> {
   if (typeof filePath !== 'string' || !/\.docx$/i.test(filePath)) return null
   if (!existsSync(filePath)) return null
   const original = await readFile(filePath)
+  // Password-protected docx (ECMA-376 CFB container): without a password, hand
+  // back a marker — the renderer prompts and retries via docs:open-decrypt.
+  // No side effects (recents/write grant) until the password checks out.
+  let plainBytes: Buffer = original
+  const encrypted = isEncryptedDocx(original)
+  if (encrypted) {
+    const pwd = password ?? docPasswordFor(wcId, filePath)
+    if (!pwd) return { needsPassword: true, path: filePath, name: basename(filePath) }
+    plainBytes = await decryptDocx(original, pwd) // throws DocxDecryptError
+    rememberDocPassword(wcId, filePath, pwd)
+  } else {
+    rememberDocPassword(wcId, filePath, null)
+  }
+  // the archive keeps the on-disk original as-is (encrypted ones included: they
+  // reopen with the user's password), so a bad save never loses the source file
   const hash = await archiveOriginal(filePath, original)
-  const bytes = await maybeRecoverDocBytes(filePath, original)
+  const recovery = await maybeRecoverDocBytes(filePath, plainBytes)
+  let bytes = recovery.bytes
+  let recovered = recovery.recovered
+  // recovery copies of a protected document are themselves encrypted (see
+  // docs:write-recovery); an unreadable copy falls back to the original
+  if (encrypted && isEncryptedDocx(bytes)) {
+    try {
+      bytes = await decryptRecoveryCopy(wcId, filePath, bytes)
+    } catch {
+      bytes = plainBytes
+      recovered = false
+    }
+  }
   pushRecent(filePath)
   allowDocWrite(wcId, filePath)
+  if (fileOpenedHook) fileOpenedHook(wcId, filePath)
+  markDiskEncrypted(wcId, filePath, encrypted)
   // record the on-disk file, not the recovery copy: what matters is what save would overwrite
   await rememberDiskState(wcId, filePath, original)
   return {
@@ -2305,6 +2417,8 @@ async function loadDocx(filePath: string, wcId: number): Promise<OpenFileResult 
     name: basename(filePath),
     data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
     hash,
+    encrypted,
+    recovered: recovered || undefined,
   }
 }
 
@@ -2353,11 +2467,13 @@ const TEXT_EXTS = new Set([
 /** office/pdf formats get text extracted via @hermesoffice/file-parse; images skip extraction and go multimodal (files:read-image) */
 const ATTACHMENT_EXTS = new Set([
   ...TEXT_EXTS,
+  'doc',
   'docx',
   'pdf',
   'pptx',
   'ppt',
   'xlsx',
+  'xlsm',
   'xls',
   ...ATTACHMENT_IMAGE_EXTS,
 ])
@@ -2478,6 +2594,11 @@ const TWIPS_PER_INCH = 1440
 
 const SETTINGS_PATH = () => userDataPath('ai-settings.json')
 
+/** live read: the shell settings pane writes the file; every tool call re-checks */
+function gskCloudToolsOn(): boolean {
+  return cloudToolsEnabled(readJson<Partial<AiSettings>>(SETTINGS_PATH(), {}))
+}
+
 const activeAiStreams = new Map<string, AbortController>()
 
 /**
@@ -2485,107 +2606,21 @@ const activeAiStreams = new Map<string, AbortController>()
  * register them exactly once for all window types (docs, sheets, home) —
  * sheets' standalone AI handlers use the same channel names.
  */
-// ── Auto-reload externo (fork) ──────────────────────────────────────────
-// O agente Hermes pode editar o arquivo por fora (engines headless via MCP).
-// Cada aba docs registra o arquivo aberto ('docx:track-file'); o main vigia o
-// diretório (fs.watch, filtro por basename, debounce 400ms) e emite
-// 'docx:external-change' para a aba dona. O guard anti-loop (o próprio save
-// do app também toca o arquivo) fica no renderer, que conhece o momento
-// exato de cada save. Multi-aba: um watcher por webContents, não singleton —
-// fechar uma aba não desliga o tracking das outras.
-interface TrackedDocx {
-  watcher: FSWatcher | null
-  path: string
-  timer: NodeJS.Timeout | null
-}
-
-const trackedDocxByWc = new Map<number, TrackedDocx>()
-
-function stopTrackingDocx(wcId: number): void {
-  const tracked = trackedDocxByWc.get(wcId)
-  if (!tracked) return
-  tracked.watcher?.close()
-  if (tracked.timer) clearTimeout(tracked.timer)
-  trackedDocxByWc.delete(wcId)
-}
-
-function registerDocxTrackIpc(): void {
-  ipcMain.handle('docx:track-file', (event, path?: string) => {
-    const wcId = event.sender.id
-    stopTrackingDocx(wcId)
-    if (!path || !existsSync(path)) return
-    const dir = dirname(path)
-    const base = basename(path)
-    const entry: TrackedDocx = { watcher: null, path, timer: null }
-    trackedDocxByWc.set(wcId, entry)
-    try {
-      entry.watcher = watch(dir, (_ev, filename) => {
-        // macOS entrega nomes em NFD ou NFC dependendo da origem (open-file
-        // event vs FSEvents) — normalizar antes de comparar, senão arquivos
-        // com acento nunca casam e o auto-reload morre silenciosamente.
-        if (!filename || filename.normalize('NFC') !== base.normalize('NFC')) return
-        // debounce: agrupa rajadas (saves atômicos, múltiplos eventos do FS)
-        if (entry.timer) return
-        entry.timer = setTimeout(() => {
-          entry.timer = null
-          if (!event.sender.isDestroyed()) event.sender.send('docx:external-change', entry.path)
-        }, 400)
-      })
-    } catch {
-      // diretório inacessível: sem watcher, sem auto-reload — save segue normal
-      trackedDocxByWc.delete(wcId)
-    }
-  })
-}
-
-// ── Export Markdown (fork: anydoc) ──────────────────────────────────────
-// Converts the open document to Markdown with anydoc (Firecrawl, MIT,
-// 100% local — files never leave the machine). The napi binding lives in
-// node_modules in dev; in the packaged app it is copied to
-// resources/anydoc/node_modules (extraResources — see electron-builder.cjs)
-// and loaded by absolute path here.
-const nodeRequire = createRequire(import.meta.url)
-
-let anydocLib: { toMarkdown: (path: string) => Promise<string> } | null = null
-
-function loadAnydoc(): { toMarkdown: (path: string) => Promise<string> } {
-  if (anydocLib) return anydocLib
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    anydocLib = nodeRequire('@firecrawl/anydoc') as {
-      toMarkdown: (path: string) => Promise<string>
-    }
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    anydocLib = nodeRequire(
-      join(process.resourcesPath, 'anydoc/node_modules/@firecrawl/anydoc'),
-    ) as { toMarkdown: (path: string) => Promise<string> }
-  }
-  return anydocLib as { toMarkdown: (path: string) => Promise<string> }
-}
-
-function registerExportMarkdownIpc(): void {
-  ipcMain.handle('docs:export-markdown', async (_event, filePath?: string) => {
-    if (!filePath || !existsSync(filePath)) return { ok: false, error: 'no-file' }
-    try {
-      const md = await loadAnydoc().toMarkdown(filePath)
-      const mdPath = filePath.replace(/\.(?:docx?|docm|odt|rtf|pdf|pptx?|xlsx?|epub)$/i, '') + '.md'
-      writeFileSync(mdPath, md)
-      return { ok: true, path: mdPath }
-    } catch (e) {
-      return { ok: false, error: String(e) }
-    }
-  })
-}
-
 export function registerAiIpc(): void {
-  registerDocxTrackIpc()
-  registerExportMarkdownIpc()
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
+    // pre-lock legacy file: genspark selected with cloud tools opted out. The
+    // settings UI locks the tools switch on with genspark and apps read this
+    // file live, so heal the stored flag once. Judged on the *stored* provider
+    // — never the activeProvider fallback below, which must not leak into the
+    // file and clobber a saved (half-configured) BYOK selection.
+    if ((stored.provider ?? 'genspark') === 'genspark' && stored.gskToolsEnabled === false) {
+      stored.gskToolsEnabled = true
+      writeJson(SETTINGS_PATH(), stored)
+    }
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Genspark (gsk login); legacy settings with another provider are reset
-    settings.provider = 'hermes'
+    // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
+    settings.provider = activeProvider(settings)
     return settings
   })
 
@@ -2648,6 +2683,7 @@ export function registerAiIpc(): void {
       await streamForProvider(provider, config, system, messages, tools, maxTokens, {
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
+        onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
         onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
         onActivity: ping,
         onStopReason: (reason) => {
@@ -2667,7 +2703,11 @@ export function registerAiIpc(): void {
             ? { errorCode: 'timeout' as const }
             : err instanceof AiCreditsError
               ? { errorCode: 'credits' as const }
-              : {}),
+              : isAiNetworkError(err)
+                ? { errorCode: 'network' as const }
+                : isAiOverloadedError(err)
+                  ? { errorCode: 'overloaded' as const }
+                  : {}),
         })
       }
     } finally {
@@ -2682,14 +2722,22 @@ export function registerAiIpc(): void {
   // shared search tools (content + images): Serper with DuckDuckGo fallback (same source as slides/sheets)
   ipcMain.handle('ai:web-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await webSearch(String(query), typeof maxResults === 'number' ? maxResults : 6)
+      return await webSearch(
+        String(query),
+        typeof maxResults === 'number' ? maxResults : 6,
+        gskCloudToolsOn(),
+      )
     } catch (err) {
       return { results: [], method: 'error', error: String(err) }
     }
   })
   ipcMain.handle('ai:image-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await imageSearch(String(query), typeof maxResults === 'number' ? maxResults : 8)
+      return await imageSearch(
+        String(query),
+        typeof maxResults === 'number' ? maxResults : 8,
+        gskCloudToolsOn(),
+      )
     } catch (err) {
       return { images: [], method: 'error', error: String(err) }
     }
@@ -2720,6 +2768,34 @@ export function registerAiIpc(): void {
     },
   )
 
+  // docs-owned (like pdf:generate-image): slides' ai:generate-image is only
+  // registered once a slides view exists, so docs needs its own channel
+  ipcMain.handle(
+    'docs:ai-generate-image',
+    async (_event, op: { prompt?: unknown; aspectRatio?: unknown }) => {
+      if (!hasGskAuth())
+        return {
+          error: 'Genspark account is not logged in on this machine; ask the user to log in first',
+        }
+      if (!gskCloudToolsOn())
+        return {
+          error:
+            'Genspark cloud tools are turned off in Settings (AI Model); enable them to use this tool',
+        }
+      const prompt = String(op?.prompt ?? '').trim()
+      if (!prompt) return { error: 'prompt must not be empty' }
+      try {
+        const r = await gskGenerateImage({
+          prompt,
+          aspectRatio: op?.aspectRatio ? String(op.aspectRatio) : undefined,
+        })
+        return { url: r.url }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
   ipcMain.handle('ai:chat', async (_event, request: AiChatRequest) => {
     const { settings, system, user } = request
     const provider = settings.provider
@@ -2735,9 +2811,15 @@ export function registerAiIpc(): void {
     }
     if (!config.model) return { ok: false, error: tm('errNoModel') }
     try {
-      return await chatForProvider(provider, config, system, user)
+      const result = await chatForProvider(provider, config, system, user)
+      // the one-shot path reports HTTP failures as ok:false with the raw body —
+      // replace capacity/rate-limit dumps with the localized "busy" message
+      if (!result.ok && isAiOverloadedError(result.error)) {
+        return { ok: false, error: tm('errAiBusy') }
+      }
+      return result
     } catch (err) {
-      return { ok: false, error: String(err) }
+      return { ok: false, error: isAiOverloadedError(err) ? tm('errAiBusy') : String(err) }
     }
   })
 }
@@ -2765,6 +2847,19 @@ export function setDocsFileSavedHook(hook: (wc: WebContents, filePath: string) =
 
 function notifyFileSaved(wc: WebContents, filePath: string): void {
   if (fileSavedHook) fileSavedHook(wc, filePath)
+}
+
+/**
+ * Fired when a docx is opened INSIDE an existing tab (File > Open dialog or an
+ * explicit path open). Sheets and slides have had this hook from the start;
+ * docs only synced the tab on save-as/first-save, so a file opened into an
+ * untitled tab kept the "Untitled Document" tab title until a save landed on a
+ * NEW path — which a plain Ctrl+S to the original file never does (r115).
+ */
+let fileOpenedHook: ((wcId: number, filePath: string) => void) | null = null
+
+export function setDocsFileOpenedHook(hook: (wcId: number, filePath: string) => void): void {
+  fileOpenedHook = hook
 }
 
 /**
@@ -2933,9 +3028,17 @@ export function registerProjectIpc(): void {
 
 /** document/attachment/window IPC (everything except the AI proxy above) */
 export function registerDocsIpc(): void {
+  // Node fetch (undici) direct connections get reset under VPN/tun setups; retry over Chromium's stack
+  setRescueFetch((url, init) => net.fetch(url, init))
+
   // shared with the other editor modules — last (identical) registration wins
   ipcMain.removeHandler('app:get-language')
   ipcMain.handle('app:get-language', () => getUiLang())
+
+  configureMetricsCache(userDataPath('font-metrics'))
+  ipcMain.handle('docs:font-metrics', (_event, family: string) =>
+    typeof family === 'string' ? familyVerticalMetrics(family) : null,
+  )
 
   ipcMain.handle('docs:open', async (event) => {
     const result = await openDialog(event, {
@@ -2948,6 +3051,66 @@ export function registerDocsIpc(): void {
   })
 
   ipcMain.handle('docs:open-path', (event, filePath: string) => loadDocx(filePath, event.sender.id))
+
+  // Review > Protect > Encrypt with Password: set/clear the open password.
+  // Takes effect on the next save (docs:save / save-as / save-new all consult the store).
+  ipcMain.handle(
+    'docs:set-password',
+    (event, filePath: string | null, password: string | null): { ok: boolean } => {
+      if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+      if (filePath !== null && typeof filePath !== 'string') return { ok: false }
+      if (password !== null && (typeof password !== 'string' || password.length === 0)) {
+        return { ok: false }
+      }
+      // only the document this renderer legitimately has open (same grant as saving)
+      if (filePath && !canDocWrite(event.sender.id, filePath)) return { ok: false }
+      setDocPassword(event.sender.id, filePath, password)
+      return { ok: true }
+    },
+  )
+
+  ipcMain.handle('docs:password-intent-revision', (event): number => {
+    if (tornDownWcIds.has(event.sender.id)) return -1
+    return currentDocPasswordIntentRevision()
+  })
+
+  ipcMain.handle(
+    'docs:discard-password-intents',
+    (event, throughRevision: unknown): { ok: boolean } => {
+      if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+      if (
+        typeof throughRevision !== 'number' ||
+        !Number.isSafeInteger(throughRevision) ||
+        throughRevision < 0
+      ) {
+        return { ok: false }
+      }
+      discardDocPasswordIntents(event.sender.id, throughRevision)
+      return { ok: true }
+    },
+  )
+
+  // decrypt-and-open a password-protected docx; wrong-password keeps the renderer's prompt open
+  ipcMain.handle(
+    'docs:open-decrypt',
+    async (event, filePath: string, password: string): Promise<DecryptOpenResult> => {
+      if (typeof filePath !== 'string' || typeof password !== 'string' || password.length === 0) {
+        return { ok: false, reason: 'error', error: 'invalid arguments' }
+      }
+      try {
+        const result = await loadDocx(filePath, event.sender.id, password)
+        if (!result) return { ok: false, reason: 'error', error: 'file not found' }
+        // the file was swapped for a plain docx between prompt and submit — still an open
+        if ('needsPassword' in result) return { ok: false, reason: 'error', error: 'not encrypted' }
+        return { ok: true, result }
+      } catch (err) {
+        if (err instanceof DocxDecryptError) {
+          return { ok: false, reason: err.reason, error: err.message }
+        }
+        return { ok: false, reason: 'error', error: String(err) }
+      }
+    },
+  )
 
   ipcMain.handle('docs:consume-pending-open', (event) => {
     rendererReady = true
@@ -2970,6 +3133,13 @@ export function registerDocsIpc(): void {
       return true
     }
     return false
+  })
+
+  /** one-shot AI content queued by create_document for this tab; null when none */
+  ipcMain.handle('docs:consume-ai-doc-content', (event): AiDocContent | null => {
+    const content = pendingAiDocContents.get(event.sender.id) ?? null
+    pendingAiDocContents.delete(event.sender.id)
+    return content
   })
 
   ipcMain.handle(
@@ -3006,12 +3176,32 @@ export function registerDocsIpc(): void {
         if (tornDownWcIds.has(event.sender.id) || !canDocWrite(event.sender.id, filePath)) {
           return { ok: false, error: 'save target is not an opened document' }
         }
-        const bytes = Buffer.from(data)
+        // Snapshot desired state: the disk password remains unchanged until the
+        // atomic write succeeds, and a newer ribbon intent survives this save.
+        const passwordState = snapshotDocPassword(event.sender.id, filePath)
+        const bytes = passwordState.password
+          ? encryptDocx(Buffer.from(data), passwordState.password)
+          : Buffer.from(data)
         await atomicWriteFile(filePath, bytes)
+        // Teardown may have cleared all in-memory secrets while the atomic
+        // write was pending. Never resurrect state for an orphaned renderer.
+        if (tornDownWcIds.has(event.sender.id)) {
+          return { ok: false, error: 'save target is not an opened document' }
+        }
         await rememberDiskState(event.sender.id, filePath, bytes)
+        if (tornDownWcIds.has(event.sender.id)) {
+          return { ok: false, error: 'save target is not an opened document' }
+        }
+        // Commit immediately after the final await: intents received during
+        // post-write bookkeeping are included, with no later async race.
+        const passwordIntentPending = commitDocPasswordSave(
+          event.sender.id,
+          passwordState,
+          filePath,
+        )
         clearRecoveryCopy(filePath)
         pushRecent(filePath)
-        return { ok: true }
+        return { ok: true, passwordIntentPending }
       } catch (err) {
         return { ok: false, error: String(err) }
       }
@@ -3028,7 +3218,12 @@ export function registerDocsIpc(): void {
       // copy while this write is in flight bumps the epoch and invalidates it
       const epoch = recoveryClearEpochs.get(filePath) ?? 0
       await mkdir(recoveryDir(), { recursive: true })
-      await atomicWriteFile(recoveryPathFor(filePath), Buffer.from(data))
+      // Recovery follows the current disk state, never the desired next-save
+      // password. Missing state for an encrypted disk file skips the tick so
+      // plaintext can never be written as its recovery copy.
+      const bytes = prepareRecoveryDocx(event.sender.id, filePath, Buffer.from(data))
+      if (!bytes) return { ok: false }
+      await atomicWriteFile(recoveryPathFor(filePath), bytes)
       // The tab may have been closed ("Don't Save" clears the copy, teardown
       // revokes access) or the document saved (docs:save clears the copy) while
       // the write was in flight. A write that lost either race would offer
@@ -3047,30 +3242,46 @@ export function registerDocsIpc(): void {
     }
   })
 
-  ipcMain.handle('docs:save-as', async (event, defaultName: string, data: ArrayBuffer) => {
-    // an orphaned (closed-tab) renderer must not open dialogs or land new files
-    if (tornDownWcIds.has(event.sender.id)) return { ok: false }
-    const result = await saveDialog(event, {
-      title: tm('dlgSaveAs'),
-      defaultPath: defaultName,
-      filters: [{ name: tm('filterWord'), extensions: ['docx'] }],
-    })
-    if (result.canceled || !result.filePath) return { ok: false }
-    // the tab may have been closed while the dialog was open; checked before the
-    // write because Save As may overwrite an existing file (no safe rollback)
-    if (tornDownWcIds.has(event.sender.id)) return { ok: false }
-    try {
-      const bytes = Buffer.from(data)
-      await atomicWriteFile(result.filePath, bytes)
-      allowDocWrite(event.sender.id, result.filePath)
-      await rememberDiskState(event.sender.id, result.filePath, bytes)
-      pushRecent(result.filePath)
-      notifyFileSaved(event.sender, result.filePath)
-      return { ok: true, path: result.filePath }
-    } catch (err) {
-      return { ok: false, error: String(err) }
-    }
-  })
+  ipcMain.handle(
+    'docs:save-as',
+    async (event, defaultName: string, data: ArrayBuffer, sourcePath?: string | null) => {
+      // an orphaned (closed-tab) renderer must not open dialogs or land new files
+      if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+      const result = await saveDialog(event, {
+        title: tm('dlgSaveAs'),
+        defaultPath: defaultName,
+        filters: [{ name: tm('filterWord'), extensions: ['docx'] }],
+      })
+      if (result.canceled || !result.filePath) return { ok: false }
+      // the tab may have been closed while the dialog was open; checked before the
+      // write because Save As may overwrite an existing file (no safe rollback)
+      if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+      try {
+        const passwordState = snapshotDocPassword(
+          event.sender.id,
+          typeof sourcePath === 'string' && sourcePath ? sourcePath : null,
+        )
+        const bytes = passwordState.password
+          ? encryptDocx(Buffer.from(data), passwordState.password)
+          : Buffer.from(data)
+        await atomicWriteFile(result.filePath, bytes)
+        if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+        allowDocWrite(event.sender.id, result.filePath)
+        await rememberDiskState(event.sender.id, result.filePath, bytes)
+        if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+        const passwordIntentPending = commitDocPasswordSave(
+          event.sender.id,
+          passwordState,
+          result.filePath,
+        )
+        pushRecent(result.filePath)
+        notifyFileSaved(event.sender, result.filePath)
+        return { ok: true, path: result.filePath, passwordIntentPending }
+      } catch (err) {
+        return { ok: false, error: String(err) }
+      }
+    },
+  )
 
   ipcMain.handle('docs:save-new', async (event, defaultName: string, data: ArrayBuffer) => {
     try {
@@ -3078,7 +3289,10 @@ export function registerDocsIpc(): void {
       // itself to the default folder after the user chose Don't Save
       if (tornDownWcIds.has(event.sender.id)) return { ok: false }
       const filePath = uniquePathIn(defaultSaveDir(), defaultName)
-      const bytes = Buffer.from(data)
+      const passwordState = snapshotDocPassword(event.sender.id, null)
+      const bytes = passwordState.password
+        ? encryptDocx(Buffer.from(data), passwordState.password)
+        : Buffer.from(data)
       await atomicWriteFile(filePath, bytes)
       // teardown may have happened while the write was in flight — the path is
       // freshly created, so rolling it back is safe (mirrors docs:write-recovery)
@@ -3088,13 +3302,24 @@ export function registerDocsIpc(): void {
       }
       allowDocWrite(event.sender.id, filePath)
       await rememberDiskState(event.sender.id, filePath, bytes)
+      if (tornDownWcIds.has(event.sender.id)) {
+        await unlink(filePath).catch(() => {})
+        return { ok: false }
+      }
+      const passwordIntentPending = commitDocPasswordSave(event.sender.id, passwordState, filePath)
       pushRecent(filePath)
       notifyFileSaved(event.sender, filePath)
-      return { ok: true, path: filePath }
+      return { ok: true, path: filePath, passwordIntentPending }
     } catch (err) {
       return { ok: false, error: String(err) }
     }
   })
+
+  ipcMain.handle(
+    'docs:create-document',
+    (_event, request: CreateDocumentRequest): Promise<CreateDocumentResult> =>
+      createAiDocument(request),
+  )
 
   ipcMain.handle('docs:recent', () =>
     readJson<string[]>(RECENT_PATH(), []).filter((p) => existsSync(p)),
@@ -3192,9 +3417,56 @@ export function registerDocsIpc(): void {
     },
   )
 
-  ipcMain.handle('docs:print', (event) => {
-    // print the calling tab's own content; zero margins — the docx page padding provides them
-    event.sender.print({ margins: { marginType: 'none' } })
+  // r136: copying an embedded picture must yield a real bitmap for external
+  // apps (Gmail pasted blank) plus plain <img> html for cross-document paste
+  // (the protected wrapper round-tripped as a "protected content" shell).
+  ipcMain.handle(
+    'docs:copy-image-to-clipboard',
+    (_event, dataUrl: unknown, meta: unknown): boolean => {
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return false
+      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      // createFromBuffer, not createFromDataURL — the latter returns an empty
+      // image for valid PNGs in this Electron
+      const image = nativeImage.createFromBuffer(Buffer.from(base64, 'base64'))
+      if (image.isEmpty()) return false
+      // the html flavor carries the DISPLAY size + layout meta so an in-app
+      // paste keeps size/align/wrap instead of falling back to bitmap pixels
+      let width = image.getSize().width
+      let height = image.getSize().height
+      let metaAttr = ''
+      if (typeof meta === 'string' && meta.length <= 2048) {
+        try {
+          const parsed = JSON.parse(meta) as Record<string, unknown>
+          if (typeof parsed.imageWidthPx === 'number' && parsed.imageWidthPx > 0)
+            width = Math.round(parsed.imageWidthPx)
+          if (typeof parsed.imageHeightPx === 'number' && parsed.imageHeightPx > 0)
+            height = Math.round(parsed.imageHeightPx)
+          const escaped = meta.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+          metaAttr = ` data-image-meta="${escaped}"`
+        } catch {
+          /* malformed payload: plain img */
+        }
+      }
+      clipboard.write({
+        image,
+        html: `<img src="${dataUrl}" width="${width}" height="${height}"${metaAttr}>`,
+      })
+      return true
+    },
+  )
+
+  ipcMain.handle('docs:print', async (event) => {
+    // print the calling tab's own content; zero margins — the docx page padding provides them.
+    // Resolves when the system dialog is dismissed; the print dialog stays open on cancel
+    // (ok=false without error) and surfaces real failures.
+    return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      event.sender.print({ margins: { marginType: 'none' } }, (success, failureReason) => {
+        resolve({
+          ok: success,
+          ...(failureReason && !/cancel/i.test(failureReason) ? { error: failureReason } : {}),
+        })
+      })
+    })
   })
 
   ipcMain.handle(
@@ -3232,6 +3504,7 @@ export function registerDocsIpc(): void {
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
         })
         writeFileSync(filePath, data)
+        openGeneratedFile(filePath)
         return { ok: true, path: filePath }
       } catch (err) {
         return { ok: false, error: String(err) }
@@ -3286,6 +3559,7 @@ export function registerDocsIpc(): void {
           for (const page of pages) merged.addPage(page)
         }
         writeFileSync(filePath, Buffer.from(await merged.save()))
+        openGeneratedFile(filePath)
         return { ok: true, path: filePath }
       } catch (err) {
         return { ok: false, error: String(err) }
@@ -3329,14 +3603,90 @@ export function registerDocsIpc(): void {
  * and falls back to real multi-BrowserWindow behavior. */
 interface DocsShellHooks {
   openTab(openPath?: string, options?: { newBlank?: boolean }): void
+  /** open a blank docs tab that consumes the queued AI content on boot (create_document) */
+  openAiDocTab?(content: AiDocContent): void
   listTabs(): DocsTabInfo[]
   focusTab(id: string): void
   /** closes the calling tab instead of the whole shell window (Cmd+W / role:'close') */
   closeActiveTab(): void
+  /** Shell router used to open exported PDFs in a new HermesOffice tab. */
+  openGeneratedPath?(path: string): boolean
 }
 let shellHooks: DocsShellHooks | null = null
 export function setDocsShellHooks(hooks: DocsShellHooks | null): void {
   shellHooks = hooks
+}
+
+/** After writing an exported/AI-generated file: open it in the right tab
+ * (shell) or reveal it in the folder (standalone). Tab-opening failure must
+ * not report the write itself as failed — the file is already persisted. */
+function openGeneratedFile(path: string): void {
+  try {
+    if (shellHooks?.openGeneratedPath?.(path)) return
+  } catch (err) {
+    console.warn('[docs] Failed to open generated file:', err)
+  }
+  shell.showItemInFolder(path)
+}
+
+/** Pick a safe file-name stem for an AI-created document. */
+export function sanitizeAiDocFileBase(title: string): string {
+  // Control characters are intentionally rejected from generated file names.
+  const cleaned = String(title ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '_')
+    .trim()
+    .slice(0, 80)
+    .trim()
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
+}
+
+/**
+ * AI create_document: build a new standalone file in the default folder and
+ * open it in a new tab. docx routes through a fresh blank docs tab that
+ * inserts the queued content on boot and saves itself (the full-fidelity
+ * HTML → docx conversion lives in the docs renderer); pdf and md are written
+ * directly here. Also called by other apps' mains via shell-wired hooks.
+ */
+export async function createAiDocument(
+  request: CreateDocumentRequest,
+): Promise<CreateDocumentResult> {
+  const type = request?.type
+  const title = sanitizeAiDocFileBase(request?.title)
+  const content = String(request?.content ?? '')
+  if (!content.trim()) return { ok: false, error: 'content must not be empty' }
+  try {
+    if (type === 'docx') {
+      const payload: AiDocContent = { title, html: content }
+      if (shellHooks?.openAiDocTab) shellHooks.openAiDocTab(payload)
+      else {
+        const win = createDocsWindow(undefined)
+        markDocsNewBlank(win.webContents.id)
+        queueDocsAiContent(win.webContents.id, payload)
+      }
+      return { ok: true }
+    }
+    if (type === 'pdf') {
+      const bytes = await printHtmlToPdf(
+        buildPrintableHtml(title, content),
+        () =>
+          new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } }),
+      )
+      const filePath = uniquePathIn(defaultSaveDir(), `${title}.pdf`)
+      await writeFile(filePath, bytes)
+      openGeneratedFile(filePath)
+      return { ok: true, path: filePath }
+    }
+    if (type === 'md') {
+      const filePath = uniquePathIn(defaultSaveDir(), `${title}.md`)
+      await writeFile(filePath, content, 'utf8')
+      openGeneratedFile(filePath)
+      return { ok: true, path: filePath }
+    }
+    return { ok: false, error: `unsupported document type: ${String(type)}` }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 // ---- application menu ----
@@ -3456,7 +3806,9 @@ export function buildDocsMenu(): void {
         {
           label: tm('menuPrint'),
           accelerator: 'CmdOrCtrl+P',
-          click: () => activeDocsWebContents()?.print({}),
+          // routed through the renderer: it opens the pagination preview first so each
+          // printed sheet is exactly one editor page (WYSIWYG), then invokes docs:print
+          click: () => sendCommand('print'),
         },
       ],
     },
@@ -3529,6 +3881,9 @@ export function buildDocsMenu(): void {
       submenu: [
         { label: tm('menuInsertTable'), click: () => sendCommand('insert-table') },
         { label: tm('menuInsertImage'), click: () => sendCommand('insert-image') },
+        // no CmdOrCtrl+Enter accelerator: a menu accelerator would intercept
+        // the key before renderer inputs (comments panel / prompt modal use
+        // Cmd+Enter to submit); the editor keymap handles it instead
         { label: tm('menuInsertPageBreak'), click: () => sendCommand('insert-page-break') },
         {
           label: tm('menuInsertLink'),
@@ -3579,15 +3934,23 @@ export function buildDocsMenu(): void {
       submenu: [
         { label: tm('menuWordCount'), click: () => sendCommand('word-count') },
         { type: 'separator' },
-        { label: tm('menuSpelling'), enabled: false },
-        { label: tm('menuMacros'), enabled: false },
+        // Runs the same AI proofread as Review > Editor (renderer shows the one-time ack)
+        { label: tm('menuAiProofread'), click: () => sendCommand('ai-proofread') },
       ],
     },
     windowMenuTemplate(process.platform, appMenuLabels(getUiLang())),
     {
       label: tm('menuHelp'),
       role: 'help',
-      submenu: [{ label: tm('menuDocsHelp'), enabled: false }],
+      submenu: [
+        {
+          label: tm('menuShortcuts'),
+          accelerator: 'CmdOrCtrl+/',
+          click: () => sendCommand('shortcuts'),
+        },
+        { type: 'separator' },
+        { label: tm('menuDocsHelp'), enabled: false },
+      ],
     },
   ]
 
@@ -3894,7 +4257,10 @@ export function startDocsStandalone(): void {
   // dev runs must not share the packaged app's userData (recent files, AI settings)
   // or its single-instance lock — otherwise `npm run dev` silently quits whenever
   // the installed HermesOffice Docs is open and forwards its argv there instead.
-  if (isDev) app.setPath('userData', join(app.getPath('appData'), 'HermesOffice Docs Dev'))
+  // AI_OFFICE_USER_DATA: E2E/screenshot runs isolate userData (and the
+  // single-instance lock) so parallel automation sessions don't evict each other
+  if (process.env.AI_OFFICE_USER_DATA) app.setPath('userData', process.env.AI_OFFICE_USER_DATA)
+  else if (isDev) app.setPath('userData', join(app.getPath('appData'), 'HermesOffice Docs Dev'))
 
   const hasSingleInstanceLock = app.requestSingleInstanceLock()
   if (!hasSingleInstanceLock) {

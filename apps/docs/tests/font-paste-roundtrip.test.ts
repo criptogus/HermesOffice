@@ -81,10 +81,31 @@ describe('fontAttrsFromFamilyChain', () => {
     })
   })
 
-  it('skips internal GenOffice aliases even at the chain head', () => {
+  it('skips internal HermesOffice aliases even at the chain head', () => {
     expect(
-      fontAttrsFromFamilyChain("'GenOffice Songti SC','STSong','SimSun','Noto Serif CJK SC',serif"),
+      fontAttrsFromFamilyChain("'HermesOffice Songti SC','STSong','SimSun','Noto Serif CJK SC',serif"),
     ).toEqual({ font: 'STSong' })
+  })
+
+  it('never mistakes the range-limited GO aliases for a user East Asian font', () => {
+    expect(fontAttrsFromFamilyChain(cssFontFamily('SomeCustomFont'))).toEqual({
+      font: 'SomeCustomFont',
+      fontAscii: 'SomeCustomFont',
+    })
+    expect(
+      fontAttrsFromFamilyChain("'PT Serif Custom','Noto Serif CJK GO','HermesOffice PUA Blank',serif"),
+    ).toEqual({ font: 'PT Serif Custom', fontAscii: 'PT Serif Custom' })
+  })
+
+  it('skips the other internal chain aliases (KR Theme Latin GO, Arabic size-adjusted)', () => {
+    expect(fontAttrsFromFamilyChain(cssFontFamily('Noto Sans CJK KR'))).toEqual({
+      font: 'Noto Sans CJK KR',
+    })
+    expect(
+      fontAttrsFromFamilyChain(
+        "'Naskh Digits GO','Noto Naskh Arabic TNR','Geeza Pro','Al Bayan',serif",
+      ),
+    ).toEqual({ font: 'Geeza Pro', fontAscii: 'Geeza Pro' })
   })
 
   it('handles foreign single-family styles', () => {
@@ -122,7 +143,7 @@ describe('complex-script (w:cs) render chain', () => {
       csFont: 'Arabic Typesetting',
     })
     expect(html).toContain(
-      'font-family: &quot;Arabic Typesetting&quot;, &quot;Noto Naskh Arabic&quot;, &quot;Geeza Pro&quot;, &quot;Al Bayan&quot;, &quot;Calibri&quot;, &quot;Carlito GO&quot;, &quot;Noto Sans CJK SC&quot;, sans-serif',
+      'font-family: &quot;Arabic Typesetting&quot;, &quot;Naskh Digits GO&quot;, &quot;Times Punct GO&quot;, &quot;Noto Naskh Arabic TNR&quot;, &quot;Calibri&quot;, &quot;Carlito GO&quot;, &quot;Noto Sans CJK SC&quot;, &quot;Times New Roman&quot;, &quot;Liberation Serif&quot;, &quot;Geeza Pro&quot;, &quot;Al Bayan&quot;, sans-serif',
     )
   })
 

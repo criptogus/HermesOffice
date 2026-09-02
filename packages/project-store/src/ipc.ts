@@ -2,29 +2,9 @@
  * IPC interface type definitions (shared by the renderer and main processes).
  * No Electron dependency; importable from the renderer.
  */
-import type {
-  ChatAttachment,
-  ChatMessage,
-  ChatMeta,
-  ProjectDocumentReference,
-  ProjectSummary,
-  ProposedChangeRecord,
-  ProposedChangeStatus,
-  TimelineEntry,
-  ToolActivity,
-} from './types.js'
+import type { ChatAttachment, ChatMessage, ChatMeta, ProjectSummary, TimelineEntry, ToolActivity } from './types.js'
 
-export type {
-  ChatAttachment,
-  ChatMessage,
-  ChatMeta,
-  ProjectDocumentReference,
-  ProjectSummary,
-  ProposedChangeRecord,
-  ProposedChangeStatus,
-  TimelineEntry,
-  ToolActivity,
-}
+export type { ChatAttachment, ChatMessage, ChatMeta, ProjectSummary, TimelineEntry, ToolActivity }
 
 export interface AppendChatArgs {
   projectId: string
@@ -91,36 +71,6 @@ export interface GetTimelineArgs {
   limit?: number
 }
 
-export interface SaveProposedChangeArgs {
-  change: Omit<ProposedChangeRecord, 'createdAt' | 'updatedAt'> & {
-    createdAt?: string
-    updatedAt?: string
-  }
-}
-
-export interface UpdateProposedChangeStatusArgs {
-  projectId: string
-  proposalId: string
-  status: ProposedChangeStatus
-}
-
-export interface ListProposedChangesArgs {
-  projectId: string
-  limit?: number
-}
-
-export interface UpsertDocumentReferenceArgs {
-  projectId: string
-  reference: Omit<ProjectDocumentReference, 'createdAt' | 'updatedAt'> & {
-    createdAt?: string
-    updatedAt?: string
-  }
-}
-
-export interface ListDocumentReferencesArgs {
-  projectId: string
-}
-
 /** Project storage API the main process exposes to the renderer */
 export interface ProjectApi {
   /**
@@ -147,14 +97,4 @@ export interface ProjectApi {
   moveFile(args: MoveFileArgs): Promise<void>
   /** Gets the project timeline */
   getTimeline(args: GetTimelineArgs): Promise<TimelineEntry[]>
-  /** Saves a trusted-action proposal without applying document mutations. */
-  saveProposedChange(args: SaveProposedChangeArgs): Promise<ProposedChangeRecord>
-  /** Advances the status of a trusted-action proposal. */
-  updateProposedChangeStatus(args: UpdateProposedChangeStatusArgs): Promise<ProposedChangeRecord>
-  /** Lists proposal audit records for a project. */
-  listProposedChanges(args: ListProposedChangesArgs): Promise<ProposedChangeRecord[]>
-  /** Records a typed document-graph edge outside the source document bytes. */
-  upsertDocumentReference(args: UpsertDocumentReferenceArgs): Promise<ProjectDocumentReference>
-  /** Lists typed document-graph edges for a project. */
-  listDocumentReferences(args: ListDocumentReferencesArgs): Promise<ProjectDocumentReference[]>
 }

@@ -11,6 +11,8 @@ import {
   applyPageNumType,
   applySectionSettings,
   applySectionStartType,
+  BLANK_BULLET_NUM_ID,
+  BLANK_ORDERED_NUM_ID,
   buildBlankDocx,
   findChartWorkbookPath,
   parseChartPartXml,
@@ -22,21 +24,25 @@ import {
   readSections,
   readSectionSettings,
   saveDocx,
+  type Block,
   type CommentInfo,
   type DocProtection,
   type HeaderFooter,
   type NoteInfo,
+  type ParsedDocFull,
   type SectionInfo,
   type SectionSettings,
   type SourceInfo,
   type StyleUpsert,
   type ThemeColors,
   type ThemeFonts,
+  type WriteProtection,
 } from '@hermesoffice/docx-engine'
 import type { Dispatch, SetStateAction } from 'react'
-import type { OpenFileResult } from '../shared/ipc'
+import type { AiDocContent, OpenDocxResult } from '../shared/ipc'
 import {
   hfVariantsFromParsed,
+  openedFileStartsDirty,
   type DocState,
   type HfVariantKey,
   type HfVariantsState,
@@ -53,17 +59,14 @@ import {
   type InkTool,
 } from './editor/ink'
 import { t, getLang } from './i18n/locale'
-import { isBlankDocument } from './ai/protocol'
+import { isBlankDocument, parseHtmlFragment, replaceBlockRange } from './ai/protocol'
 import { isDocDirty } from './doc-dirty'
 import { createSaveSerializer } from './save-until-persisted'
 import { checkMissingFonts, collectDocFonts } from './font-check'
+import { setDocFontTable } from './line-metrics'
 import { defaultEastAsiaFontFor } from './font-list'
 import { hasPrintableHeaderFooter } from './pagination'
 import { showToast } from './components/toast-bus'
-
-/** Fork: guard anti-loop do auto-reload externo — o renderer marca o momento
- * do último save; mudanças no disco dentro da margem são do próprio app. */
-export const externalChangeGuard = { lastSaveAt: 0 }
 
 /** The App state the file actions need; built fresh per call. */
 export interface FileActionContext {
@@ -73,6 +76,9 @@ export interface FileActionContext {
   saveInFlightRef: { current: boolean }
   saveIncompleteRef: { current: boolean }
   pendingMixedExportRef: { current: boolean | string }
+  /** the print dialog auto-opened the pagination preview: closing the dialog closes it again */
+  printAutoOpenedPreviewRef: { current: boolean }
+  setShowPrintDialog: (show: boolean) => void
   setStatus: (status: string) => void
   setRecent: (paths: string[]) => void
   setShowAi: (show: boolean) => void
@@ -164,11 +170,52 @@ export interface FileActionContext {
   protectionDirty: boolean
   setProtection: (value: DocProtection | null) => void
   setProtectionDirty: (dirty: boolean) => void
+  writeProtection: WriteProtection | null
+  writeProtectionDirty: boolean
+  setWriteProtection: (value: WriteProtection | null) => void
+  setWriteProtectionDirty: (dirty: boolean) => void
+  removePersonalInfo: boolean
+  removePersonalInfoDirty: boolean
+  setRemovePersonalInfo: (value: boolean) => void
+  setRemovePersonalInfoDirty: (dirty: boolean) => void
+  /** document (re)loaded: App resets the modify-password session state and prompts when one is set */
+  onWriteProtectionLoaded: (wp: WriteProtection | null) => void
   setCompareResult: (value: { otherName: string; entries: CompareEntry[] } | null) => void
+  /** password-protected docx: open the password prompt (decrypt-retry loop lives in App) */
+  promptDocxPassword: (info: { path: string; name: string }) => void
 }
 
 /** Drop the undo stack: undo across an open/reparse boundary resurrects stale
  *  docxIndex anchors (corrupting the next save) or the previous document. */
+/**
+ * Comments with no anchor anywhere in the body (no marked run, no range
+ * markers, no reference in any block's XML) have neither a click target nor a
+ * margin bubble; open the panel so they are visible at all.
+ */
+export function hasUnanchoredComments(comments: CommentInfo[], blocks: Block[]): boolean {
+  if (comments.length === 0) return false
+  const anchored = new Set<string>()
+  for (const b of blocks) {
+    for (const id of [...(b.commentStarts ?? []), ...(b.commentEnds ?? [])]) anchored.add(id)
+    for (const r of b.runs ?? []) for (const id of r.commentIds ?? []) anchored.add(id)
+    for (const row of b.table?.rows ?? [])
+      for (const cell of row)
+        for (const p of cell.richParas ?? [])
+          for (const r of p.runs) for (const id of r.commentIds ?? []) anchored.add(id)
+    // bare w:commentReference on a text-less run never becomes a mark, but the
+    // margin bubble overlay anchors it to the block (margin-annotations.ts)
+    if (b.originalXml) {
+      for (const m of b.originalXml.matchAll(
+        /<w:comment(?:Reference|RangeStart)\b[^>]*w:id="([^"]+)"/g,
+      ))
+        anchored.add(m[1])
+    }
+  }
+  return comments.some(
+    (c) => !c.done && !anchored.has(c.id) && !(c.parentId && anchored.has(c.parentId)),
+  )
+}
+
 function resetEditorHistory(editor: Editor): void {
   const plugin = editor.state.plugins.find((p) =>
     String((p as unknown as { key: string }).key).startsWith('history$'),
@@ -178,18 +225,59 @@ function resetEditorHistory(editor: Editor): void {
   editor.registerPlugin(history((plugin.spec as { config?: object }).config))
 }
 
+/** doc-level layout inputs living outside CSS: default tab grid + hyphenation lang */
+function applyDocLayoutSettings(editor: Editor, parsed: ParsedDocFull): void {
+  editor.storage.tabStops.defaultTabStopTwips = parsed.defaultTabStopTwips ?? null
+  // Word 2013+ justified lines pull words up by shrinking spaces; legacy
+  // compatibility modes (and new blank docs) never do
+  editor.storage.justifyShrink.enabled = (parsed.compatibilityMode ?? 0) >= 15
+  // Chromium only hyphenates under an explicit lang (the app shell is zh-CN);
+  // scoped to autoHyphenation docs so CJK font fallback is untouched elsewhere
+  const lang = parsed.autoHyphenation ? parsed.docDefaults?.lang : undefined
+  if (lang) editor.view.dom.setAttribute('lang', lang)
+  else editor.view.dom.removeAttribute('lang')
+}
+
+/**
+ * 'ok' loaded; 'canceled' dialog dismissed / no editor; 'password' the password
+ * prompt took over (App resumes via loadFile once decrypted); 'failed' parse or
+ * load error — the boot path falls back to a blank document instead of leaving
+ * the tab on "Opening…" forever.
+ */
+export type LoadFileOutcome = 'ok' | 'canceled' | 'password' | 'failed'
+
 export async function loadFile(
   ctx: FileActionContext,
-  result: OpenFileResult | null,
-): Promise<void> {
-  if (!result || !ctx.editor) return
+  result: OpenDocxResult,
+): Promise<LoadFileOutcome> {
+  if (!result || !ctx.editor) return 'canceled'
+  if ('needsPassword' in result) {
+    ctx.promptDocxPassword({ path: result.path, name: result.name })
+    return 'password'
+  }
   try {
     const parsed = await parseDocx(new Uint8Array(result.data))
+    // before setContent: blockAttrs/marks bake fontTable-driven factors and chains into the DOM
+    setDocFontTable(parsed.fontTable)
+    ctx.editor.storage.listNumbering.styles = parsed.styles
+    ctx.editor.storage.listNumbering.docDefaults = parsed.docDefaults
     ctx.editor.storage.listNumbering.defs = parsed.numbering
+    applyDocLayoutSettings(ctx.editor, parsed)
     ctx.editor.commands.setContent(blocksToPmDoc(parsed.blocks, readSections(parsed)) as never)
     resetEditorHistory(ctx.editor)
     noteDocumentSwapped()
-    ctx.setDoc({ parsed, filePath: result.path, fileName: result.name, hash: result.hash })
+    ctx.setDoc({
+      parsed,
+      filePath: result.path,
+      fileName: result.name,
+      hash: result.hash,
+      encrypted: result.encrypted,
+    })
+    // this tab's document was replaced: a password parked for the previous
+    // unsaved draft is stale and must not encrypt this document's saves.
+    // Done here, not in the main process's loadDocx — Review > Compare also
+    // opens files without replacing the current document.
+    discardStalePasswordIntents()
     ctx.setAiPanelKey((k) => k + 1)
     ctx.setDocCss(docStyleCss(parsed))
     ctx.setSection(readSectionSettings(parsed))
@@ -224,7 +312,7 @@ export async function loadFile(
     ctx.setEvenOddHf(parsed.evenAndOddHeaders ?? false)
     ctx.setEvenOddHfDirty(false)
     ctx.setHfView('default')
-    ctx.setShowComments(false)
+    ctx.setShowComments(hasUnanchoredComments(parsed.comments, parsed.blocks))
     ctx.setComments(parsed.comments)
     ctx.setCommentsDirty(false)
     ctx.setWatermark(parsed.watermarkText ?? null)
@@ -245,8 +333,15 @@ export async function loadFile(
     ctx.setTrackChanges(false)
     ctx.setProtection(parsed.protection)
     ctx.setProtectionDirty(false)
+    ctx.setWriteProtection(parsed.writeProtection)
+    ctx.setWriteProtectionDirty(false)
+    ctx.setRemovePersonalInfo(parsed.removePersonalInfo)
+    ctx.setRemovePersonalInfoDirty(false)
+    ctx.onWriteProtectionLoaded(parsed.writeProtection)
     ctx.setCompareResult(null)
-    ctx.dirtyRef.current = false
+    // Recovery content still only exists in the autosave copy. Keep it dirty
+    // until an explicit/automatic save lands it on the original path.
+    ctx.dirtyRef.current = openedFileStartsDirty(result)
     const missing = checkMissingFonts(collectDocFonts(parsed))
     const verticalText = readSections(parsed).some((s) => s.settings.textDirection)
     if (verticalText) {
@@ -262,8 +357,12 @@ export async function loadFile(
       ctx.setStatus(t('appOpenedFile', { name: result.name }))
     }
     void window.desktop.getRecentFiles().then(ctx.setRecent)
+    return 'ok'
   } catch (err) {
+    // visible failure: the status-bar line alone is easy to miss under the start screen
     ctx.setStatus(t('appOpenFailed', { error: String(err) }))
+    showToast(t('appOpenFailed', { error: String(err) }), 'error')
+    return 'failed'
   }
 }
 
@@ -273,11 +372,18 @@ export async function newFile(ctx: FileActionContext): Promise<boolean | undefin
   try {
     const bytes = await buildBlankDocx({ eastAsiaFont: defaultEastAsiaFontFor(getLang()) })
     const parsed = await parseDocx(bytes)
+    setDocFontTable(parsed.fontTable)
+    ctx.editor.storage.listNumbering.styles = parsed.styles
+    ctx.editor.storage.listNumbering.docDefaults = parsed.docDefaults
     ctx.editor.storage.listNumbering.defs = parsed.numbering
+    applyDocLayoutSettings(ctx.editor, parsed)
     ctx.editor.commands.setContent(blocksToPmDoc(parsed.blocks, readSections(parsed)) as never)
     resetEditorHistory(ctx.editor)
     noteDocumentSwapped()
     ctx.setDoc({ parsed, filePath: null, fileName: t('appUntitledDocx'), hash: '', isBlank: true })
+    // a fresh blank draft starts unencrypted: drop any pending password left by
+    // the previous draft (its DocState, including the encrypted flag, is gone)
+    discardStalePasswordIntents()
     ctx.setAiPanelKey((k) => k + 1)
     ctx.setDocCss(docStyleCss(parsed))
     ctx.setSection(readSectionSettings(parsed))
@@ -310,6 +416,11 @@ export async function newFile(ctx: FileActionContext): Promise<boolean | undefin
     ctx.setTrackChanges(false)
     ctx.setProtection(null)
     ctx.setProtectionDirty(false)
+    ctx.setWriteProtection(null)
+    ctx.setWriteProtectionDirty(false)
+    ctx.setRemovePersonalInfo(false)
+    ctx.setRemovePersonalInfoDirty(false)
+    ctx.onWriteProtectionLoaded(null)
     ctx.setCompareResult(null)
     ctx.dirtyRef.current = false
     ctx.setShowAi(true)
@@ -464,6 +575,8 @@ export async function buildDocBytes(ctx: FileActionContext): Promise<Uint8Array 
     partBinary: Object.keys(partBinary).length > 0 ? partBinary : undefined,
     comments: ctx.commentsDirty ? ctx.comments : undefined,
     protection: ctx.protectionDirty ? ctx.protection : undefined,
+    writeProtection: ctx.writeProtectionDirty ? ctx.writeProtection : undefined,
+    removePersonalInfo: ctx.removePersonalInfoDirty ? ctx.removePersonalInfo : undefined,
     inks,
     watermark: ctx.watermarkDirty ? ctx.watermark : undefined,
     footnotes: ctx.notesDirty ? ctx.footnotes : undefined,
@@ -512,6 +625,25 @@ export async function writeRecoveryCopy(ctx: FileActionContext): Promise<void> {
 const runSerializedSave = createSaveSerializer()
 
 /**
+ * Drop unsaved password intents left by a replaced document — queued behind any
+ * in-flight save: writeRecoveryCopy silently save-new's a dirty pathless
+ * draft, and that save must still consume the draft's desired password (the
+ * draft stays protected on disk) before the swap-triggered clear lands.
+ */
+function discardStalePasswordIntents(): void {
+  // Start the IPC now, before the replacement document can record a password.
+  // The destructive half stays serialized behind an old in-flight save.
+  const throughRevision = window.desktop.docPasswordIntentRevision()
+  void runSerializedSave(
+    async () => {
+      await window.desktop.discardDocPasswordIntents(await throughRevision)
+      return false // not a save: a queued save pass must never reuse this result
+    },
+    () => false,
+  )
+}
+
+/**
  * Path assigned by the first save of a still-pathless document (silent save-new
  * or Save As). A queued save whose ctx snapshot predates that first save still
  * sees `doc.filePath === null`; without this it would re-run the save-new path
@@ -523,20 +655,88 @@ export function noteDocumentSwapped(): void {
   pathlessDocSavedPath = null
 }
 
-export function save(ctx: FileActionContext, saveAs: boolean, auto = false): Promise<boolean> {
+export function save(
+  ctx: FileActionContext,
+  saveAs: boolean,
+  auto = false,
+  newDocName?: string,
+): Promise<boolean> {
   // A save arriving mid-flight waits for the current one instead of failing.
   // Reuse the finished pass only when it left nothing behind — judged by the
   // composite dirty check (header/section/theme edits do not set dirtyRef), plus
-  // the raced-with-typing flag. A pass that left anything runs its own pass;
+  // in-flight edit/password races. A pass that left anything runs its own pass;
   // saveOnce resolves a stale pathless snapshot via pathlessDocSavedPath, so
   // the retry can no longer create a duplicate file.
   return runSerializedSave(
-    () => saveOnce(ctx, saveAs, auto),
+    () => saveOnce(ctx, saveAs, auto, newDocName),
     () => !saveAs && !ctx.saveIncompleteRef.current && !isDocDirty(ctx),
   )
 }
 
-async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean): Promise<boolean> {
+/** the parsed fragment flags every node aiChanged (yellow highlight); a boot-time fill is not a reviewable AI edit */
+function stripAiChanged(node: PmNode): PmNode {
+  const next: PmNode = { ...node }
+  if (next.attrs && 'aiChanged' in next.attrs) next.attrs = { ...next.attrs, aiChanged: false }
+  if (next.content) next.content = next.content.map(stripAiChanged)
+  return next
+}
+
+/**
+ * Parse queued create_document content into blocks. The docs chat validates
+ * the fragment before queueing, but the pdf chat cannot (the parser lives
+ * here), so unparseable HTML falls back to plain-text paragraphs instead of
+ * silently dropping the content.
+ */
+export function aiDocContentNodes(html: string): PmNode[] {
+  const numIds = { bullet: BLANK_BULLET_NUM_ID, ordered: BLANK_ORDERED_NUM_ID }
+  try {
+    const nodes = parseHtmlFragment(html, numIds)
+    if (nodes.length > 0) return nodes.map(stripAiChanged)
+  } catch {
+    /* fall through to the plain-text salvage */
+  }
+  try {
+    // textContent glues adjacent blocks in minified markup — reinsert the
+    // block structure as blank lines (and cell gaps as spaces) before parsing
+    const spaced = html
+      .replace(/<\/(?:td|th)>/gi, ' $&')
+      .replace(/<\/(?:p|h[1-6]|li|div|pre|blockquote|tr)>/gi, '$&\n\n')
+    const text = new DOMParser().parseFromString(spaced, 'text/html').body.textContent ?? ''
+    if (!text.trim()) return []
+    return parseHtmlFragment(text, numIds).map(stripAiChanged)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Boot-time half of the AI create_document tool: fill the fresh blank
+ * document with the queued content (same restricted-HTML pipeline as
+ * insert_content), then silently save it under the tool-provided title.
+ * The save runs even when nothing could be parsed — the tool already
+ * reported the document as created, so an unsaved untitled tab would lie.
+ */
+export async function applyAiDocContent(
+  ctx: FileActionContext,
+  content: AiDocContent,
+): Promise<void> {
+  const { editor, doc } = ctx
+  if (!editor || !doc) return
+  const nodes = aiDocContentNodes(content.html)
+  if (nodes.length > 0) {
+    replaceBlockRange(editor, 0, editor.state.doc.childCount - 1, nodes)
+    // the document is born with this content: undo must not reach back to empty
+    resetEditorHistory(editor)
+  }
+  await save(ctx, false, true, `${content.title}.docx`)
+}
+
+async function saveOnce(
+  ctx: FileActionContext,
+  saveAs: boolean,
+  auto: boolean,
+  newDocName?: string,
+): Promise<boolean> {
   const { doc, editor } = ctx
   if (!doc || !editor) return false
   ctx.saveInFlightRef.current = true
@@ -556,14 +756,16 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
     // a pathless snapshot may belong to a document that an earlier queued pass
     // already landed on disk — overwrite that file instead of creating another
     let savedPath = doc.filePath ?? pathlessDocSavedPath
+    let passwordIntentPending = false
     if (saveAs || !savedPath) {
       // A never-saved document still called "Untitled" gets a name derived from its first heading
       const autoName =
         !doc.filePath && doc.fileName === t('appUntitledDocx') ? deriveAutoFileName(editor) : null
-      // Save As keeps the dialog; a new document's first save lands silently in the default folder
+      // Save As keeps the dialog; a new document's first save lands silently in the default
+      // folder. The source path identifies the desired password state to snapshot.
       const result = saveAs
-        ? await window.desktop.saveDocxAs(autoName ?? doc.fileName, buffer)
-        : await window.desktop.saveDocxNew(autoName ?? doc.fileName, buffer)
+        ? await window.desktop.saveDocxAs(autoName ?? doc.fileName, buffer, doc.filePath)
+        : await window.desktop.saveDocxNew(newDocName ?? autoName ?? doc.fileName, buffer)
       if (!result.ok) {
         if (result.error) {
           ctx.setStatus(t('appSaveFailed', { error: result.error }))
@@ -572,6 +774,7 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
         return false
       }
       savedPath = result.path!
+      passwordIntentPending = result.passwordIntentPending === true
       if (!doc.filePath) pathlessDocSavedPath = savedPath
     } else {
       const result = await window.desktop.saveDocx(savedPath, buffer, auto)
@@ -584,15 +787,13 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
         }
         return false
       }
+      passwordIntentPending = result.passwordIntentPending === true
     }
-    // Fork: marca o momento do save — o auto-reload externo ignora eventos
-    // do próprio app (o save também toca o arquivo no disco)
-    externalChangeGuard.lastSaveAt = Date.now()
-    if (editor.state.doc !== docSnapshot) {
-      // The user kept editing while the save was in flight. Replacing the
-      // editor content with the reparsed (pre-edit) snapshot would silently
-      // drop those keystrokes, so keep the live editor + parsed state as-is
-      // and leave the document dirty; the next save persists the newer edits.
+    if (editor.state.doc !== docSnapshot || passwordIntentPending) {
+      // The user kept editing or chose another password after the main process
+      // captured this save. Keep the live state dirty; replacing it with the
+      // saved snapshot or marking it clean would consume the newer intent.
+      if (passwordIntentPending) ctx.dirtyRef.current = true
       ctx.saveIncompleteRef.current = true
       ctx.setDoc((prev) =>
         prev
@@ -606,14 +807,18 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
       ctx.setStatus(
         auto ? t('appAutoSavedAt', { time: new Date().toLocaleTimeString() }) : t('appSaved'),
       )
-      // No success toast: the doc is still dirty (edits raced the save), and the
+      // No success toast: the doc is still dirty (state raced the save), and the
       // close-guard's saveUntilPersisted retries would repeat it on every pass —
       // the converging complete save below toasts once.
       return true
     }
     // Reload from saved bytes so docxIndex anchors point at the new file.
     const reparsed = await parseDocx(bytes)
+    setDocFontTable(reparsed.fontTable)
+    editor.storage.listNumbering.styles = reparsed.styles
+    editor.storage.listNumbering.docDefaults = reparsed.docDefaults
     editor.storage.listNumbering.defs = reparsed.numbering
+    applyDocLayoutSettings(editor, reparsed)
     const rebasedPm = blocksToPmDoc(reparsed.blocks, readSections(reparsed))
     let unchanged = false
     try {
@@ -697,6 +902,11 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
     ctx.setThemeColorsDirty(false)
     ctx.setProtection(reparsed.protection)
     ctx.setProtectionDirty(false)
+    // no onWriteProtectionLoaded here: saving must not re-lock the session
+    ctx.setWriteProtection(reparsed.writeProtection)
+    ctx.setWriteProtectionDirty(false)
+    ctx.setRemovePersonalInfo(reparsed.removePersonalInfo)
+    ctx.setRemovePersonalInfoDirty(false)
     ctx.dirtyRef.current = false
     ctx.setStatus(
       auto ? t('appAutoSavedAt', { time: new Date().toLocaleTimeString() }) : t('appSaved'),
@@ -710,6 +920,22 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
   } finally {
     ctx.saveInFlightRef.current = false
   }
+}
+
+/**
+ * Print via the pagination preview so each printed sheet is exactly one editor page
+ * (WYSIWYG). Printing the continuous canvas instead would let Chromium auto-paginate:
+ * middle pages lose the per-page top/bottom margins and the breaks drift from the
+ * editor. Opens the Word-style print dialog (preview + range); the pagination
+ * preview is mounted (visually hidden behind the dialog) as its print source.
+ */
+export function printDoc(ctx: FileActionContext): void {
+  if (!ctx.doc) return
+  if (!document.querySelector('.pagination-preview')) {
+    ctx.printAutoOpenedPreviewRef.current = true
+    ctx.setShowPagePreview(true)
+  }
+  ctx.setShowPrintDialog(true)
 }
 
 export async function exportPdf(ctx: FileActionContext, outPath?: string): Promise<void> {

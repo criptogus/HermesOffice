@@ -5,6 +5,8 @@ import { LocaleProvider } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/dropdown.css'
+import 'katex/dist/katex.min.css'
 import './styles.css'
 import { installScreenTips } from '@hermesoffice/ui'
 

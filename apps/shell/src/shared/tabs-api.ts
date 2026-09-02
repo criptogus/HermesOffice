@@ -27,11 +27,6 @@ export interface TabsApi {
   showNewMenu(x: number, y: number): Promise<void>
   /** move a tab to a new index in the strip; Home stays pinned at index 0 */
   reorder(id: string, toIndex: number): Promise<void>
-  /**
-   * open the "Send to…" share window for the active document (no-op when the
-   * active tab is Home or has no file on disk yet).
-   */
-  shareActive(): Promise<void>
   /** subscribe to tab list changes (open/close/activate/title updates); returns unsubscribe */
   onChanged(handler: (tabs: TabSummary[]) => void): () => void
   /**
@@ -40,6 +35,10 @@ export interface TabsApi {
    * a focus change, so the shell relays it for them to dismiss popovers.
    */
   notifyChromePressed(): void
+  /** the main-process broadcast that notifyChromePressed (and a window drag)
+   * triggers; the shell's own popovers subscribe so a title-bar drag — which
+   * produces no DOM event — still dismisses them */
+  onChromePressed(handler: () => void): () => void
 }
 
 export const TABS_CHANNELS = {
@@ -49,7 +48,6 @@ export const TABS_CHANNELS = {
   showMenu: 'tabs:show-menu',
   showNewMenu: 'tabs:show-new-menu',
   reorder: 'tabs:reorder',
-  shareActive: 'tabs:share-active',
   changed: 'tabs:changed',
   chromePressed: 'tabs:chrome-pressed',
 } as const

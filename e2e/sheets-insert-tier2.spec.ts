@@ -35,14 +35,14 @@ async function gridOrigin(page: Page): Promise<{ x: number; y: number }> {
   return grid
 }
 
-/** center of a cell: ~46px row header, ~24px column header, ~86px × ~23px cells */
+/** center of a cell: ~46px row header, ~24px column header, ~74px × ~23px cells */
 function cellPoint(origin: { x: number; y: number }, row: number, column: number) {
-  return { x: origin.x + 46 + column * 86 + 43, y: origin.y + 24 + row * 23 + 11 }
+  return { x: origin.x + 46 + column * 74 + 37, y: origin.y + 24 + row * 23 + 11 }
 }
 
 test.describe('sheets: Insert → Equation and Checkbox', () => {
   test('renders LaTeX to a picture and saves it into the workbook', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'equation.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -84,7 +84,7 @@ test.describe('sheets: Insert → Equation and Checkbox', () => {
   })
 
   test('inserts a checkbox rule that saves as a two-value list validation', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'checkbox.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -116,7 +116,7 @@ test.describe('sheets: Insert → Equation and Checkbox', () => {
 
 test.describe('sheets: Insert → Timeline', () => {
   test('filters a pivot by month range through the timeline panel', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'timeline.xlsx')
     await copyFile(FIXTURE, workbook)
 

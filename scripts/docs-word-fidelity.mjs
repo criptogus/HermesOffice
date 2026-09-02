@@ -234,7 +234,7 @@ class CDP {
 async function oursExport(docxPath, pdfPath, index) {
   const port = 19680 + (index % 40)
   const stamp = `${process.pid}-${index}`
-  const userData = join(tmpdir(), `genoffice-fidelity-${stamp}`)
+  const userData = join(tmpdir(), `hermesoffice-fidelity-${stamp}`)
   mkdirSync(userData, { recursive: true })
   const docCopy = join(tmpdir(), `fidelity-${stamp}-${basename(docxPath)}`)
   copyFileSync(docxPath, docCopy)
@@ -253,8 +253,8 @@ async function oursExport(docxPath, pdfPath, index) {
       env: {
         ...process.env,
         NODE_ENV: 'production',
-        GENOFFICE_LANG: 'zh',
-        GENOFFICE_TEST_EXPORT_DIR: OURS_PDF_DIR,
+        HERMESOFFICE_LANG: 'zh',
+        HERMESOFFICE_TEST_EXPORT_DIR: OURS_PDF_DIR,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

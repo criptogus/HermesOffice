@@ -4,7 +4,7 @@ import type {
   AiChatResponse,
   AiSettings,
   AiStreamChunk,
-  GatewayAccountStatus,
+  GenSparkAccountStatus,
 } from '@hermesoffice/ai-provider'
 import type { ProjectApi } from '@hermesoffice/project-store'
 import type {
@@ -13,6 +13,7 @@ import type {
   AttachmentMeta,
   AttachmentReadResult,
   DesktopApi,
+  RecoveryPromptPayload,
   ScreenCaptureResult,
   ScreenSourcesResult,
   UiTheme,
@@ -23,6 +24,7 @@ import type {
   WorkbookFormulaCellsResult,
   WorkbookMediaRequest,
   WorkbookMediaResult,
+  WorkbookPagePrintSettings,
   WorkbookPivotDefinition,
   WorkbookPivotRequest,
   WorkbookRangeRequest,
@@ -34,8 +36,19 @@ import type {
   WorkbookSaveResult,
   WorkbookVisualObject,
   WebSearchResult,
+  ImageSearchResponse,
+  GenerateImageResult,
 } from '../shared/desktop-api'
-import { IPC_CHANNELS } from '../shared/ipc-channels'
+import {
+  IPC_CHANNELS,
+  MAX_CREATE_DOCUMENT_CONTENT_CHARS,
+  MAX_CREATE_DOCUMENT_TITLE_CHARS,
+  MAX_CSV_EXPORT_CHARS,
+  MAX_SAVE_EDITS,
+  MAX_SAVE_EDITS_TOTAL,
+  SAVE_EDITS_CHUNK_JSON_MAX,
+} from '../shared/ipc-channels'
+import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
 
 const desktopApi: DesktopApi = {
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
@@ -156,6 +169,57 @@ const desktopApi: DesktopApi = {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.saveWorkbook, validatedRequest)
     return parseSaveResult(result)
   },
+  async beginSaveEditsTransfer(request) {
+    if (!isRecord(request)) throw new Error('Invalid save transfer request.')
+    if (!isUuid(request.sessionId)) throw new Error('Invalid save transfer session.')
+    if (!isUuid(request.transferId)) throw new Error('Invalid save transfer id.')
+    if (
+      typeof request.total !== 'number' ||
+      !Number.isInteger(request.total) ||
+      request.total <= 0 ||
+      request.total > MAX_SAVE_EDITS_TOTAL
+    ) {
+      throw new Error(
+        `Invalid save transfer size. (${String(request.total)} exceeds the ${MAX_SAVE_EDITS_TOTAL} limit)`,
+      )
+    }
+    await ipcRenderer.invoke(IPC_CHANNELS.saveEditsBegin, {
+      sessionId: request.sessionId,
+      transferId: request.transferId,
+      total: request.total,
+    })
+  },
+  async sendSaveEditsChunk(request) {
+    if (!isRecord(request)) throw new Error('Invalid save transfer chunk.')
+    if (!isUuid(request.sessionId)) throw new Error('Invalid save transfer session.')
+    if (!isUuid(request.transferId)) throw new Error('Invalid save transfer id.')
+    if (typeof request.seq !== 'number' || !Number.isInteger(request.seq) || request.seq < 0)
+      throw new Error('Invalid save transfer chunk index.')
+    // The edits stay a JSON string end to end here: the main process parses
+    // and validates each chunk against the cell-edit schema before storing.
+    if (
+      typeof request.editsJson !== 'string' ||
+      request.editsJson.length < 2 ||
+      request.editsJson.length > SAVE_EDITS_CHUNK_JSON_MAX
+    ) {
+      throw new Error('Invalid save transfer chunk edits.')
+    }
+    await ipcRenderer.invoke(IPC_CHANNELS.saveEditsChunk, {
+      sessionId: request.sessionId,
+      transferId: request.transferId,
+      seq: request.seq,
+      editsJson: request.editsJson,
+    })
+  },
+  async abortSaveEditsTransfer(request) {
+    if (!isRecord(request)) throw new Error('Invalid save transfer request.')
+    if (!isUuid(request.sessionId)) throw new Error('Invalid save transfer session.')
+    if (!isUuid(request.transferId)) throw new Error('Invalid save transfer id.')
+    await ipcRenderer.invoke(IPC_CHANNELS.saveEditsAbort, {
+      sessionId: request.sessionId,
+      transferId: request.transferId,
+    })
+  },
   async writeWorkbookRecovery(request) {
     const validatedRequest = parseSaveRequest(request)
     const result: unknown = await ipcRenderer.invoke(
@@ -197,7 +261,9 @@ const desktopApi: DesktopApi = {
       }) ||
       typeof request.scale !== 'number' ||
       request.scale < 0.1 ||
-      request.scale > 2
+      request.scale > 2 ||
+      (request.headerTemplate !== undefined && !isBoundedString(request.headerTemplate, 50_000)) ||
+      (request.footerTemplate !== undefined && !isBoundedString(request.footerTemplate, 50_000))
     ) {
       throw new Error('Invalid PDF export request.')
     }
@@ -210,6 +276,78 @@ const desktopApi: DesktopApi = {
       throw new Error('Invalid PDF export response.')
     }
     return result as { canceled: true } | { canceled: false; path: string }
+  },
+  async exportCsv(request) {
+    if (
+      !isRecord(request) ||
+      typeof request.fileName !== 'string' ||
+      request.fileName.length === 0 ||
+      request.fileName.length > 255 ||
+      typeof request.content !== 'string' ||
+      request.content.length > MAX_CSV_EXPORT_CHARS ||
+      typeof request.hasFormulas !== 'boolean' ||
+      (request.activeSheetName !== undefined &&
+        (typeof request.activeSheetName !== 'string' || request.activeSheetName.length > 255)) ||
+      (request.targetPath !== undefined &&
+        (typeof request.targetPath !== 'string' || request.targetPath.length === 0))
+    ) {
+      throw new Error('Invalid CSV export request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.exportCsv, request)
+    if (
+      !isRecord(result) ||
+      typeof result.canceled !== 'boolean' ||
+      (result.canceled === false && typeof result.path !== 'string') ||
+      (result.canceled === true &&
+        result.saveAsXlsxInstead !== undefined &&
+        typeof result.saveAsXlsxInstead !== 'boolean')
+    ) {
+      throw new Error('Invalid CSV export response.')
+    }
+    return result as
+      { canceled: true; saveAsXlsxInstead?: boolean } | { canceled: false; path: string }
+  },
+  async confirmCsvSave() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.csvSaveConfirm)
+    if (result !== 'csv' && result !== 'xlsx' && result !== 'cancel') {
+      throw new Error('Invalid CSV save confirmation response.')
+    }
+    return result
+  },
+  async createDocument(request) {
+    if (
+      !isRecord(request) ||
+      (request.type !== 'xlsx' &&
+        request.type !== 'csv' &&
+        request.type !== 'docx' &&
+        request.type !== 'pdf' &&
+        request.type !== 'md') ||
+      typeof request.title !== 'string' ||
+      request.title.length === 0 ||
+      request.title.length > MAX_CREATE_DOCUMENT_TITLE_CHARS ||
+      typeof request.content !== 'string' ||
+      request.content.length === 0 ||
+      request.content.length >
+        (request.type === 'xlsx' || request.type === 'csv'
+          ? MAX_CSV_EXPORT_CHARS
+          : MAX_CREATE_DOCUMENT_CONTENT_CHARS) ||
+      (request.sheetName !== undefined &&
+        (typeof request.sheetName !== 'string' ||
+          request.sheetName.length === 0 ||
+          request.sheetName.length > 31))
+    ) {
+      throw new Error('Invalid create-document request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.createDocument, request)
+    if (
+      !isRecord(result) ||
+      typeof result.ok !== 'boolean' ||
+      (result.path !== undefined && typeof result.path !== 'string') ||
+      (result.error !== undefined && typeof result.error !== 'string')
+    ) {
+      throw new Error('Invalid create-document response.')
+    }
+    return result as { ok: boolean; path?: string; error?: string }
   },
   async closeWorkbook(sessionId) {
     if (!isUuid(sessionId)) throw new Error('Invalid workbook session.')
@@ -228,6 +366,7 @@ const desktopApi: DesktopApi = {
         action === 'save' ||
         action === 'save-as' ||
         action === 'export-pdf' ||
+        action === 'export-csv' ||
         action === 'undo' ||
         action === 'redo'
       )
@@ -255,6 +394,27 @@ const desktopApi: DesktopApi = {
   reportCloseSaveResult(ok) {
     ipcRenderer.send(IPC_CHANNELS.closeSaveResult, ok === true)
   },
+  onRecoveryPrompt(callback) {
+    const listener = (_event: unknown, payload: unknown): void => {
+      if (
+        isRecord(payload) &&
+        typeof payload.title === 'string' &&
+        typeof payload.body === 'string' &&
+        typeof payload.restoreLabel === 'string' &&
+        typeof payload.discardLabel === 'string' &&
+        typeof payload.fileName === 'string' &&
+        typeof payload.savedAtMs === 'number' &&
+        Number.isFinite(payload.savedAtMs)
+      ) {
+        callback(payload as unknown as RecoveryPromptPayload)
+      }
+    }
+    ipcRenderer.on(IPC_CHANNELS.recoveryPrompt, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.recoveryPrompt, listener)
+  },
+  replyRecoveryPrompt(restore) {
+    ipcRenderer.send(IPC_CHANNELS.recoveryPromptReply, restore === true)
+  },
   async getAiSettings() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGetSettings)
     if (!isRecord(result)) throw new Error('Invalid AI settings response.')
@@ -277,15 +437,15 @@ const desktopApi: DesktopApi = {
     if (!requestId) throw new Error('Invalid AI stream request id.')
     await ipcRenderer.invoke(IPC_CHANNELS.aiStreamCancel, requestId)
   },
-  async aiGatewayStatus(withEmail) {
-    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGatewayStatus, withEmail)
+  async aiGskStatus(withEmail) {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGskStatus, withEmail)
     if (!isRecord(result) || typeof result.loggedIn !== 'boolean') {
-      throw new Error('Invalid Hermes gateway status response.')
+      throw new Error('Invalid Genspark account status response.')
     }
-    return result as unknown as GatewayAccountStatus
+    return result as unknown as GenSparkAccountStatus
   },
-  async aiGatewayLogin() {
-    await ipcRenderer.invoke(IPC_CHANNELS.aiGatewayLogin)
+  async aiGskLogin() {
+    await ipcRenderer.invoke(IPC_CHANNELS.aiGskLogin)
   },
   async webSearch(query, maxResults) {
     if (typeof query !== 'string' || !query.trim() || query.length > 512) {
@@ -296,6 +456,35 @@ const desktopApi: DesktopApi = {
       throw new Error('Invalid web search response.')
     }
     return result as unknown as WebSearchResult
+  },
+  async imageSearch(query, maxResults) {
+    if (typeof query !== 'string' || !query.trim() || query.length > 512) {
+      throw new Error('Invalid search query.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiImageSearch, query, maxResults)
+    if (!isRecord(result) || !Array.isArray(result.images) || typeof result.method !== 'string') {
+      throw new Error('Invalid image search response.')
+    }
+    return result as unknown as ImageSearchResponse
+  },
+  async generateImage(op) {
+    if (!isRecord(op) || typeof op.prompt !== 'string' || !op.prompt.trim()) {
+      throw new Error('Invalid image generation request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGenerateImage, op)
+    if (!isRecord(result)) throw new Error('Invalid image generation response.')
+    return result as unknown as GenerateImageResult
+  },
+  async fetchImage(url) {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || url.length > 2048) {
+      throw new Error('Invalid image URL.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiFetchImage, url)
+    if (result === null) return null
+    if (!isRecord(result) || typeof result.base64 !== 'string' || typeof result.mime !== 'string') {
+      throw new Error('Invalid image download response.')
+    }
+    return result as { base64: string; mime: string }
   },
   onAiStream(callback) {
     const listener = (_event: unknown, chunk: unknown): void => {
@@ -439,20 +628,20 @@ const projectApi: ProjectApi = {
   deleteProject: (args) => ipcRenderer.invoke('project:delete', args),
   moveFile: (args) => ipcRenderer.invoke('project:moveFile', args),
   getTimeline: (args) => ipcRenderer.invoke('project:timeline', args),
-  saveProposedChange: (args) => ipcRenderer.invoke('project:proposal:save', args),
-  updateProposedChangeStatus: (args) => ipcRenderer.invoke('project:proposal:updateStatus', args),
-  listProposedChanges: (args) => ipcRenderer.invoke('project:proposal:list', args),
-  upsertDocumentReference: (args) => ipcRenderer.invoke('project:graph:upsertReference', args),
-  listDocumentReferences: (args) => ipcRenderer.invoke('project:graph:listReferences', args),
 }
 contextBridge.exposeInMainWorld('projectApi', projectApi)
+
+// open documents dragged from the OS onto this tab as a new shell tab
+installDropOpenBridge()
 
 function parseWorkbookFile(input: unknown): WorkbookFile {
   if (!isRecord(input)) throw new Error('Invalid workbook response.')
   const {
     sessionId,
     name,
+    path,
     sha256,
+    fileBytes,
     entryCount,
     sheets,
     styles,
@@ -460,19 +649,27 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
     visuals,
     definedNames,
     readOnly,
+    needsSaveAs,
+    csvPath,
+    restoredFromRecovery,
   } = input
   if (
     !isUuid(sessionId) ||
     typeof name !== 'string' ||
+    (path !== undefined && (typeof path !== 'string' || path.length === 0)) ||
     typeof sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(sha256) ||
+    (fileBytes !== undefined && !isNonnegativeInteger(fileBytes)) ||
     !isNonnegativeInteger(entryCount) ||
     !Array.isArray(sheets) ||
     !Array.isArray(styles) ||
     !Array.isArray(dxfStyles) ||
     !Array.isArray(visuals) ||
     !Array.isArray(definedNames) ||
-    typeof readOnly !== 'boolean'
+    typeof readOnly !== 'boolean' ||
+    (needsSaveAs !== undefined && typeof needsSaveAs !== 'boolean') ||
+    (csvPath !== undefined && (typeof csvPath !== 'string' || csvPath.length === 0)) ||
+    (restoredFromRecovery !== undefined && typeof restoredFromRecovery !== 'boolean')
   ) {
     throw new Error('Invalid workbook response.')
   }
@@ -518,9 +715,35 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
         typeof table.showRowStripes !== 'boolean' ||
         typeof table.showColumnStripes !== 'boolean' ||
         !isOptionalString(table.styleName) ||
+        !isOptionalString(table.name) ||
+        (table.columns !== undefined &&
+          (!Array.isArray(table.columns) ||
+            table.columns.some((column: unknown) => typeof column !== 'string'))) ||
         !isOptionalString(table.headerFill) ||
         !isOptionalString(table.headerFontColor) ||
-        !isOptionalString(table.stripeFill)
+        !isOptionalString(table.stripeFill) ||
+        !isOptionalString(table.secondRowStripeFill) ||
+        !isOptionalString(table.columnStripeFill) ||
+        !isOptionalString(table.secondColumnStripeFill) ||
+        !isOptionalString(table.wholeTableFill) ||
+        !isOptionalString(table.firstColumnFill) ||
+        !isOptionalString(table.lastColumnFill) ||
+        !isOptionalString(table.totalRowFill) ||
+        !isOptionalString(table.totalRowFontColor) ||
+        !isOptionalString(table.totalRowBorderColor) ||
+        !isOptionalString(table.totalRowBorderStyle) ||
+        !isOptionalString(table.bodyFontColor) ||
+        !isOptionalString(table.firstHeaderCellFontColor) ||
+        !isOptionalString(table.borderColor) ||
+        !isOptionalString(table.wholeTableBorderColor) ||
+        !isOptionalString(table.wholeTableBorderStyle) ||
+        !isOptionalString(table.innerHorizontalBorderColor) ||
+        !isOptionalString(table.innerHorizontalBorderStyle) ||
+        !isOptionalString(table.innerVerticalBorderColor) ||
+        !isOptionalString(table.innerVerticalBorderStyle) ||
+        !isOptionalString(table.headerBottomBorderColor) ||
+        !isOptionalString(table.headerBottomBorderStyle) ||
+        (table.totalsRowCount !== undefined && !isNonnegativeInteger(table.totalsRowCount))
       ) {
         throw new Error('Invalid worksheet table.')
       }
@@ -529,10 +752,64 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
         headerRowCount: table.headerRowCount,
         showRowStripes: table.showRowStripes,
         showColumnStripes: table.showColumnStripes,
+        ...(table.name === undefined ? {} : { name: table.name }),
+        ...(table.columns === undefined ? {} : { columns: table.columns }),
         ...(table.styleName === undefined ? {} : { styleName: table.styleName }),
         ...(table.headerFill === undefined ? {} : { headerFill: table.headerFill }),
         ...(table.headerFontColor === undefined ? {} : { headerFontColor: table.headerFontColor }),
         ...(table.stripeFill === undefined ? {} : { stripeFill: table.stripeFill }),
+        ...(table.secondRowStripeFill === undefined
+          ? {}
+          : { secondRowStripeFill: table.secondRowStripeFill }),
+        ...(table.columnStripeFill === undefined
+          ? {}
+          : { columnStripeFill: table.columnStripeFill }),
+        ...(table.secondColumnStripeFill === undefined
+          ? {}
+          : { secondColumnStripeFill: table.secondColumnStripeFill }),
+        ...(table.wholeTableFill === undefined ? {} : { wholeTableFill: table.wholeTableFill }),
+        ...(table.firstColumnFill === undefined ? {} : { firstColumnFill: table.firstColumnFill }),
+        ...(table.lastColumnFill === undefined ? {} : { lastColumnFill: table.lastColumnFill }),
+        ...(table.totalRowFill === undefined ? {} : { totalRowFill: table.totalRowFill }),
+        ...(table.totalRowFontColor === undefined
+          ? {}
+          : { totalRowFontColor: table.totalRowFontColor }),
+        ...(table.totalRowBorderColor === undefined
+          ? {}
+          : { totalRowBorderColor: table.totalRowBorderColor }),
+        ...(table.totalRowBorderStyle === undefined
+          ? {}
+          : { totalRowBorderStyle: table.totalRowBorderStyle }),
+        ...(table.bodyFontColor === undefined ? {} : { bodyFontColor: table.bodyFontColor }),
+        ...(table.firstHeaderCellFontColor === undefined
+          ? {}
+          : { firstHeaderCellFontColor: table.firstHeaderCellFontColor }),
+        ...(table.totalsRowCount === undefined ? {} : { totalsRowCount: table.totalsRowCount }),
+        ...(table.borderColor === undefined ? {} : { borderColor: table.borderColor }),
+        ...(table.wholeTableBorderColor === undefined
+          ? {}
+          : { wholeTableBorderColor: table.wholeTableBorderColor }),
+        ...(table.wholeTableBorderStyle === undefined
+          ? {}
+          : { wholeTableBorderStyle: table.wholeTableBorderStyle }),
+        ...(table.innerHorizontalBorderColor === undefined
+          ? {}
+          : { innerHorizontalBorderColor: table.innerHorizontalBorderColor }),
+        ...(table.innerHorizontalBorderStyle === undefined
+          ? {}
+          : { innerHorizontalBorderStyle: table.innerHorizontalBorderStyle }),
+        ...(table.innerVerticalBorderColor === undefined
+          ? {}
+          : { innerVerticalBorderColor: table.innerVerticalBorderColor }),
+        ...(table.innerVerticalBorderStyle === undefined
+          ? {}
+          : { innerVerticalBorderStyle: table.innerVerticalBorderStyle }),
+        ...(table.headerBottomBorderColor === undefined
+          ? {}
+          : { headerBottomBorderColor: table.headerBottomBorderColor }),
+        ...(table.headerBottomBorderStyle === undefined
+          ? {}
+          : { headerBottomBorderStyle: table.headerBottomBorderStyle }),
       }
     })
     const comments = sheet.comments.map((comment) => {
@@ -565,7 +842,9 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
         typeof columnWidth.hidden !== 'boolean' ||
         (columnWidth.outlineLevel !== undefined &&
           (!isNonnegativeInteger(columnWidth.outlineLevel) || columnWidth.outlineLevel > 7)) ||
-        (columnWidth.collapsed !== undefined && typeof columnWidth.collapsed !== 'boolean')
+        (columnWidth.collapsed !== undefined && typeof columnWidth.collapsed !== 'boolean') ||
+        (columnWidth.styleIndex !== undefined &&
+          (!isNonnegativeInteger(columnWidth.styleIndex) || columnWidth.styleIndex === 0))
       ) {
         throw new Error('Invalid worksheet column width.')
       }
@@ -578,6 +857,7 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
           ? {}
           : { outlineLevel: columnWidth.outlineLevel }),
         ...(columnWidth.collapsed === undefined ? {} : { collapsed: columnWidth.collapsed }),
+        ...(columnWidth.styleIndex === undefined ? {} : { styleIndex: columnWidth.styleIndex }),
       }
     })
     return {
@@ -585,35 +865,103 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
       name: sheet.name,
       rowCount: sheet.rowCount,
       columnCount: sheet.columnCount,
+      // The renderer's oversized-sheet write gate needs this; omitting it
+      // silently disables the gate (older sidecars don't report it).
+      ...(isPositiveInteger(sheet.sourceXmlBytes) ? { sourceXmlBytes: sheet.sourceXmlBytes } : {}),
       columnWidths,
       // Degrade instead of rejecting the workbook: 0 / malformed defaults
       // mean "use the built-in size".
       defaultRowHeight: normalizedDefaultSize(sheet.defaultRowHeight),
       defaultColumnWidth: normalizedDefaultSize(sheet.defaultColumnWidth),
+      baseColumnWidth: normalizedDefaultSize(sheet.baseColumnWidth),
       freeze: parseFreeze(sheet.freeze),
       hidden: sheet.hidden,
       tabColor: sheet.tabColor,
       showGridLines: sheet.showGridLines,
       showFormulas: sheet.showFormulas === true,
+      showRowColHeaders: sheet.showRowColHeaders !== false,
+      rightToLeft: sheet.rightToLeft === true,
       tables,
       comments,
       pivotRanges: sheet.pivotRanges.map(parseCellArea),
       pivotTables: parsePivotTableInfos(sheet.pivotTables ?? []),
       sparklines: parseSparklineGroups(sheet.sparklines ?? []),
+      cellImages: parseCellImages(sheet.cellImages ?? []),
+      ...(isBoundedString(sheet.printArea, 2_000) ? { printArea: sheet.printArea } : {}),
+      ...(isBoundedString(sheet.printTitles, 2_000) ? { printTitles: sheet.printTitles } : {}),
+      ...(sheet.hasScopedDefinedNames === true ? { hasScopedDefinedNames: true } : {}),
     }
   })
   if (parsedSheets.length === 0) throw new Error('Workbook contains no worksheets.')
+  const { themeColors, themeFonts, workbookProtection } = input
+  if (
+    themeColors !== undefined &&
+    (!Array.isArray(themeColors) ||
+      themeColors.length !== 12 ||
+      themeColors.some((color) => typeof color !== 'string'))
+  ) {
+    throw new Error('Invalid workbook theme palette response.')
+  }
+  let parsedThemeFonts: { major: string; minor: string; minorEa?: string } | undefined
+  if (themeFonts !== undefined) {
+    if (
+      !isRecord(themeFonts) ||
+      typeof themeFonts.major !== 'string' ||
+      typeof themeFonts.minor !== 'string'
+    ) {
+      throw new Error('Invalid workbook theme fonts response.')
+    }
+    parsedThemeFonts = {
+      major: themeFonts.major,
+      minor: themeFonts.minor,
+      ...(typeof themeFonts.minorEa === 'string' ? { minorEa: themeFonts.minorEa } : {}),
+    }
+  }
+  let parsedWorkbookProtection: { lockStructure: boolean; hasPassword: boolean } | undefined
+  if (workbookProtection !== undefined) {
+    if (
+      !isRecord(workbookProtection) ||
+      typeof workbookProtection.lockStructure !== 'boolean' ||
+      typeof workbookProtection.hasPassword !== 'boolean'
+    ) {
+      throw new Error('Invalid workbook protection response.')
+    }
+    parsedWorkbookProtection = {
+      lockStructure: workbookProtection.lockStructure,
+      hasPassword: workbookProtection.hasPassword,
+    }
+  }
+  const activeTab = isNonnegativeInteger(input.activeTab) ? input.activeTab : 0
+  const date1904 = input.date1904 === true
+  const shortDateFormat =
+    typeof input.shortDateFormat === 'string' ? input.shortDateFormat : undefined
   return {
     sessionId,
     name,
+    ...(path === undefined ? {} : { path }),
     sha256,
+    ...(fileBytes === undefined ? {} : { fileBytes }),
     entryCount,
     sheets: parsedSheets,
+    activeTab,
     styles: styles.map(parseCellStyle),
     dxfStyles: dxfStyles.map(parseCellStyle),
     visuals: visuals.map(parseVisualObject),
     definedNames: parsedDefinedNames,
     readOnly,
+    ...(needsSaveAs === undefined ? {} : { needsSaveAs }),
+    ...(csvPath === undefined ? {} : { csvPath }),
+    ...(restoredFromRecovery === undefined ? {} : { restoredFromRecovery }),
+    ...(themeColors === undefined ? {} : { themeColors: themeColors as string[] }),
+    ...(parsedThemeFonts === undefined ? {} : { themeFonts: parsedThemeFonts }),
+    ...(typeof input.normalFontName === 'string' && input.normalFontName !== ''
+      ? { normalFontName: input.normalFontName }
+      : {}),
+    ...(parsedWorkbookProtection === undefined
+      ? {}
+      : { workbookProtection: parsedWorkbookProtection }),
+    ...(date1904 ? { date1904 } : {}),
+    ...(shortDateFormat === undefined ? {} : { shortDateFormat }),
   }
 }
 
@@ -634,7 +982,7 @@ function parseRangeRequest(input: WorkbookRangeRequest): WorkbookRangeRequest {
     !isNonnegativeInteger(endColumn) ||
     startRow > endRow ||
     startColumn > endColumn ||
-    (endRow - startRow + 1) * (endColumn - startColumn + 1) > 20_000
+    (endRow - startRow + 1) * (endColumn - startColumn + 1) > 100_000
   ) {
     throw new Error('Invalid workbook range request.')
   }
@@ -785,15 +1133,15 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
   if (
     !isRecord(input) ||
     !Array.isArray(input.cells) ||
-    input.cells.length > 20_000 ||
+    input.cells.length > 100_000 ||
     !Array.isArray(input.rows) ||
-    input.rows.length > 20_000 ||
+    input.rows.length > 100_000 ||
     !Array.isArray(input.merges) ||
-    input.merges.length > 20_000 ||
+    input.merges.length > 100_000 ||
     !Array.isArray(input.hyperlinks) ||
-    input.hyperlinks.length > 20_000 ||
+    input.hyperlinks.length > 100_000 ||
     !Array.isArray(input.conditionalRules) ||
-    input.conditionalRules.length > 20_000 ||
+    input.conditionalRules.length > 100_000 ||
     (input.indexedThroughRow !== null && !isNonnegativeInteger(input.indexedThroughRow)) ||
     typeof input.indexingComplete !== 'boolean'
   ) {
@@ -809,7 +1157,10 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
       typeof row.hidden !== 'boolean' ||
       (row.outlineLevel !== undefined &&
         (!isNonnegativeInteger(row.outlineLevel) || row.outlineLevel > 7)) ||
-      (row.collapsed !== undefined && typeof row.collapsed !== 'boolean')
+      (row.collapsed !== undefined && typeof row.collapsed !== 'boolean') ||
+      (row.customHeight !== undefined && typeof row.customHeight !== 'boolean') ||
+      (row.styleIndex !== undefined &&
+        (!isNonnegativeInteger(row.styleIndex) || row.styleIndex === 0))
     ) {
       throw new Error('Invalid workbook row response.')
     }
@@ -817,8 +1168,10 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
       row: row.row,
       hidden: row.hidden,
       ...(row.height === undefined ? {} : { height: row.height }),
+      ...(row.customHeight === undefined ? {} : { customHeight: row.customHeight }),
       ...(row.outlineLevel === undefined ? {} : { outlineLevel: row.outlineLevel }),
       ...(row.collapsed === undefined ? {} : { collapsed: row.collapsed }),
+      ...(row.styleIndex === undefined ? {} : { styleIndex: row.styleIndex }),
     }
   })
   const merges = input.merges.map((merge) => {
@@ -907,6 +1260,28 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
     }
     sheetProtection = { protected: protection.protected, hasPassword: protection.hasPassword }
   }
+  const parseBreaks = (value: unknown, label: string): number[] => {
+    if (!Array.isArray(value) || value.length > 1_024 || !value.every(isNonnegativeInteger)) {
+      throw new Error(`Invalid workbook ${label} response.`)
+    }
+    return value as number[]
+  }
+  if (!Array.isArray(input.protectedRanges) || input.protectedRanges.length > 1_024) {
+    throw new Error('Invalid workbook protected ranges response.')
+  }
+  const protectedRanges = input.protectedRanges.map((range) => {
+    if (
+      !isRecord(range) ||
+      typeof range.name !== 'string' ||
+      range.name === '' ||
+      typeof range.sqref !== 'string' ||
+      range.sqref === '' ||
+      typeof range.hasPassword !== 'boolean'
+    ) {
+      throw new Error('Invalid workbook protected range response.')
+    }
+    return { name: range.name, sqref: range.sqref, hasPassword: range.hasPassword }
+  })
   return {
     cells,
     rows,
@@ -916,8 +1291,70 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
     autoFilter: input.autoFilter === null ? null : parseCellArea(input.autoFilter),
     dataValidations,
     sheetProtection,
+    rowBreaks: parseBreaks(input.rowBreaks, 'row breaks'),
+    colBreaks: parseBreaks(input.colBreaks, 'column breaks'),
+    protectedRanges,
+    pageSetup: parsePagePrintSettings(input.pageSetup),
     indexedThroughRow: input.indexedThroughRow,
     indexingComplete: input.indexingComplete,
+  }
+}
+
+function parsePagePrintSettings(input: unknown): WorkbookRangeResult['pageSetup'] {
+  if (input === null || input === undefined) return null
+  const boundedInt = (value: unknown, min: number, max: number): boolean =>
+    typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
+  if (
+    !isRecord(input) ||
+    (input.orientation !== undefined &&
+      input.orientation !== 'portrait' &&
+      input.orientation !== 'landscape') ||
+    (input.paperSize !== undefined && !boundedInt(input.paperSize, 1, 256)) ||
+    (input.scale !== undefined && !boundedInt(input.scale, 10, 400)) ||
+    (input.fitToWidth !== undefined && !boundedInt(input.fitToWidth, 0, 32_767)) ||
+    (input.fitToHeight !== undefined && !boundedInt(input.fitToHeight, 0, 32_767)) ||
+    (input.fitToPage !== undefined && typeof input.fitToPage !== 'boolean') ||
+    (input.printGridlines !== undefined && typeof input.printGridlines !== 'boolean') ||
+    (input.printHeadings !== undefined && typeof input.printHeadings !== 'boolean') ||
+    (input.oddHeader !== undefined && !isBoundedString(input.oddHeader, 500)) ||
+    (input.oddFooter !== undefined && !isBoundedString(input.oddFooter, 500))
+  ) {
+    throw new Error('Invalid workbook page setup response.')
+  }
+  let margins: WorkbookPagePrintSettings['margins']
+  if (input.margins !== undefined) {
+    const record = input.margins
+    if (
+      !isRecord(record) ||
+      !['left', 'right', 'top', 'bottom', 'header', 'footer'].every((edge) => {
+        const value = record[edge]
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10
+      })
+    ) {
+      throw new Error('Invalid workbook page margins response.')
+    }
+    margins = {
+      left: record.left as number,
+      right: record.right as number,
+      top: record.top as number,
+      bottom: record.bottom as number,
+      header: record.header as number,
+      footer: record.footer as number,
+    }
+  }
+  const validated = input as WorkbookPagePrintSettings
+  return {
+    ...(validated.orientation === undefined ? {} : { orientation: validated.orientation }),
+    ...(validated.paperSize === undefined ? {} : { paperSize: validated.paperSize }),
+    ...(validated.scale === undefined ? {} : { scale: validated.scale }),
+    ...(validated.fitToWidth === undefined ? {} : { fitToWidth: validated.fitToWidth }),
+    ...(validated.fitToHeight === undefined ? {} : { fitToHeight: validated.fitToHeight }),
+    ...(validated.fitToPage === undefined ? {} : { fitToPage: validated.fitToPage }),
+    ...(margins === undefined ? {} : { margins }),
+    ...(validated.printGridlines === undefined ? {} : { printGridlines: validated.printGridlines }),
+    ...(validated.printHeadings === undefined ? {} : { printHeadings: validated.printHeadings }),
+    ...(validated.oddHeader === undefined ? {} : { oddHeader: validated.oddHeader }),
+    ...(validated.oddFooter === undefined ? {} : { oddFooter: validated.oddFooter }),
   }
 }
 
@@ -934,7 +1371,10 @@ function parseRichRuns(input: unknown): WorkbookRichRun[] {
       !isOptionalString(run.color) ||
       (run.size !== undefined &&
         (typeof run.size !== 'number' || !Number.isFinite(run.size) || run.size <= 0)) ||
-      !isOptionalString(run.family)
+      !isOptionalString(run.family) ||
+      (run.vertAlign !== undefined &&
+        run.vertAlign !== 'subscript' &&
+        run.vertAlign !== 'superscript')
     ) {
       throw new Error('Invalid workbook rich text response.')
     }
@@ -947,6 +1387,7 @@ function parseRichRuns(input: unknown): WorkbookRichRun[] {
       ...(run.color === undefined ? {} : { color: run.color }),
       ...(run.size === undefined ? {} : { size: run.size }),
       ...(run.family === undefined ? {} : { family: run.family }),
+      ...(run.vertAlign === undefined ? {} : { vertAlign: run.vertAlign }),
     }
   })
 }
@@ -1010,7 +1451,11 @@ function parseConditionalRule(input: unknown): WorkbookConditionalRule {
   if (
     !isOptionalString(input.iconSetName) ||
     typeof input.iconReverse !== 'boolean' ||
-    typeof input.showValue !== 'boolean'
+    typeof input.showValue !== 'boolean' ||
+    !isOptionalString(input.negativeColor) ||
+    (input.negativeSameAsPositive !== undefined &&
+      typeof input.negativeSameAsPositive !== 'boolean') ||
+    (input.gradient !== undefined && typeof input.gradient !== 'boolean')
   ) {
     throw new Error('Invalid workbook conditional rule.')
   }
@@ -1030,50 +1475,65 @@ function parseConditionalRule(input: unknown): WorkbookConditionalRule {
     ...(input.text === undefined ? {} : { text: input.text }),
     ...(input.dxfIndex === undefined ? {} : { dxfIndex: input.dxfIndex }),
     ...(input.rank === undefined ? {} : { rank: input.rank }),
+    ...(input.negativeColor === undefined ? {} : { negativeColor: input.negativeColor }),
+    ...(input.negativeSameAsPositive === undefined
+      ? {}
+      : { negativeSameAsPositive: input.negativeSameAsPositive }),
+    ...(input.gradient === undefined ? {} : { gradient: input.gradient }),
   }
 }
 
 function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
+  // Every rejection names the failing part: this one message ends up in the
+  // save-failure toast, and "Invalid workbook save request." alone gave user
+  // reports nothing to go on (alpha ledger r110).
+  const invalid = (detail: string): never => {
+    throw new Error(`Invalid workbook save request. (${detail})`)
+  }
+  // Arrays of renderer-built parts share one shape rule: a real array, at
+  // most `cap` entries.
+  const cappedArray = (name: string, value: unknown, cap: number): void => {
+    if (!Array.isArray(value)) invalid(`${name}: not a list`)
+    if ((value as unknown[]).length > cap)
+      invalid(`${name}: ${(value as unknown[]).length} entries exceeds the ${cap} limit`)
+  }
+  if (!isRecord(input)) invalid('malformed request')
+  if (!isUuid(input.sessionId)) invalid('session id')
+  if (input.mode !== 'save' && input.mode !== 'save-as') invalid('mode')
+  if (input.restoreWriteBack !== undefined && typeof input.restoreWriteBack !== 'boolean')
+    invalid('restore flag')
   if (
-    !isRecord(input) ||
-    !isUuid(input.sessionId) ||
-    (input.mode !== 'save' && input.mode !== 'save-as') ||
-    !Array.isArray(input.edits) ||
-    input.edits.length > 10_000 ||
-    !Array.isArray(input.structuralOps) ||
-    input.structuralOps.length > 1_000 ||
-    !Array.isArray(input.chartEdits) ||
-    input.chartEdits.length > 100 ||
-    !Array.isArray(input.visualEdits) ||
-    input.visualEdits.length > 100 ||
-    !Array.isArray(input.visualAdditions) ||
-    input.visualAdditions.length > 100 ||
-    !Array.isArray(input.tableAdditions) ||
-    input.tableAdditions.length > 50 ||
-    !Array.isArray(input.pivotAdditions) ||
-    input.pivotAdditions.length > 20 ||
-    !Array.isArray(input.sheetOps) ||
-    input.sheetOps.length > 100 ||
-    !Array.isArray(input.sheetOrder) ||
-    input.sheetOrder.length > 1_000 ||
-    input.sheetOrder.some((sheetId) => typeof sheetId !== 'string' || sheetId.length === 0) ||
-    !Array.isArray(input.filterStates) ||
-    input.filterStates.length > 1_000 ||
-    !Array.isArray(input.hyperlinkEdits) ||
-    input.hyperlinkEdits.length > 1_000 ||
-    !Array.isArray(input.cfStates) ||
-    input.cfStates.length > 1_000 ||
-    !Array.isArray(input.dvStates) ||
-    input.dvStates.length > 1_000 ||
-    !Array.isArray(input.pageSetupStates) ||
-    input.pageSetupStates.length > 1_000 ||
-    !Array.isArray(input.noteStates) ||
-    input.noteStates.length > 1_000 ||
-    !Array.isArray(input.pivotCacheRefreshPaths) ||
-    input.pivotCacheRefreshPaths.length > 100 ||
-    input.pivotCacheRefreshPaths.some((path) => typeof path !== 'string') ||
-    !Array.isArray(input.pivotRefreshUpdates) ||
-    input.pivotRefreshUpdates.length > 100 ||
+    input.csvContent !== undefined &&
+    (typeof input.csvContent !== 'string' || input.csvContent.length > MAX_CSV_EXPORT_CHARS)
+  )
+    invalid('csv content')
+  if (input.editsTransferId !== undefined && !isUuid(input.editsTransferId))
+    invalid('edits transfer id')
+  cappedArray('cell edits', input.edits, MAX_SAVE_EDITS)
+  if (input.editsTransferId !== undefined && input.edits.length > 0)
+    invalid('cell edits: inline edits mixed with a transfer')
+  cappedArray('bulk constant fills', input.bulkConstantFills ?? [], 1_000)
+  cappedArray('structural operations', input.structuralOps, 1_000)
+  cappedArray('chart edits', input.chartEdits, 100)
+  cappedArray('visual edits', input.visualEdits, 100)
+  cappedArray('visual additions', input.visualAdditions, 100)
+  cappedArray('table additions', input.tableAdditions, 50)
+  cappedArray('pivot additions', input.pivotAdditions, 20)
+  cappedArray('sheet operations', input.sheetOps, 100)
+  cappedArray('sheet order', input.sheetOrder, 1_000)
+  if (input.sheetOrder.some((sheetId) => typeof sheetId !== 'string' || sheetId.length === 0))
+    invalid('sheet order: empty sheet id')
+  cappedArray('filter states', input.filterStates, 1_000)
+  cappedArray('hyperlink edits', input.hyperlinkEdits, 1_000)
+  cappedArray('conditional-formatting states', input.cfStates, 1_000)
+  cappedArray('data-validation states', input.dvStates, 1_000)
+  cappedArray('page-setup states', input.pageSetupStates, 1_000)
+  cappedArray('note states', input.noteStates, 1_000)
+  cappedArray('pivot cache refreshes', input.pivotCacheRefreshPaths, 100)
+  if (input.pivotCacheRefreshPaths.some((path) => typeof path !== 'string'))
+    invalid('pivot cache refreshes: non-string path')
+  cappedArray('pivot refresh updates', input.pivotRefreshUpdates, 100)
+  if (
     input.pivotRefreshUpdates.some(
       (update) =>
         !isRecord(update) ||
@@ -1084,40 +1544,81 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
         update.newOutputRef.length > 64 ||
         // relayout's full shape is authoritatively validated by main's zod schema.
         (update.relayout !== undefined && !isRecord(update.relayout)),
-    ) ||
-    !Array.isArray(input.sheetProtections) ||
-    input.sheetProtections.length > 1_000 ||
+    )
+  )
+    invalid('pivot refresh updates: malformed entry')
+  cappedArray('sheet protections', input.sheetProtections, 1_000)
+  if (
     input.sheetProtections.some(
       (state) =>
         !isRecord(state) ||
         typeof state.sheetId !== 'string' ||
         state.sheetId.length === 0 ||
         typeof state.protected !== 'boolean',
-    ) ||
-    !isDefinedNamesState(input.definedNamesState) ||
-    (input.mode !== 'save-as' &&
-      input.edits.length === 0 &&
-      input.structuralOps.length === 0 &&
-      input.chartEdits.length === 0 &&
-      input.visualEdits.length === 0 &&
-      input.visualAdditions.length === 0 &&
-      input.tableAdditions.length === 0 &&
-      input.pivotAdditions.length === 0 &&
-      input.sheetOps.length === 0 &&
-      input.filterStates.length === 0 &&
-      input.hyperlinkEdits.length === 0 &&
-      input.cfStates.length === 0 &&
-      input.dvStates.length === 0 &&
-      input.pageSetupStates.length === 0 &&
-      input.noteStates.length === 0 &&
-      input.pivotCacheRefreshPaths.length === 0 &&
-      input.pivotRefreshUpdates.length === 0 &&
-      input.sheetProtections.length === 0 &&
-      input.definedNamesState === null) ||
-    (input.sheetOps.length > 0 && input.sheetOrder.length === 0)
-  ) {
-    throw new Error('Invalid workbook save request.')
-  }
+    )
+  )
+    invalid('sheet protections: malformed entry')
+  if (!isDefinedNamesState(input.definedNamesState)) invalid('defined names')
+  if (!isThemeState(input.themeState)) invalid('theme')
+  if (
+    input.workbookProtectionState !== null &&
+    (!isRecord(input.workbookProtectionState) ||
+      typeof input.workbookProtectionState.lockStructure !== 'boolean')
+  )
+    invalid('workbook protection')
+  cappedArray('protected-range states', input.protectedRangeStates, 1_000)
+  if (
+    input.protectedRangeStates.some(
+      (state) =>
+        !isRecord(state) ||
+        typeof state.sheetId !== 'string' ||
+        state.sheetId.length === 0 ||
+        !Array.isArray(state.ranges) ||
+        state.ranges.length > 1_000 ||
+        state.ranges.some(
+          (range: unknown) =>
+            !isRecord(range) ||
+            typeof range.name !== 'string' ||
+            range.name.length === 0 ||
+            range.name.length > 255 ||
+            typeof range.sqref !== 'string' ||
+            range.sqref.length === 0 ||
+            range.sqref.length > 1_024,
+        ),
+    )
+  )
+    invalid('protected-range states: malformed entry')
+  if (
+    input.mode !== 'save-as' &&
+    input.restoreWriteBack !== true &&
+    input.editsTransferId === undefined &&
+    input.edits.length === 0 &&
+    (input.bulkConstantFills?.length ?? 0) === 0 &&
+    input.structuralOps.length === 0 &&
+    input.chartEdits.length === 0 &&
+    input.visualEdits.length === 0 &&
+    input.visualAdditions.length === 0 &&
+    input.tableAdditions.length === 0 &&
+    input.pivotAdditions.length === 0 &&
+    (input.sparklineAdditions?.length ?? 0) === 0 &&
+    input.sheetOps.length === 0 &&
+    input.filterStates.length === 0 &&
+    input.hyperlinkEdits.length === 0 &&
+    input.cfStates.length === 0 &&
+    input.dvStates.length === 0 &&
+    input.pageSetupStates.length === 0 &&
+    input.noteStates.length === 0 &&
+    input.pivotCacheRefreshPaths.length === 0 &&
+    input.pivotRefreshUpdates.length === 0 &&
+    input.sheetProtections.length === 0 &&
+    input.definedNamesState === null &&
+    input.themeState === null &&
+    input.workbookProtectionState === null &&
+    input.protectedRangeStates.length === 0
+  )
+    invalid('no changes to save')
+  if (input.sheetOps.length > 0 && input.sheetOrder.length === 0)
+    invalid('sheet order missing for sheet operations')
   for (const state of input.dvStates) {
     if (
       !isRecord(state) ||
@@ -1364,6 +1865,21 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
       parseCellArea(op.range)
       continue
     }
+    if ('style' in op) {
+      const { start, end } = op
+      if (
+        op.kind !== 'set-col-style' ||
+        !isNonnegativeInteger(start) ||
+        !isNonnegativeInteger(end) ||
+        end < start ||
+        end - start >= 100_000 ||
+        !isRecord(op.style) ||
+        Object.keys(op.style).length === 0
+      ) {
+        throw new Error('Invalid workbook structural operation.')
+      }
+      continue
+    }
     if ('size' in op || 'hidden' in op || 'level' in op) {
       const { start, end } = op
       if (
@@ -1448,6 +1964,22 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
     }
     if (edit.rich !== undefined) parseRichRuns(edit.rich)
   }
+  for (const fill of input.bulkConstantFills ?? []) {
+    if (
+      !isRecord(fill) ||
+      typeof fill.sheetId !== 'string' ||
+      fill.sheetId.length === 0 ||
+      !isNonnegativeInteger(fill.startRow) ||
+      !isNonnegativeInteger(fill.endRow) ||
+      fill.endRow < fill.startRow ||
+      !isNonnegativeInteger(fill.startColumn) ||
+      !isNonnegativeInteger(fill.endColumn) ||
+      fill.endColumn < fill.startColumn ||
+      !isCellScalar(fill.value)
+    ) {
+      invalid('bulk constant fills: malformed entry')
+    }
+  }
   return input
 }
 
@@ -1527,6 +2059,7 @@ function isPageSetupState(input: unknown): boolean {
     'printHeadings',
     'showGridlines',
     'showFormulas',
+    'showHeadings',
     'fitToPage',
   ]) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') return false
@@ -1545,6 +2078,19 @@ function isPageSetupState(input: unknown): boolean {
     (typeof input.printTitles !== 'string' || !/^\d{1,7}:\d{1,7}$/.test(input.printTitles))
   )
     return false
+  for (const [key, max] of [
+    ['rowBreaks', 1_048_575],
+    ['colBreaks', 16_383],
+  ] as const) {
+    const breaks = input[key]
+    if (
+      breaks !== undefined &&
+      (!Array.isArray(breaks) ||
+        breaks.length > 1_023 ||
+        breaks.some((id) => !isBoundedInt(id, 1, max)))
+    )
+      return false
+  }
   return Object.keys(input).length > 1
 }
 
@@ -1669,6 +2215,41 @@ function isStyleEdit(input: unknown): boolean {
   )
 }
 
+function isThemeState(input: unknown): boolean {
+  if (input === null) return true
+  if (!isRecord(input)) return false
+  const { colors, fonts } = input
+  if (colors === undefined && fonts === undefined) return false
+  if (colors !== undefined) {
+    if (
+      !isRecord(colors) ||
+      typeof colors.name !== 'string' ||
+      colors.name.length === 0 ||
+      colors.name.length > 64 ||
+      !Array.isArray(colors.values) ||
+      colors.values.length !== 12 ||
+      colors.values.some((value) => typeof value !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(value))
+    )
+      return false
+  }
+  if (fonts !== undefined) {
+    if (
+      !isRecord(fonts) ||
+      typeof fonts.name !== 'string' ||
+      fonts.name.length === 0 ||
+      fonts.name.length > 64 ||
+      typeof fonts.major !== 'string' ||
+      fonts.major.length === 0 ||
+      fonts.major.length > 128 ||
+      typeof fonts.minor !== 'string' ||
+      fonts.minor.length === 0 ||
+      fonts.minor.length > 128
+    )
+      return false
+  }
+  return true
+}
+
 function isDefinedNamesState(input: unknown): boolean {
   if (input === null) return true
   if (!isRecord(input)) return false
@@ -1697,7 +2278,15 @@ function isDefinedNamesState(input: unknown): boolean {
 
 function parseSaveResult(input: unknown): WorkbookSaveResult {
   if (!isRecord(input)) throw new Error('Invalid workbook save response.')
-  if (input.canceled === true) return { canceled: true }
+  if (input.canceled === true) {
+    if (input.csvSaveAsPath !== undefined) {
+      if (typeof input.csvSaveAsPath !== 'string' || input.csvSaveAsPath.length === 0) {
+        throw new Error('Invalid workbook save response.')
+      }
+      return { canceled: true, csvSaveAsPath: input.csvSaveAsPath }
+    }
+    return { canceled: true }
+  }
   if (
     input.canceled !== false ||
     !Array.isArray(input.touchedEntries) ||
@@ -1773,9 +2362,36 @@ function parseSparklineGroups(input: unknown): {
   })
 }
 
-function parsePivotTableInfos(
-  input: unknown,
-): { path: string; cachePath: string | null; outputRef: string }[] {
+function parseCellImages(input: unknown): { id: string; row: number; column: number }[] {
+  if (!Array.isArray(input) || input.length > 500) {
+    throw new Error('Invalid worksheet cell-image metadata.')
+  }
+  return input.map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== 'string' ||
+      entry.id.length === 0 ||
+      !isNonnegativeInteger(entry.row) ||
+      !isNonnegativeInteger(entry.column)
+    ) {
+      throw new Error('Invalid worksheet cell-image metadata.')
+    }
+    return { id: entry.id, row: entry.row, column: entry.column }
+  })
+}
+
+function parsePivotTableInfos(input: unknown): {
+  path: string
+  cachePath: string | null
+  outputRef: string
+  headerFill?: string
+  headerFontColor?: string
+  wholeTableFill?: string
+  stripeFill?: string
+  styled?: boolean
+  firstDataRow?: number
+  rowGrandTotals?: boolean
+}[] {
   if (!Array.isArray(input) || input.length > 100) {
     throw new Error('Invalid worksheet pivot metadata.')
   }
@@ -1786,11 +2402,29 @@ function parsePivotTableInfos(
       entry.path.length === 0 ||
       (entry.cachePath !== null && typeof entry.cachePath !== 'string') ||
       typeof entry.outputRef !== 'string' ||
-      entry.outputRef.length === 0
+      entry.outputRef.length === 0 ||
+      (entry.headerFill !== undefined && typeof entry.headerFill !== 'string') ||
+      (entry.headerFontColor !== undefined && typeof entry.headerFontColor !== 'string') ||
+      (entry.wholeTableFill !== undefined && typeof entry.wholeTableFill !== 'string') ||
+      (entry.stripeFill !== undefined && typeof entry.stripeFill !== 'string') ||
+      (entry.styled !== undefined && typeof entry.styled !== 'boolean') ||
+      (entry.firstDataRow !== undefined && !isNonnegativeInteger(entry.firstDataRow)) ||
+      (entry.rowGrandTotals !== undefined && typeof entry.rowGrandTotals !== 'boolean')
     ) {
       throw new Error('Invalid worksheet pivot metadata.')
     }
-    return { path: entry.path, cachePath: entry.cachePath, outputRef: entry.outputRef }
+    return {
+      path: entry.path,
+      cachePath: entry.cachePath,
+      outputRef: entry.outputRef,
+      ...(entry.headerFill === undefined ? {} : { headerFill: entry.headerFill }),
+      ...(entry.headerFontColor === undefined ? {} : { headerFontColor: entry.headerFontColor }),
+      ...(entry.wholeTableFill === undefined ? {} : { wholeTableFill: entry.wholeTableFill }),
+      ...(entry.stripeFill === undefined ? {} : { stripeFill: entry.stripeFill }),
+      ...(entry.styled === undefined ? {} : { styled: entry.styled }),
+      ...(entry.firstDataRow === undefined ? {} : { firstDataRow: entry.firstDataRow }),
+      ...(entry.rowGrandTotals === undefined ? {} : { rowGrandTotals: entry.rowGrandTotals }),
+    }
   })
 }
 
@@ -1851,6 +2485,7 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     typeof input.underline !== 'boolean' ||
     typeof input.strikethrough !== 'boolean' ||
     typeof input.wrapText !== 'boolean' ||
+    (input.shrinkToFit !== undefined && typeof input.shrinkToFit !== 'boolean') ||
     !isOptionalString(input.fontFamily) ||
     (input.fontSize !== undefined &&
       (typeof input.fontSize !== 'number' ||
@@ -1861,7 +2496,16 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     !isOptionalString(input.horizontalAlignment) ||
     !isOptionalString(input.verticalAlignment) ||
     (input.indent !== undefined && !isNonnegativeInteger(input.indent)) ||
-    !isOptionalString(input.numberFormat)
+    (input.textRotation !== undefined &&
+      (!isNonnegativeInteger(input.textRotation) || input.textRotation > 255)) ||
+    !isOptionalString(input.numberFormat) ||
+    (input.fontColorTheme !== undefined && !isNonnegativeInteger(input.fontColorTheme)) ||
+    (input.fillColorTheme !== undefined && !isNonnegativeInteger(input.fillColorTheme)) ||
+    (input.fontColorTint !== undefined &&
+      (typeof input.fontColorTint !== 'number' || !Number.isFinite(input.fontColorTint))) ||
+    (input.fillColorTint !== undefined &&
+      (typeof input.fillColorTint !== 'number' || !Number.isFinite(input.fillColorTint))) ||
+    (input.fontScheme !== undefined && input.fontScheme !== 'major' && input.fontScheme !== 'minor')
   ) {
     throw new Error('Invalid workbook style response.')
   }
@@ -1881,6 +2525,7 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     wrapText: input.wrapText,
     diagonalUp: input.diagonalUp,
     diagonalDown: input.diagonalDown,
+    ...(input.shrinkToFit === undefined ? {} : { shrinkToFit: input.shrinkToFit }),
     ...(input.fontFamily === undefined ? {} : { fontFamily: input.fontFamily }),
     ...(input.fontSize === undefined ? {} : { fontSize: input.fontSize }),
     ...(input.fontColor === undefined ? {} : { fontColor: input.fontColor }),
@@ -1892,7 +2537,13 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
       ? {}
       : { verticalAlignment: input.verticalAlignment }),
     ...(input.indent === undefined ? {} : { indent: input.indent }),
+    ...(input.textRotation === undefined ? {} : { textRotation: input.textRotation }),
     ...(input.numberFormat === undefined ? {} : { numberFormat: input.numberFormat }),
+    ...(input.fontColorTheme === undefined ? {} : { fontColorTheme: input.fontColorTheme }),
+    ...(input.fontColorTint === undefined ? {} : { fontColorTint: input.fontColorTint }),
+    ...(input.fillColorTheme === undefined ? {} : { fillColorTheme: input.fillColorTheme }),
+    ...(input.fillColorTint === undefined ? {} : { fillColorTint: input.fillColorTint }),
+    ...(input.fontScheme === undefined ? {} : { fontScheme: input.fontScheme }),
     ...(borderTop === undefined ? {} : { borderTop }),
     ...(borderBottom === undefined ? {} : { borderBottom }),
     ...(borderLeft === undefined ? {} : { borderLeft }),
@@ -1944,12 +2595,41 @@ function parseVisualObject(input: unknown): WorkbookVisualObject {
   if (input.kind === 'chart' && chart === undefined) {
     throw new Error('Workbook chart has no chart metadata.')
   }
+  const paragraphs =
+    input.paragraphs === undefined ? undefined : parseShapeParagraphs(input.paragraphs)
+  const fillGradient =
+    input.fillGradient === undefined ? undefined : parseFillGradient(input.fillGradient)
+  const customPath = input.customPath === undefined ? undefined : parseCustomPath(input.customPath)
   if (
     !isOptionalString(input.shapeType) ||
+    (input.opacity !== undefined &&
+      (typeof input.opacity !== 'number' ||
+        !Number.isFinite(input.opacity) ||
+        input.opacity < 0 ||
+        input.opacity > 1)) ||
+    !isOptionalString(input.fillMediaPath) ||
+    !isOptionalString(input.fillMediaType) ||
     !isOptionalString(input.fillColor) ||
+    !isOptionalString(input.lineColor) ||
+    (input.lineWidth !== undefined &&
+      (typeof input.lineWidth !== 'number' || !Number.isFinite(input.lineWidth))) ||
+    !isOptionalString(input.lineDash) ||
+    !isOptionalString(input.lineCap) ||
+    (input.flipH !== undefined && typeof input.flipH !== 'boolean') ||
+    (input.flipV !== undefined && typeof input.flipV !== 'boolean') ||
+    !isOptionalString(input.textColor) ||
+    !isOptionalString(input.textAnchor) ||
     !isOptionalString(input.text) ||
     (input.rotation !== undefined &&
       (typeof input.rotation !== 'number' || !Number.isFinite(input.rotation))) ||
+    (input.frameWidth !== undefined &&
+      (typeof input.frameWidth !== 'number' ||
+        !Number.isFinite(input.frameWidth) ||
+        input.frameWidth <= 0)) ||
+    (input.frameHeight !== undefined &&
+      (typeof input.frameHeight !== 'number' ||
+        !Number.isFinite(input.frameHeight) ||
+        input.frameHeight <= 0)) ||
     (input.drawingPath !== undefined &&
       (typeof input.drawingPath !== 'string' ||
         !/^xl\/drawings\/[A-Za-z0-9._/-]+\.xml$/.test(input.drawingPath))) ||
@@ -1967,14 +2647,121 @@ function parseVisualObject(input: unknown): WorkbookVisualObject {
     ...(typeof input.chartPath === 'string' ? { chartPath: input.chartPath } : {}),
     ...(typeof input.mediaPath === 'string' ? { mediaPath: input.mediaPath } : {}),
     ...(typeof input.mediaType === 'string' ? { mediaType: input.mediaType } : {}),
+    ...(input.opacity === undefined ? {} : { opacity: input.opacity }),
+    ...(input.fillMediaPath === undefined ? {} : { fillMediaPath: input.fillMediaPath }),
+    ...(input.fillMediaType === undefined ? {} : { fillMediaType: input.fillMediaType }),
     ...(typeof input.name === 'string' ? { name: input.name } : {}),
     ...(input.shapeType === undefined ? {} : { shapeType: input.shapeType }),
+    ...(customPath === undefined ? {} : { customPath }),
     ...(input.fillColor === undefined ? {} : { fillColor: input.fillColor }),
+    ...(fillGradient === undefined ? {} : { fillGradient }),
+    ...(input.lineColor === undefined ? {} : { lineColor: input.lineColor }),
+    ...(input.lineWidth === undefined ? {} : { lineWidth: input.lineWidth }),
+    ...(input.lineDash === undefined ? {} : { lineDash: input.lineDash }),
+    ...(input.lineCap === undefined ? {} : { lineCap: input.lineCap }),
+    ...(input.flipH === undefined ? {} : { flipH: input.flipH }),
+    ...(input.flipV === undefined ? {} : { flipV: input.flipV }),
+    ...(input.textColor === undefined ? {} : { textColor: input.textColor }),
+    ...(input.textAnchor === undefined ? {} : { textAnchor: input.textAnchor }),
+    ...(paragraphs === undefined ? {} : { paragraphs }),
     ...(input.text === undefined ? {} : { text: input.text }),
     ...(input.rotation === undefined ? {} : { rotation: input.rotation }),
+    ...(input.frameWidth === undefined ? {} : { frameWidth: input.frameWidth }),
+    ...(input.frameHeight === undefined ? {} : { frameHeight: input.frameHeight }),
     ...(input.drawingPath === undefined ? {} : { drawingPath: input.drawingPath }),
     ...(input.drawingIndex === undefined ? {} : { drawingIndex: input.drawingIndex }),
   }
+}
+
+function parseCustomPath(input: unknown): NonNullable<WorkbookVisualObject['customPath']> {
+  if (
+    !isRecord(input) ||
+    typeof input.width !== 'number' ||
+    !Number.isFinite(input.width) ||
+    input.width <= 0 ||
+    typeof input.height !== 'number' ||
+    !Number.isFinite(input.height) ||
+    input.height <= 0 ||
+    typeof input.d !== 'string' ||
+    (input.strokeOnly !== undefined && typeof input.strokeOnly !== 'boolean') ||
+    (input.fillD !== undefined && typeof input.fillD !== 'string')
+  ) {
+    throw new Error('Invalid workbook shape custom path.')
+  }
+  return {
+    width: input.width,
+    height: input.height,
+    d: input.d,
+    ...(input.strokeOnly === undefined ? {} : { strokeOnly: input.strokeOnly }),
+    ...(input.fillD === undefined ? {} : { fillD: input.fillD }),
+  }
+}
+
+function parseFillGradient(input: unknown): NonNullable<WorkbookVisualObject['fillGradient']> {
+  if (
+    !isRecord(input) ||
+    typeof input.angle !== 'number' ||
+    !Number.isFinite(input.angle) ||
+    !Array.isArray(input.stops) ||
+    input.stops.length < 2 ||
+    input.stops.length > 50
+  ) {
+    throw new Error('Invalid workbook shape gradient.')
+  }
+  const stops = input.stops.map((stop) => {
+    if (
+      !isRecord(stop) ||
+      typeof stop.position !== 'number' ||
+      !Number.isFinite(stop.position) ||
+      stop.position < 0 ||
+      stop.position > 1 ||
+      typeof stop.color !== 'string'
+    ) {
+      throw new Error('Invalid workbook shape gradient stop.')
+    }
+    return { position: stop.position, color: stop.color }
+  })
+  return { angle: input.angle, stops }
+}
+
+function parseShapeParagraphs(input: unknown): NonNullable<WorkbookVisualObject['paragraphs']> {
+  if (!Array.isArray(input) || input.length > 200) {
+    throw new Error('Invalid workbook shape paragraphs.')
+  }
+  return input.map((paragraph) => {
+    if (
+      !isRecord(paragraph) ||
+      !isOptionalString(paragraph.align) ||
+      !Array.isArray(paragraph.runs)
+    ) {
+      throw new Error('Invalid workbook shape paragraph.')
+    }
+    const runs = paragraph.runs.map((run) => {
+      if (
+        !isRecord(run) ||
+        typeof run.text !== 'string' ||
+        !isOptionalString(run.color) ||
+        (run.bold !== undefined && typeof run.bold !== 'boolean') ||
+        (run.italic !== undefined && typeof run.italic !== 'boolean') ||
+        (run.underline !== undefined && typeof run.underline !== 'boolean') ||
+        (run.size !== undefined && (typeof run.size !== 'number' || !Number.isFinite(run.size)))
+      ) {
+        throw new Error('Invalid workbook shape run.')
+      }
+      return {
+        text: run.text,
+        ...(run.color === undefined ? {} : { color: run.color }),
+        ...(run.bold === undefined ? {} : { bold: run.bold }),
+        ...(run.italic === undefined ? {} : { italic: run.italic }),
+        ...(run.underline === undefined ? {} : { underline: run.underline }),
+        ...(run.size === undefined ? {} : { size: run.size }),
+      }
+    })
+    return {
+      ...(paragraph.align === undefined ? {} : { align: paragraph.align }),
+      runs,
+    }
+  })
 }
 
 function parseDrawingAnchor(input: Record<string, unknown>): WorkbookVisualObject['anchor'] {
@@ -1987,7 +2774,8 @@ function parseDrawingAnchor(input: Record<string, unknown>): WorkbookVisualObjec
   ]
   if (
     values.some((value) => !isNonnegativeInteger(value)) ||
-    offsets.some((value) => typeof value !== 'number' || !Number.isInteger(value))
+    offsets.some((value) => typeof value !== 'number' || !Number.isInteger(value)) ||
+    (input.explicitTo !== undefined && typeof input.explicitTo !== 'boolean')
   ) {
     throw new Error('Invalid workbook drawing anchor.')
   }
@@ -2000,11 +2788,18 @@ function parseDrawingAnchor(input: Record<string, unknown>): WorkbookVisualObjec
     fromColumnOffset: input.fromColumnOffset as number,
     toRowOffset: input.toRowOffset as number,
     toColumnOffset: input.toColumnOffset as number,
+    ...(input.explicitTo === undefined ? {} : { explicitTo: input.explicitTo }),
   }
 }
 
 const CHART_LEGENDS = ['none', 'right', 'bottom', 'top', 'left'] as const
-const CHART_DATA_LABELS = ['none', 'value', 'percent', 'category-percent'] as const
+const CHART_DATA_LABELS = [
+  'none',
+  'value',
+  'percent',
+  'category-percent',
+  'category-value-percent',
+] as const
 const CHART_DATA_LABEL_POSITIONS = ['center', 'inside-end', 'outside-end'] as const
 const CHART_GROUPINGS = ['clustered', 'stacked', 'percentStacked', 'standard'] as const
 
@@ -2022,37 +2817,55 @@ function parseChart(input: unknown): NonNullable<WorkbookVisualObject['chart']> 
     !isOptionalString(input.dataLabelFormat) ||
     !isOptionalEnum(input.grouping, CHART_GROUPINGS) ||
     (input.gridlines !== undefined && typeof input.gridlines !== 'boolean') ||
+    !isOptionalString(input.categoryAxisFormat) ||
     !isOptionalFiniteNumber(input.gapWidthPct) ||
-    !isOptionalFiniteNumber(input.holeSizePct)
+    !isOptionalFiniteNumber(input.holeSizePct) ||
+    (input.lineMarkers !== undefined && typeof input.lineMarkers !== 'boolean')
   ) {
     throw new Error('Invalid workbook chart response.')
   }
   const axisTitles = parseChartAxisTitles(input.axisTitles)
   const valueAxis = parseChartValueAxis(input.valueAxis)
+  const xAxis = parseChartAxisInfo(input.xAxis)
+  const yAxis = parseChartAxisInfo(input.yAxis)
+  const secondaryYAxis = parseChartAxisInfo(input.secondaryYAxis)
+  const titleStyle = parseChartTitleStyle(input.titleStyle)
+  if (!isOptionalString(input.scatterStyle)) {
+    throw new Error('Invalid workbook chart response.')
+  }
   const series = input.series.map((entry) => {
     if (
       !isRecord(entry) ||
       typeof entry.name !== 'string' ||
+      !isOptionalString(entry.nameRef) ||
       !Array.isArray(entry.categories) ||
       entry.categories.some((value) => typeof value !== 'string') ||
       !Array.isArray(entry.values) ||
       entry.values.some((value) => typeof value !== 'number' || !Number.isFinite(value)) ||
       !isOptionalString(entry.numberFormat) ||
+      !isOptionalString(entry.categoryFormat) ||
       !isOptionalString(entry.color) ||
       !isOptionalString(entry.trendline) ||
       !isOptionalString(entry.valuesRef) ||
       !isOptionalString(entry.categoriesRef) ||
-      !isOptionalFiniteNumber(entry.explosionPct)
+      !isOptionalFiniteNumber(entry.explosionPct) ||
+      !isOptionalString(entry.lineColor) ||
+      !isOptionalFiniteNumber(entry.lineWidth) ||
+      (entry.smooth !== undefined && typeof entry.smooth !== 'boolean') ||
+      !isOptionalString(entry.marker)
     ) {
       throw new Error('Invalid workbook chart series.')
     }
     const pointColors = parseChartPointColors(entry.pointColors)
     const pointExplosions = parseChartPointExplosions(entry.pointExplosions)
+    const categoryGroups = parseChartCategoryGroups(entry.categoryGroups)
     return {
       name: entry.name,
+      ...(entry.nameRef === undefined ? {} : { nameRef: entry.nameRef }),
       categories: entry.categories,
       values: entry.values,
       ...(entry.numberFormat === undefined ? {} : { numberFormat: entry.numberFormat }),
+      ...(entry.categoryFormat === undefined ? {} : { categoryFormat: entry.categoryFormat }),
       ...(entry.color === undefined ? {} : { color: entry.color }),
       ...(entry.trendline === undefined ? {} : { trendline: entry.trendline }),
       ...(entry.valuesRef === undefined ? {} : { valuesRef: entry.valuesRef }),
@@ -2060,6 +2873,11 @@ function parseChart(input: unknown): NonNullable<WorkbookVisualObject['chart']> 
       ...(pointColors === undefined ? {} : { pointColors }),
       ...(entry.explosionPct === undefined ? {} : { explosionPct: entry.explosionPct }),
       ...(pointExplosions === undefined ? {} : { pointExplosions }),
+      ...(entry.lineColor === undefined ? {} : { lineColor: entry.lineColor }),
+      ...(entry.lineWidth === undefined ? {} : { lineWidth: entry.lineWidth }),
+      ...(entry.smooth === undefined ? {} : { smooth: entry.smooth }),
+      ...(entry.marker === undefined ? {} : { marker: entry.marker }),
+      ...(categoryGroups === undefined ? {} : { categoryGroups }),
     }
   })
   return {
@@ -2076,9 +2894,75 @@ function parseChart(input: unknown): NonNullable<WorkbookVisualObject['chart']> 
     ...(input.dataLabelFormat === undefined ? {} : { dataLabelFormat: input.dataLabelFormat }),
     ...(input.grouping === undefined ? {} : { grouping: input.grouping }),
     ...(input.gridlines === undefined ? {} : { gridlines: input.gridlines }),
+    ...(input.categoryAxisFormat === undefined
+      ? {}
+      : { categoryAxisFormat: input.categoryAxisFormat }),
     ...(valueAxis === undefined ? {} : { valueAxis }),
     ...(input.gapWidthPct === undefined ? {} : { gapWidthPct: input.gapWidthPct }),
     ...(input.holeSizePct === undefined ? {} : { holeSizePct: input.holeSizePct }),
+    ...(xAxis === undefined ? {} : { xAxis }),
+    ...(yAxis === undefined ? {} : { yAxis }),
+    ...(secondaryYAxis === undefined ? {} : { secondaryYAxis }),
+    ...(titleStyle === undefined ? {} : { titleStyle }),
+    ...(input.scatterStyle === undefined ? {} : { scatterStyle: input.scatterStyle }),
+    ...(input.lineMarkers === undefined ? {} : { lineMarkers: input.lineMarkers }),
+  }
+}
+
+function parseChartTitleStyle(
+  input: unknown,
+): { size?: number; bold?: boolean; color?: string } | undefined {
+  if (input === undefined) return undefined
+  if (
+    !isRecord(input) ||
+    !isOptionalFiniteNumber(input.size) ||
+    (input.bold !== undefined && typeof input.bold !== 'boolean') ||
+    !isOptionalString(input.color)
+  ) {
+    throw new Error('Invalid workbook chart title style.')
+  }
+  return {
+    ...(input.size === undefined ? {} : { size: input.size }),
+    ...(input.bold === undefined ? {} : { bold: input.bold }),
+    ...(input.color === undefined ? {} : { color: input.color }),
+  }
+}
+
+function parseChartAxisInfo(input: unknown):
+  | {
+      title?: string
+      min?: number
+      max?: number
+      majorUnit?: number
+      numFmt?: string
+      majorGridlines: boolean
+      hidden: boolean
+      reversed: boolean
+    }
+  | undefined {
+  if (input === undefined) return undefined
+  if (
+    !isRecord(input) ||
+    !isOptionalString(input.title) ||
+    !isOptionalFiniteNumber(input.min) ||
+    !isOptionalFiniteNumber(input.max) ||
+    !isOptionalFiniteNumber(input.majorUnit) ||
+    !isOptionalString(input.numFmt) ||
+    typeof input.majorGridlines !== 'boolean' ||
+    (input.hidden !== undefined && typeof input.hidden !== 'boolean') ||
+    (input.reversed !== undefined && typeof input.reversed !== 'boolean')
+  ) {
+    throw new Error('Invalid workbook chart axis.')
+  }
+  return {
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.min === undefined ? {} : { min: input.min }),
+    ...(input.max === undefined ? {} : { max: input.max }),
+    ...(input.majorUnit === undefined ? {} : { majorUnit: input.majorUnit }),
+    ...(input.numFmt === undefined ? {} : { numFmt: input.numFmt }),
+    majorGridlines: input.majorGridlines,
+    hidden: input.hidden === true,
+    reversed: input.reversed === true,
   }
 }
 
@@ -2124,6 +3008,24 @@ function parseChartPointColors(
       throw new Error('Invalid workbook chart point colors.')
     }
     return { index: entry.index, color: entry.color }
+  })
+}
+
+function parseChartCategoryGroups(
+  input: unknown,
+): Array<{ label: string; start: number; end: number }> | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) throw new Error('Invalid workbook chart category groups.')
+  return input.map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.label !== 'string' ||
+      !isNonnegativeInteger(entry.start) ||
+      !isNonnegativeInteger(entry.end)
+    ) {
+      throw new Error('Invalid workbook chart category groups.')
+    }
+    return { label: entry.label, start: entry.start, end: entry.end }
   })
 }
 
@@ -2176,6 +3078,10 @@ function isCellScalar(input: unknown): input is string | number | boolean | null
 
 function isOptionalString(input: unknown): input is string | undefined {
   return input === undefined || typeof input === 'string'
+}
+
+function isBoundedString(input: unknown, maxLength: number): input is string {
+  return typeof input === 'string' && input.length >= 1 && input.length <= maxLength
 }
 
 function isOptionalNullableString(input: unknown): input is string | null | undefined {

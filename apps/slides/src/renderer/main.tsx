@@ -7,10 +7,19 @@ import { LocaleProvider, setModuleLang } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/color-picker.css'
+import '@hermesoffice/ui/dropdown.css'
 import './styles.css'
 import { installScreenTips } from '@hermesoffice/ui'
 
 installScreenTips()
+
+// Canvas fillText never triggers @font-face downloads, so the bundled document fonts
+// (Carlito ↔ Calibri) must be loaded explicitly or Konva silently draws the fallback face.
+for (const variant of ['', 'bold ', 'italic ', 'italic bold ']) {
+  document.fonts?.load?.(`${variant}16px Carlito`).catch(() => {})
+  document.fonts?.load?.(`${variant}16px 'Carlito GO'`).catch(() => {})
+}
 
 // ?mode=audience: the presenter view's external-screen audience show window (created by the main process)
 const mode = new URLSearchParams(window.location.search).get('mode')

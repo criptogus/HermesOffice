@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import { shapePreviewPath } from '@hermesoffice/ui'
+import { BooleanNumber, numfmt } from '@univerjs/core'
+import { isMetafileMime, metafileToDataUrl } from '@hermesoffice/docx-engine/metafile'
+import { Dropdown, shapePreviewPath, useDismissablePopover } from '@hermesoffice/ui'
 
 import type { createUniver } from './create-univer'
 
@@ -11,8 +13,10 @@ import {
   formatCategoryLabel,
   scatterAxisBounds,
   splitSheetRef,
+  valueAxisScale,
 } from '../domain/chart-visual'
 import { parseAddress } from '../domain/cell-address'
+import { ColorDropdown } from './ColorDropdown'
 import { t } from './i18n/locale'
 import type { WorkbookChartEdit, WorkbookFile, WorkbookVisualObject } from '../shared/desktop-api'
 
@@ -52,6 +56,9 @@ export interface ChartEditing {
 
 export interface ShapeEditChanges {
   readonly anchor?: WorkbookVisualObject['anchor']
+  /// New a:xfrm ext in EMU — rides along when resizing a rotated shape,
+  /// whose anchor stores the rotated AABB rather than the true frame.
+  readonly frameSize?: { readonly width: number; readonly height: number }
   readonly text?: string
   readonly remove?: true
 }
@@ -125,20 +132,6 @@ export function installWorkbookVisuals(
     const componentKey = `xlsx-${file.sessionId}-${visual.id}`
     const editable =
       isEditableShape(visual) || isEditableFileVisual(visual) || isEditableChart(visual)
-    const component =
-      shapeEditing && editable
-        ? () => (
-            <EditableShapeVisual
-              file={file}
-              visual={visual}
-              worksheet={worksheet}
-              allowText={isEditableShape(visual)}
-              chartEditing={chartEditing}
-              onEdit={shapeEditing.onEdit}
-            />
-          )
-        : () => <WorkbookVisual file={file} visual={visual} chartEditing={chartEditing} />
-    disposables.push(runtime.univerAPI.registerComponent(componentKey, component))
     // Lazy grids are sized to the data, but session-added visuals anchor
     // beyond it (default: two columns right of the data) — grow the grid so
     // the float keeps its frame instead of being clamped into a sliver.
@@ -152,39 +145,103 @@ export function installWorkbookVisuals(
     // visual down with it — clamp the display range to the sheet.
     const maxRows = worksheet.getMaxRows()
     const maxColumns = worksheet.getMaxColumns()
-    const fromRow = Math.min(visual.anchor.fromRow, maxRows - 1)
-    const fromColumn = Math.min(visual.anchor.fromColumn, maxColumns - 1)
-    const toRow = Math.min(visual.anchor.toRow, maxRows - 1)
-    const toColumn = Math.min(visual.anchor.toColumn, maxColumns - 1)
+    let fromRow = Math.min(visual.anchor.fromRow, maxRows - 1)
+    let fromColumn = Math.min(visual.anchor.fromColumn, maxColumns - 1)
+    let toRow = Math.min(visual.anchor.toRow, maxRows - 1)
+    let toColumn = Math.min(visual.anchor.toColumn, maxColumns - 1)
+    // Pixel-exact frame (Excel twoCellAnchor semantics): each marker is a
+    // cell plus an EMU offset inside it, so the box runs from the `from`
+    // marker to the `to` marker — not across the whole cell range.
+    const columnWidth = (index: number): number => Math.max(worksheet.getColumnWidth(index), 1)
+    const rowHeight = (index: number): number => Math.max(worksheet.getRowHeight(index), 1)
+    let marginX = Math.max(0, visual.anchor.fromColumnOffset / EMU_PER_PIXEL)
+    let marginY = Math.max(0, visual.anchor.fromRowOffset / EMU_PER_PIXEL)
+    const explicitTo = visual.anchor.explicitTo === true
+    let width = markerSpan(
+      { index: fromColumn, offset: marginX },
+      clampExplicitTo(markerFrom(toColumn, visual.anchor.toColumnOffset), explicitTo, columnWidth),
+      columnWidth,
+    )
+    let height = markerSpan(
+      { index: fromRow, offset: marginY },
+      clampExplicitTo(markerFrom(toRow, visual.anchor.toRowOffset), explicitTo, rowHeight),
+      rowHeight,
+    )
+    // A rotated shape's anchor holds its rotated bounds while xfrm ext keeps
+    // the true frame; both share the same center. The float container clips
+    // (Univer overflow-hidden), so re-anchor it to the AABB of the rotated
+    // true frame — the component centers the ext box inside and rotates it.
+    if (visual.rotation && visual.frameWidth && visual.frameHeight && width > 0 && height > 0) {
+      const extWidth = visual.frameWidth / EMU_PER_PIXEL
+      const extHeight = visual.frameHeight / EMU_PER_PIXEL
+      const radians = (visual.rotation * Math.PI) / 180
+      const aabbWidth =
+        Math.abs(extWidth * Math.cos(radians)) + Math.abs(extHeight * Math.sin(radians))
+      const aabbHeight =
+        Math.abs(extWidth * Math.sin(radians)) + Math.abs(extHeight * Math.cos(radians))
+      const fromX = walkMarker(
+        { index: fromColumn, offset: marginX },
+        (width - aabbWidth) / 2,
+        columnWidth,
+        maxColumns - 1,
+      )
+      const fromY = walkMarker(
+        { index: fromRow, offset: marginY },
+        (height - aabbHeight) / 2,
+        rowHeight,
+        maxRows - 1,
+      )
+      fromColumn = fromX.index
+      fromRow = fromY.index
+      marginX = fromX.offset
+      marginY = fromY.offset
+      toColumn = walkMarker(fromX, aabbWidth, columnWidth, maxColumns - 1).index
+      toRow = walkMarker(fromY, aabbHeight, rowHeight, maxRows - 1).index
+      width = aabbWidth
+      height = aabbHeight
+    }
     const range = worksheet.getRange(
       fromRow,
       fromColumn,
       Math.max(1, toRow + 1 - fromRow),
       Math.max(1, toColumn + 1 - fromColumn),
     )
-    // Pixel-exact frame (Excel twoCellAnchor semantics): each marker is a
-    // cell plus an EMU offset inside it, so the box runs from the `from`
-    // marker to the `to` marker — not across the whole cell range.
-    const columnWidth = (index: number): number => Math.max(worksheet.getColumnWidth(index), 1)
-    const rowHeight = (index: number): number => Math.max(worksheet.getRowHeight(index), 1)
-    const marginX = Math.max(0, visual.anchor.fromColumnOffset / EMU_PER_PIXEL)
-    const marginY = Math.max(0, visual.anchor.fromRowOffset / EMU_PER_PIXEL)
-    const width = markerSpan(
-      { index: fromColumn, offset: marginX },
-      markerFrom(toColumn, visual.anchor.toColumnOffset),
-      columnWidth,
-    )
-    const height = markerSpan(
-      { index: fromRow, offset: marginY },
-      markerFrom(toRow, visual.anchor.toRowOffset),
-      rowHeight,
-    )
-    // Degenerate anchors (oneCellAnchor fallback parses to a zero span):
-    // keep the legacy behavior of filling the clamped cell range.
-    const layout =
-      width >= MIN_FRAME_PIXELS / 2 && height >= MIN_FRAME_PIXELS / 2
-        ? { width, height, marginX, marginY }
-        : {}
+    // Degenerate anchors (a zero marker span on BOTH axes): keep the legacy
+    // behavior of filling the clamped cell range. Any real span stays a
+    // marker frame with a 1px floor — tiny icons and hairlines (a line's
+    // thin axis spans 0) must not balloon to their cell range, which turned
+    // zero-height rules into cell-tall diagonals and icon parts into
+    // cell-sized blobs.
+    const framed = width > 0 || height > 0
+    const frameWidth = Math.max(width, 1)
+    const frameHeight = Math.max(height, 1)
+    // RTL sheets mirror the float too (Excel keeps logical anchors; the box
+    // lands mirrored). Univer positions the DOM from the anchor cell's
+    // mirrored left edge, so restate the margin as "mirrored box left minus
+    // that edge": colWidth(from) - marginX - width.
+    const rtl = worksheet.getSheet().getConfig().rightToLeft === BooleanNumber.TRUE
+    const anchoredMarginX = rtl ? columnWidth(fromColumn) - marginX - frameWidth : marginX
+    const layout = framed
+      ? { width: frameWidth, height: frameHeight, marginX: anchoredMarginX, marginY }
+      : {}
+    const frame = framed ? { width: frameWidth, height: frameHeight } : undefined
+    const component =
+      shapeEditing && editable
+        ? () => (
+            <EditableShapeVisual
+              file={file}
+              visual={visual}
+              worksheet={worksheet}
+              allowText={isEditableShape(visual)}
+              chartEditing={chartEditing}
+              onEdit={shapeEditing.onEdit}
+              frame={frame}
+            />
+          )
+        : () => (
+            <WorkbookVisual file={file} visual={visual} chartEditing={chartEditing} frame={frame} />
+          )
+    disposables.push(runtime.univerAPI.registerComponent(componentKey, component))
     const floating = worksheet.addFloatDomToRange(
       range,
       {
@@ -272,6 +329,63 @@ export function installSparklines(
   return disposables
 }
 
+export interface CellImageState {
+  readonly id: string
+  readonly row: number
+  readonly column: number
+}
+
+/// In-cell rich-value pictures ("place picture in cell"): one pass-through
+/// float DOM per host cell, bytes fetched through the same media IPC as
+/// floating images.
+export function installCellImages(
+  runtime: UniverRuntime,
+  sessionId: string,
+  images: readonly CellImageState[],
+  sheetId: string,
+): Disposable[] {
+  const workbook = runtime.univerAPI.getActiveWorkbook()
+  const worksheet = workbook?.getSheetBySheetId(sheetId)
+  if (!workbook || !worksheet) return []
+  const disposables: Disposable[] = []
+  for (const image of images) {
+    if (image.row >= worksheet.getMaxRows() || image.column >= worksheet.getMaxColumns()) continue
+    const componentKey = `cell-image-${sessionId}-${sheetId}-${image.id}`
+    disposables.push(
+      runtime.univerAPI.registerComponent(componentKey, () => (
+        <CellImage sessionId={sessionId} imageId={image.id} />
+      )),
+    )
+    const range = worksheet.getRange(image.row, image.column, 1, 1)
+    const floating = worksheet.addFloatDomToRange(
+      range,
+      { componentKey, allowTransform: false, eventPassThrough: true },
+      {},
+      componentKey,
+    )
+    if (floating) disposables.push(floating)
+  }
+  return disposables
+}
+
+/// Excel fits the picture inside the cell box, preserving its aspect ratio;
+/// while the bytes load the cell just stays blank.
+function CellImage({
+  sessionId,
+  imageId,
+}: {
+  readonly sessionId: string
+  readonly imageId: string
+}): React.JSX.Element | null {
+  const { url, unavailable } = useWorkbookMediaUrl(sessionId, imageId)
+  if (unavailable || !url) return null
+  return (
+    <div className="xlsx-cell-image">
+      <img src={url} alt="" />
+    </div>
+  )
+}
+
 function Sparkline({
   values,
   type,
@@ -332,14 +446,23 @@ function Sparkline({
   )
 }
 
+/// Anchor-frame pixel size at install time — the shape renderer needs the
+/// aspect ratio for preset geometry and Excel's rotated-anchor un-swap.
+export interface ShapeFrame {
+  readonly width: number
+  readonly height: number
+}
+
 function WorkbookVisual({
   file,
   visual,
   chartEditing,
+  frame,
 }: {
   readonly file: VisualHost
   readonly visual: WorkbookVisualObject
   readonly chartEditing?: ChartEditing | undefined
+  readonly frame?: ShapeFrame | undefined
 }): React.JSX.Element {
   if (visual.kind === 'chart' && visual.chart) {
     return (
@@ -354,7 +477,7 @@ function WorkbookVisual({
   if (visual.kind === 'image') {
     return <ImageVisual file={file} visual={visual} />
   }
-  return <ShapeVisual visual={visual} />
+  return <ShapeVisual file={file} visual={visual} frame={frame} />
 }
 
 /// A drag commit tears down and re-registers every float DOM, dropping the
@@ -509,7 +632,12 @@ function useIsSelected(visualId: string): boolean {
 }
 
 const RESIZE_CORNERS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
-type ResizeCorner = (typeof RESIZE_CORNERS)[number]
+export type ResizeCorner = (typeof RESIZE_CORNERS)[number]
+
+/// RTL mirrors the x-axis: a screen-space handle grabs the opposite logical
+/// edge (pair with negating the screen dx).
+export const mirrorCornerX = (corner: ResizeCorner): ResizeCorner =>
+  (({ nw: 'ne', n: 'n', ne: 'nw', e: 'w', se: 'sw', s: 's', sw: 'se', w: 'e' }) as const)[corner]
 
 const cornerEast = (corner: ResizeCorner): boolean =>
   corner === 'ne' || corner === 'e' || corner === 'se'
@@ -564,6 +692,20 @@ export function walkMarker(
   return { index, offset }
 }
 
+/// A real `<xdr:to>` marker never reaches past its own cell: Excel clamps
+/// the offset at the cell edge (broken writers store the picture's full
+/// size there, e.g. ClosedXML). Synthesized to markers (oneCellAnchor ext,
+/// absoluteAnchor, group children) encode sizes as offsets past the edge
+/// and must keep walking, so only explicit-to anchors clamp.
+export function clampExplicitTo(
+  to: AnchorMarker,
+  explicitTo: boolean,
+  sizeOf: (index: number) => number,
+): AnchorMarker {
+  if (!explicitTo || to.offset <= sizeOf(to.index)) return to
+  return { index: to.index, offset: sizeOf(to.index) }
+}
+
 /// Pixel distance between two markers (negative when `to` sits before `from`).
 function markerSpan(
   from: AnchorMarker,
@@ -585,6 +727,7 @@ function EditableShapeVisual({
   allowText,
   chartEditing,
   onEdit,
+  frame,
 }: {
   readonly file: VisualHost
   readonly visual: WorkbookVisualObject
@@ -592,6 +735,7 @@ function EditableShapeVisual({
   readonly allowText: boolean
   readonly chartEditing?: ChartEditing | undefined
   readonly onEdit: (visualId: string, changes: ShapeEditChanges) => void
+  readonly frame?: ShapeFrame | undefined
 }): React.JSX.Element {
   const [drag, setDrag] = useState<{
     mode: 'move' | 'resize'
@@ -639,7 +783,7 @@ function EditableShapeVisual({
 
   const commitDrag = (
     mode: 'move' | 'resize',
-    corner: ResizeCorner,
+    screenCorner: ResizeCorner,
     dxRaw: number,
     dyRaw: number,
   ): boolean => {
@@ -663,9 +807,22 @@ function EditableShapeVisual({
     const maxRow = XLSX_MAX_ROW
     let fromX = markerFrom(anchor.fromColumn, anchor.fromColumnOffset)
     let fromY = markerFrom(anchor.fromRow, anchor.fromRowOffset)
-    let toX = markerFrom(anchor.toColumn, anchor.toColumnOffset)
-    let toY = markerFrom(anchor.toRow, anchor.toRowOffset)
-    const dx = dxRaw / zoom
+    // Drag from the clamped geometry the user sees, not the raw overflowing
+    // offsets — otherwise walkMarker re-expands an explicit-to anchor to its
+    // walked size on commit. The rebuilt anchor is fully normalized, so it
+    // rightly drops the explicitTo flag.
+    const explicitTo = anchor.explicitTo === true
+    let toX = clampExplicitTo(
+      markerFrom(anchor.toColumn, anchor.toColumnOffset),
+      explicitTo,
+      columnWidth,
+    )
+    let toY = clampExplicitTo(markerFrom(anchor.toRow, anchor.toRowOffset), explicitTo, rowHeight)
+    // RTL sheets render mirrored geometry from logical anchors, so a screen
+    // drag maps to the opposite logical x-shift and the opposite logical edge.
+    const rtl = config.rightToLeft === BooleanNumber.TRUE
+    const corner = rtl ? mirrorCornerX(screenCorner) : screenCorner
+    const dx = (rtl ? -dxRaw : dxRaw) / zoom
     const dy = dyRaw / zoom
     if (mode === 'move') {
       // Free placement: keep the frame size. The grid edge caps
@@ -715,6 +872,44 @@ function EditableShapeVisual({
         }
       }
     }
+    let frameSize: { width: number; height: number } | undefined
+    if (mode === 'resize' && visual.rotation && visual.frameWidth && visual.frameHeight) {
+      // The dragged box is the shape's new rotated AABB; the file's true
+      // frame (xfrm ext) must change with it or the next install re-centers
+      // the old AABB and the resize snaps back. Solve the ext whose rotated
+      // AABB is the box; near 45° the system is singular, so scale the old
+      // ext uniformly to the box's half-perimeter instead.
+      const boxWidth = markerSpan(fromX, toX, columnWidth)
+      const boxHeight = markerSpan(fromY, toY, rowHeight)
+      const radians = (visual.rotation * Math.PI) / 180
+      const cos = Math.abs(Math.cos(radians))
+      const sin = Math.abs(Math.sin(radians))
+      const det = cos * cos - sin * sin
+      let extWidth = Math.abs(det) > 0.1 ? (cos * boxWidth - sin * boxHeight) / det : 0
+      let extHeight = Math.abs(det) > 0.1 ? (cos * boxHeight - sin * boxWidth) / det : 0
+      if (extWidth < MIN_FRAME_PIXELS || extHeight < MIN_FRAME_PIXELS) {
+        const oldWidth = visual.frameWidth / EMU_PER_PIXEL
+        const oldHeight = visual.frameHeight / EMU_PER_PIXEL
+        const scale = Math.max(
+          (boxWidth + boxHeight) / ((cos + sin) * (oldWidth + oldHeight)),
+          MIN_FRAME_PIXELS / Math.min(oldWidth, oldHeight),
+        )
+        extWidth = oldWidth * scale
+        extHeight = oldHeight * scale
+      }
+      // Keep the file invariant (anchor = the ext's rotated AABB, shared
+      // center): re-derive the markers from the box center.
+      const aabbWidth = cos * extWidth + sin * extHeight
+      const aabbHeight = sin * extWidth + cos * extHeight
+      fromX = walkMarker(fromX, (boxWidth - aabbWidth) / 2, columnWidth, maxColumn)
+      fromY = walkMarker(fromY, (boxHeight - aabbHeight) / 2, rowHeight, maxRow)
+      toX = walkMarker(fromX, aabbWidth, columnWidth, maxColumn)
+      toY = walkMarker(fromY, aabbHeight, rowHeight, maxRow)
+      frameSize = {
+        width: Math.max(1, Math.round(extWidth * EMU_PER_PIXEL)),
+        height: Math.max(1, Math.round(extHeight * EMU_PER_PIXEL)),
+      }
+    }
     const next = {
       fromRow: fromY.index,
       fromColumn: fromX.index,
@@ -737,7 +932,7 @@ function EditableShapeVisual({
     )
       return false
     pendingFocusId = visual.id
-    onEdit(visual.id, { anchor: next })
+    onEdit(visual.id, { anchor: next, ...(frameSize ? { frameSize } : {}) })
     return true
   }
 
@@ -881,7 +1076,11 @@ function EditableShapeVisual({
       ) : visual.kind === 'image' ? (
         <ImageVisual file={file} visual={visual} />
       ) : (
-        <ShapeVisual visual={textEditing ? { ...visual, text: '' } : visual} />
+        <ShapeVisual
+          file={file}
+          visual={textEditing ? { ...visual, text: '' } : visual}
+          frame={frame}
+        />
       )}
       {!textEditing && (
         <button
@@ -964,30 +1163,328 @@ function EditableShapeVisual({
   )
 }
 
-function ShapeVisual({ visual }: { readonly visual: WorkbookVisualObject }): React.JSX.Element {
+/// prstDash → dash/gap units in multiples of the line width (DrawingML's
+/// preset patterns); "solid" and unknown values fall through to a solid
+/// stroke.
+const LINE_DASH_PATTERNS: Record<string, readonly number[]> = {
+  dash: [4, 3],
+  dashDot: [4, 3, 1, 3],
+  dot: [1, 3],
+  lgDash: [8, 3],
+  lgDashDot: [8, 3, 1, 3],
+  lgDashDotDot: [8, 3, 1, 3, 1, 3],
+  sysDash: [3, 1],
+  sysDashDot: [3, 1, 1, 1],
+  sysDashDotDot: [3, 1, 1, 1, 1, 1],
+  sysDot: [1, 1],
+}
+
+/// DrawingML gradient angle (degrees clockwise, 0 = left-to-right) to SVG
+/// linearGradient endpoints in objectBoundingBox units. The bounding-box
+/// stretch matches lin@scaled gradients closely enough for cell-anchored
+/// shapes.
+function gradientEndpoints(angle: number): { x1: number; y1: number; x2: number; y2: number } {
+  const radians = (angle * Math.PI) / 180
+  const dx = Math.cos(radians) / 2
+  const dy = Math.sin(radians) / 2
+  const round = (value: number): number => Math.round(value * 1000) / 1000
+  return { x1: round(0.5 - dx), y1: round(0.5 - dy), x2: round(0.5 + dx), y2: round(0.5 + dy) }
+}
+
+function ShapeVisual({
+  file,
+  visual,
+  frame,
+}: {
+  readonly file?: VisualHost | undefined
+  readonly visual: WorkbookVisualObject
+  readonly frame?: ShapeFrame | undefined
+}): React.JSX.Element {
+  // useId's delimiters (":"/"«») are hostile to url(#…) parsing.
+  const shapeId = useId().replace(/[^A-Za-z0-9]/g, '')
+  const gradientId = `shape-fill-${shapeId}`
+  const clipId = `shape-clip-${shapeId}`
+  // a:blipFill: the image paints clipped to the geometry, under the stroke.
+  const { url: fillImage } = useWorkbookMediaUrl(
+    visual.fillMediaPath && file ? file.sessionId : undefined,
+    visual.id,
+  )
   const type = visual.shapeType ?? ''
-  const fill = visual.fillColor ?? '#DDEBF7'
+  const gradient = visual.fillGradient
+  const customPath = visual.customPath
+  // "none" is an explicit <a:noFill/> — transparent, not the default tint.
+  // Custom geometry never gets the default tint either: a custGeom without
+  // an explicit fill is stroke-only artwork, not an inserted preset.
+  const fill = gradient
+    ? `url(#${gradientId})`
+    : visual.fillColor === 'none'
+      ? 'transparent'
+      : (visual.fillColor ?? (customPath ? 'transparent' : '#DDEBF7'))
+  // A rotated shape's anchor stores its rotated bounds (Excel writes the
+  // quadrant-swapped snap rect, LibreOffice the AABB) while xfrm ext keeps
+  // the true unrotated frame; both center the anchor on the shape center.
+  // Restore the ext-sized box around that center, then rotate it. Without
+  // ext, fall back to swapping the anchor box inside the swap quadrants.
+  const rotation = (((visual.rotation ?? 0) % 360) + 360) % 360
+  const trueFrame =
+    rotation !== 0 && frame && visual.frameWidth && visual.frameHeight
+      ? { width: visual.frameWidth / EMU_PER_PIXEL, height: visual.frameHeight / EMU_PER_PIXEL }
+      : undefined
+  const swapFallback =
+    rotation !== 0 &&
+    !trueFrame &&
+    ((rotation >= 45 && rotation < 135) || (rotation >= 225 && rotation < 315))
+  // Preset geometry is aspect-dependent (snips/rounds scale with the short
+  // side); use the real frame proportions when the install-time layout is
+  // known instead of a stretched 100×100 square.
+  const boxWidth = trueFrame
+    ? Math.max(1, trueFrame.width)
+    : frame
+      ? Math.max(1, swapFallback ? frame.height : frame.width)
+      : 100
+  const boxHeight = trueFrame
+    ? Math.max(1, trueFrame.height)
+    : frame
+      ? Math.max(1, swapFallback ? frame.width : frame.height)
+      : 100
+  // An unflipped OOXML line runs top-left → bottom-right; flips mirror the
+  // endpoints (the gallery preview draws ascending, which is the flipV form).
+  const isStraightLine = type === 'line' || type === 'straightConnector1'
+  const lineX0 = visual.flipH ? boxWidth : 0
+  const lineY0 = visual.flipV ? boxHeight : 0
   // Same geometry source as the gallery previews (and the other apps'
   // renderers), so every insertable preset draws its real silhouette.
-  const d = shapePreviewPath(type, 100, 100)
+  // custGeom paths keep their own coordinate space and scale into the box.
+  const d = customPath
+    ? customPath.d
+    : isStraightLine
+      ? `M ${lineX0} ${lineY0} L ${boxWidth - lineX0} ${boxHeight - lineY0}`
+      : shapePreviewPath(type, boxWidth, boxHeight)
   if (!d) {
+    // Unsupported geometry: never leak the internal shape name (Excel shows
+    // no frame at all) — an empty frame only when the shape carries text.
+    if (!visual.text) return <div aria-hidden="true" />
     return (
       <div className="xlsx-shape">
-        <span>{visual.text ?? visual.name ?? t('appDrawingObject')}</span>
+        <span>{visual.text}</span>
+      </div>
+    )
+  }
+  const stroke = visual.lineColor === 'none' ? 'transparent' : (visual.lineColor ?? '#00000022')
+  // Session text edits overwrite `text` but not `paragraphs`; a mismatch
+  // means the flat text is the newer truth.
+  const paragraphs =
+    visual.paragraphs &&
+    visual.paragraphs
+      .map((paragraph) => paragraph.runs.map((run) => run.text).join(''))
+      .join('\n') === (visual.text ?? '')
+      ? visual.paragraphs
+      : undefined
+  const transforms: string[] = []
+  if (visual.rotation) transforms.push(`rotate(${visual.rotation}deg)`)
+  if (!isStraightLine && (visual.flipH || visual.flipV)) {
+    transforms.push(`scale(${visual.flipH ? -1 : 1}, ${visual.flipV ? -1 : 1})`)
+  }
+  const strokeWidth = visual.lineWidth ?? 1
+  let dashPattern = visual.lineDash ? LINE_DASH_PATTERNS[visual.lineDash] : undefined
+  // Round-capped dot patterns render as true circles via zero-length dashes:
+  // the stretched viewBox distorts dash lengths but not the cap circle.
+  if (dashPattern && visual.lineCap === 'rnd' && dashPattern[0] === 1 && dashPattern.length === 2) {
+    dashPattern = [0, dashPattern[1]! + 1]
+  }
+  const content = (
+    <>
+      <svg viewBox={`0 0 ${boxWidth} ${boxHeight}`} preserveAspectRatio="none" aria-hidden="true">
+        {gradient && !isStraightLine && (
+          <defs>
+            <linearGradient id={gradientId} {...gradientEndpoints(gradient.angle)}>
+              {gradient.stops.map((stop, index) => (
+                <stop key={index} offset={stop.position} stopColor={stop.color} />
+              ))}
+            </linearGradient>
+          </defs>
+        )}
+        {customPath?.fillD && (
+          // Mixed custGeom: fill only the fillable subpaths; the stroke pass
+          // below covers every subpath with a transparent fill.
+          <path
+            d={customPath.fillD}
+            fill={fill}
+            stroke="none"
+            transform={`scale(${boxWidth / customPath.width}, ${boxHeight / customPath.height})`}
+          />
+        )}
+        {fillImage && !isStraightLine && (
+          <>
+            <clipPath id={clipId}>
+              <path
+                d={d}
+                {...(customPath
+                  ? {
+                      transform: `scale(${boxWidth / customPath.width}, ${boxHeight / customPath.height})`,
+                    }
+                  : {})}
+              />
+            </clipPath>
+            <image
+              href={fillImage}
+              x={0}
+              y={0}
+              width={boxWidth}
+              height={boxHeight}
+              preserveAspectRatio="none"
+              clipPath={`url(#${clipId})`}
+            />
+          </>
+        )}
+        <path
+          d={d}
+          fill={
+            isStraightLine || customPath?.strokeOnly || customPath?.fillD || fillImage
+              ? 'transparent'
+              : fill
+          }
+          {...(customPath
+            ? {
+                transform: `scale(${boxWidth / customPath.width}, ${boxHeight / customPath.height})`,
+              }
+            : {})}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          {...(dashPattern
+            ? { strokeDasharray: dashPattern.map((unit) => unit * strokeWidth).join(' ') }
+            : {})}
+          {...(visual.lineCap === 'rnd'
+            ? { strokeLinecap: 'round' as const }
+            : visual.lineCap === 'sq'
+              ? { strokeLinecap: 'square' as const }
+              : {})}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      {paragraphs ? (
+        <span
+          className={`shape-text shape-text-rich shape-anchor-${visual.textAnchor ?? 'ctr'}`}
+          style={visual.textColor ? { color: visual.textColor } : undefined}
+        >
+          {paragraphs.map((paragraph, index) => (
+            <span
+              key={index}
+              className="shape-paragraph"
+              style={{
+                textAlign:
+                  paragraph.align === 'ctr'
+                    ? 'center'
+                    : paragraph.align === 'r'
+                      ? 'right'
+                      : paragraph.align === 'just'
+                        ? 'justify'
+                        : 'left',
+              }}
+            >
+              {paragraph.runs.length === 0
+                ? '\u00a0'
+                : paragraph.runs.map((run, runIndex) => (
+                    <span
+                      key={runIndex}
+                      style={{
+                        ...(run.color ? { color: run.color } : {}),
+                        ...(run.bold ? { fontWeight: 700 } : {}),
+                        ...(run.italic ? { fontStyle: 'italic' } : {}),
+                        ...(run.underline ? { textDecoration: 'underline' } : {}),
+                        ...(run.size ? { fontSize: `${run.size}pt` } : {}),
+                      }}
+                    >
+                      {run.text}
+                    </span>
+                  ))}
+            </span>
+          ))}
+        </span>
+      ) : (
+        visual.text && (
+          <span
+            className="shape-text"
+            style={visual.textColor ? { color: visual.textColor } : undefined}
+          >
+            {visual.text}
+          </span>
+        )
+      )}
+    </>
+  )
+  if (trueFrame || swapFallback) {
+    // cq units keep the inner box proportional to the float container so it
+    // tracks zoom and live resizes.
+    const size =
+      trueFrame && frame
+        ? {
+            width: `${(trueFrame.width / frame.width) * 100}cqw`,
+            height: `${(trueFrame.height / frame.height) * 100}cqh`,
+          }
+        : { width: '100cqh', height: '100cqw' }
+    return (
+      <div className="xlsx-shape-drawn xlsx-shape-rotated">
+        <div
+          className="xlsx-shape-rotated-inner"
+          style={{ ...size, transform: ['translate(-50%, -50%)', ...transforms].join(' ') }}
+        >
+          {content}
+        </div>
       </div>
     )
   }
   return (
     <div
       className="xlsx-shape-drawn"
-      style={visual.rotation ? { transform: `rotate(${visual.rotation}deg)` } : undefined}
+      style={transforms.length ? { transform: transforms.join(' ') } : undefined}
     >
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <path d={d} fill={fill} stroke="#00000022" />
-      </svg>
-      {visual.text && <span className="shape-text">{visual.text}</span>}
+      {content}
     </div>
   )
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+/// Lazily fetches a visual's media bytes as a data URL (metafiles rasterize
+/// to PNG first). Pass an undefined sessionId to skip fetching.
+function useWorkbookMediaUrl(
+  sessionId: string | undefined,
+  visualId: string,
+): { url: string | null; unavailable: boolean } {
+  const [url, setUrl] = useState<string | null>(null)
+  const [unavailable, setUnavailable] = useState(false)
+
+  useEffect(() => {
+    if (sessionId === undefined) return
+    let isCurrent = true
+    void window.desktopApi
+      .readWorkbookMedia({ sessionId, visualId })
+      .then(async (media) => {
+        const next = isMetafileMime(media.mediaType)
+          ? await metafileToDataUrl(base64ToBytes(media.base64), media.mediaType)
+          : `data:${media.mediaType};base64,${media.base64}`
+        if (!isCurrent) return
+        if (next) setUrl(next)
+        else setUnavailable(true)
+      })
+      .catch((reason: unknown) => {
+        // Unsupported or unreadable media degrades to an empty frame; the
+        // grid must never show the failure text.
+        console.warn(`workbook media unavailable (${visualId})`, reason)
+        if (isCurrent) setUnavailable(true)
+      })
+    return () => {
+      isCurrent = false
+    }
+  }, [sessionId, visualId])
+
+  return { url, unavailable }
 }
 
 function ImageVisual({
@@ -997,32 +1494,25 @@ function ImageVisual({
   readonly file: VisualHost
   readonly visual: WorkbookVisualObject
 }): React.JSX.Element {
-  const [source, setSource] = useState<string | null>(visual.mediaDataUrl ?? null)
-  const [error, setError] = useState<string | null>(null)
+  // Session-added images carry their bytes inline; nothing to fetch.
+  const { url, unavailable } = useWorkbookMediaUrl(
+    visual.mediaDataUrl ? undefined : file.sessionId,
+    visual.id,
+  )
+  const source = visual.mediaDataUrl ?? url
 
-  useEffect(() => {
-    // Session-added images carry their bytes inline; nothing to fetch.
-    if (visual.mediaDataUrl) return
-    let isCurrent = true
-    void window.desktopApi
-      .readWorkbookMedia({
-        sessionId: file.sessionId,
-        visualId: visual.id,
-      })
-      .then((media) => {
-        if (isCurrent) setSource(`data:${media.mediaType};base64,${media.base64}`)
-      })
-      .catch((reason: unknown) => {
-        if (isCurrent) setError(reason instanceof Error ? reason.message : t('appImageLoadFailed'))
-      })
-    return () => {
-      isCurrent = false
-    }
-  }, [file.sessionId, visual.id, visual.mediaDataUrl])
-
-  if (error) return <div className="xlsx-visual-error">{error}</div>
+  if (unavailable) return <div className="xlsx-visual-unavailable" />
   if (!source) return <div className="xlsx-visual-loading">{t('appImageLoading')}</div>
-  return <img className="xlsx-image" src={source} alt={visual.name ?? t('appWorkbookImageAlt')} />
+  return (
+    <img
+      className="xlsx-image"
+      src={source}
+      alt={visual.name ?? t('appWorkbookImageAlt')}
+      style={
+        visual.opacity !== undefined && visual.opacity < 1 ? { opacity: visual.opacity } : undefined
+      }
+    />
+  )
 }
 
 type ChartMetadata = NonNullable<WorkbookVisualObject['chart']>
@@ -1124,11 +1614,16 @@ function ChartVisual({
   const needsHydration = sourceChart.series.some(
     (series) =>
       (series.values.length === 0 && series.valuesRef) ||
-      (series.categories.length === 0 && series.categoriesRef),
+      (series.categories.length === 0 && series.categoriesRef) ||
+      series.nameRef,
   )
   const [hydration, setHydration] = useState<ReadonlyMap<
     number,
-    { values: readonly number[] | null; categories: readonly string[] | null }
+    {
+      values: readonly number[] | null
+      categories: readonly string[] | null
+      name: string | null
+    }
   > | null>(null)
   useEffect(() => {
     if (!needsHydration || !readVector) return
@@ -1138,13 +1633,20 @@ function ChartVisual({
       for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
         const entries = new Map<
           number,
-          { values: readonly number[] | null; categories: readonly string[] | null }
+          {
+            values: readonly number[] | null
+            categories: readonly string[] | null
+            name: string | null
+          }
         >()
         let retry = false
         for (const [index, series] of sourceChart.series.entries()) {
           const valuesRef = series.values.length === 0 ? series.valuesRef : undefined
           const categoriesRef = series.categories.length === 0 ? series.categoriesRef : undefined
-          if (valuesRef === undefined && categoriesRef === undefined) continue
+          const nameRef = series.nameRef
+          if (valuesRef === undefined && categoriesRef === undefined && nameRef === undefined) {
+            continue
+          }
           try {
             const values = valuesRef === undefined ? null : await readVector(editKey, valuesRef)
             // A failed categories read only aborts (and retries) when it is
@@ -1155,7 +1657,18 @@ function ChartVisual({
                 : valuesRef === undefined
                   ? await readVector(editKey, categoriesRef)
                   : await readVector(editKey, categoriesRef).catch(() => null)
-            if (values === null && categories === null) continue
+            // The name (an uncached c:tx cell reference) throws into the
+            // retry loop when it is the sole target — a still-indexing sheet
+            // must not freeze the SeriesN placeholder. Alongside other reads
+            // it stays best-effort: the placeholder already stands in.
+            const name =
+              nameRef === undefined
+                ? null
+                : valuesRef === undefined && categoriesRef === undefined
+                  ? await readVector(editKey, nameRef)
+                  : await readVector(editKey, nameRef).catch(() => null)
+            if (values === null && categories === null && name === null) continue
+            const nameText = String(name?.vector[0] ?? '').slice(0, 255)
             entries.set(index, {
               values:
                 values?.vector.map((value) => {
@@ -1165,6 +1678,7 @@ function ChartVisual({
                 }) ?? null,
               categories:
                 categories?.vector.map((value) => String(value ?? '').slice(0, 255)) ?? null,
+              name: nameText === '' ? null : nameText,
             })
           } catch {
             retry = true
@@ -1193,6 +1707,7 @@ function ChartVisual({
             ...(series.categories.length === 0 && entry.categories
               ? { categories: [...entry.categories] }
               : {}),
+            ...(entry.name !== null ? { name: entry.name } : {}),
           }
         }),
       }
@@ -1201,11 +1716,9 @@ function ChartVisual({
   const populated = chart.series.filter((series) => series.values.length > 0)
   const primarySeries = populated[0]
   if (!primarySeries) {
-    // Blank while hydration is still in flight; error only when it can't run.
-    if (needsHydration && readVector && !hydration) {
-      return <figure className="xlsx-chart" />
-    }
-    return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
+    // No cached points and nothing hydrated: Excel shows a silent empty
+    // frame, never a diagnostic.
+    return <figure className="xlsx-chart" />
   }
   const types = chart.chartTypes
   const isDoughnut = types.includes('doughnutChart')
@@ -1221,6 +1734,25 @@ function ChartVisual({
     ? (element: ChartElementRef): void => setChartElementSelection(visualId, element)
     : undefined
   const labelsOn = chart.dataLabels !== undefined && chart.dataLabels !== 'none'
+  // Per-side axes (xAxis/yAxis, paired by c:axPos) win over the legacy
+  // element-kind fields — scatter charts have two value axes and the legacy
+  // pairing flips their titles. The slots here are SEMANTIC
+  // (category/value); on a horizontal bar chart the category axis sits on
+  // the left (yAxis position) and the value axis on the bottom, so the
+  // positional fields map crosswise — BarChart swaps them back for layout.
+  const isHorizontalBar = chart.barDirection === 'bar'
+  const effectiveAxisTitles = {
+    category: (isHorizontalBar ? chart.yAxis : chart.xAxis)?.title ?? chart.axisTitles?.category,
+    value: (isHorizontalBar ? chart.xAxis : chart.yAxis)?.title ?? chart.axisTitles?.value,
+  }
+  // The value axis sits on the bottom (xAxis slot) for horizontal bars.
+  const valueAxisSide = isHorizontalBar ? chart.xAxis : chart.yAxis
+  const valueScaleInput = {
+    min: valueAxisSide?.min ?? chart.valueAxis?.min,
+    max: valueAxisSide?.max ?? chart.valueAxis?.max,
+    majorUnit: valueAxisSide?.majorUnit,
+    numFmt: valueAxisSide?.numFmt,
+  }
   return (
     <figure
       className="xlsx-chart"
@@ -1264,19 +1796,26 @@ function ChartVisual({
           onCancel={() => setIsEditing(false)}
         />
       )}
-      <figcaption
-        className={selectedEl?.kind === 'title' ? 'chart-el-selected' : undefined}
-        onClick={
-          selectElement
-            ? (event) => {
-                event.stopPropagation()
-                selectElement({ kind: 'title' })
-              }
-            : undefined
-        }
-      >
-        {chart.title}
-      </figcaption>
+      {chart.title !== '' && (
+        <figcaption
+          className={selectedEl?.kind === 'title' ? 'chart-el-selected' : undefined}
+          style={{
+            ...(chart.titleStyle?.size ? { fontSize: `${chart.titleStyle.size}pt` } : {}),
+            ...(chart.titleStyle?.bold === false ? { fontWeight: 400 } : {}),
+            ...(chart.titleStyle?.color ? { color: chart.titleStyle.color } : {}),
+          }}
+          onClick={
+            selectElement
+              ? (event) => {
+                  event.stopPropagation()
+                  selectElement({ kind: 'title' })
+                }
+              : undefined
+          }
+        >
+          {chart.title}
+        </figcaption>
+      )}
       <div className={`chart-body chart-legend-${chart.legend ?? 'default'}`}>
         {isPie ? (
           <PieChart
@@ -1302,10 +1841,12 @@ function ChartVisual({
         ) : isScatter ? (
           <ScatterChart
             seriesList={populated}
-            axisTitles={chart.axisTitles}
+            axisTitles={effectiveAxisTitles}
             dataLabels={chart.dataLabels}
             gridlines={chart.gridlines}
-            valueAxis={chart.valueAxis}
+            valueAxis={valueScaleInput}
+            xAxis={chart.xAxis}
+            scatterStyle={chart.scatterStyle}
             categoryFormat={categoryFormat}
             onElement={selectElement}
             selectedEl={selectedEl}
@@ -1313,11 +1854,11 @@ function ChartVisual({
         ) : isArea ? (
           <AreaChart
             seriesList={populated}
-            axisTitles={chart.axisTitles}
+            axisTitles={effectiveAxisTitles}
             dataLabels={chart.dataLabels}
             grouping={chart.grouping}
             gridlines={chart.gridlines}
-            valueAxis={chart.valueAxis}
+            valueAxis={valueScaleInput}
             categoryFormat={categoryFormat}
             onElement={selectElement}
             selectedEl={selectedEl}
@@ -1325,12 +1866,13 @@ function ChartVisual({
         ) : isLine ? (
           <LineChart
             seriesList={populated}
-            axisTitles={chart.axisTitles}
+            axisTitles={effectiveAxisTitles}
             dataLabels={chart.dataLabels}
             grouping={chart.grouping}
             gridlines={chart.gridlines}
-            valueAxis={chart.valueAxis}
+            valueAxis={valueScaleInput}
             categoryFormat={categoryFormat}
+            lineMarkers={chart.lineMarkers}
             onElement={selectElement}
             selectedEl={selectedEl}
           />
@@ -1341,15 +1883,17 @@ function ChartVisual({
             lineSeries={
               isCombo && populated.length > 1 ? populated[populated.length - 1] : undefined
             }
-            axisTitles={chart.axisTitles}
+            axisTitles={effectiveAxisTitles}
             dataLabels={chart.dataLabels}
             dataLabelPosition={chart.dataLabelPosition}
             dataLabelFormat={chart.dataLabelFormat}
             grouping={chart.grouping}
             gridlines={chart.gridlines}
-            valueAxis={chart.valueAxis}
+            valueAxis={valueScaleInput}
+            secondaryAxis={chart.secondaryYAxis}
             gapWidthPct={chart.gapWidthPct}
             categoryFormat={categoryFormat}
+            categoryReversed={(isHorizontalBar ? chart.yAxis : chart.xAxis)?.reversed === true}
             onElement={selectElement}
             selectedEl={selectedEl}
           />
@@ -1359,6 +1903,7 @@ function ChartVisual({
           (chart.legend !== undefined || populated.length > 1) && (
             <SeriesLegend
               seriesList={populated}
+              lineSwatches={legendUsesLineSwatches(types)}
               selected={selectedEl?.kind === 'legend'}
               onSelect={
                 selectElement
@@ -1415,6 +1960,20 @@ function ChartContextMenu({
   readonly items: readonly { label: string; action: () => void }[]
   readonly onClose: () => void
 }): React.JSX.Element {
+  const menuRef = useRef<HTMLDivElement>(null)
+  // Outside press / window blur / shell chrome press — the shared dismissal
+  // (the click-through backdrop below stays as belt and braces). The menu is
+  // portaled to the body, so the inside guard must be its own element.
+  useDismissablePopover(true, onClose, { inside: () => [menuRef.current] })
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') closeRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   // Portal to the body: the float-DOM container clips overflowing children.
   return createPortal(
     <div
@@ -1423,6 +1982,7 @@ function ChartContextMenu({
       onContextMenu={(event) => event.preventDefault()}
     >
       <div
+        ref={menuRef}
         className="chart-menu"
         style={{
           left: Math.min(x, window.innerWidth - 200),
@@ -1456,14 +2016,18 @@ type ChartGrouping = ChartMetadata['grouping']
 function AxisTitleTexts({
   bottom,
   left,
+  bottomY = 317,
 }: {
   readonly bottom?: string | null | undefined
   readonly left?: string | null | undefined
+  /// Charts with an outer category tier extend the viewBox and push the
+  /// bottom title below the group-label band.
+  readonly bottomY?: number
 }): React.JSX.Element {
   return (
     <g>
       {bottom ? (
-        <text x="320" y="317" textAnchor="middle" className="axis-title">
+        <text x="320" y={bottomY} textAnchor="middle" className="axis-title">
           {truncateLabel(bottom, 60)}
         </text>
       ) : null}
@@ -1491,14 +2055,18 @@ function rangeReader(
   return (range) => readVector(editKey, range)
 }
 
+/// Excel's automatic slice cycle past the six accents: the same accents
+/// lightened (HSL L' = 0.6·L + 0.4), verified against Excel-rendered pies.
+const pieSliceColorsLight = ['#8faadc', '#f4b183', '#c9c9c9', '#ffd966', '#9dc3e6', '#a9d18e']
+
 /// Pie/doughnut slices color per point: explicit `c:dPt` fills win, the
-/// Office palette cycles underneath (Excel's varyColors default).
+/// Office palette cycles underneath (Excel's varyColors default) — six
+/// accents, then their lighter variants, then around again.
 function pieSliceColor(series: SeriesLike, index: number): string {
-  return (
-    series.pointColors?.find((point) => point.index === index)?.color ??
-    chartColors[index % chartColors.length] ??
-    '#4472c4'
-  )
+  const explicit = series.pointColors?.find((point) => point.index === index)?.color
+  if (explicit) return explicit
+  const cycle = index % 12
+  return (cycle < 6 ? chartColors[cycle] : pieSliceColorsLight[cycle - 6]) ?? '#4472c4'
 }
 
 /// Inline editor: title, chart type (axis-based family only), series colors.
@@ -1610,29 +2178,29 @@ function ChartEditor({
       {convertible && (
         <label>
           {t('appTypeLabel')}
-          <select
+          <Dropdown
             className="chart-editor-type"
+            ariaLabel={t('appTypeLabel')}
             value={chartType}
-            onChange={(event) => setChartType(event.target.value)}
-          >
-            {CHART_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.labelKey)}
-              </option>
-            ))}
-          </select>
+            options={CHART_TYPE_OPTIONS.map((option) => ({
+              value: option.value,
+              label: t(option.labelKey),
+            }))}
+            onPick={setChartType}
+          />
         </label>
       )}
       {!isPie &&
         chart.series.slice(0, 6).map((series, index) => (
           <label key={index}>
             {truncateLabel(series.name || t('appSeriesN', { n: index + 1 }), 14)}
-            <input
-              type="color"
+            <ColorDropdown
+              label={series.name || t('appSeriesN', { n: index + 1 })}
               value={colors[String(index)] ?? seriesColor(series, index)}
-              onChange={(event) =>
-                setColors((previous) => ({ ...previous, [String(index)]: event.target.value }))
-              }
+              portal
+              onPick={(hex) => {
+                if (hex) setColors((previous) => ({ ...previous, [String(index)]: hex }))
+              }}
             />
           </label>
         ))}
@@ -1640,12 +2208,13 @@ function ChartEditor({
         chart.series[0]?.categories.slice(0, 12).map((category, index) => (
           <label key={`slice-${index}`}>
             {truncateLabel(category || t('appSliceN', { n: index + 1 }), 14)}
-            <input
-              type="color"
+            <ColorDropdown
+              label={category || t('appSliceN', { n: index + 1 })}
               value={sliceColors[String(index)] ?? pieSliceColor(chart.series[0] ?? {}, index)}
-              onChange={(event) =>
-                setSliceColors((previous) => ({ ...previous, [String(index)]: event.target.value }))
-              }
+              portal
+              onPick={(hex) => {
+                if (hex) setSliceColors((previous) => ({ ...previous, [String(index)]: hex }))
+              }}
             />
           </label>
         ))}
@@ -1716,16 +2285,19 @@ function SeriesLegend({
   seriesList,
   selected,
   onSelect,
+  lineSwatches = false,
 }: {
   readonly seriesList: readonly ChartSeries[]
   readonly selected?: boolean | undefined
   readonly onSelect?: ((event: React.MouseEvent) => void) | undefined
+  /// Line-family charts: swatches mirror the drawn stroke color.
+  readonly lineSwatches?: boolean | undefined
 }): React.JSX.Element {
   return (
     <div className={`chart-legend${selected ? ' chart-el-selected' : ''}`} onClick={onSelect}>
       {seriesList.slice(0, 8).map((series, index) => (
         <span key={`${series.name}-${index}`}>
-          <i style={{ background: seriesColor(series, index) }} />
+          <i style={{ background: legendSwatchColor(series, index, lineSwatches) }} />
           {truncateLabel(series.name, 18)}
         </span>
       ))}
@@ -1745,14 +2317,19 @@ function BarChart({
   grouping,
   gridlines,
   valueAxis,
+  secondaryAxis,
   gapWidthPct,
   categoryFormat,
+  categoryReversed,
   onElement,
   selectedEl,
 }: {
   readonly seriesList: readonly ChartSeries[]
   readonly lineSeries?: ChartSeries | undefined
   readonly isHorizontal: boolean
+  /// c:catAx orientation maxMin — categories read top-down (bar) /
+  /// right-to-left (column) instead of Excel's minMax default.
+  readonly categoryReversed?: boolean | undefined
   readonly axisTitles?: ChartAxisTitles
   readonly dataLabels?: ChartDataLabels
   readonly dataLabelPosition?: ChartLabelPosition
@@ -1760,20 +2337,31 @@ function BarChart({
   readonly grouping?: ChartGrouping
   readonly gridlines?: boolean | undefined
   readonly valueAxis?: ChartValueAxis
+  readonly secondaryAxis?:
+    | {
+        min?: number | undefined
+        max?: number | undefined
+        majorUnit?: number | undefined
+        numFmt?: string | undefined
+        hidden?: boolean | undefined
+      }
+    | undefined
   readonly gapWidthPct?: number | undefined
   readonly categoryFormat?: string | undefined
 } & ChartElementProps): React.JSX.Element {
   const primary = seriesList[0]
-  if (!primary) return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
+  if (!primary) return <></>
   const categories = primary.categories.map((value) => formatCategoryLabel(value, categoryFormat))
-  const visibleCount = Math.min(primary.values.length, 20)
+  // 20 was too tight for real corpora (38-county bar charts); 48 keeps
+  // bars ≥ ~5px in the 600px plot while very wide data still truncates.
+  const visibleCount = Math.min(primary.values.length, 48)
   const isStacked =
     (grouping === 'stacked' || grouping === 'percentStacked') && seriesList.length > 1
   const isPercent = grouping === 'percentStacked' && seriesList.length > 1
   const categoryTotal = (index: number): number =>
     seriesList.reduce((sum, series) => sum + Math.max(0, series.values[index] ?? 0), 0)
   const bounds = isPercent
-    ? { min: 0, max: 1 }
+    ? { min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] }
     : axisBounds(
         isStacked
           ? Math.max(...Array.from({ length: visibleCount }, (_, index) => categoryTotal(index)), 0)
@@ -1790,7 +2378,7 @@ function BarChart({
     const total = categoryTotal(index)
     return total === 0 ? 0 : value / total
   }
-  const axisNumberFormat = isPercent ? '0%' : primary.numberFormat
+  const axisNumberFormat = isPercent ? '0%' : (valueAxis?.numFmt ?? primary.numberFormat)
   // Excel gap width: the space between category groups, in % of one bar.
   const gap = (gapWidthPct ?? 150) / 100
   const pickBar = onElement
@@ -1817,26 +2405,89 @@ function BarChart({
     : undefined
 
   if (isHorizontal) {
-    const rowHeight = 280 / visibleCount
+    const rowHeight = 270 / visibleCount
+    const rowGroups = visibleCategoryGroups(primary.categoryGroups, visibleCount)
+    // The outer tier owns the x ≤ 99 column; tick labels (end-anchored at
+    // 148) shrink so the two never share pixels.
+    const categoryBudget = rowGroups.length > 0 ? 8 : 14
     const barHeight = Math.max(
       3,
       isStacked ? rowHeight / (1 + gap) : rowHeight / (seriesList.length + gap),
     )
+    // Excel draws bar-chart categories bottom-up and series 0 nearest the
+    // category axis under the default minMax orientation; maxMin flips both
+    // back to top-down reading order.
+    const rowSlot = (index: number): number => (categoryReversed ? index : visibleCount - 1 - index)
+    const seriesSlot = (seriesIndex: number): number =>
+      categoryReversed ? seriesIndex : seriesList.length - 1 - seriesIndex
     const groupTop = (index: number): number =>
-      14 + rowHeight * index + (rowHeight - barHeight * (isStacked ? 1 : seriesList.length)) / 2
+      14 +
+      rowHeight * rowSlot(index) +
+      (rowHeight - barHeight * (isStacked ? 1 : seriesList.length)) / 2
+    const plotX = (value: number): number =>
+      158 + Math.max(0, Math.min(1, (value - bounds.min) / (bounds.max - bounds.min || 1))) * 390
+    const labelFor = (
+      value: number,
+      y: number,
+      numberFormat?: string,
+    ): React.JSX.Element | null => {
+      const width = norm(value) * 390
+      const inside = dataLabelPosition === 'center' || dataLabelPosition === 'inside-end'
+      const x =
+        dataLabelPosition === 'center'
+          ? 158 + width / 2
+          : dataLabelPosition === 'inside-end'
+            ? 154 + width
+            : 164 + width
+      return (
+        <text
+          x={x}
+          y={y}
+          textAnchor={
+            dataLabelPosition === 'center'
+              ? 'middle'
+              : dataLabelPosition === 'inside-end'
+                ? 'end'
+                : 'start'
+          }
+          className="axis-label"
+          {...(inside ? { fill: '#fff' } : {})}
+        >
+          {formatLabelValue(value, dataLabelFormat, numberFormat)}
+        </text>
+      )
+    }
     return (
       <svg className="chart-svg" viewBox="0 0 600 320" role="img">
+        {bounds.ticks.map((tick, index) => (
+          <g key={`vt-${index}`} onClick={selectValueAxis}>
+            {gridlines !== false && (
+              <line
+                x1={plotX(tick)}
+                y1="12"
+                x2={plotX(tick)}
+                y2="286"
+                stroke="#e3e3e3"
+                strokeWidth="1"
+              />
+            )}
+            {/* Excel draws the bar-chart value axis along the bottom. */}
+            <text x={plotX(tick)} y="298" textAnchor="middle" className="axis-label">
+              {formatAxisValue(tick, axisNumberFormat)}
+            </text>
+          </g>
+        ))}
         {Array.from({ length: visibleCount }, (_, index) => {
           let cursor = 0
           return (
             <g key={`${categories[index] ?? index}-${index}`}>
               <text
                 x="148"
-                y={26 + rowHeight * index}
+                y={26 + rowHeight * rowSlot(index)}
                 textAnchor="end"
                 onClick={selectCategoryAxis}
               >
-                {truncateLabel(categories[index] ?? String(index + 1))}
+                {truncateLabel(categories[index] ?? String(index + 1), categoryBudget)}
               </text>
               {seriesList.map((series, seriesIndex) => {
                 const share = isStacked
@@ -1848,7 +2499,7 @@ function BarChart({
                   <rect
                     key={seriesIndex}
                     x={x}
-                    y={groupTop(index) + (isStacked ? 0 : barHeight * seriesIndex)}
+                    y={groupTop(index) + (isStacked ? 0 : barHeight * seriesSlot(seriesIndex))}
                     width={share * 390}
                     height={barHeight}
                     fill={seriesColor(series, seriesIndex)}
@@ -1859,38 +2510,36 @@ function BarChart({
               })}
               {dataLabels === 'value' &&
                 !isStacked &&
-                (() => {
-                  const width = norm(primary.values[index] ?? bounds.min) * 390
-                  const inside =
-                    dataLabelPosition === 'center' || dataLabelPosition === 'inside-end'
-                  const x =
-                    dataLabelPosition === 'center'
-                      ? 158 + width / 2
-                      : dataLabelPosition === 'inside-end'
-                        ? 154 + width
-                        : 164 + width
-                  return (
-                    <text
-                      x={x}
-                      y={groupTop(index) + barHeight / 2 + 3}
-                      textAnchor={
-                        dataLabelPosition === 'center'
-                          ? 'middle'
-                          : dataLabelPosition === 'inside-end'
-                            ? 'end'
-                            : 'start'
-                      }
-                      className="axis-label"
-                      {...(inside ? { fill: '#fff' } : {})}
-                    >
-                      {formatLabelValue(
-                        primary.values[index] ?? 0,
-                        dataLabelFormat,
-                        primary.numberFormat,
-                      )}
-                    </text>
-                  )
-                })()}
+                seriesList.map((series, seriesIndex) => (
+                  <Fragment key={`lbl-${seriesIndex}`}>
+                    {labelFor(
+                      series.values[index] ?? 0,
+                      groupTop(index) + barHeight * seriesSlot(seriesIndex) + barHeight / 2 + 3,
+                      series.numberFormat,
+                    )}
+                  </Fragment>
+                ))}
+            </g>
+          )
+        })}
+        {/* Outer multiLvlStrCache level: a rotated label column left of the
+            category labels with separator lines at the group edges. */}
+        {rowGroups.map((group, groupIndex) => {
+          const first = rowSlot(group.start)
+          const last = rowSlot(group.end - 1)
+          const yTop = 14 + rowHeight * Math.min(first, last)
+          const yBottom = 14 + rowHeight * (Math.max(first, last) + 1)
+          const cy = (yTop + yBottom) / 2
+          return (
+            <g key={`grp-${groupIndex}`} onClick={selectCategoryAxis}>
+              <line x1="86" y1={yTop} x2="158" y2={yTop} stroke="#d9d9d9" strokeWidth="1" />
+              <line x1="86" y1={yBottom} x2="158" y2={yBottom} stroke="#d9d9d9" strokeWidth="1" />
+              <text x="94" y={cy} transform={`rotate(-90 94 ${cy})`} textAnchor="middle">
+                {truncateLabel(
+                  group.label,
+                  Math.max(3, Math.floor((yBottom - yTop) / AXIS_LABEL_CHAR_UNITS)),
+                )}
+              </text>
             </g>
           )
         })}
@@ -1901,29 +2550,54 @@ function BarChart({
   }
 
   const columnWidth = 480 / visibleCount
+  const tickStride = categoryTickStride(categories, visibleCount, columnWidth)
   const barWidth = Math.max(
     2,
     isStacked ? columnWidth / (1 + gap) : columnWidth / (seriesList.length + gap),
   )
   const groupWidth = barWidth * (isStacked ? 1 : seriesList.length)
+  // maxMin mirrors the column order (and the series order inside a group).
+  const catSlot = (index: number): number => (categoryReversed ? visibleCount - 1 - index : index)
+  const seriesSlot = (seriesIndex: number): number =>
+    categoryReversed ? seriesList.length - 1 - seriesIndex : seriesIndex
   const groupLeft = (index: number): number =>
-    62 + columnWidth * index + (columnWidth - groupWidth) / 2
-  const lineMaximum = lineSeries ? niceAxisMaximum(Math.max(...lineSeries.values, 0)) : 1
-  const points = lineSeries?.values
-    .slice(0, visibleCount)
-    .map(
-      (value, index) => `${groupLeft(index) + groupWidth / 2},${280 - (value / lineMaximum) * 230}`,
-    )
-    .join(' ')
+    62 + columnWidth * catSlot(index) + (columnWidth - groupWidth) / 2
+  // The combo line rides the secondary value axis (its own Excel-like auto
+  // scale when the file has no explicit bounds).
+  const lineScale = lineSeries
+    ? valueAxisScale(Math.max(...lineSeries.values, 0), secondaryAxis)
+    : undefined
+  const points =
+    lineSeries && lineScale
+      ? lineSeries.values
+          .slice(0, visibleCount)
+          .map(
+            (value, index) =>
+              `${groupLeft(index) + groupWidth / 2},${
+                280 -
+                Math.max(
+                  0,
+                  Math.min(1, (value - lineScale.min) / (lineScale.max - lineScale.min || 1)),
+                ) *
+                  240
+              }`,
+          )
+          .join(' ')
+      : undefined
   const showValueLabels =
     !isStacked &&
     (dataLabels === 'value' ||
       (dataLabels === undefined && visibleCount <= 12 && seriesList.length === 1))
+  const columnGroups = visibleCategoryGroups(primary.categoryGroups, visibleCount)
+  // The group band occupies y 284-314; a bottom axis title moves below it
+  // on an extended canvas instead of overprinting.
+  const shiftBottomTitle = columnGroups.length > 0 && Boolean(axisTitles?.category)
   return (
-    <svg className="chart-svg" viewBox="0 0 600 320" role="img">
+    <svg className="chart-svg" viewBox={`0 0 600 ${shiftBottomTitle ? 336 : 320}`} role="img">
       <VerticalAxis
         minimum={bounds.min}
         maximum={bounds.max}
+        ticks={isPercent ? undefined : bounds.ticks}
         numberFormat={axisNumberFormat}
         showGridlines={gridlines !== false}
         onSelect={selectValueAxis}
@@ -1942,7 +2616,7 @@ function BarChart({
               return (
                 <rect
                   key={seriesIndex}
-                  x={groupLeft(index) + (isStacked ? 0 : barWidth * seriesIndex)}
+                  x={groupLeft(index) + (isStacked ? 0 : barWidth * seriesSlot(seriesIndex))}
                   y={y}
                   width={barWidth}
                   height={height}
@@ -1953,8 +2627,8 @@ function BarChart({
               )
             })}
             {showValueLabels &&
-              (() => {
-                const share = norm(primary.values[index] ?? bounds.min)
+              seriesList.map((series, seriesIndex) => {
+                const share = norm(series.values[index] ?? bounds.min)
                 const inside = dataLabelPosition === 'center' || dataLabelPosition === 'inside-end'
                 const y =
                   dataLabelPosition === 'center'
@@ -1962,30 +2636,32 @@ function BarChart({
                     : dataLabelPosition === 'inside-end'
                       ? 292 - share * 240
                       : 272 - share * 240
+                const x = groupLeft(index) + barWidth * seriesSlot(seriesIndex) + barWidth / 2
                 return (
                   <text
-                    x={groupLeft(index) + groupWidth / 2}
+                    key={`lbl-${seriesIndex}`}
+                    x={x}
                     y={y}
                     textAnchor="middle"
                     className="axis-label"
                     {...(inside ? { fill: '#fff' } : {})}
                   >
                     {formatLabelValue(
-                      primary.values[index] ?? 0,
+                      series.values[index] ?? 0,
                       dataLabelFormat,
-                      primary.numberFormat,
+                      series.numberFormat,
                     )}
                   </text>
                 )
-              })()}
-            <text
-              x={62 + columnWidth * index + columnWidth / 2}
-              y="298"
-              textAnchor="middle"
+              })}
+            <CategoryTick
+              x={62 + columnWidth * catSlot(index) + columnWidth / 2}
+              label={categories[index] ?? String(index + 1)}
+              slotWidth={columnWidth}
+              stride={tickStride}
+              index={index}
               onClick={selectCategoryAxis}
-            >
-              {truncateLabel(categories[index] ?? String(index + 1), 5)}
-            </text>
+            />
           </g>
         )
       })}
@@ -2007,24 +2683,41 @@ function BarChart({
           points={points}
           fill="none"
           stroke={seriesColor(lineSeries, seriesList.length)}
-          strokeWidth="3"
+          strokeWidth={lineSeries?.lineWidth ?? 3}
         />
       )}
+      <CategoryGroupBand
+        spans={columnGroups.map((group) => {
+          const first = catSlot(group.start)
+          const last = catSlot(group.end - 1)
+          return {
+            label: group.label,
+            xStart: 62 + columnWidth * Math.min(first, last),
+            xEnd: 62 + columnWidth * (Math.max(first, last) + 1),
+          }
+        })}
+        onClick={selectCategoryAxis}
+      />
       {lineSeries &&
-        [0, 0.5, 1].map((fraction) => (
+        lineScale &&
+        secondaryAxis?.hidden !== true &&
+        lineScale.ticks.map((tick, index) => (
           <text
-            key={fraction}
+            key={index}
             x="596"
-            y={284 - fraction * 230}
+            y={284 - ((tick - lineScale.min) / (lineScale.max - lineScale.min || 1)) * 240}
             textAnchor="end"
             className="axis-label"
-            fill={seriesColor(lineSeries, seriesList.length)}
           >
-            {formatAxisValue(fraction * lineMaximum, lineSeries.numberFormat)}
+            {formatAxisValue(tick, secondaryAxis?.numFmt ?? lineSeries.numberFormat)}
           </text>
         ))}
       <TruncationNote shown={visibleCount} total={primary.values.length} />
-      <AxisTitleTexts bottom={axisTitles?.category} left={axisTitles?.value} />
+      <AxisTitleTexts
+        bottom={axisTitles?.category}
+        left={axisTitles?.value}
+        bottomY={shiftBottomTitle ? 333 : 317}
+      />
     </svg>
   )
 }
@@ -2072,6 +2765,70 @@ function TrendLine({
   )
 }
 
+/// Excel's automatic marker cycle when the plot flag is on but the series
+/// sets no symbol (diamond, square, triangle, then repeat).
+const AUTO_MARKER_SYMBOLS = ['diamond', 'square', 'triangle'] as const
+
+function MarkerGlyph({
+  x,
+  y,
+  symbol,
+  color,
+}: {
+  readonly x: number
+  readonly y: number
+  readonly symbol: string
+  readonly color: string
+}): React.JSX.Element {
+  const r = 4
+  if (symbol === 'diamond') {
+    return (
+      <polygon points={`${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`} fill={color} />
+    )
+  }
+  if (symbol === 'square') {
+    return <rect x={x - r} y={y - r} width={2 * r} height={2 * r} fill={color} />
+  }
+  if (symbol === 'triangle') {
+    return <polygon points={`${x},${y - r} ${x + r},${y + r} ${x - r},${y + r}`} fill={color} />
+  }
+  return <circle cx={x} cy={y} r={r} fill={color} />
+}
+
+/// Series line stroke: an explicit spPr/a:ln color wins over the fill/accent
+/// default; null for an explicit noFill line.
+export function lineStroke(
+  series: SeriesLike & { readonly lineColor?: string | undefined },
+  index: number,
+): string | null {
+  if (series.lineColor === 'none') return null
+  return series.lineColor ?? seriesColor(series, index)
+}
+
+/// Whether the legend mirrors stroke colors: only when a line-drawing
+/// component wins the render cascade (pie → radar → scatter → area → line →
+/// bar) — a chart that also carries an areaChart/scatterChart paints fills.
+export function legendUsesLineSwatches(types: readonly string[]): boolean {
+  if (types.includes('pieChart') || types.includes('doughnutChart')) return false
+  const noBar = !types.includes('barChart')
+  if (types.includes('radarChart') && noBar) return true
+  if (types.includes('scatterChart')) return false
+  if (types.includes('areaChart') && noBar) return false
+  return types.includes('lineChart') && noBar
+}
+
+/// Legend swatch color: line-family charts mirror the drawn stroke (an
+/// explicit noFill line keeps the series color); everything else keeps the
+/// fill resolution.
+export function legendSwatchColor(
+  series: SeriesLike & { readonly lineColor?: string | undefined },
+  index: number,
+  lineSwatches: boolean,
+): string {
+  if (!lineSwatches) return seriesColor(series, index)
+  return lineStroke(series, index) ?? seriesColor(series, index)
+}
+
 function linePoints(values: readonly number[], maximum: number, minimum = 0): string {
   const count = Math.max(1, values.length - 1)
   const span = maximum - minimum || 1
@@ -2097,6 +2854,19 @@ type ChartLabelPosition = ChartMetadata['dataLabelPosition']
 
 /// Minimal formatCode support for data labels (percent / thousands / fixed
 /// decimals); anything fancier falls back to the axis heuristics.
+/// Pie value labels honor the full source number format (currency symbols,
+/// accounting padding) the way Excel's sourceLinked labels do.
+function formatPieValue(value: number, formatCode: string | undefined): string {
+  if (formatCode && formatCode !== 'General') {
+    try {
+      return numfmt.format(formatCode, value, { throws: false }).trim()
+    } catch {
+      // Unparseable format: fall through to the plain rendering.
+    }
+  }
+  return formatLabelValue(value, formatCode, undefined)
+}
+
 function formatLabelValue(
   value: number,
   formatCode: string | undefined,
@@ -2128,37 +2898,174 @@ function TruncationNote({
   )
 }
 
+/// Approximate glyph width of the small axis font in the 640-unit viewBox.
+const AXIS_LABEL_CHAR_UNITS = 5.4
+
+/// Excel wraps a category label at spaces when its slot is narrow ("KW 01"
+/// stacks as KW / 01); greedy two-line split, single line when it fits or
+/// has no break point.
+export function categoryTickLines(label: string, slotWidth: number): readonly string[] {
+  const fits = (text: string): boolean => text.length * AXIS_LABEL_CHAR_UNITS <= slotWidth
+  if (fits(label) || !label.includes(' ')) return [label]
+  const words = label.split(/\s+/)
+  let first = words[0] ?? ''
+  let index = 1
+  while (index < words.length && fits(`${first} ${words[index]}`)) {
+    first = `${first} ${words[index]}`
+    index += 1
+  }
+  const rest = words.slice(index).join(' ')
+  return rest ? [first, rest] : [first]
+}
+
+/// Excel thins overlapping category labels to every n-th instead of
+/// overprinting: when even the wrapped label is wider than its slot, only
+/// every ceil(width/slot)-th category keeps its label.
+export function categoryTickStride(
+  labels: readonly string[],
+  count: number,
+  slotWidth: number,
+): number {
+  if (!(slotWidth > 0)) return 1
+  let widest = 0
+  for (let index = 0; index < count; index += 1) {
+    for (const line of categoryTickLines(labels[index] ?? String(index + 1), slotWidth)) {
+      widest = Math.max(widest, Math.min(line.length, 16) * AXIS_LABEL_CHAR_UNITS)
+    }
+  }
+  return Math.max(1, Math.ceil((widest + 2) / slotWidth))
+}
+
+function CategoryTick({
+  x,
+  label,
+  slotWidth,
+  stride,
+  index,
+  onClick,
+}: {
+  readonly x: number
+  readonly label: string
+  readonly slotWidth: number
+  readonly stride: number
+  readonly index: number
+  readonly onClick?: ((event: React.MouseEvent) => void) | undefined
+}): React.JSX.Element | null {
+  if (index % stride !== 0) return null
+  const budget = Math.max(5, Math.min(16, Math.floor((slotWidth * stride) / AXIS_LABEL_CHAR_UNITS)))
+  const lines = categoryTickLines(label, slotWidth * stride)
+  // Two-line ticks start higher so the second line (baseline 303) clears
+  // the bottom axis title at y=317; the plot floor is 280, so line one at
+  // 292 stays below the bars either way.
+  return (
+    <text x={x} y={lines.length === 1 ? 298 : 292} textAnchor="middle" onClick={onClick}>
+      {lines.length === 1 ? (
+        truncateLabel(lines[0] ?? '', budget)
+      ) : (
+        <>
+          <tspan x={x} dy="0">
+            {truncateLabel(lines[0] ?? '', budget)}
+          </tspan>
+          <tspan x={x} dy="11">
+            {truncateLabel(lines[1] ?? '', budget)}
+          </tspan>
+        </>
+      )}
+    </text>
+  )
+}
+
+/// Clamp parsed outer-level category spans to the drawn category count.
+function visibleCategoryGroups(
+  groups: ChartSeries['categoryGroups'],
+  visibleCount: number,
+): { label: string; start: number; end: number }[] {
+  return (groups ?? [])
+    .map((group) => ({ ...group, end: Math.min(group.end, visibleCount) }))
+    .filter((group) => group.start < group.end && group.start < visibleCount)
+}
+
+/// Outer multiLvlStrCache level under the tick labels: each group label
+/// centered under its span with separator ticks at the span edges (Excel's
+/// grouped category axis).
+function CategoryGroupBand({
+  spans,
+  onClick,
+}: {
+  readonly spans: readonly { label: string; xStart: number; xEnd: number }[]
+  readonly onClick?: ((event: React.MouseEvent) => void) | undefined
+}): React.JSX.Element {
+  return (
+    <g onClick={onClick}>
+      {spans.map((span, index) => (
+        <Fragment key={index}>
+          <line
+            x1={span.xStart}
+            y1="284"
+            x2={span.xStart}
+            y2="314"
+            stroke="#d9d9d9"
+            strokeWidth="1"
+          />
+          <line x1={span.xEnd} y1="284" x2={span.xEnd} y2="314" stroke="#d9d9d9" strokeWidth="1" />
+          <text x={(span.xStart + span.xEnd) / 2} y="312" textAnchor="middle">
+            {truncateLabel(
+              span.label,
+              Math.max(3, Math.floor((span.xEnd - span.xStart) / AXIS_LABEL_CHAR_UNITS)),
+            )}
+          </text>
+        </Fragment>
+      ))}
+    </g>
+  )
+}
+
 function formatAxisValue(value: number, numberFormat: string | undefined): string {
+  if (numberFormat && numberFormat !== 'General' && !numberFormat.includes('%')) {
+    try {
+      const text = numfmt.format(numberFormat, value, { throws: false })
+      if (typeof text === 'string' && text !== '') return text
+    } catch {
+      // fall through to the plain rendering
+    }
+  }
   if (numberFormat?.includes('%')) return `${Math.round(value * 100)}%`
   const magnitude = Math.abs(value)
+  // Excel prints full numbers on value axes (no K abbreviation); only guard
+  // the layout against extreme magnitudes.
   if (magnitude >= 1e9) return `${(value / 1e9).toFixed(1)}B`
   if (magnitude >= 1e6) return `${(value / 1e6).toFixed(1)}M`
-  if (magnitude >= 1e4) return `${Math.round(value / 1e3)}K`
-  return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(1)
+  const clean = Number(value.toPrecision(12))
+  return clean.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
 
 function VerticalAxis({
   minimum = 0,
   maximum,
+  ticks,
   numberFormat,
   showGridlines = true,
   onSelect,
 }: {
   readonly minimum?: number
   readonly maximum: number
+  readonly ticks?: readonly number[] | undefined
   readonly numberFormat: string | undefined
   readonly showGridlines?: boolean
   readonly onSelect?: ((event: React.MouseEvent) => void) | undefined
 }): React.JSX.Element {
   const span = maximum - minimum || 1
+  const list =
+    ticks && ticks.length >= 2
+      ? ticks
+      : [0, 0.25, 0.5, 0.75, 1].map((fraction) => minimum + fraction * span)
   return (
     <g onClick={onSelect}>
-      {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-        const tick = minimum + fraction * span
-        const y = 280 - fraction * 240
+      {list.map((tick, index) => {
+        const y = 280 - ((tick - minimum) / span) * 240
         return (
-          <g key={fraction}>
-            {(showGridlines || fraction === 0) && (
+          <g key={index}>
+            {(showGridlines || index === 0) && (
               <line x1="58" y1={y} x2="580" y2={y} stroke="#e3e3e3" strokeWidth="1" />
             )}
             <text x="54" y={y + 4} textAnchor="end" className="axis-label">
@@ -2171,13 +3078,21 @@ function VerticalAxis({
   )
 }
 
-type ChartValueAxis = ChartMetadata['valueAxis']
+type ChartValueAxis =
+  | {
+      min?: number | undefined
+      max?: number | undefined
+      majorUnit?: number | undefined
+      numFmt?: string | undefined
+    }
+  | undefined
 
-/// Explicit axis bounds win; otherwise 0 up to a nice ceiling.
-function axisBounds(dataMax: number, valueAxis: ChartValueAxis): { min: number; max: number } {
-  const min = valueAxis?.min ?? 0
-  const max = valueAxis?.max ?? niceAxisMaximum(dataMax)
-  return max > min ? { min, max } : { min, max: min + 1 }
+/// Explicit axis bounds/unit win; otherwise an Excel-like auto scale.
+function axisBounds(
+  dataMax: number,
+  valueAxis: ChartValueAxis,
+): { min: number; max: number; ticks: number[] } {
+  return valueAxisScale(dataMax, valueAxis)
 }
 
 function LineChart({
@@ -2188,6 +3103,7 @@ function LineChart({
   gridlines,
   valueAxis,
   categoryFormat,
+  lineMarkers,
   onElement,
   selectedEl,
 }: {
@@ -2198,9 +3114,10 @@ function LineChart({
   readonly gridlines?: boolean | undefined
   readonly valueAxis?: ChartValueAxis
   readonly categoryFormat?: string | undefined
+  readonly lineMarkers?: boolean | undefined
 } & ChartElementProps): React.JSX.Element {
   const primary = seriesList[0]
-  if (!primary) return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
+  if (!primary) return <></>
   const isStacked =
     (grouping === 'stacked' || grouping === 'percentStacked') && seriesList.length > 1
   const isPercent = grouping === 'percentStacked' && seriesList.length > 1
@@ -2225,7 +3142,7 @@ function LineChart({
     return isPercent ? totals.map((value, index) => value / (percentTotals[index] ?? 1)) : totals
   }
   const bounds = isPercent
-    ? { min: 0, max: 1 }
+    ? { min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] }
     : axisBounds(
         isStacked
           ? Math.max(...(stackTotals[stackTotals.length - 1] ?? [0]), 0)
@@ -2235,12 +3152,17 @@ function LineChart({
   const span = bounds.max - bounds.min
   const categories = primary.categories.map((value) => formatCategoryLabel(value, categoryFormat))
   const count = Math.max(1, primary.values.length - 1)
+  const categoryGroups = visibleCategoryGroups(primary.categoryGroups, primary.values.length)
+  // The group band occupies y 284-314; a bottom axis title moves below it
+  // on an extended canvas instead of overprinting.
+  const shiftBottomTitle = categoryGroups.length > 0 && Boolean(axisTitles?.category)
   return (
-    <svg className="chart-svg" viewBox="0 0 600 320" role="img">
+    <svg className="chart-svg" viewBox={`0 0 600 ${shiftBottomTitle ? 336 : 320}`} role="img">
       <VerticalAxis
         minimum={bounds.min}
         maximum={bounds.max}
-        numberFormat={isPercent ? '0%' : primary.numberFormat}
+        ticks={isPercent ? undefined : bounds.ticks}
+        numberFormat={isPercent ? '0%' : (valueAxis?.numFmt ?? primary.numberFormat)}
         showGridlines={gridlines !== false}
         onSelect={
           onElement
@@ -2251,25 +3173,59 @@ function LineChart({
             : undefined
         }
       />
-      {seriesList.map((series, seriesIndex) => (
-        <polyline
-          key={seriesIndex}
-          points={linePoints(displayValues(seriesIndex), bounds.max, bounds.min)}
-          fill="none"
-          stroke={seriesColor(series, seriesIndex)}
-          strokeWidth={
-            selectedEl?.kind === 'series' && selectedEl.seriesIndex === seriesIndex ? '5' : '3'
-          }
-          onClick={
-            onElement
-              ? (event) => {
-                  event.stopPropagation()
-                  onElement({ kind: 'series', seriesIndex })
-                }
-              : undefined
-          }
-        />
-      ))}
+      {seriesList.map((series, seriesIndex) => {
+        const stroke = lineStroke(series, seriesIndex)
+        if (stroke === null) return null
+        const width = series.lineWidth ?? 3
+        return (
+          <polyline
+            key={seriesIndex}
+            points={linePoints(displayValues(seriesIndex), bounds.max, bounds.min)}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={
+              selectedEl?.kind === 'series' && selectedEl.seriesIndex === seriesIndex
+                ? Math.max(5, width + 2)
+                : width
+            }
+            onClick={
+              onElement
+                ? (event) => {
+                    event.stopPropagation()
+                    onElement({ kind: 'series', seriesIndex })
+                  }
+                : undefined
+            }
+          />
+        )
+      })}
+      {seriesList.map((series, seriesIndex) => {
+        // Plot flag on or explicit symbol; a series-level "none" always wins.
+        if (series.marker === 'none') return null
+        if (lineMarkers !== true && series.marker === undefined) return null
+        const symbol =
+          series.marker !== undefined && series.marker !== 'auto'
+            ? series.marker
+            : (AUTO_MARKER_SYMBOLS[seriesIndex % AUTO_MARKER_SYMBOLS.length] ?? 'circle')
+        const values = displayValues(seriesIndex)
+        const pointCount = Math.max(1, values.length - 1)
+        // Markers match the polyline stroke; an explicit noFill line keeps
+        // its markers in the series color.
+        const color = lineStroke(series, seriesIndex) ?? seriesColor(series, seriesIndex)
+        return (
+          <g key={`markers-${seriesIndex}`}>
+            {values.map((value, index) => (
+              <MarkerGlyph
+                key={index}
+                x={60 + (index / pointCount) * 500}
+                y={280 - Math.max(0, Math.min(1, (value - bounds.min) / (span || 1))) * 240}
+                symbol={symbol}
+                color={color}
+              />
+            ))}
+          </g>
+        )
+      })}
       {seriesList.map((series, seriesIndex) =>
         series.trendline === 'linear' ? (
           <TrendLine
@@ -2283,11 +3239,13 @@ function LineChart({
         ) : null,
       )}
       {primary.values.map((_, index) => (
-        <text
+        <CategoryTick
           key={index}
           x={60 + (index / count) * 500}
-          y="300"
-          textAnchor="middle"
+          label={categories[index] ?? String(index + 1)}
+          slotWidth={500 / Math.max(1, count)}
+          stride={categoryTickStride(categories, primary.values.length, 500 / Math.max(1, count))}
+          index={index}
           onClick={
             onElement
               ? (event) => {
@@ -2296,9 +3254,7 @@ function LineChart({
                 }
               : undefined
           }
-        >
-          {truncateLabel(categories[index] ?? String(index + 1), 5)}
-        </text>
+        />
       ))}
       {dataLabels === 'value' &&
         displayValues(0).map((displayed, index) => (
@@ -2312,7 +3268,32 @@ function LineChart({
             {formatAxisValue(primary.values[index] ?? 0, primary.numberFormat)}
           </text>
         ))}
-      <AxisTitleTexts bottom={axisTitles?.category} left={axisTitles?.value} />
+      <CategoryGroupBand
+        spans={categoryGroups.map((group) => {
+          const xAt = (index: number): number => 60 + (index / count) * 500
+          // Group edges fall midway between the last point of one group
+          // and the first point of the next (plot edges at the ends).
+          return {
+            label: group.label,
+            xStart: group.start === 0 ? 60 : (xAt(group.start - 1) + xAt(group.start)) / 2,
+            xEnd:
+              group.end >= primary.values.length ? 560 : (xAt(group.end - 1) + xAt(group.end)) / 2,
+          }
+        })}
+        onClick={
+          onElement
+            ? (event) => {
+                event.stopPropagation()
+                onElement({ kind: 'category-axis' })
+              }
+            : undefined
+        }
+      />
+      <AxisTitleTexts
+        bottom={axisTitles?.category}
+        left={axisTitles?.value}
+        bottomY={shiftBottomTitle ? 333 : 317}
+      />
     </svg>
   )
 }
@@ -2337,7 +3318,7 @@ function AreaChart({
   readonly categoryFormat?: string | undefined
 } & ChartElementProps): React.JSX.Element {
   const primary = seriesList[0]
-  if (!primary) return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
+  if (!primary) return <></>
   const categories = primary.categories.map((value) => formatCategoryLabel(value, categoryFormat))
   const count = Math.max(1, primary.values.length - 1)
   const isStacked =
@@ -2359,7 +3340,7 @@ function AreaChart({
       )
     : []
   const bounds = isPercent
-    ? { min: 0, max: 1 }
+    ? { min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] }
     : axisBounds(
         isStacked
           ? Math.max(...(stackBounds[stackBounds.length - 1] ?? [0]), 0)
@@ -2380,7 +3361,8 @@ function AreaChart({
       <VerticalAxis
         minimum={bounds.min}
         maximum={bounds.max}
-        numberFormat={isPercent ? '0%' : primary.numberFormat}
+        ticks={isPercent ? undefined : bounds.ticks}
+        numberFormat={isPercent ? '0%' : (valueAxis?.numFmt ?? primary.numberFormat)}
         showGridlines={gridlines !== false}
         onSelect={
           onElement
@@ -2443,9 +3425,14 @@ function AreaChart({
         )
       })}
       {primary.values.map((_, index) => (
-        <text key={index} x={60 + (index / count) * 500} y="300" textAnchor="middle">
-          {truncateLabel(categories[index] ?? String(index + 1), 5)}
-        </text>
+        <CategoryTick
+          key={index}
+          x={60 + (index / count) * 500}
+          label={categories[index] ?? String(index + 1)}
+          slotWidth={500 / Math.max(1, count)}
+          stride={categoryTickStride(categories, primary.values.length, 500 / Math.max(1, count))}
+          index={index}
+        />
       ))}
       {dataLabels === 'value' &&
         primary.values.map((value, index) => (
@@ -2478,7 +3465,7 @@ function RadarChart({
   readonly categoryFormat?: string | undefined
 } & ChartElementProps): React.JSX.Element {
   const primary = seriesList[0]
-  if (!primary) return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
+  if (!primary) return <></>
   const categories = primary.categories.map((value) => formatCategoryLabel(value, categoryFormat))
   const count = Math.min(Math.max(primary.values.length, 3), 12)
   const cx = 300
@@ -2535,8 +3522,10 @@ function RadarChart({
             points={seriesPoints(series)}
             fill={seriesColor(series, seriesIndex)}
             fillOpacity="0.18"
-            stroke={isSel ? '#107C41' : seriesColor(series, seriesIndex)}
-            strokeWidth={isSel ? '4' : '2.5'}
+            stroke={isSel ? '#107C41' : (lineStroke(series, seriesIndex) ?? 'none')}
+            strokeWidth={
+              isSel ? Math.max(4, (series.lineWidth ?? 2.5) + 1.5) : (series.lineWidth ?? 2.5)
+            }
             onClick={
               onElement
                 ? (event) => {
@@ -2578,6 +3567,8 @@ function ScatterChart({
   dataLabels,
   gridlines,
   valueAxis,
+  xAxis,
+  scatterStyle,
   categoryFormat,
   onElement,
   selectedEl,
@@ -2587,6 +3578,16 @@ function ScatterChart({
   readonly dataLabels?: ChartDataLabels
   readonly gridlines?: boolean | undefined
   readonly valueAxis?: ChartValueAxis
+  readonly xAxis?:
+    | {
+        min?: number | undefined
+        max?: number | undefined
+        majorUnit?: number | undefined
+        numFmt?: string | undefined
+        majorGridlines: boolean
+      }
+    | undefined
+  readonly scatterStyle?: string | undefined
   readonly categoryFormat?: string | undefined
 } & ChartElementProps): React.JSX.Element {
   const points = seriesList.map((series) => {
@@ -2598,11 +3599,13 @@ function ScatterChart({
   })
   const allX = points.flatMap((entry) => entry.xValues)
   const allY = points.flatMap((entry) => [...entry.series.values])
-  if (allY.length === 0) return <div className="xlsx-visual-error">{t('appChartCacheEmpty')}</div>
-  // X has no explicit bounds channel (the sidecar reports the left axis'
-  // c:scaling as valueAxis); it always auto-scales to the data.
-  const boundsX = scatterAxisBounds(allX)
+  if (allY.length === 0) return <></>
+  const boundsX = scatterAxisBounds(allX, xAxis)
   const boundsY = scatterAxisBounds(allY, valueAxis)
+  // lineMarker / smoothMarker / line / smooth connect the points; a series
+  // whose spPr line is an explicit noFill stays marker-only.
+  const styleWantsLines = scatterStyle !== undefined && scatterStyle !== 'marker'
+  const xFormat = xAxis?.numFmt ?? categoryFormat
   const plotX = (value: number): number =>
     60 + Math.max(0, Math.min(1, (value - boundsX.min) / (boundsX.max - boundsX.min))) * 520
   const plotY = (value: number): number =>
@@ -2612,7 +3615,8 @@ function ScatterChart({
       <VerticalAxis
         minimum={boundsY.min}
         maximum={boundsY.max}
-        numberFormat={seriesList[0]?.numberFormat}
+        ticks={boundsY.ticks}
+        numberFormat={valueAxis?.numFmt ?? seriesList[0]?.numberFormat}
         showGridlines={gridlines !== false}
         onSelect={
           onElement
@@ -2624,47 +3628,73 @@ function ScatterChart({
         }
       />
       {boundsX.ticks.map((tick, index) => (
-        <text
-          key={index}
-          x={plotX(tick)}
-          y="296"
-          textAnchor="middle"
-          className="axis-label"
-          onClick={
-            onElement
-              ? (event) => {
-                  event.stopPropagation()
-                  onElement({ kind: 'category-axis' })
-                }
-              : undefined
-          }
-        >
-          {formatScatterTick(tick, categoryFormat)}
-        </text>
+        <g key={index}>
+          {xAxis?.majorGridlines && (
+            <line
+              x1={plotX(tick)}
+              y1="40"
+              x2={plotX(tick)}
+              y2="280"
+              stroke="#e3e3e3"
+              strokeWidth="1"
+            />
+          )}
+          <text
+            x={plotX(tick)}
+            y="296"
+            textAnchor="middle"
+            className="axis-label"
+            onClick={
+              onElement
+                ? (event) => {
+                    event.stopPropagation()
+                    onElement({ kind: 'category-axis' })
+                  }
+                : undefined
+            }
+          >
+            {formatScatterTick(tick, xFormat)}
+          </text>
+        </g>
       ))}
       {points.map(({ series, xValues }, seriesIndex) => (
         <g key={seriesIndex}>
-          {series.values.map((value, index) => (
-            <circle
-              key={index}
-              cx={plotX(xValues[index] ?? 0)}
-              cy={plotY(value)}
-              r={isSelectedPoint(selectedEl, seriesIndex, index) ? 6 : 4}
-              fill={seriesColor(series, seriesIndex)}
-              opacity="0.85"
-              {...(isSelectedPoint(selectedEl, seriesIndex, index)
-                ? { stroke: '#107C41', strokeWidth: 2 }
-                : {})}
-              onClick={
-                onElement
-                  ? (event) => {
-                      event.stopPropagation()
-                      onElement(narrowSelection(selectedEl ?? null, seriesIndex, index))
-                    }
-                  : undefined
+          {styleWantsLines && series.lineColor !== 'none' && series.values.length > 1 && (
+            <polyline
+              points={series.values
+                .map((value, index) => `${plotX(xValues[index] ?? 0)},${plotY(value)}`)
+                .join(' ')}
+              fill="none"
+              stroke={
+                series.lineColor && series.lineColor !== 'none'
+                  ? series.lineColor
+                  : seriesColor(series, seriesIndex)
               }
+              strokeWidth={series.lineWidth ?? 2}
             />
-          ))}
+          )}
+          {series.marker !== 'none' &&
+            series.values.map((value, index) => (
+              <circle
+                key={index}
+                cx={plotX(xValues[index] ?? 0)}
+                cy={plotY(value)}
+                r={isSelectedPoint(selectedEl, seriesIndex, index) ? 6 : 4}
+                fill={seriesColor(series, seriesIndex)}
+                opacity="0.85"
+                {...(isSelectedPoint(selectedEl, seriesIndex, index)
+                  ? { stroke: '#107C41', strokeWidth: 2 }
+                  : {})}
+                onClick={
+                  onElement
+                    ? (event) => {
+                        event.stopPropagation()
+                        onElement(narrowSelection(selectedEl ?? null, seriesIndex, index))
+                      }
+                    : undefined
+                }
+              />
+            ))}
           {dataLabels === 'value' &&
             series.values.map((value, index) => (
               <text
@@ -2713,12 +3743,17 @@ function pieSliceLabels(
     const share = Math.max(0, value) / total
     const mid = (cursor + share / 2) * 2 * Math.PI
     cursor += share
-    if (share < 0.02) continue
+    // Excel labels every visible slice; only slivers too thin to aim a
+    // leader line at go unlabeled.
+    if (share < 0.005) continue
     const percentText = `${(share * 100).toFixed(share >= 0.1 ? 0 : 1)}%`
+    const valueText = formatPieValue(value, formatCode)
     const lines =
-      mode === 'category-percent'
-        ? [truncateLabel(categories[index] ?? '', 12), percentText]
-        : [mode === 'value' ? formatLabelValue(value, formatCode, undefined) : percentText]
+      mode === 'category-value-percent'
+        ? [truncateLabel(categories[index] ?? '', 12), valueText, percentText]
+        : mode === 'category-percent'
+          ? [truncateLabel(categories[index] ?? '', 12), percentText]
+          : [mode === 'value' ? valueText : percentText]
     const sin = Math.sin(mid)
     const cos = Math.cos(mid)
     // An exploded slice carries its label out with it.
@@ -2856,7 +3891,8 @@ function PieChart({
           dataLabels,
           { cx, cy, r, inner, offsets },
           dataLabelPosition,
-          dataLabelFormat,
+          // Labels without their own numFmt inherit the source cells' format.
+          dataLabelFormat ?? series.numberFormat,
         )
       : []
   return (
@@ -2921,15 +3957,12 @@ function PieChart({
               : undefined
           }
         >
-          {categories.slice(0, 12).map((category, index) => {
-            const share = (Math.max(0, values[index] ?? 0) / total) * 100
-            return (
-              <span key={`${category}-${index}`}>
-                <i style={{ background: pieSliceColor(series, index) }} />
-                {truncateLabel(category, 12)} {share >= 0.05 ? `${share.toFixed(1)}%` : ''}
-              </span>
-            )
-          })}
+          {categories.slice(0, 12).map((category, index) => (
+            <span key={`${category}-${index}`}>
+              <i style={{ background: pieSliceColor(series, index) }} />
+              {truncateLabel(category, 12)}
+            </span>
+          ))}
           {categories.length > 12 && (
             <span>{t('appMoreItems', { count: categories.length - 12 })}</span>
           )}

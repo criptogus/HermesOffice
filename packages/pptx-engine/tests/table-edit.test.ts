@@ -28,6 +28,37 @@ describe('patchTableStyleXml', () => {
     expect(result).toContain('{2D5ABB26-0587-4C30-8999-92F81FD0307C}')
   })
 
+  it('style preset keeps an existing rtl flag (direction is orthogonal to style)', () => {
+    const rtlTable = patchTableStyleXml(MINIMAL_TABLE_XML, { rtl: true })
+    const preset = TABLE_STYLE_PRESETS['zebraBlue']!
+    const styled = patchTableStyleXml(rtlTable, { tblPrXml: preset.tblPrXml })
+    expect(styled).toContain('rtl="1"')
+    expect(styled).toContain(preset.styleId)
+    // A table without rtl does not gain one from the preset
+    const plain = patchTableStyleXml(MINIMAL_TABLE_XML, { tblPrXml: preset.tblPrXml })
+    expect(plain).not.toContain('rtl=')
+  })
+
+  it('rtl=true adds the tblPr rtl flag, rtl=false removes it; siblings untouched', () => {
+    const on = patchTableStyleXml(MINIMAL_TABLE_XML, { rtl: true })
+    expect(on).toContain('rtl="1"')
+    expect(on).toContain('firstRow="1"')
+    expect(on).toContain('{2D5ABB26-0587-4C30-8999-92F81FD0307C}')
+    const off = patchTableStyleXml(on, { rtl: false })
+    expect(off).not.toContain('rtl=')
+    expect(off).toContain('bandRow="1"')
+  })
+
+  it('rtl toggle expands a self-closing tblPr with attributes (trailing slash stripped)', () => {
+    const selfClosing = MINIMAL_TABLE_XML.replace(
+      /<a:tblPr[^>]*>.*?<\/a:tblPr>/,
+      '<a:tblPr firstRow="1"/>',
+    )
+    const result = patchTableStyleXml(selfClosing, { rtl: true })
+    expect(result).toContain('<a:tblPr firstRow="1" rtl="1"></a:tblPr>')
+    expect(result).not.toContain('/ rtl')
+  })
+
   it('set shading color → solidFill inserted in every tcPr, replacing existing fills', () => {
     const result = patchTableStyleXml(MINIMAL_TABLE_XML, { shadingColor: '#AABBCC' })
     expect(result).toContain('<a:srgbClr val="AABBCC"/>')
@@ -205,5 +236,25 @@ describe('ensureTableStyleXml', () => {
     expect(def?.band1H?.fill).toEqual({ type: 'solid', color: '#E9EDF5' })
     expect(def?.wholeTbl?.fill).toEqual({ type: 'solid', color: '#FFFFFF' })
     expect(def?.insideH?.fill).toEqual({ type: 'solid', color: '#D9D9D9' })
+  })
+})
+
+describe('custom table style outer borders (tcBdr left/right/top/bottom)', () => {
+  const XML = `<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" def="{X}">
+    <a:tblStyle styleId="{X}" styleName="T"><a:wholeTbl><a:tcStyle><a:tcBdr>
+      <a:left><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:left>
+      <a:right><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:right>
+      <a:top><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:top>
+      <a:bottom><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:bottom>
+      <a:insideH><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:insideH>
+      <a:insideV><a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln></a:insideV>
+    </a:tcBdr></a:tcStyle></a:wholeTbl></a:tblStyle></a:tblStyleLst>`
+  it('reads the whole-table outer edges alongside inside lines', () => {
+    const def = resolveTableStyle('{X}', XML, undefined)!
+    for (const k of ['l', 'r', 't', 'b'] as const) {
+      expect(def.outer?.[k]?.fill).toEqual({ type: 'solid', color: '#9E9E9E' })
+      expect(def.outer?.[k]?.width).toBe(9525)
+    }
+    expect(def.insideH?.fill).toEqual({ type: 'solid', color: '#9E9E9E' })
   })
 })

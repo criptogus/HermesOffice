@@ -1,6 +1,6 @@
 /// The default folder where new/untitled files land on their first (silent)
 /// save and where AI-generated drafts go. Historically hardcoded to
-/// <Documents>/GenOffice; now user-configurable via the `defaultSaveDir` key
+/// <Documents>/HermesOffice; now user-configurable via the `defaultSaveDir` key
 /// in userData/app-settings.json (set from the home screen's account menu).
 /// Every editor main module resolves through here so they all honor the same
 /// setting.

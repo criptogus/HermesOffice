@@ -157,6 +157,25 @@ describe('appendChatMessage + loadChat', () => {
     const msgs = store.loadChat('default', 'chat1')
     expect(msgs[0].text).toBe('')
   })
+
+  it('a runaway reply is truncated instead of stored whole', () => {
+    // A model stuck in a repetition loop; stored whole it would also be replayed
+    // into the model context when the file reopens
+    store.appendChatMessage('default', 'chatHuge', {
+      role: 'assistant',
+      text: 'shame '.repeat(20_000),
+    })
+    const msgs = store.loadChat('default', 'chatHuge')
+    expect(msgs[0].text.length).toBeLessThan(33_000)
+    expect(msgs[0].text.endsWith('[truncated]')).toBe(true)
+  })
+
+  it('text just under the cap is stored verbatim', () => {
+    const text = 'x'.repeat(31_999)
+    store.appendChatMessage('default', 'chatUnder', { role: 'assistant', text })
+    const msgs = store.loadChat('default', 'chatUnder')
+    expect(msgs[0].text).toBe(text)
+  })
 })
 
 // ────────────────────────────────────────────────────────────
@@ -865,115 +884,3 @@ function mkdirSyncHelper(p: string): void {
     /* ignore */
   }
 }
-
-// ────────────────────────────────────────────────────────────
-// 11. P0/P2: trusted agent proposals and document graph
-// ────────────────────────────────────────────────────────────
-
-describe('trusted agent proposed changes', () => {
-  let tmpDir: string
-  let store: ProjectStore
-
-  beforeEach(() => {
-    tmpDir = makeTempDir()
-    store = new ProjectStore(tmpDir)
-    store.ensureDefaultProject()
-  })
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
-  })
-
-  it('saves proposal audit records without mutating chat history', () => {
-    const record = store.saveProposedChange({
-      id: 'proposal-1',
-      projectId: 'default',
-      chatId: 'chat-1',
-      filePath: '/tmp/board-deck.pptx',
-      app: 'slides',
-      status: 'proposed',
-      title: 'Update Q3 revenue slide',
-      summary: 'Replace the revenue bullet with workbook-backed numbers.',
-      rationale: 'Requested by the user for board review.',
-      actor: { id: 'hermes-agent', name: 'Hermes Agent', kind: 'agent' },
-      sessionId: 'session-1',
-      operations: [
-        {
-          id: 'op-1',
-          type: 'replace_text',
-          summary: 'Replace revenue bullet',
-          scope: { kind: 'slide', ref: 'slide-3', label: 'Revenue' },
-          payload: { elementId: 'bullet-1' },
-        },
-      ],
-      risks: [{ level: 'low', message: 'One text element changes.' }],
-      preview: '- Old revenue\n+ New revenue',
-    })
-
-    expect(record.createdAt).toBeTruthy()
-    expect(record.updatedAt).toBe(record.createdAt)
-    expect(store.loadChat('default', 'chat-1')).toEqual([])
-    expect(store.listProposedChanges('default')).toHaveLength(1)
-  })
-
-  it('updates proposal status and returns newest proposals first', () => {
-    store.saveProposedChange({
-      id: 'proposal-a',
-      projectId: 'default',
-      app: 'docs',
-      status: 'proposed',
-      title: 'Rewrite intro',
-      summary: 'Rewrite intro paragraph.',
-      actor: { id: 'agent', kind: 'agent' },
-      operations: [
-        {
-          id: 'op-a',
-          type: 'replace_block',
-          summary: 'Rewrite',
-          scope: { kind: 'block', ref: 'p1' },
-        },
-      ],
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    })
-    const updated = store.updateProposedChangeStatus('default', 'proposal-a', 'accepted')
-
-    expect(updated.status).toBe('accepted')
-    expect(updated.updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
-    expect(store.listProposedChanges('default')[0].status).toBe('accepted')
-  })
-})
-
-describe('project document graph', () => {
-  let tmpDir: string
-  let store: ProjectStore
-
-  beforeEach(() => {
-    tmpDir = makeTempDir()
-    store = new ProjectStore(tmpDir)
-    store.ensureDefaultProject()
-  })
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
-  })
-
-  it('upserts typed cross-document references outside document bytes', () => {
-    const first = store.upsertDocumentReference('default', {
-      id: 'deck-from-model',
-      sourceFilePath: '/tmp/model.xlsx',
-      targetFilePath: '/tmp/board.pptx',
-      relation: 'derived-from',
-      note: 'Board deck generated from workbook KPIs.',
-    })
-    const second = store.upsertDocumentReference('default', {
-      id: 'deck-from-model',
-      sourceFilePath: '/tmp/model-v2.xlsx',
-      targetFilePath: '/tmp/board.pptx',
-      relation: 'derived-from',
-    })
-
-    expect(second.createdAt).toBe(first.createdAt)
-    expect(store.listDocumentReferences('default')).toEqual([second])
-  })
-})

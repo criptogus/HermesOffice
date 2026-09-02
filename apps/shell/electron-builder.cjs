@@ -12,22 +12,53 @@
  * When the variable is unset (forks, PR smoke builds, plain local packaging)
  * the publish config is omitted: electron-builder then bakes no
  * app-update.yml into the app and in-app auto-update stays disabled.
+ *
+ * HERMESOFFICE_GA4_MEASUREMENT_ID / HERMESOFFICE_GA4_API_SECRET — GA4 Measurement
+ * Protocol credentials for anonymous usage analytics, injected the same way
+ * (CI secrets, or apps/shell/electron-builder.env locally). They are written
+ * into the packaged app's package.json via extraMetadata and read back by
+ * src/main/analytics.ts. When either is unset — every source/fork build —
+ * nothing is injected and the app runs with analytics fully disabled.
+ *
+ * HERMESOFFICE_FONT_CDN_URL — base URL for the curated downloadable-font catalog.
+ * Official release jobs inject it through extraMetadata so the endpoint stays
+ * out of source. Without it, font download prompts/catalog entries are hidden;
+ * users can still install local font files.
  */
 
 const { execFileSync } = require('node:child_process')
-const { existsSync } = require('node:fs')
+const { existsSync, rmSync } = require('node:fs')
 const { join } = require('node:path')
 
-const updateUrl = process.env.HERMESOFFICE_UPDATE_URL
+function normalizeHttpsBaseUrl(name, value) {
+  if (!value || !value.trim()) return null
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+      throw new Error('invalid')
+    }
+    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
+  } catch {
+    throw new Error(`${name} must be an HTTPS base URL without credentials, query, or fragment`)
+  }
+}
 
-// GENOFFICE_MAC_X64=1 — opt into packaging the Intel (x64) dmg/zip alongside
+const updateUrl = process.env.HERMESOFFICE_UPDATE_URL
+const ga4MeasurementId = process.env.HERMESOFFICE_GA4_MEASUREMENT_ID
+const ga4ApiSecret = process.env.HERMESOFFICE_GA4_API_SECRET
+const fontCdnUrl = normalizeHttpsBaseUrl(
+  'HERMESOFFICE_FONT_CDN_URL',
+  process.env.HERMESOFFICE_FONT_CDN_URL,
+)
+
+// HERMESOFFICE_MAC_X64=1 — opt into packaging the Intel (x64) dmg/zip alongside
 // arm64. Off by default: Intel packages must only ever ship signed with the
 // company certificate (planned dual-track pipeline), so the current release
 // pipeline stays arm64-only and never produces a personally-signed Intel
-// artifact. The downstream layout (feed archive name, GenOffice-intel.dmg
+// artifact. The downstream layout (feed archive name, HermesOffice-intel.dmg
 // alias) keys off which dmgs exist, so flipping this flag is the single
 // switch.
-const includeMacX64 = process.env.GENOFFICE_MAC_X64 === '1'
+const includeMacX64 = process.env.HERMESOFFICE_MAC_X64 === '1'
 
 // The gsk CLI tree below is copied verbatim from node_modules, and the
 // nested commander path depends on npm's current hoisting layout — fail the
@@ -43,8 +74,6 @@ for (const rel of [
   '../../node_modules/@genspark/cli/node_modules/commander',
   '../../node_modules/ws',
   '../../node_modules/electron/dist/LICENSES.chromium.html',
-  '../../node_modules/@firecrawl/anydoc',
-  '../../node_modules/@firecrawl/anydoc-darwin-arm64',
   '../../node_modules/@embedpdf/pdfium/dist/pdfium.wasm',
   '../pdf/node_modules/harfbuzzjs/hb-subset.wasm',
 ]) {
@@ -52,6 +81,83 @@ for (const rel of [
     throw new Error(
       `electron-builder extraResources source missing: ${rel} (npm hoisting changed?)`,
     )
+  }
+}
+
+// macOS local-OCR helper (scanned-page text recovery): a swiftc output, not
+// an npm artifact — compiled here on demand so CI runners and fresh checkouts
+// need no manual step. Universal (arm64 + x86_64) when both targets compile,
+// host-arch otherwise; mac installers must not silently ship without it.
+const VISION_OCR_HELPER = '../../packages/pdf2docx/ocr-helper/vision-ocr'
+
+// Compile the helper. universalOnly=true has NO host-arch fallback: dual-arch
+// packaging must fail loudly rather than ship a host-arch binary to both dmgs.
+function compileVisionOcr({ universalOnly } = { universalOnly: false }) {
+  const src = join(__dirname, `${VISION_OCR_HELPER}.swift`)
+  const out = join(__dirname, VISION_OCR_HELPER)
+  try {
+    try {
+      const slices = ['arm64', 'x86_64'].map((arch) => {
+        const slice = `${out}.${arch}`
+        execFileSync('swiftc', ['-O', src, '-target', `${arch}-apple-macos12`, '-o', slice], {
+          stdio: 'inherit',
+        })
+        return slice
+      })
+      execFileSync('lipo', ['-create', ...slices, '-output', out], { stdio: 'inherit' })
+      for (const slice of slices) rmSync(slice, { force: true })
+    } catch (err) {
+      if (universalOnly) throw err
+      // cross-target SDK unavailable — a host-arch helper still serves this build
+      execFileSync('swiftc', ['-O', src, '-o', out], { stdio: 'inherit' })
+    }
+  } catch (err) {
+    throw new Error(`vision-ocr helper compile failed: ${err}`, { cause: err })
+  }
+}
+
+if (process.platform === 'darwin' && !existsSync(join(__dirname, VISION_OCR_HELPER))) {
+  compileVisionOcr()
+}
+
+// Windows local-OCR helper (Windows.Media.Ocr): compiled by the in-box .NET
+// Framework csc via build-win.mjs — same on-demand policy as the mac helper,
+// and Windows installers must not silently ship without it.
+const WIN_OCR_HELPER = '../../packages/pdf2docx/ocr-helper/win-ocr.exe'
+if (process.platform === 'win32' && !existsSync(join(__dirname, WIN_OCR_HELPER))) {
+  try {
+    execFileSync(
+      process.execPath,
+      [join(__dirname, '../../packages/pdf2docx/ocr-helper/build-win.mjs')],
+      { stdio: 'inherit' },
+    )
+  } catch (err) {
+    throw new Error(`win-ocr helper compile failed: ${err}`, { cause: err })
+  }
+}
+
+// Dual-arch packs share one extraResources path, so the shipped helper must be
+// a lipo fat binary. A stale host-arch build (dev path above) is rebuilt in
+// place; if a universal build cannot be produced, packaging aborts — otherwise
+// the other arch's OCR silently fails and every scanned page ships as bitmap.
+function assertUniversalVisionOcr() {
+  const helper = join(__dirname, VISION_OCR_HELPER)
+  const wanted = ['x86_64', 'arm64']
+  const archsOf = () =>
+    existsSync(helper)
+      ? execFileSync('lipo', ['-archs', helper], { encoding: 'utf8' }).trim().split(/\s+/)
+      : []
+  if (!wanted.every((w) => archsOf().includes(w))) {
+    rmSync(helper, { force: true })
+    compileVisionOcr({ universalOnly: true })
+  }
+  const archs = archsOf()
+  for (const want of wanted) {
+    if (!archs.includes(want)) {
+      throw new Error(
+        `vision-ocr helper is [${archs.join(', ')}] but both mac arch packages ship it`,
+      )
+    }
   }
 }
 
@@ -64,7 +170,7 @@ for (const rel of [
 // Runs from the beforePack hook, not at module load: gen-third-party-notices
 // requires this config to read extraResources, and the dist:* scripts run
 // notices before build:all, when the out dirs legitimately don't exist yet.
-// When the mac build packages BOTH arches (GENOFFICE_MAC_X64=1) its
+// When the mac build packages BOTH arches (HERMESOFFICE_MAC_X64=1) its
 // extraResources entry is a single path shared by the two packs, so the
 // sidecar there must be a lipo fat binary — a host-arch-only build (the plain
 // `native:build` dev path) would silently ship an arm64 sidecar inside the
@@ -118,10 +224,6 @@ const config = {
   files: ['out/**'],
   extraResources: [
     {
-      from: 'build/build-info.json',
-      to: 'build-info.json',
-    },
-    {
       from: 'build/THIRD-PARTY-NOTICES.txt',
       to: 'THIRD-PARTY-NOTICES.txt',
     },
@@ -159,6 +261,17 @@ const config = {
       from: '../pdf/node_modules/harfbuzzjs/hb-subset.wasm',
       to: 'wasm/hb-subset.wasm',
     },
+    // platform system-OCR helpers for scanned-page recovery (each exists only
+    // on its own build platform; electron-builder skips absent sources and the
+    // engine resolver degrades to the bitmap fallback when missing)
+    {
+      from: '../../packages/pdf2docx/ocr-helper/vision-ocr',
+      to: 'ocr/vision-ocr',
+    },
+    {
+      from: '../../packages/pdf2docx/ocr-helper/win-ocr.exe',
+      to: 'ocr/win-ocr.exe',
+    },
     {
       from: '../../node_modules/@genspark/cli',
       to: 'gsk/node_modules/@genspark/cli',
@@ -171,65 +284,80 @@ const config = {
       from: '../../node_modules/ws',
       to: 'gsk/node_modules/ws',
     },
-    {
-      from: '../../node_modules/@firecrawl/anydoc',
-      to: 'anydoc/node_modules/@firecrawl/anydoc',
-    },
-    {
-      from: '../../node_modules/@firecrawl/anydoc-darwin-arm64',
-      to: 'anydoc/node_modules/@firecrawl/anydoc-darwin-arm64',
-    },
   ],
   // `mimeType` is read only by the Linux target, where it becomes the
   // desktop entry's MimeType= list; associations without it are dropped
   // there. macOS and Windows ignore the field and key off `ext`.
+  //
+  // `icon` is extension-less on purpose: electron-builder resolves it against
+  // build/ as <icon>.icns for the mac CFBundleDocumentTypes entry and
+  // <icon>.ico for the NSIS DefaultIcon registry value. Without it both
+  // platforms fall back to the app icon, so every associated file shows the
+  // bare HermesOffice logo instead of a per-type document icon. The icns/ico
+  // pairs are generated from the shell renderer's file-type tiles by
+  // tools/gen-file-association-icons.mjs.
   fileAssociations: [
     {
       ext: 'docx',
       name: 'Word Document',
       role: 'Editor',
+      icon: 'docx',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     },
     {
       ext: 'xlsx',
       name: 'Excel Workbook',
       role: 'Editor',
+      icon: 'xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    },
+    {
+      ext: 'xlsm',
+      name: 'Excel Macro-Enabled Workbook',
+      role: 'Editor',
+      icon: 'xlsx',
+      mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12',
     },
     {
       ext: 'pptx',
       name: 'PowerPoint Presentation',
       role: 'Editor',
+      icon: 'pptx',
       mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     },
     {
       ext: 'xls',
       name: 'Excel 97-2003 Workbook',
       role: 'Editor',
+      icon: 'xlsx',
       mimeType: 'application/vnd.ms-excel',
     },
     {
       ext: 'csv',
       name: 'CSV Document',
       role: 'Editor',
+      icon: 'xlsx',
       mimeType: 'text/csv',
     },
     {
       ext: 'pdf',
       name: 'PDF Document',
       role: 'Editor',
+      icon: 'pdf',
       mimeType: 'application/pdf',
     },
     {
       ext: 'md',
       name: 'Markdown Document',
       role: 'Editor',
+      icon: 'md',
       mimeType: 'text/markdown',
     },
     {
       ext: 'markdown',
       name: 'Markdown Document',
       role: 'Editor',
+      icon: 'md',
       mimeType: 'text/markdown',
     },
   ],
@@ -237,9 +365,9 @@ const config = {
   mac: {
     // Two separate arch packages (NOT universal): arm64 keeps the exact
     // artifact names and update-feed entries it always had, x64 (opt-in via
-    // GENOFFICE_MAC_X64=1, see includeMacX64 above) adds Intel support with
-    // electron-builder's default arch-less names (GenOffice-<v>.dmg /
-    // GenOffice-<v>-mac.zip). Both zips land in one latest-mac.yml and
+    // HERMESOFFICE_MAC_X64=1, see includeMacX64 above) adds Intel support with
+    // electron-builder's default arch-less names (HermesOffice-<v>.dmg /
+    // HermesOffice-<v>-mac.zip). Both zips land in one latest-mac.yml and
     // electron-updater picks by process.arch. Dual-arch packs ship the same
     // lipo fat xlsx-sidecar (see assertUniversalSidecar above).
     target: [
@@ -283,7 +411,7 @@ const config = {
     // AppImage (self-contained, any distro) + deb (apt install, pulls in the
     // GTK/NSS runtime deps) + rpm (dnf/zypper install on Fedora / RHEL /
     // openSUSE). Default artifact names are kept on purpose —
-    // GenOffice-<v>.AppImage / genoffice_<v>_amd64.deb — because the public
+    // HermesOffice-<v>.AppImage / hermesoffice_<v>_amd64.deb — because the public
     // README download links and the already-published linux-v0.5.149 release
     // use them.
     target: [
@@ -298,7 +426,12 @@ const config = {
     maintainer: 'Mainfunc, Inc. <team@genspark.ai>',
     vendor: 'Mainfunc, Inc. <team@genspark.ai>',
     category: 'Office',
-    icon: 'build/icon.png',
+    // Icon SET directory, not the single 1024px png: electron-builder does
+    // not resize a lone png, so deb/rpm would install only
+    // hicolor/1024x1024/apps/hermesoffice.png — a size absent from the hicolor
+    // theme index, leaving GNOME/KDE launchers on the generic fallback icon
+    // (genspark-ai/hermesoffice#90). The set ships every standard raster size.
+    icon: 'build/icons',
     // mac and win name the binary from productName; linux instead derives it
     // from package.json "name", and "@hermesoffice/shell" sanitizes to the
     // invalid "@hermesofficeshell". Setting it explicitly also makes the
@@ -322,15 +455,15 @@ const config = {
   },
   // Same "@hermesoffice/shell" problem as executableName above: the default deb
   // artifact name derives from package.json "name", and the scope's "/" makes
-  // fpm treat "@genoffice" as a directory. Spell the published name out
-  // (genoffice_<version>_amd64.deb, matching the linux-v0.5.149 release).
+  // fpm treat "@hermesoffice" as a directory. Spell the published name out
+  // (hermesoffice_<version>_amd64.deb, matching the linux-v0.5.149 release).
   // packageName pins the control Package field to the same value the 0.5.149
   // deb shipped with — apt treats a different Package name as an unrelated
   // install, breaking upgrades. Without it, fpm receives productName
-  // "GenOffice" and only happens to downcase it to the right value.
+  // "HermesOffice" and only happens to downcase it to the right value.
   deb: {
-    artifactName: 'genoffice_${version}_${arch}.deb',
-    packageName: 'genoffice',
+    artifactName: 'hermesoffice_${version}_${arch}.deb',
+    packageName: 'hermesoffice',
   },
   // Same "@hermesoffice/shell" naming problem as deb: spell the artifact name
   // out (${arch} expands to the rpm arch string, x86_64) and pin the rpm
@@ -344,8 +477,8 @@ const config = {
   // latest-linux.yml keeps listing exactly what the CDN pipeline uploads
   // (AppImage + deb) and the promote workflow needs no rpm alias.
   rpm: {
-    artifactName: 'genoffice-${version}.${arch}.rpm',
-    packageName: 'genoffice',
+    artifactName: 'hermesoffice-${version}.${arch}.rpm',
+    packageName: 'hermesoffice',
     publish: null,
   },
   nsis: {
@@ -354,12 +487,48 @@ const config = {
   },
   beforePack: async (context) => {
     assertModuleTreesPresent()
-    if (context.electronPlatformName === 'darwin' && includeMacX64) assertUniversalSidecar()
+    if (context.electronPlatformName === 'darwin' && includeMacX64) {
+      assertUniversalSidecar()
+      assertUniversalVisionOcr()
+    }
   },
   dmg: {
     sign: true,
   },
   afterAllArtifactBuild: 'build/notarize-dmg.js',
+}
+
+// Windows in-package code signing. Security features that judge every PE
+// individually (Smart App Control, WDAC/AppLocker, AV heuristics) block
+// unsigned child processes — the unsigned xlsx-sidecar.exe died with
+// "spawn UNKNOWN" on such machines even though the installer itself was
+// signed. When CI exports HERMESOFFICE_WIN_SIGN_MODE ("test" = alpha
+// self-signed PFX, "production" = DigiCert KeyLocker — the two modes of
+// scripts/win-sign.cjs, whose env-var contract applies here too), every
+// binary electron-builder signs for win (HermesOffice.exe, the NSIS
+// uninstaller, and the installer) goes through that script. The static
+// extraResources binaries (xlsx-sidecar.exe, win-ocr.exe) are signed by the
+// workflow before packaging since electron-builder does not sign
+// extraResources. Unset (local / fork builds) keeps the old behavior:
+// electron-builder has no signing config and packages everything unsigned.
+const winSignMode = process.env.HERMESOFFICE_WIN_SIGN_MODE
+if (winSignMode) {
+  if (winSignMode !== 'test' && winSignMode !== 'production') {
+    throw new Error(`HERMESOFFICE_WIN_SIGN_MODE must be "test" or "production", got "${winSignMode}"`)
+  }
+  config.win.signtoolOptions = {
+    // Single pass per file: the sha1+sha256 dual-signing default is a
+    // pre-Win8 relic and would invoke the hook twice per binary.
+    signingHashAlgorithms: ['sha256'],
+    sign: (configuration) => {
+      execFileSync(
+        process.execPath,
+        [join(__dirname, '../../scripts/win-sign.cjs'), winSignMode, configuration.path],
+        { stdio: 'inherit' },
+      )
+      return Promise.resolve()
+    },
+  }
 }
 
 if (updateUrl) {
@@ -371,5 +540,17 @@ if (updateUrl) {
     },
   ]
 }
+
+// CI's "-c.extraMetadata.version=..." CLI override deep-merges with this block,
+// so the version and all injected feature settings survive together.
+const extraMetadata = {}
+if (ga4MeasurementId && ga4ApiSecret) {
+  extraMetadata.hermesofficeAnalytics = {
+    measurementId: ga4MeasurementId,
+    apiSecret: ga4ApiSecret,
+  }
+}
+if (fontCdnUrl) extraMetadata.hermesofficeFontCdn = { baseUrl: fontCdnUrl }
+if (Object.keys(extraMetadata).length) config.extraMetadata = extraMetadata
 
 module.exports = config

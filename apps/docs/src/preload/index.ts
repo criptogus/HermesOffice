@@ -10,6 +10,7 @@ import type {
   UiTheme,
 } from '../shared/ipc'
 import type { ProjectApi } from '@hermesoffice/project-store'
+import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
 
 const api: DesktopApi = {
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
@@ -27,19 +28,29 @@ const api: DesktopApi = {
     ipcRenderer.on('app:theme-changed', listener)
     return () => ipcRenderer.removeListener('app:theme-changed', listener)
   },
+  onChromePressed: (handler) => {
+    const listener = () => handler()
+    ipcRenderer.on('app:chrome-pressed', listener)
+    return () => ipcRenderer.removeListener('app:chrome-pressed', listener)
+  },
   openDocx: () => ipcRenderer.invoke('docs:open'),
   openDocxPath: (path: string) => ipcRenderer.invoke('docs:open-path', path),
+  openDocxDecrypt: (path: string, password: string) =>
+    ipcRenderer.invoke('docs:open-decrypt', path, password),
+  setDocPassword: (filePath: string | null, password: string | null) =>
+    ipcRenderer.invoke('docs:set-password', filePath, password),
+  docPasswordIntentRevision: async () => {
+    const revision: unknown = await ipcRenderer.invoke('docs:password-intent-revision')
+    return typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0
+      ? revision
+      : 0
+  },
+  discardDocPasswordIntents: (throughRevision: number) =>
+    ipcRenderer.invoke('docs:discard-password-intents', throughRevision),
   consumePendingOpenDocx: () => ipcRenderer.invoke('docs:consume-pending-open'),
   consumeNewBlankDoc: () => ipcRenderer.invoke('docs:consume-new-blank'),
-  // Fork: vigia o arquivo aberto p/ auto-reload quando o agente edita por fora
-  trackDocxFile: (path: string) => ipcRenderer.invoke('docx:track-file', path),
-  onDocxExternalChange: (handler: (path: string) => void) => {
-    const listener = (_event: IpcRendererEvent, path: string) => handler(path)
-    ipcRenderer.on('docx:external-change', listener)
-    return () => ipcRenderer.removeListener('docx:external-change', listener)
-  },
-  // Fork: abre um arquivo no app padrão do macOS (links clicáveis no chat)
-  openPath: (path: string) => ipcRenderer.invoke('app:open-path', path),
+  consumeAiDocContent: () => ipcRenderer.invoke('docs:consume-ai-doc-content'),
+  createDocument: (request) => ipcRenderer.invoke('docs:create-document', request),
   onOpenDocx: (handler) => {
     const listener = (_event: IpcRendererEvent, result: Parameters<typeof handler>[0]) =>
       handler(result)
@@ -61,12 +72,13 @@ const api: DesktopApi = {
     ipcRenderer.on('docs:teardown', listener)
     return () => ipcRenderer.removeListener('docs:teardown', listener)
   },
-  saveDocxAs: (defaultName: string, data: ArrayBuffer) =>
-    ipcRenderer.invoke('docs:save-as', defaultName, data),
+  saveDocxAs: (defaultName: string, data: ArrayBuffer, sourcePath?: string | null) =>
+    ipcRenderer.invoke('docs:save-as', defaultName, data, sourcePath ?? null),
   saveDocxNew: (defaultName: string, data: ArrayBuffer) =>
     ipcRenderer.invoke('docs:save-new', defaultName, data),
   getRecentFiles: () => ipcRenderer.invoke('docs:recent'),
   pickImage: () => ipcRenderer.invoke('docs:pick-image'),
+  fontMetrics: (family: string) => ipcRenderer.invoke('docs:font-metrics', family),
   print: () => ipcRenderer.invoke('docs:print'),
   exportPdf: (
     defaultName: string,
@@ -78,23 +90,26 @@ const api: DesktopApi = {
     ipcRenderer.invoke('docs:print-pdf-buffer', pageWidthTwips, pageHeightTwips),
   saveMergedPdf: (defaultName: string, base64Parts: string[], outPath?: string) =>
     ipcRenderer.invoke('docs:save-merged-pdf', defaultName, base64Parts, outPath),
-  exportMarkdown: (filePath: string) => ipcRenderer.invoke('docs:export-markdown', filePath),
   getAiSettings: () => ipcRenderer.invoke('ai:get-settings'),
   setAiSettings: (settings: AiSettings) => ipcRenderer.invoke('ai:set-settings', settings),
   aiChat: (request: AiChatRequest) => ipcRenderer.invoke('ai:chat', request),
   aiStream: (request: AiStreamRequest) => ipcRenderer.invoke('ai:stream', request),
   aiStreamCancel: (requestId: string) => ipcRenderer.invoke('ai:stream-cancel', requestId),
-  aiGatewayStatus: (withEmail?: boolean) => ipcRenderer.invoke('ai:gsk-status', withEmail),
-  aiGatewayLogin: () => ipcRenderer.invoke('ai:gsk-login'),
+  aiGskStatus: (withEmail?: boolean) => ipcRenderer.invoke('ai:gsk-status', withEmail),
+  aiGskLogin: () => ipcRenderer.invoke('ai:gsk-login'),
   webSearch: (query: string, maxResults?: number) =>
     ipcRenderer.invoke('ai:web-search', query, maxResults),
   imageSearch: (query: string, maxResults?: number) =>
     ipcRenderer.invoke('ai:image-search', query, maxResults),
   fetchImage: (url: string) => ipcRenderer.invoke('ai:fetch-image', url),
+  aiGenerateImage: (op: { prompt: string; aspectRatio?: string }) =>
+    ipcRenderer.invoke('docs:ai-generate-image', op),
   pickAttachments: () => ipcRenderer.invoke('files:pick'),
   addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('files:add', paths),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('files:add-pasted-image', data, ext),
+  copyImageToClipboard: (dataUrl: string, metaJson?: string) =>
+    ipcRenderer.invoke('docs:copy-image-to-clipboard', dataUrl, metaJson),
   readAttachment: (path: string, offset: number, maxChars: number) =>
     ipcRenderer.invoke('files:read', path, offset, maxChars),
   readAttachmentImage: (path: string) => ipcRenderer.invoke('files:read-image', path),
@@ -149,12 +164,10 @@ const projectApi: ProjectApi = {
   deleteProject: (args) => ipcRenderer.invoke('project:delete', args),
   moveFile: (args) => ipcRenderer.invoke('project:moveFile', args),
   getTimeline: (args) => ipcRenderer.invoke('project:timeline', args),
-  saveProposedChange: (args) => ipcRenderer.invoke('project:proposal:save', args),
-  updateProposedChangeStatus: (args) => ipcRenderer.invoke('project:proposal:updateStatus', args),
-  listProposedChanges: (args) => ipcRenderer.invoke('project:proposal:list', args),
-  upsertDocumentReference: (args) => ipcRenderer.invoke('project:graph:upsertReference', args),
-  listDocumentReferences: (args) => ipcRenderer.invoke('project:graph:listReferences', args),
 }
 
 contextBridge.exposeInMainWorld('desktop', api)
 contextBridge.exposeInMainWorld('projectApi', projectApi)
+
+// open documents dragged from the OS onto this tab as a new shell tab
+installDropOpenBridge()

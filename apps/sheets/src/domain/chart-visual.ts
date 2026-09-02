@@ -32,6 +32,8 @@ export type ChartGridValue = string | number | boolean | null | undefined
 /// renderer's WorkbookVisualObject.chart (structurally identical).
 export interface ChartSeriesVisualState {
   name: string
+  /// `c:tx` cell reference when the name carries no cached text.
+  nameRef?: string | undefined
   categories: string[]
   values: number[]
   numberFormat?: string | undefined
@@ -46,6 +48,30 @@ export interface ChartSeriesVisualState {
   explosionPct?: number | undefined
   /// Pie: per-slice `c:dPt/c:explosion` overrides.
   pointExplosions?: { index: number; pct: number }[] | undefined
+  /// spPr/a:ln color; "none" = explicit no line.
+  lineColor?: string | undefined
+  /// spPr/a:ln/@w in CSS px (EMU / 12700 pt · 96/72).
+  lineWidth?: number | undefined
+  smooth?: boolean | undefined
+  /// c:marker symbol; "none" hides scatter/line markers.
+  marker?: string | undefined
+  /// First outer multiLvlStrCache level; start/end index the compacted
+  /// `categories` (end exclusive).
+  categoryGroups?: { label: string; start: number; end: number }[] | undefined
+}
+
+/// One plot axis keyed by its side (b/t → x, l/r → y).
+export interface ChartAxisInfoState {
+  title?: string | undefined
+  min?: number | undefined
+  max?: number | undefined
+  majorUnit?: number | undefined
+  numFmt?: string | undefined
+  majorGridlines: boolean
+  /// c:delete — scales its series but is not drawn.
+  hidden: boolean
+  /// c:scaling/c:orientation val="maxMin".
+  reversed: boolean
 }
 
 export interface ChartVisualState {
@@ -56,7 +82,9 @@ export interface ChartVisualState {
   legend?: 'none' | 'right' | 'bottom' | 'top' | 'left' | undefined
   axisTitles?:
     { category?: string | null | undefined; value?: string | null | undefined } | undefined
-  dataLabels?: 'none' | 'value' | 'percent' | 'category-percent' | undefined
+  /// 'category-value-percent' is read-only (all three show* flags on).
+  dataLabels?:
+    'none' | 'value' | 'percent' | 'category-percent' | 'category-value-percent' | undefined
   dataLabelPosition?: 'center' | 'inside-end' | 'outside-end' | undefined
   dataLabelFormat?: string | undefined
   grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard' | undefined
@@ -70,6 +98,18 @@ export interface ChartVisualState {
   gapWidthPct?: number | undefined
   /// Doughnut `c:holeSize`.
   holeSizePct?: number | undefined
+  xAxis?: ChartAxisInfoState | undefined
+  yAxis?: ChartAxisInfoState | undefined
+  /// Second left/right value axis (combo charts).
+  secondaryYAxis?: ChartAxisInfoState | undefined
+  /// c:scatterStyle — whether scatter points connect with lines.
+  scatterStyle?: string | undefined
+  /// Plot-level c:lineChart/c:marker flag; per-series symbols refine it.
+  lineMarkers?: boolean | undefined
+  /// c:title/c:txPr//a:defRPr shorthand.
+  titleStyle?:
+    | { size?: number | undefined; bold?: boolean | undefined; color?: string | undefined }
+    | undefined
 }
 
 /// Numeric category labels (date serials, percents) render through their
@@ -107,7 +147,7 @@ export interface ScatterAxis {
 /// nice-step ceiling. Ticks are 5 evenly spaced values.
 export function scatterAxisBounds(
   values: readonly number[],
-  explicit?: { min?: number | undefined; max?: number | undefined },
+  explicit?: { min?: number | undefined; max?: number | undefined; majorUnit?: number | undefined },
 ): ScatterAxis {
   const finite = values.filter((value) => Number.isFinite(value))
   const dataMin = finite.length > 0 ? Math.min(...finite) : 0
@@ -115,8 +155,56 @@ export function scatterAxisBounds(
   const min = explicit?.min ?? (dataMin >= 0 ? 0 : -niceCeiling(-dataMin))
   let max = explicit?.max ?? (dataMax <= 0 ? 0 : niceCeiling(dataMax))
   if (!(max > min)) max = min + 1
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((fraction) => min + fraction * (max - min))
+  const ticks = explicit?.majorUnit
+    ? unitTicks(min, max, explicit.majorUnit)
+    : [0, 0.25, 0.5, 0.75, 1].map((fraction) => min + fraction * (max - min))
   return { min, max, ticks }
+}
+
+/// Excel-like value-axis scale. Explicit bounds/unit win. Excel's auto max
+/// leaves ~5% headroom above the data: with bumped = span · 1.05, the unit
+/// is the smallest 1/2/5×10^n giving at most 10 intervals of bumped, and
+/// max = min + unit · ceil(bumped / unit). Calibrated on Excel-rendered
+/// refs: 18 → 20 step 2, 148 → 160 step 20, 877 → 1000 step 100, 1000 →
+/// 1200 step 200, 289753.76 → 350000 step 50000 (real-run1 + prod corpora).
+export function valueAxisScale(
+  dataMax: number,
+  explicit?: { min?: number | undefined; max?: number | undefined; majorUnit?: number | undefined },
+): { min: number; max: number; ticks: number[] } {
+  const min = explicit?.min ?? 0
+  const target = explicit?.max ?? Math.max(dataMax, min)
+  const span = target - min
+  if (!(span > 0)) {
+    return { min, max: min + 1, ticks: [min, min + 0.5, min + 1] }
+  }
+  const bumped = explicit?.max === undefined ? span * 1.05 : span
+  const unit = explicit?.majorUnit ?? autoAxisUnit(bumped)
+  const max = explicit?.max ?? min + Math.ceil(bumped / unit - 1e-9) * unit
+  return { min, max: max > min ? max : min + unit, ticks: unitTicks(min, max, unit) }
+}
+
+function autoAxisUnit(span: number): number {
+  let exponent = Math.floor(Math.log10(span)) - 1
+  for (let guard = 0; guard < 6; guard += 1) {
+    for (const base of [1, 2, 5]) {
+      const unit = base * 10 ** exponent
+      // Excel allows up to 10 intervals (877 bumps to 920.85 → unit 100 /
+      // max 1000; 1000 bumps to 1050 → 11 intervals reject 100, unit 200).
+      if (span / unit <= 10 + 1e-9) return unit
+    }
+    exponent += 1
+  }
+  return 10 ** Math.ceil(Math.log10(span))
+}
+
+function unitTicks(min: number, max: number, unit: number): number[] {
+  const ticks: number[] = []
+  for (let index = 0; index < 25; index += 1) {
+    const tick = min + index * unit
+    if (tick > max + unit * 1e-6) break
+    ticks.push(Number(tick.toPrecision(12)))
+  }
+  return ticks.length >= 2 ? ticks : [min, max]
 }
 
 /// Smallest 1/2/2.5/5×10^n step whose multiple covers `value` within 9
@@ -144,7 +232,9 @@ export function withDefaultBarLabels(chart: ChartVisualState): ChartVisualState 
     chart.series.length === 1 &&
     chart.grouping !== 'stacked' &&
     chart.grouping !== 'percentStacked' &&
-    (chart.dataLabels === undefined || chart.dataLabels === 'none')
+    // Only when the file carries no dLbls at all — an explicit
+    // showVal="0" must stay off (fidelity beats the product default).
+    chart.dataLabels === undefined
   return upgradable ? { ...chart, dataLabels: 'value' } : chart
 }
 
@@ -346,7 +436,10 @@ export function applyChartStateEdit(
           : {}),
         ...(data?.name === undefined ? {} : { name: data.name }),
         ...(data?.values === undefined ? {} : { values: data.values }),
-        ...(data?.categories === undefined ? {} : { categories: data.categories }),
+        // Replacing the categories orphans the parsed outer-level spans.
+        ...(data?.categories === undefined
+          ? {}
+          : { categories: data.categories, categoryGroups: undefined }),
         ...(data?.valuesRef === undefined ? {} : { valuesRef: data.valuesRef }),
         ...(data?.categoriesRef === undefined ? {} : { categoriesRef: data.categoriesRef }),
       }

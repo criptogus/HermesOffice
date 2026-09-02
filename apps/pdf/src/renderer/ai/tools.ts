@@ -3,20 +3,27 @@ import type { AgentToolCall, AgentToolDef, ToolExecution } from '@hermesoffice/a
 import type { OutlineNode } from '../OutlinePanel'
 import type { PageEntry, SearchIndex } from '../search'
 import { searchInIndex } from '../search'
-import { geomDispSize, pdfRectToCss, viewToPdf } from '../annotations'
+import { geomDispSize, pdfRectToCss, quadToRect, viewToPdf } from '../annotations'
 import type { PageGeom } from '../annotations'
 import { EDIT_FONTS } from '../../shared/ipc'
 import type {
+  CreateDocumentRequest,
+  CreateDocumentResult,
+  CreateDocumentType,
   FormValueInput,
   ImageLayer,
   ImageSearchResponse,
   MarkupType,
   PageImageRef,
   TextEditInput,
+  TextInsertInput,
 } from '../../shared/ipc'
 import { groupPageBlocks } from '../text-block'
 import { joinBlockLines, measurePt, wrapText } from '../text-wrap'
+import { isScannedText } from '../ocr-layer'
 import { t } from '../i18n/locale'
+import { buildFormCatalog } from '../form-catalog'
+import { flattenThread, type NoteThreadItem } from '../note-threads'
 
 /** Text cap per read_pages fed back to the model (the payload is resent in full each turn, so volume must be limited) */
 const READ_CHUNK_CHARS = 24_000
@@ -29,14 +36,42 @@ export interface PdfAiDeps {
   /** Original page number of the currently visible page (1-based) */
   currentPage(): number
   readOnly(): boolean
+  /** OCR-recovered text of a scanned page; null when the page was not OCR'd */
+  ocrText(origIdx: number): string | null
+  /** Text selection cached at mouseup (native DOM selections collapse when focus moves
+      into the panel); page..lastPage is the original-page span it covers */
+  selection(): { page: number; lastPage: number; text: string } | null
+  /** One-line summary of this session's unsaved pending edits; '' when none */
+  pendingSummary(): string
   outline(): OutlineNode[] | null
   searchIndex(): Promise<SearchIndex> | null
   isDeleted(origIdx: number): boolean
   /** Original page number → scroll to that page; returns false if the page was deleted */
   gotoPage(origPage: number): boolean
-  addMarkup(type: MarkupType, origIdx: number, rects: [number, number, number, number][]): void
+  /** color (rgb 0-1) omitted → the user's current ribbon color for the type */
+  addMarkup(
+    type: MarkupType,
+    origIdx: number,
+    rects: [number, number, number, number][],
+    color?: [number, number, number],
+  ): void
+  /** Note threads + text markups on a page: saved (minus pending deletions) with pending overlays */
+  annotationsOn(origIdx: number): Promise<{
+    threads: NoteThreadItem[]
+    markups: { type: MarkupType; quads: number[][]; saved: boolean }[]
+  }>
+  /** Counts of saved+pending annotations for the per-run context; '' when none */
+  annotationSummary(): string
+  /** Queue a pending sticky note authored by the AI; returns its thread key */
+  addNote(origIdx: number, at: [number, number], contents: string): string
+  /** Thread root by key ('S<objNum>' saved / 'P<id>' pending); null when not found */
+  findNoteRoot(origIdx: number, rootKey: string): Promise<NoteThreadItem | null>
+  /** Queue a pending AI-authored reply to a thread root */
+  replyToThread(origIdx: number, root: NoteThreadItem, contents: string): void
   /** Queue a pending text edit (dry-run validated against the file when possible); null = accepted, string = rejection reason */
   editText(input: TextEditInput): Promise<string | null>
+  /** Queue a pending insert of a new text object (same pipeline as the UI "add text" tool) */
+  insertText(input: TextInsertInput): void
   /** Edit-font ids available on this machine (EDIT_FONTS subset) */
   editFonts(): string[]
   formEdits(): ReadonlyMap<string, FormValueInput>
@@ -68,36 +103,16 @@ export interface PdfAiDeps {
   /** Queue a pending delete of an existing image */
   deleteImage(ref: PageImageRef): void
   searchImages(query: string, maxResults: number): Promise<ImageSearchResponse>
+  /** live predicate: gsk login && the Genspark-cloud-tools toggle; false hides generate_image */
+  gskTools?(): boolean
   generateImage(op: { prompt: string; aspectRatio?: string }): Promise<{
     url?: string
     error?: string
   }>
   /** Download a URL (main-process, SSRF-guarded) and re-encode as PNG; null on failure */
   fetchImage(url: string): Promise<{ png: string; width: number; height: number } | null>
-  /** Fork: absolute path of the open file (for reading via engine/MCP) */
-  filePath(): string
-  /** Fork: web search for AI tools */
-  webSearch(
-    query: string,
-    maxResults?: number,
-  ): Promise<{
-    results: Array<{ title: string; url: string; snippet: string }>
-    answer?: string
-  }>
-  /** Fork: capture edit state before a run's first mutating tool (one-click rollback) */
-  captureEditState(): unknown
-  /** Fork: restore a captured edit state (pushes current state onto the undo stack) */
-  restoreEditState(state: unknown): void
-  /** Fork: add a sticky note drawing at a page position (default: top-left) */
-  addNote(origIdx: number, text: string, at?: [number, number]): void
-  /** Fork: set the watermark overlay config (null clears) */
-  setWatermark(cfg: { text: string; opacity?: number; size?: number; color?: string } | null): void
-  /** Fork: set header/footer overlay config (null clears) */
-  setHeaderFooter(cfg: { header?: string; footer?: string; margin?: number } | null): void
-  /** Fork: move a visible page (thumbnails drag); returns false when blocked */
-  movePage(fromPos: number, toPos: number): boolean
-  /** Fork: number of pages in the visible (non-deleted) list */
-  visiblePageCount(): number
+  /** AI create_document: write a new standalone file (pdf/docx/md) into the default folder and open it in a new tab */
+  createDocument(request: CreateDocumentRequest): Promise<CreateDocumentResult>
 }
 
 export const AGENT_TOOLS: AgentToolDef[] = [
@@ -156,8 +171,58 @@ export const AGENT_TOOLS: AgentToolDef[] = [
           type: 'boolean',
           description: 'Whether to mark every occurrence on the page; defaults to false',
         },
+        color: {
+          type: 'string',
+          description:
+            "Markup color as #RRGGBB hex; omit to use the user's current color for the type",
+        },
       },
       required: ['page', 'text', 'type'],
+    },
+  },
+  {
+    name: 'read_annotations',
+    description:
+      'List the comment notes (sticky notes, with their reply threads) and text markups (highlight/underline/strikeout) in the document — both saved in the file and queued unsaved this session. Optional page range; omit to read the whole document. Reply to a note with reply_note using the returned note id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        start: { type: 'integer', description: 'First page (1-based); omit to start at page 1' },
+        end: { type: 'integer', description: 'Last page (inclusive); omit to read to the end' },
+      },
+    },
+  },
+  {
+    name: 'add_note',
+    description:
+      'Add a sticky-note comment to a page (takes effect on save; authored as "AI Assistant"). Anchor it with anchor_text (a verbatim fragment on the page — the note pin lands at its end) or explicit x/y in points from the page top-left as displayed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Page number (1-based)' },
+        text: { type: 'string', description: 'Note contents' },
+        anchor_text: {
+          type: 'string',
+          description: 'Verbatim text fragment on the page the note refers to',
+        },
+        x: { type: 'number', description: 'Pin x in points from the page left edge' },
+        y: { type: 'number', description: 'Pin y in points from the page TOP edge' },
+      },
+      required: ['page', 'text'],
+    },
+  },
+  {
+    name: 'reply_note',
+    description:
+      'Append a reply to an existing note thread (takes effect on save; authored as "AI Assistant"). note_id is a thread id from read_annotations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Page number (1-based) the thread is on' },
+        note_id: { type: 'string', description: 'Thread id from read_annotations (e.g. "S12")' },
+        text: { type: 'string', description: 'Reply contents' },
+      },
+      required: ['page', 'note_id', 'text'],
     },
   },
   {
@@ -233,6 +298,57 @@ export const AGENT_TOOLS: AgentToolDef[] = [
         italic: { type: 'boolean', description: 'Set the paragraph in the italic variant' },
       },
       required: ['page', 'paragraph_text', 'new_text'],
+    },
+  },
+  {
+    name: 'insert_text',
+    description:
+      'Add NEW text to a page (drawn as new content on top of the page; takes effect on save). Use this for blank pages, empty areas, and filling in non-interactive form blanks — to change text that already exists, use edit_text or edit_block instead. Position with anchor_text (a verbatim fragment on the page, e.g. a form label) plus placement, or with x/y as the TOP-LEFT corner of the text block in points measured from the page top-left as displayed; with neither, the block is centered horizontally near the top. "\\n" starts a new line; pass max_width to auto-wrap long paragraphs within that width.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', description: 'Page number (1-based)' },
+        text: { type: 'string', description: 'Text to insert; "\\n" separates lines/paragraphs' },
+        anchor_text: {
+          type: 'string',
+          description:
+            'Verbatim text fragment on the page (e.g. a form label) to position the new text against',
+        },
+        placement: {
+          type: 'string',
+          enum: ['right', 'below', 'above'],
+          description: 'Which side of anchor_text to place the text on; defaults to right',
+        },
+        x: {
+          type: 'number',
+          description: 'Left edge of the text block in points from the page left edge',
+        },
+        y: {
+          type: 'number',
+          description: 'Top edge of the text block in points from the page TOP edge',
+        },
+        font_size: { type: 'number', description: 'Font size in PDF points; defaults to 14' },
+        color: { type: 'string', description: 'Text color as #RRGGBB hex; defaults to black' },
+        max_width: {
+          type: 'number',
+          description:
+            'Wrap width in points: paragraphs are re-wrapped to fit; omit to keep the given line breaks as-is',
+        },
+        align: {
+          type: 'string',
+          enum: ['left', 'center', 'right'],
+          description: 'Line alignment within max_width (or the widest line); defaults to left',
+        },
+        font: {
+          type: 'string',
+          enum: ['arial', 'times', 'courier'],
+          description:
+            'Font for the text; ignored when the face lacks glyphs for it (e.g. CJK). Omit for automatic',
+        },
+        bold: { type: 'boolean', description: 'Set the text in the bold variant' },
+        italic: { type: 'boolean', description: 'Set the text in the italic variant' },
+      },
+      required: ['page', 'text'],
     },
   },
   {
@@ -461,10 +577,43 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       'Read the document outline (bookmarks) tree, including entry titles. Returns empty if the document has no outline.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'create_document',
+    description:
+      'Create a NEW standalone file in the default save folder and open it in a new tab; the current PDF is not modified. Use when the user asks to put content (a summary, an extraction, an analysis result) into a new/separate document. ' +
+      "type 'pdf' (default) and 'docx' take simple HTML in content (<h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>, <pre>, <blockquote>; inline <strong>/<em>/<u>/<s>); type 'md' takes Markdown source. Images are not supported in the new file's content.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['pdf', 'docx', 'md'],
+          description: "target file type (default 'pdf')",
+        },
+        title: { type: 'string', description: 'document title, used as the file name' },
+        content: {
+          type: 'string',
+          description: 'full document content: simple HTML for pdf/docx, Markdown for md',
+        },
+      },
+      required: ['title', 'content'],
+    },
+  },
 ]
 
 const READONLY_OUTPUT =
   'The document is encrypted and read-only; it cannot be modified. Inform the user.'
+
+/** mirror of the docs tool-echo guard: reject tool-protocol output pasted as document content */
+function contentEchoError(content: string): string | null {
+  if (/<\/?tool_response>/i.test(content)) {
+    return 'content contains a literal <tool_response> tag — that is tool-protocol output, not document content; retry with the actual document HTML'
+  }
+  if (/"index"\s*:\s*\d+\s*,\s*"type"\s*:\s*"/.test(content)) {
+    return 'content contains a raw JSON dump, not an HTML fragment; retry with simple HTML (e.g. <p>…</p>)'
+  }
+  return null
+}
 
 function err(output: string, summary: string): ToolExecution {
   return { output, isError: true, summary }
@@ -503,6 +652,12 @@ async function readPages(deps: PdfAiDeps, input: Record<string, unknown>): Promi
       }
     }
     page.cleanup()
+    if (isScannedText(text)) {
+      const ocr = deps.ocrText(n - 1)
+      if (ocr && ocr.trim()) {
+        text = `(recovered by OCR; may contain recognition errors)\n${ocr}`
+      }
+    }
     out += `[Page ${n}]\n${text.trim()}\n\n`
     if (out.length > READ_CHUNK_CHARS) {
       out = `${out.slice(0, READ_CHUNK_CHARS)}\n… (truncated; read the rest in further calls)`
@@ -547,6 +702,13 @@ async function markupText(deps: PdfAiDeps, input: Record<string, unknown>): Prom
   if ('bad' in r) return err(r.bad, summary)
   const text = String(input.text ?? '').trim()
   if (!text) return err('text must not be empty', summary)
+  let color: [number, number, number] | undefined
+  if (input.color !== undefined) {
+    const hex = HEX_COLOR.exec(String(input.color))
+    if (!hex) return err(`Invalid color "${String(input.color)}"; use #RRGGBB`, summary)
+    const v = parseInt(hex[1]!, 16)
+    color = [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]
+  }
   const indexPromise = deps.searchIndex()
   if (!indexPromise) return err('Document not ready', summary)
   const index = await indexPromise
@@ -558,10 +720,161 @@ async function markupText(deps: PdfAiDeps, input: Record<string, unknown>): Prom
     )
   }
   const targets = input.all === true ? onPage : onPage.slice(0, 1)
-  for (const m of targets) deps.addMarkup(type, r.origIdx, m.rects)
+  for (const m of targets) deps.addMarkup(type, r.origIdx, m.rects, color)
   deps.gotoPage(r.origIdx + 1)
   return {
     output: `Marked ${targets.length} occurrence(s) on page ${r.origIdx + 1} (unsaved; the user saves with ⌘S)`,
+    mutated: true,
+    summary,
+  }
+}
+
+const fmtNoteDate = (ms: number | null): string =>
+  ms === null ? '' : ` (${new Date(ms).toISOString().slice(0, 10)})`
+
+/** Page text covered by a markup rect, best-effort via the search index */
+function textUnderRect(entry: PageEntry, rect: readonly [number, number, number, number]): string {
+  const [x1, y1, x2, y2] = rect
+  let out = ''
+  for (const it of entry.items) {
+    const yOverlap = Math.min(y2, it.y + it.h) - Math.max(y1, it.y)
+    if (yOverlap < it.h * 0.5) continue
+    const lo = Math.max(0, Math.min(1, (x1 - it.x) / (it.w || 1)))
+    const hi = Math.max(0, Math.min(1, (x2 - it.x) / (it.w || 1)))
+    if (hi <= lo) continue
+    const len = it.end - it.start
+    out += entry.text.slice(it.start + Math.round(len * lo), it.start + Math.round(len * hi))
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+async function readAnnotations(
+  deps: PdfAiDeps,
+  input: Record<string, unknown>,
+): Promise<ToolExecution> {
+  const summary = t('aiToolReadAnnots')
+  const pageCount = deps.pageCount()
+  const start = input.start === undefined ? 1 : Math.trunc(Number(input.start))
+  let end = input.end === undefined ? pageCount : Math.trunc(Number(input.end))
+  if (!(start >= 1) || !(end >= start) || start > pageCount)
+    return err(`Invalid page range (the document has ${pageCount} pages)`, summary)
+  end = Math.min(end, pageCount)
+  const indexPromise = deps.searchIndex()
+  const index = indexPromise ? await indexPromise : null
+  const lines: string[] = []
+  let notes = 0
+  let marks = 0
+  for (let p = start; p <= end; p++) {
+    const origIdx = p - 1
+    if (deps.isDeleted(origIdx)) continue
+    const { threads, markups } = await deps.annotationsOn(origIdx)
+    if (threads.length === 0 && markups.length === 0) continue
+    lines.push(`[Page ${p}]`)
+    for (const root of threads) {
+      notes++
+      for (const { item, depth } of flattenThread(root)) {
+        const head = depth === 0 ? `- Note ${root.key}` : `${'  '.repeat(depth)}- reply`
+        const unsaved = item.saved ? '' : ' (unsaved)'
+        lines.push(
+          `${head}${unsaved} by ${item.author || 'unknown'}${fmtNoteDate(item.timeMs)}: ${JSON.stringify(item.contents)}`,
+        )
+      }
+    }
+    const entry = index?.[origIdx]
+    for (const m of markups) {
+      marks++
+      const covered = entry
+        ? m.quads
+            .map((q) => textUnderRect(entry, quadToRect(q)))
+            .filter(Boolean)
+            .join(' ')
+        : ''
+      const quote = covered
+        ? ` on ${JSON.stringify(covered.length > 120 ? `${covered.slice(0, 120)}…` : covered)}`
+        : ''
+      lines.push(`- ${m.type}${m.saved ? '' : ' (unsaved)'}${quote}`)
+    }
+    if (lines.join('\n').length > READ_CHUNK_CHARS) {
+      lines.push('…output truncated; call read_annotations with a narrower page range for the rest')
+      break
+    }
+  }
+  if (notes === 0 && marks === 0)
+    return { output: `No notes or markups on pages ${start}-${end}.`, summary }
+  return { output: `${notes} note thread(s), ${marks} markup(s):\n${lines.join('\n')}`, summary }
+}
+
+async function addNoteTool(
+  deps: PdfAiDeps,
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<ToolExecution> {
+  const summary = t('aiToolAddNote', { page: Number(input.page) })
+  if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+  const r = resolvePage(deps, input.page)
+  if ('bad' in r) return err(r.bad, summary)
+  const text = String(input.text ?? '').trim()
+  if (!text) return err('text must not be empty', summary)
+  const geom = deps.pageGeom(r.origIdx)
+  if (!geom) return err('Document not ready', summary)
+  let at: [number, number]
+  const anchor = String(input.anchor_text ?? '').trim()
+  if (anchor) {
+    const indexPromise = deps.searchIndex()
+    if (!indexPromise) return err('Document not ready', summary)
+    const entry = (await indexPromise)[r.origIdx]
+    const located = entry ? locateOccurrence(entry, anchor, 1) : null
+    if (!located) {
+      return err(
+        `"${anchor}" not found on page ${r.origIdx + 1}; use read_pages to verify the exact text`,
+        summary,
+      )
+    }
+    at = [located.rect[2], located.rect[3]]
+  } else if (input.x !== undefined || input.y !== undefined) {
+    const tx = Number(input.x ?? 0)
+    const ty = Number(input.y ?? 0)
+    if (!Number.isFinite(tx) || !Number.isFinite(ty))
+      return err('x and y must be numbers (points from the page top-left as displayed)', summary)
+    at = viewToPdf(geom, tx, ty)
+  } else {
+    return err('Position the note with anchor_text or x/y', summary)
+  }
+  if (signal?.aborted) return err('stopped by the user; nothing was changed', summary)
+  const key = deps.addNote(r.origIdx, at, text)
+  deps.gotoPage(r.origIdx + 1)
+  return {
+    output: `Added note ${key} on page ${r.origIdx + 1} (unsaved; the user saves with ⌘S).`,
+    mutated: true,
+    summary,
+  }
+}
+
+async function replyNoteTool(
+  deps: PdfAiDeps,
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<ToolExecution> {
+  const summary = t('aiToolReplyNote', { page: Number(input.page) })
+  if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+  const r = resolvePage(deps, input.page)
+  if ('bad' in r) return err(r.bad, summary)
+  const text = String(input.text ?? '').trim()
+  if (!text) return err('text must not be empty', summary)
+  const noteId = String(input.note_id ?? '').trim()
+  if (!noteId) return err('note_id must not be empty', summary)
+  const root = await deps.findNoteRoot(r.origIdx, noteId)
+  if (!root) {
+    return err(
+      `Note "${noteId}" not found on page ${r.origIdx + 1}; call read_annotations to list thread ids`,
+      summary,
+    )
+  }
+  if (signal?.aborted) return err('stopped by the user; nothing was changed', summary)
+  deps.replyToThread(r.origIdx, root, text)
+  deps.gotoPage(r.origIdx + 1)
+  return {
+    output: `Replied to note ${noteId} on page ${r.origIdx + 1} (unsaved; the user saves with ⌘S).`,
     mutated: true,
     summary,
   }
@@ -785,12 +1098,141 @@ async function editBlock(deps: PdfAiDeps, input: Record<string, unknown>): Promi
   }
 }
 
+/** Insert a brand-new text block (the blank-page counterpart of edit_text/edit_block) */
+async function insertTextTool(
+  deps: PdfAiDeps,
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<ToolExecution> {
+  const summary = t('aiToolInsertText', { page: Number(input.page) })
+  if (deps.readOnly()) return err(READONLY_OUTPUT, summary)
+  const r = resolvePage(deps, input.page)
+  if ('bad' in r) return err(r.bad, summary)
+  const geom = deps.pageGeom(r.origIdx)
+  if (!geom) return err('Document not ready', summary)
+  const text = String(input.text ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+  if (!text) return err('text must not be empty', summary)
+
+  const fontSize = input.font_size === undefined ? 14 : Number(input.font_size)
+  if (!(fontSize > 0)) return err('font_size must be a positive number', summary)
+  let color: [number, number, number] = [0, 0, 0]
+  if (input.color !== undefined) {
+    const hex = HEX_COLOR.exec(String(input.color))
+    if (!hex) return err(`Invalid color "${String(input.color)}"; use #RRGGBB`, summary)
+    const v = parseInt(hex[1]!, 16)
+    color = [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+  }
+  const font = input.font === undefined ? undefined : String(input.font)
+  if (font !== undefined && !deps.editFonts().includes(font)) {
+    const avail = deps.editFonts()
+    return err(
+      avail.length > 0
+        ? `Font "${font}" is not available; choose one of: ${avail.join(', ')}`
+        : 'No selectable fonts are available on this machine; omit the font parameter',
+      summary,
+    )
+  }
+  const align = input.align === undefined ? 'left' : String(input.align)
+  if (align !== 'left' && align !== 'center' && align !== 'right')
+    return err("align must be 'left', 'center' or 'right'", summary)
+  const maxWidth = input.max_width === undefined ? undefined : Number(input.max_width)
+  if (maxWidth !== undefined && !(maxWidth > 0))
+    return err('max_width must be a positive number', summary)
+
+  // measure/wrap with the face that will actually be embedded (same as edit_block)
+  const bold = input.bold === true ? true : undefined
+  const italic = input.italic === true ? true : undefined
+  const cssFamily =
+    (font ? EDIT_FONTS.find((f) => f.id === font)?.css : undefined) ??
+    getComputedStyle(document.body).fontFamily
+  const cssStyle = `${italic ? 'italic ' : ''}${bold ? 'bold' : ''}`.trim()
+  const lines = maxWidth
+    ? text
+        .split('\n')
+        .flatMap((p) => (p.trim() ? wrapText(p, maxWidth, fontSize, cssFamily, cssStyle) : ['']))
+    : text.split('\n')
+  const lineWidths = lines.map((l) => measurePt(l, fontSize, cssFamily, cssStyle))
+  const blockW = maxWidth ?? Math.max(...lineWidths, 1)
+  const lineLeading = fontSize * 1.2
+  const blockH = lineLeading * (lines.length - 1) + fontSize * 1.2
+
+  // display-space position (top-left origin, points at scale 1), clamped to the page
+  const size = geomDispSize(geom)
+  let tx: number
+  let ty: number
+  const anchor = String(input.anchor_text ?? '').trim()
+  if (anchor) {
+    const indexPromise = deps.searchIndex()
+    if (!indexPromise) return err('Document not ready', summary)
+    const entry = (await indexPromise)[r.origIdx]
+    const located = entry ? locateOccurrence(entry, anchor, 1) : null
+    if (!located) {
+      return err(
+        `"${anchor}" not found on page ${r.origIdx + 1}; use read_pages to verify the exact text`,
+        summary,
+      )
+    }
+    const a = dispBox(geom, located.rect)
+    const placement = String(input.placement ?? 'right')
+    if (placement === 'above') {
+      tx = a.left
+      ty = a.top - TEXT_GAP_PT - blockH
+    } else if (placement === 'below') {
+      tx = a.left
+      ty = a.top + a.height + TEXT_GAP_PT
+    } else {
+      // right: first baseline sits on the anchor's baseline (form-fill style)
+      tx = a.left + a.width + TEXT_GAP_PT
+      ty = a.top + a.height - fontSize * 1.1
+    }
+  } else {
+    tx = input.x === undefined ? (size.width - blockW) / 2 : Number(input.x)
+    ty = input.y === undefined ? 72 : Number(input.y)
+    if (!Number.isFinite(tx) || !Number.isFinite(ty))
+      return err('x and y must be numbers (points from the page top-left as displayed)', summary)
+  }
+  tx = Math.min(Math.max(tx, 0), Math.max(size.width - blockW, 0))
+  ty = Math.min(Math.max(ty, 0), Math.max(size.height - blockH, 0))
+
+  if (signal?.aborted) return err('stopped by the user; nothing was changed', summary)
+  deps.insertText({
+    pageIndex: r.origIdx,
+    // TextInsertInput.origin is the first-line baseline in PDF user space
+    origin: viewToPdf(geom, tx, ty + fontSize),
+    text: lines.join('\n'),
+    fontSize,
+    color,
+    font,
+    bold,
+    italic,
+    lineLeading,
+    lineXOffsets:
+      align === 'left'
+        ? undefined
+        : lineWidths.map((w) => {
+            const slack = Math.max(0, blockW - w)
+            return align === 'center' ? slack / 2 : slack
+          }),
+    align: align === 'left' ? undefined : align,
+    rotate: ((geom.rot % 360) + 360) % 360,
+  })
+  deps.gotoPage(r.origIdx + 1)
+  return {
+    output: `Inserted ${lines.length} line(s) of text on page ${r.origIdx + 1} at x=${fmt(tx)}, y=${fmt(ty)}, ${fontSize} pt (unsaved; the user can drag/edit it, undo with ⌘Z, save with ⌘S).`,
+    mutated: true,
+    summary,
+  }
+}
+
 // ── Image tools ─────────────────────────────────────────────────────
 // Model-facing coordinates are display-space points: what the user sees, with a
 // top-left origin and page rotation applied (viewToPdf/pdfRectToCss, same as the
 // UI edit path). Rects handed to deps stay in PDF user space (y-up, unrotated).
 
 const IMAGE_GAP_PT = 8
+const TEXT_GAP_PT = 4
 const px2pt = (px: number) => (px * 72) / 96
 const fmt = (n: number) => String(Math.round(n))
 
@@ -1165,51 +1607,20 @@ async function deleteImageTool(
   }
 }
 
-interface RawWidget {
-  subtype?: string
-  fieldType?: string
-  fieldName?: string
-  fieldValue?: unknown
-  buttonValue?: string
-  readOnly?: boolean
-  checkBox?: boolean
-  radioButton?: boolean
-  options?: { exportValue?: unknown; displayValue?: unknown }[]
-}
-
 /** Whole-document form field inventory (radios aggregate exportValue lists by field name) */
 async function collectFields(
   doc: PDFDocumentProxy,
 ): Promise<Map<string, { kind: string; page: number; value: string; options: string[] }>> {
+  const catalog = await buildFormCatalog(doc)
   const fields = new Map<string, { kind: string; page: number; value: string; options: string[] }>()
-  for (let n = 1; n <= doc.numPages; n++) {
-    const page = await doc.getPage(n)
-    const annots = (await page.getAnnotations()) as RawWidget[]
-    for (const a of annots) {
-      if (a.subtype !== 'Widget' || !a.fieldName || a.readOnly) continue
-      const value = Array.isArray(a.fieldValue)
-        ? String(a.fieldValue[0] ?? '')
-        : String(a.fieldValue ?? '')
-      if (a.fieldType === 'Tx') {
-        fields.set(a.fieldName, { kind: 'text', page: n, value, options: [] })
-      } else if (a.fieldType === 'Btn' && a.checkBox) {
-        fields.set(a.fieldName, { kind: 'checkbox', page: n, value, options: [] })
-      } else if (a.fieldType === 'Btn' && a.radioButton) {
-        const cur = fields.get(a.fieldName) ?? { kind: 'radio', page: n, value, options: [] }
-        if (typeof a.buttonValue === 'string' && !cur.options.includes(a.buttonValue))
-          cur.options.push(a.buttonValue)
-        fields.set(a.fieldName, cur)
-      } else if (a.fieldType === 'Ch') {
-        fields.set(a.fieldName, {
-          kind: 'choice',
-          page: n,
-          value,
-          options: (a.options ?? [])
-            .map((o) => String(o.exportValue ?? o.displayValue ?? ''))
-            .filter(Boolean),
-        })
-      }
-    }
+  for (const field of catalog.fields.values()) {
+    if (field.readOnly || field.kind === 'signature') continue
+    fields.set(field.name, {
+      kind: field.kind,
+      page: field.pageIndex + 1,
+      value: field.kind === 'checkbox' ? String(field.checked) : field.value,
+      options: field.options,
+    })
   }
   return fields
 }
@@ -1292,6 +1703,14 @@ export async function executePdfTool(
       return editText(deps, input)
     case 'edit_block':
       return editBlock(deps, input)
+    case 'insert_text':
+      return insertTextTool(deps, input, signal)
+    case 'read_annotations':
+      return readAnnotations(deps, input)
+    case 'add_note':
+      return addNoteTool(deps, input, signal)
+    case 'reply_note':
+      return replyNoteTool(deps, input, signal)
     case 'image_search':
       return imageSearchTool(deps, input)
     case 'generate_image':
@@ -1346,6 +1765,30 @@ export async function executePdfTool(
       return {
         output: lines.join('\n') || 'The document has no outline',
         summary: t('aiToolOutline'),
+      }
+    }
+    case 'create_document': {
+      const typeRaw = input.type === undefined ? 'pdf' : String(input.type)
+      const summary = t('aiToolCreateDocument')
+      if (typeRaw !== 'pdf' && typeRaw !== 'docx' && typeRaw !== 'md')
+        return err('type must be one of pdf/docx/md', summary)
+      const type: CreateDocumentType = typeRaw
+      const title = String(input.title ?? '').trim()
+      if (!title) return err('title must not be empty', summary)
+      const content = String(input.content ?? '')
+      if (!content.trim()) return err('content must not be empty', summary)
+      if (type !== 'md') {
+        const echo = contentEchoError(content)
+        if (echo) return err(echo, summary)
+      }
+      const r = await deps.createDocument({ type, title, content })
+      if (!r.ok) return err(r.error ?? 'creating the document failed', summary)
+      const name = `${title}.${type}`
+      return {
+        output: r.path
+          ? `Created the new document at ${r.path} and opened it in a new tab.`
+          : `Created the new document "${name}" in a new tab; it saves itself into the default folder.`,
+        summary: t('aiToolCreatedDocument', { name }),
       }
     }
     default:

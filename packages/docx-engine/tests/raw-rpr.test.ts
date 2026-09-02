@@ -4,7 +4,14 @@
  * rebuilds; editing a modeled field rebuilds only its group.
  */
 import { describe, expect, it } from 'vitest'
-import { generateParagraphXml, parseDocx, saveDocx, type GenerateContext, type SaveBlock } from '../src/index'
+import {
+  generateParagraphXml,
+  parseDocx,
+  saveDocx,
+  styleRunFormat,
+  type GenerateContext,
+  type SaveBlock,
+} from '../src/index'
 import { buildDocx } from './helpers/build-docx'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -33,9 +40,14 @@ const RICH_RPR =
 const RICH_PARA = `<w:p><w:r>${RICH_RPR}<w:t>富格式文本</w:t></w:r></w:p>`
 
 const UNMODELED_TAGS = [
-  '<w:caps/>', '<w:dstrike/>', '<w:vanish/>',
+  '<w:caps/>',
+  '<w:dstrike/>',
+  '<w:vanish/>',
   'w:themeColor="accent1"',
-  '<w:spacing w:val="20"/>', '<w:w w:val="90"/>', '<w:kern w:val="24"/>', '<w:position w:val="6"/>',
+  '<w:spacing w:val="20"/>',
+  '<w:w w:val="90"/>',
+  '<w:kern w:val="24"/>',
+  '<w:position w:val="6"/>',
   '<w:szCs w:val="32"/>',
   '<w:u w:val="double"/>',
   '<w:bdr w:val="single" w:sz="4" w:space="1" w:color="auto"/>',
@@ -63,10 +75,7 @@ describe('rawRPr passthrough', () => {
     const run = doc.blocks[0].runs![0]
     // Add bold (not there originally): w:b is inserted at its schema position, the other
     // groups keep their original bytes
-    const xml = generateParagraphXml(
-      { type: 'paragraph', runs: [{ ...run, bold: true }] },
-      GEN_CTX,
-    )
+    const xml = generateParagraphXml({ type: 'paragraph', runs: [{ ...run, bold: true }] }, GEN_CTX)
     expect(xml).toContain('<w:b/>')
     // schema order: rFonts < b < caps
     expect(xml.indexOf('<w:rFonts')).toBeLessThan(xml.indexOf('<w:b/>'))
@@ -107,15 +116,22 @@ describe('rawRPr passthrough', () => {
 
   it('adjacent runs with different unmodeled props are not merged at parse', async () => {
     const body =
-      '<w:p><w:r><w:rPr><w:caps/></w:rPr><w:t>大写</w:t></w:r>' +
-      '<w:r><w:t>普通</w:t></w:r></w:p>'
+      '<w:p><w:r><w:rPr><w:caps/></w:rPr><w:t>大写</w:t></w:r>' + '<w:r><w:t>普通</w:t></w:r></w:p>'
     const doc = await parseDocx(await buildDocx({ bodyXml: body }))
     expect(doc.blocks[0].runs).toHaveLength(2) // modeled fields all equal, but rawRPr differs → no merge
   })
 })
 
 const here = dirname(fileURLToPath(import.meta.url))
-const REAL = join(here, '..', '..', '..', 'example', 'docx', 'OpenClaw开源项目调研分析报告文档.docx')
+const REAL = join(
+  here,
+  '..',
+  '..',
+  '..',
+  'example',
+  'docx',
+  'OpenClaw开源项目调研分析报告文档.docx',
+)
 
 // Runs only when the local (gitignored) sample document is present.
 describe.skipIf(!existsSync(REAL))('real document invariant (example/docx)', () => {
@@ -154,7 +170,9 @@ describe.skipIf(!existsSync(REAL))('real document invariant (example/docx)', () 
     const JSZip = (await import('jszip')).default
     const [zBefore, zAfter] = await Promise.all([JSZip.loadAsync(bytes), JSZip.loadAsync(saved)])
     const fileNames = (z: InstanceType<typeof JSZip>) =>
-      Object.keys(z.files).filter((n) => !z.files[n].dir).sort()
+      Object.keys(z.files)
+        .filter((n) => !z.files[n].dir)
+        .sort()
     expect(fileNames(zAfter)).toEqual(fileNames(zBefore))
     for (const name of fileNames(zBefore)) {
       // core.xml is the exception: a real save updates dcterms:modified / cp:revision
@@ -167,7 +185,9 @@ describe.skipIf(!existsSync(REAL))('real document invariant (example/docx)', () 
     }
 
     // Untouched paragraphs' original slices remain; the edited one keeps its character spacing
-    const newXml = new TextDecoder().decode(await zAfter.files['word/document.xml'].async('uint8array'))
+    const newXml = new TextDecoder().decode(
+      await zAfter.files['word/document.xml'].async('uint8array'),
+    )
     let checked = 0
     for (const b of visible) {
       if (b === target || !b.originalXml || b.originalXml.length < 40) continue
@@ -186,5 +206,282 @@ describe.skipIf(!existsSync(REAL))('real document invariant (example/docx)', () 
     // The saved output can be re-parsed
     const reparsed = await parseDocx(saved)
     expect(reparsed.blocks.length).toBe(doc.blocks.length)
+  })
+})
+
+describe('explicit w:rtl selects the property set (probed, Word for Mac)', () => {
+  it('non-rtl runs read w:b/w:i/w:sz and ignore the Cs twins, even for Arabic text', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:b/><w:sz w:val="15"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:rPr><w:bCs/><w:iCs/><w:sz w:val="28"/><w:szCs w:val="36"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>latin</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const [arabic, csTwins, latin] = doc.blocks.filter((b) => b.runs?.length).map((b) => b.runs![0])
+    expect(arabic.cs).toBeUndefined()
+    expect(arabic.bold).toBe(true)
+    expect(arabic.sizeHalfPoints).toBe(15)
+    expect(csTwins.cs).toBeUndefined()
+    expect(csTwins.bold).toBeUndefined()
+    expect(csTwins.italic).toBeUndefined()
+    expect(csTwins.sizeHalfPoints).toBe(28)
+    expect(latin.cs).toBeUndefined()
+    expect(latin.bold).toBe(true)
+    expect(latin.sizeHalfPoints).toBe(28)
+  })
+
+  it('rtl runs read w:bCs/w:iCs/w:szCs with no fallback to w:b/w:i/w:sz', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:rtl/><w:b/><w:sz w:val="28"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:rPr><w:rtl/><w:bCs/><w:szCs w:val="36"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const [base, twins] = doc.blocks.filter((b) => b.runs?.length).map((b) => b.runs![0])
+    expect(base.cs).toBe(true)
+    expect(base.bold).toBeUndefined()
+    expect(base.sizeHalfPoints).toBeUndefined()
+    expect(twins.cs).toBe(true)
+    expect(twins.bold).toBe(true)
+    expect(twins.sizeHalfPoints).toBe(36)
+  })
+
+  it('w:rtl selects the Cs set regardless of the run characters', async () => {
+    const bodyXml = '<w:p><w:r><w:rPr><w:rtl/><w:b/></w:rPr><w:t>123</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    expect(doc.blocks[0].runs![0].cs).toBe(true)
+    expect(doc.blocks[0].runs![0].bold).toBeUndefined()
+  })
+
+  it('an untouched Arabic run keeps its w:b/w:sz bytes on paragraph rebuild', async () => {
+    const bodyXml = '<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const run = doc.blocks[0].runs![0]
+    const xml = generateParagraphXml({ type: 'paragraph', runs: [{ ...run }] }, GEN_CTX)
+    expect(xml).toContain('<w:b/>')
+    expect(xml).toContain('<w:sz w:val="28"/>')
+    expect(xml).not.toContain('<w:bCs/>')
+    expect(xml).not.toContain('w:szCs')
+  })
+
+  it('an untouched rtl run keeps its Cs-twin bytes on paragraph rebuild', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:bCs/><w:szCs w:val="36"/><w:rtl/></w:rPr><w:t>عنوان</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const run = doc.blocks[0].runs![0]
+    const xml = generateParagraphXml({ type: 'paragraph', runs: [{ ...run }] }, GEN_CTX)
+    expect(xml).toContain('<w:bCs/><w:szCs w:val="36"/><w:rtl/>')
+    expect(xml).not.toContain('<w:b/>')
+  })
+})
+
+const RTL_STYLES_XML =
+  '<w:style w:type="paragraph" w:styleId="HeadB"><w:name w:val="Head B"/>' +
+  '<w:rPr><w:b/><w:sz w:val="30"/></w:rPr></w:style>' +
+  '<w:style w:type="paragraph" w:styleId="HeadBCs"><w:name w:val="Head BCs"/>' +
+  '<w:rPr><w:bCs/><w:szCs w:val="36"/></w:rPr></w:style>' +
+  '<w:style w:type="paragraph" w:styleId="RtlNormal"><w:name w:val="Rtl Normal"/>' +
+  '<w:rPr><w:rtl/><w:bCs/></w:rPr></w:style>' +
+  '<w:style w:type="character" w:styleId="ArChar"><w:name w:val="Ar Char"/>' +
+  '<w:rPr><w:rtl/><w:iCs/></w:rPr></w:style>'
+
+describe('style chain follows the same rtl property-set selection', () => {
+  const styled = (styleId: string, rPr = '') =>
+    `<w:p><w:pPr><w:pStyle w:val="${styleId}"/></w:pPr>` +
+    `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t>عنوان</w:t></w:r></w:p>`
+
+  it('pStyle w:b/w:sz applies to non-rtl runs, not to rtl runs', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: styled('HeadB') + styled('HeadB', '<w:rtl/>'),
+        extraStylesXml: RTL_STYLES_XML,
+      }),
+    )
+    const display = doc.styles.get('HeadB')!.display
+    const [plain, rtl] = doc.blocks.filter((b) => b.runs?.length).map((b) => b.runs![0])
+    expect(plain.cs).toBeUndefined()
+    expect(styleRunFormat(display, !!plain.cs)).toEqual({
+      bold: true,
+      italic: undefined,
+      sizeHalfPoints: 30,
+    })
+    expect(rtl.cs).toBe(true)
+    expect(styleRunFormat(display, !!rtl.cs)).toEqual({
+      bold: undefined,
+      italic: undefined,
+      sizeHalfPoints: undefined,
+    })
+  })
+
+  it('pStyle w:bCs/w:szCs applies to rtl runs, ignored for non-rtl runs', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: styled('HeadBCs', '<w:rtl/>') + styled('HeadBCs'),
+        extraStylesXml: RTL_STYLES_XML,
+      }),
+    )
+    const display = doc.styles.get('HeadBCs')!.display
+    expect(display?.boldCs).toBe(true)
+    expect(display?.sizeCsHalfPoints).toBe(36)
+    const [rtl, plain] = doc.blocks.filter((b) => b.runs?.length).map((b) => b.runs![0])
+    expect(styleRunFormat(display, !!rtl.cs)).toEqual({
+      bold: true,
+      italic: undefined,
+      sizeHalfPoints: 36,
+    })
+    expect(styleRunFormat(display, !!plain.cs)).toEqual({
+      bold: undefined,
+      italic: undefined,
+      sizeHalfPoints: undefined,
+    })
+  })
+
+  it('style-level w:rtl inherits into runs without their own flag; explicit off wins', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml:
+          styled('RtlNormal', '<w:color w:val="FF0000"/>') +
+          styled('RtlNormal', '<w:rtl w:val="0"/>') +
+          `<w:p><w:pPr><w:pStyle w:val="RtlNormal"/></w:pPr><w:r><w:t>bare</w:t></w:r></w:p>`,
+        extraStylesXml: RTL_STYLES_XML,
+      }),
+    )
+    const [inherited, explicitOff, bare] = doc.blocks
+      .filter((b) => b.runs?.length)
+      .map((b) => b.runs![0])
+    expect(inherited.cs).toBe(true)
+    expect(explicitOff.cs).toBeUndefined()
+    expect(bare.cs).toBe(true)
+  })
+
+  it('character-style w:rtl inherits into the run', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:rStyle w:val="ArChar"/></w:rPr><w:t>عنوان</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml, extraStylesXml: RTL_STYLES_XML }))
+    const run = doc.blocks[0].runs![0]
+    expect(run.cs).toBe(true)
+    expect(styleRunFormat(doc.styles.get('ArChar')!.display, !!run.cs).italic).toBe(true)
+  })
+
+  it('an untouched w:b run under an rtl style keeps its bytes on paragraph rebuild', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: styled('RtlNormal', '<w:b/>'),
+        extraStylesXml: RTL_STYLES_XML,
+      }),
+    )
+    const run = doc.blocks[0].runs![0]
+    expect(run.cs).toBe(true)
+    expect(run.bold).toBeUndefined() // rtl run: direct w:b is not the selected set
+    const xml = generateParagraphXml(
+      { type: 'paragraph', styleId: 'RtlNormal', runs: [{ ...run }] },
+      GEN_CTX,
+    )
+    expect(xml).toContain('<w:b/>')
+    expect(xml).not.toContain('<w:bCs/>')
+  })
+
+  it('a run whose cs flag was dropped by a round-trip still keeps its Cs bytes', async () => {
+    const bodyXml = '<w:p><w:r><w:rPr><w:bCs/><w:rtl/></w:rPr><w:t>عنوان</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const run = doc.blocks[0].runs![0]
+    expect(run.bold).toBe(true)
+    // editor mark round-trips can rebuild the Run without cs; raw w:rtl re-selects the set
+    const xml = generateParagraphXml(
+      { type: 'paragraph', runs: [{ ...run, cs: undefined }] },
+      GEN_CTX,
+    )
+    expect(xml).toContain('<w:bCs/><w:rtl/>')
+    expect(xml).not.toContain('<w:b/>')
+  })
+})
+
+describe('run-level character shading (w:shd)', () => {
+  it('parses the non-auto fill alongside highlight', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="FFC000"/></w:rPr><w:t>badge</w:t></w:r>' +
+      '<w:r><w:rPr><w:highlight w:val="yellow"/><w:shd w:val="clear" w:fill="FFC000"/></w:rPr><w:t>both</w:t></w:r>' +
+      '<w:r><w:rPr><w:shd w:val="clear" w:fill="auto"/></w:rPr><w:t>none</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const runs = doc.blocks[0].runs!
+    expect(runs[0].shading).toBe('FFC000')
+    expect(runs[1].shading).toBe('FFC000')
+    expect(runs[1].highlight).toBe('yellow')
+    expect(runs[2].shading).toBeUndefined()
+  })
+
+  it('unchanged shading keeps its exact bytes; a modeled value writes fresh', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:rPr><w:shd w:val="pct15" w:color="FF0000" w:fill="FFC000"/></w:rPr><w:t>x</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml }))
+    const run = doc.blocks[0].runs![0]
+    expect(run.shading).toBe('FFC000')
+    const kept = generateParagraphXml(
+      { type: 'paragraph', runs: [{ ...run, text: 'edited' }] },
+      GEN_CTX,
+    )
+    expect(kept).toContain('<w:shd w:val="pct15" w:color="FF0000" w:fill="FFC000"/>')
+    const fresh = generateParagraphXml(
+      { type: 'paragraph', runs: [{ text: 'z', shading: '00B050' }] },
+      GEN_CTX,
+    )
+    expect(fresh).toContain('<w:shd w:val="clear" w:color="auto" w:fill="00B050"/>')
+  })
+})
+
+// rFonts theme refs: parse resolves w:asciiTheme/w:eastAsiaTheme to literal font
+// names for the model; regeneration must not materialize the refs into literals
+const THEME_XML =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office">' +
+  '<a:themeElements><a:fontScheme name="Office">' +
+  '<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +
+  '<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>' +
+  '</a:fontScheme></a:themeElements></a:theme>'
+
+const THEMED_RFONTS = '<w:rFonts w:ascii="Georgia" w:eastAsiaTheme="minorHAnsi" w:hAnsi="Georgia"/>'
+const THEMED_PARA = `<w:p><w:r><w:rPr>${THEMED_RFONTS}</w:rPr><w:t>themed</w:t></w:r></w:p>`
+
+async function parseThemed() {
+  const doc = await parseDocx(
+    await buildDocx({
+      bodyXml: THEMED_PARA,
+      extraParts: [
+        {
+          path: 'word/theme/theme1.xml',
+          xml: THEME_XML,
+          contentType: 'application/vnd.openxmlformats-officedocument.theme+xml',
+        },
+      ],
+    }),
+  )
+  return doc.blocks[0].runs![0]
+}
+
+describe('rFonts theme refs survive regeneration', () => {
+  it('parse resolves the ref and records its theme origin', async () => {
+    const run = await parseThemed()
+    expect(run.font).toBe('Calibri')
+    expect(run.fontAscii).toBe('Georgia')
+    expect(run.themeRFonts).toEqual({ font: 'Calibri' })
+  })
+
+  it('a text-only edit keeps the theme attrs instead of materializing them', async () => {
+    const run = await parseThemed()
+    const xml = generateParagraphXml(
+      { type: 'paragraph', runs: [{ ...run, text: 'edited' }] },
+      GEN_CTX,
+    )
+    expect(xml).toContain(THEMED_RFONTS)
+    expect(xml).not.toContain('w:eastAsia="Calibri"')
+  })
+
+  it('a real font edit still materializes the touched slot', async () => {
+    const run = await parseThemed()
+    const xml = generateParagraphXml(
+      { type: 'paragraph', runs: [{ ...run, font: 'Arial' }] },
+      GEN_CTX,
+    )
+    expect(xml).toContain('w:eastAsia="Arial"')
+    expect(xml).not.toContain('w:eastAsiaTheme')
+    // untouched Latin slot keeps its literal value
+    expect(xml).toContain('w:ascii="Georgia"')
   })
 })

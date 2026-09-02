@@ -59,7 +59,7 @@ function minimalPdf(): Buffer {
 
 test.describe('theme visual adoption', () => {
   test('markdown editor surface follows dark theme', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-theme-md-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-theme-md-'))
     const mdPath = join(dir, 'doc.md')
     await writeFile(mdPath, '# Doc\n\nBody.\n')
 
@@ -163,7 +163,7 @@ test.describe('theme visual adoption', () => {
   })
 
   test('pdf chrome follows dark theme while the page stays paper-white', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-theme-pdf-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-theme-pdf-'))
     const pdfPath = join(dir, 'doc.pdf')
     await writeFile(pdfPath, minimalPdf())
 

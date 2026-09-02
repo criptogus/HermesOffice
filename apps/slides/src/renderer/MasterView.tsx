@@ -5,12 +5,7 @@
  * refreshes all slides after exit.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  RenderFill,
-  RenderNode,
-  RenderSlide,
-  ShapeRenderNode,
-} from '@hermesoffice/pptx-render'
+import type { RenderFill, RenderNode, RenderSlide, ShapeRenderNode } from '@hermesoffice/pptx-render'
 import { SlideCanvas } from './SlideCanvas'
 import { SlideThumb } from './SlideThumb'
 import { TextEditOverlay } from './TextEditOverlay'

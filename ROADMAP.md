@@ -80,7 +80,7 @@ plan, draft, verify and polish together.
 
 ## Relationship with upstream
 
-HermesOffice is a **thin fork** of [genspark-ai/genoffice](https://github.com/genspark-ai/genoffice)
+HermesOffice is a **thin fork** of [genspark-ai/hermesoffice](https://github.com/genspark-ai/hermesoffice)
 (Apache-2.0). Engines and app shells follow upstream; our own layer is the
 Hermes integration, product identity and collaboration features. That keeps
 upstream sync cheap and lets us focus community energy on the agent-native

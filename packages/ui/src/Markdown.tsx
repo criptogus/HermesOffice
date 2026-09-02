@@ -2,14 +2,30 @@ import { Fragment, type ReactNode } from 'react'
 
 /**
  * Minimal dependency-free markdown for chat bubbles: paragraphs, ul/ol,
- * headings, **bold**, *italic*, `inline code`, and links `[label](url)`.
- * Tolerates partial (streaming) input — anything unrecognized renders as
- * plain text.
+ * headings, **bold**, *italic*, `inline code`. Tolerates
+ * partial (streaming) input — anything unrecognized renders as plain text.
+ *
+ * Markdown links stay literal text unless the host passes `nav` and the href
+ * carries its scheme — then they become in-app navigation links. External
+ * URLs never turn into clickable links here.
  */
 
-const INLINE_RE = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+\]\([^)\n]+\))/g
+export interface MarkdownNav {
+  /** href prefix that renders as an in-app navigation link (e.g. 'docnav://') */
+  scheme: string
+  onNavigate: (href: string) => void
+}
 
-function renderInline(text: string, onLinkClick?: (url: string) => void): ReactNode[] {
+// Hrefs may carry one level of balanced parens (sheet names like `Data (2)`
+// arrive as sheetnav://Data%20(2)!B2), so the href cannot simply stop at ')'.
+const HREF = /(?:[^\s()]|\([^\s()]*\))+/.source
+const INLINE_RE = new RegExp(
+  `(\`[^\`\\n]+\`|\\*\\*[^*\\n]+?\\*\\*|\\*[^*\\n]+?\\*|\\[[^\\]\\n]+\\]\\(${HREF}\\))`,
+  'g',
+)
+const LINK_RE = new RegExp(`^\\[([^\\]]+)\\]\\((${HREF})\\)$`)
+
+function renderInline(text: string, nav?: MarkdownNav): ReactNode[] {
   const out: ReactNode[] = []
   let last = 0
   let key = 0
@@ -19,26 +35,27 @@ function renderInline(text: string, onLinkClick?: (url: string) => void): ReactN
     const tok = m[0] ?? ''
     if (tok.startsWith('`')) out.push(<code key={key++}>{tok.slice(1, -1)}</code>)
     else if (tok.startsWith('**')) out.push(<strong key={key++}>{tok.slice(2, -2)}</strong>)
-    else if (tok.startsWith('*')) out.push(<em key={key++}>{tok.slice(1, -1)}</em>)
-    else {
-      // [label](url) — clicável; onLinkClick decide o que fazer (ex: abrir arquivo)
-      const m2 = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
-      const label = m2?.[1] ?? tok
-      const url = m2?.[2] ?? ''
-      out.push(
-        <a
-          key={key++}
-          className="ai-md-link"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault()
-            onLinkClick?.(url)
-          }}
-        >
-          {label}
-        </a>,
-      )
-    }
+    else if (tok.startsWith('[')) {
+      const link = LINK_RE.exec(tok)
+      const href = link?.[2] ?? ''
+      if (link && nav && href.startsWith(nav.scheme)) {
+        out.push(
+          <a
+            key={key++}
+            className="ai-md-nav"
+            href={href}
+            onClick={(e) => {
+              e.preventDefault()
+              nav.onNavigate(href)
+            }}
+          >
+            {link[1]}
+          </a>,
+        )
+      } else {
+        out.push(tok) // non-nav links keep today's literal rendering
+      }
+    } else out.push(<em key={key++}>{tok.slice(1, -1)}</em>)
     last = i + tok.length
   }
   if (last < text.length) out.push(text.slice(last))
@@ -100,27 +117,19 @@ function parseBlocks(text: string): MdBlock[] {
   return blocks
 }
 
-export interface MarkdownProps {
-  text: string
-  /** Invoked when the user clicks a [label](url) link; caller decides what to do */
-  onLinkClick?: (url: string) => void
-}
-
-export function Markdown({ text, onLinkClick }: MarkdownProps): React.JSX.Element {
+export function Markdown({ text, nav }: { text: string; nav?: MarkdownNav }): React.JSX.Element {
   return (
     <div className="ai-md">
       {parseBlocks(text).map((b, i) => {
         if (b.kind === 'h') {
           return (
             <p key={i} className="ai-md-h">
-              {renderInline(b.text, onLinkClick)}
+              {renderInline(b.text, nav)}
             </p>
           )
         }
         if (b.kind === 'ul' || b.kind === 'ol') {
-          const items = b.items.map((it, j) => (
-            <li key={j}>{renderInline(it, onLinkClick)}</li>
-          ))
+          const items = b.items.map((it, j) => <li key={j}>{renderInline(it, nav)}</li>)
           return b.kind === 'ul' ? <ul key={i}>{items}</ul> : <ol key={i}>{items}</ol>
         }
         return (
@@ -128,7 +137,7 @@ export function Markdown({ text, onLinkClick }: MarkdownProps): React.JSX.Elemen
             {b.lines.map((ln, j) => (
               <Fragment key={j}>
                 {j > 0 && <br />}
-                {renderInline(ln, onLinkClick)}
+                {renderInline(ln, nav)}
               </Fragment>
             ))}
           </p>

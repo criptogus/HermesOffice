@@ -54,11 +54,13 @@ const ATTACHMENT_TEXT_EXTS = new Set([
 /** office/pdf formats extract text via @hermesoffice/file-parse; images skip text extraction and go multimodal (slides:files-read-image) */
 const ATTACHMENT_EXTS = new Set([
   ...ATTACHMENT_TEXT_EXTS,
+  'doc',
   'docx',
   'pdf',
   'pptx',
   'ppt',
   'xlsx',
+  'xlsm',
   'xls',
   ...ATTACHMENT_IMAGE_EXTS,
 ])

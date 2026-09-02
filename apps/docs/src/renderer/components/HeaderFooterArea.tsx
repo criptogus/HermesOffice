@@ -7,8 +7,15 @@ import {
   type Run,
 } from '@hermesoffice/docx-engine'
 import { useI18n } from '../i18n/locale'
-import { hfUsesLegacyHash } from '../editor/hf-dom'
-import { cssDualFontFamily, cssFontFamily } from '../line-metrics'
+import {
+  hfLeadIndentCss,
+  hfSegLeftCss,
+  hfTabSegments,
+  hfUsesLegacyHash,
+  paraBorderCss,
+} from '../editor/hf-dom'
+import { applyHfText, hfEditText, hfParasOf, PAGE_TOKEN } from '../editor/hf-text'
+import { cssRunFontFamily, runLetterSpacingCss } from '../line-metrics'
 
 export interface HfValue {
   text: string
@@ -16,31 +23,50 @@ export interface HfValue {
   paras?: HfParagraph[]
 }
 
-/** visible edit-surface stand-ins for the invisible private-use field sentinels */
-const PAGE_TOKEN = '{PAGE}'
-const TOTAL_TOKEN = '{NUMPAGES}'
-
 function runStyle(run: Run): React.CSSProperties {
   const style: React.CSSProperties = {}
   if (run.bold) style.fontWeight = 600
+  else if (run.bold === false) style.fontWeight = 'normal'
   if (run.italic) style.fontStyle = 'italic'
+  else if (run.italic === false) style.fontStyle = 'normal'
   if (run.underline) style.textDecoration = 'underline'
   if (run.strike) style.textDecoration = `${style.textDecoration ?? ''} line-through`.trim()
   if (run.color) style.color = `#${run.color}`
   if (run.sizeHalfPoints) style.fontSize = `${run.sizeHalfPoints / 2}pt`
-  if (run.font && run.fontAscii) style.fontFamily = cssDualFontFamily(run.fontAscii, run.font)
-  else if (run.font || run.fontAscii) style.fontFamily = cssFontFamily((run.font ?? run.fontAscii)!)
+  const letterSpacing = runLetterSpacingCss(run)
+  if (letterSpacing) style.letterSpacing = letterSpacing
+  if (run.font || run.fontAscii) style.fontFamily = cssRunFontFamily(run.fontAscii, run.font)
+  if (run.caps === 'all') style.textTransform = 'uppercase'
+  else if (run.caps === 'small') style.fontVariantCaps = 'small-caps'
+  else if (run.caps === 'none') {
+    style.textTransform = 'none'
+    style.fontVariantCaps = 'normal'
+  }
   return style
 }
 
-/** effective paragraphs: rich paras when present, else the legacy single line */
-function parasOf(value: HfValue): HfParagraph[] {
-  if (value.paras?.length) return value.paras
-  const runs: Run[] = value.text ? [{ text: value.text }] : []
-  if (value.pageNumber && !value.text.includes('#') && !value.text.includes(PAGE_MARK)) {
-    runs.push({ text: runs.length > 0 ? ` ${PAGE_MARK}` : PAGE_MARK })
+/** document content colors (w:shd / w:pBdr), theme-independent; mirrors makeGapHfEl */
+function paraStyle(para: HfParagraph): React.CSSProperties {
+  const style: React.CSSProperties = {}
+  if (para.bidi) style.direction = 'rtl'
+  if (para.align) {
+    style.textAlign =
+      para.align === 'left' || para.align === 'center' || para.align === 'right'
+        ? para.align
+        : 'justify'
   }
-  return [{ align: 'center', runs }]
+  // frame placement wins over the paragraph's own jc (mirrors makeGapHfEl)
+  if (para.frameXAlign) style.textAlign = para.frameXAlign
+  if (para.shadingFill) style.backgroundColor = `#${para.shadingFill}`
+  if (para.borders) {
+    const line = (side: 't' | 'b' | 'l' | 'r') => paraBorderCss(para.borderLines?.[side])
+    if (para.borders.includes('t')) style.borderTop = line('t')
+    if (para.borders.includes('b')) style.borderBottom = line('b')
+    if (para.borders.includes('l')) style.borderLeft = line('l')
+    if (para.borders.includes('r')) style.borderRight = line('r')
+    style.padding = '1px 4px'
+  }
+  return style
 }
 
 /**
@@ -57,6 +83,7 @@ export function HeaderFooterArea({
   onCommit,
   pageNo,
   pageTotal,
+  style,
 }: {
   kind: 'header' | 'footer'
   value: HfValue
@@ -68,13 +95,15 @@ export function HeaderFooterArea({
   pageNo?: number | string
   /** Total page count shown for TOTAL_PAGES_MARK (NUMPAGES field), defaults to 1 */
   pageTotal?: number
+  /** geometry override: on differing-width sections the strip is pinned to its own section's box */
+  style?: React.CSSProperties
 }) {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const editRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef(false)
   const initialTextRef = useRef('')
-  const paras = parasOf(value)
+  const paras = hfParasOf(value)
 
   // The editing surface is a standalone element: content is injected here and React
   // does not manage its children; after commit the whole element unmounts, so text
@@ -84,12 +113,7 @@ export function HeaderFooterArea({
     const el = editRef.current
     if (!el) return
     // table-row (cells) paragraphs stay out of the text editing flow
-    el.innerText = paras
-      .filter((p) => !p.cells)
-      .map((p) => p.runs.map((r) => r.text).join(''))
-      .join('\n')
-      .replaceAll(PAGE_MARK, PAGE_TOKEN)
-      .replaceAll(TOTAL_PAGES_MARK, TOTAL_TOKEN)
+    el.innerText = hfEditText(value)
     cancelRef.current = false
     initialTextRef.current = el.innerText
     el.focus()
@@ -110,29 +134,7 @@ export function HeaderFooterArea({
       return
     }
     if (el.innerText === initialTextRef.current) return
-    const lines = el.innerText
-      .replace(/\n+$/, '')
-      .replaceAll(PAGE_TOKEN, PAGE_MARK)
-      .replaceAll(TOTAL_TOKEN, TOTAL_PAGES_MARK)
-      .split('\n')
-    const textParas = paras.filter((p) => !p.cells)
-    const templates: HfParagraph[] =
-      textParas.length > 0 ? textParas : [{ align: 'center', runs: [] }]
-    const edited: HfParagraph[] = lines.map((line, i) => {
-      const template = templates[Math.min(i, templates.length - 1)]
-      const style = template.runs[0] ?? {}
-      return { ...template, runs: line === '' ? [] : [{ ...style, text: line }] }
-    })
-    // splice cells rows back at their original positions among the text paragraphs
-    const nextParas: HfParagraph[] = []
-    let ei = 0
-    for (const p of paras) {
-      if (p.cells) nextParas.push(p)
-      else if (ei < edited.length) nextParas.push(edited[ei++])
-    }
-    nextParas.push(...edited.slice(ei))
-    const text = edited.map((p) => p.runs.map((r) => r.text).join('')).join('')
-    onCommit({ ...value, text, paras: nextParas })
+    onCommit(applyHfText(value, el.innerText))
   }
 
   const display = (text: string) => {
@@ -145,7 +147,8 @@ export function HeaderFooterArea({
   return (
     <div
       className={`page-hf page-hf-${kind}${editing ? ' page-hf-editing' : ''}`}
-      title={
+      style={style}
+      data-tip={
         readOnly
           ? undefined
           : t(kind === 'header' ? 'appDblclickEditHeader' : 'appDblclickEditFooter') +
@@ -159,20 +162,32 @@ export function HeaderFooterArea({
         if (!readOnly && !editing) setEditing(true)
       }}
     >
-      {images && images.length > 0 && (
-        <div className="page-hf-images" contentEditable={false}>
-          {images.map((img, i) => (
-            <img
-              key={i}
-              src={img.dataUrl}
-              alt=""
-              draggable={false}
-              style={{
-                ...(img.widthPx ? { width: img.widthPx } : {}),
-                ...(img.heightPx ? { height: img.heightPx } : {}),
-              }}
-            />
-          ))}
+      {images && images.some((im) => !im.floating) && (
+        <div
+          className="page-hf-images"
+          contentEditable={false}
+          style={
+            images.find((im) => !im.floating)?.align === 'right'
+              ? { justifyContent: 'flex-end' }
+              : images.find((im) => !im.floating)?.align === 'center'
+                ? { justifyContent: 'center' }
+                : undefined
+          }
+        >
+          {images
+            .filter((img) => !img.floating)
+            .map((img, i) => (
+              <img
+                key={i}
+                src={img.dataUrl}
+                alt=""
+                draggable={false}
+                style={{
+                  ...(img.widthPx ? { width: img.widthPx } : {}),
+                  ...(img.heightPx ? { height: img.heightPx } : {}),
+                }}
+              />
+            ))}
         </div>
       )}
       {editing ? (
@@ -217,6 +232,8 @@ function HfContent({
                 className="page-hf-cell"
                 style={{
                   ...(cell.widthPct ? { width: `${cell.widthPct}%` } : {}),
+                  // document content color (w:shd), theme-independent
+                  ...(cell.fill ? { backgroundColor: `#${cell.fill}` } : {}),
                   ...(cell.align
                     ? {
                         textAlign:
@@ -227,37 +244,85 @@ function HfContent({
                     : {}),
                 }}
               >
-                {cell.runs.map((run, k) => (
-                  <span key={k} style={runStyle(run)}>
-                    {display(run.text)}
-                  </span>
+                {/* one block line per cell paragraph (mirrors makeGapHfEl) */}
+                {(cell.paras.length > 0 ? cell.paras : [[]]).map((runs, k) => (
+                  <div key={k} className="page-hf-cell-para">
+                    {runs.length === 0 ? ' ' : null}
+                    {runs.map((run, l) => (
+                      <span key={l} style={runStyle(run)}>
+                        {run.image && (
+                          <img
+                            className="page-hf-cell-img"
+                            src={run.image.dataUrl}
+                            alt=""
+                            draggable={false}
+                            style={{
+                              ...(run.image.widthPx ? { width: run.image.widthPx } : {}),
+                              ...(run.image.heightPx ? { height: run.image.heightPx } : {}),
+                            }}
+                          />
+                        )}
+                        {display(run.text)}
+                      </span>
+                    ))}
+                  </div>
                 ))}
               </div>
             ))}
           </div>
         ) : (
-          <div
-            key={i}
-            className="page-hf-para"
-            style={{
-              ...(para.bidi ? { direction: 'rtl' as const } : {}),
-              ...(para.align
-                ? {
-                    textAlign:
-                      para.align === 'left' || para.align === 'center' || para.align === 'right'
-                        ? para.align
-                        : ('justify' as const),
-                  }
-                : {}),
-            }}
-          >
-            {para.runs.length === 0 ? ' ' : null}
-            {para.runs.map((run, j) => (
-              <span key={j} style={runStyle(run)}>
-                {display(run.text)}
-              </span>
-            ))}
-          </div>
+          (() => {
+            const tabbed = hfTabSegments(para, display)
+            if (!tabbed) {
+              return (
+                <div
+                  key={i}
+                  className={`page-hf-para${para.frameXAlign ? ' page-hf-frame' : ''}`}
+                  style={paraStyle(para)}
+                >
+                  {para.runs.length === 0 ? ' ' : null}
+                  {para.runs.map((run, j) => (
+                    <span key={j} style={runStyle(run)}>
+                      {display(run.text)}
+                    </span>
+                  ))}
+                </div>
+              )
+            }
+            const leadIndent = hfLeadIndentCss(tabbed)
+            return (
+              <div
+                key={i}
+                className={`page-hf-para page-hf-tabbed${para.frameXAlign ? ' page-hf-frame' : ''}`}
+                style={{
+                  ...paraStyle(para),
+                  ...(tabbed.minHeightPt ? { minHeight: `${tabbed.minHeightPt}pt` } : {}),
+                  // tab layout happens in left-aligned space; w:jc becomes an explicit shift
+                  textAlign: 'left',
+                  ...(leadIndent ? { textIndent: leadIndent } : {}),
+                }}
+              >
+                {tabbed.lead.map((run, j) => (
+                  <span key={j} style={runStyle(run)}>
+                    {display(run.text)}
+                  </span>
+                ))}
+                {tabbed.segments.map((seg, k) => (
+                  <span
+                    key={`t${k}`}
+                    className={`page-hf-tabseg page-hf-tabseg-${seg.anchor}`}
+                    style={{ left: hfSegLeftCss(seg, tabbed) }}
+                  >
+                    {seg.runs.map((run, j) => (
+                      <span key={j} style={runStyle(run)}>
+                        {display(run.text)}
+                      </span>
+                    ))}
+                  </span>
+                ))}
+              </div>
+            )
+          })()
         ),
       )}
     </>

@@ -5,6 +5,7 @@ import type { ChangePlan } from '../../domain/workbook.types'
 import { ATTACHMENT_IMAGE_EXTS, type AttachmentMeta } from '../../shared/desktop-api'
 import { useI18n, type TFunc } from '../i18n/locale'
 import { Markdown } from '@hermesoffice/ui'
+import { SHEET_NAV_SCHEME } from './sheet-nav'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -32,7 +33,7 @@ const PASTE_MIME_EXT: Record<string, string> = {
  *  attachment allowlist doesn't accept yet are mapped ahead so they light up when added */
 const ATTACHMENT_CARD_ICON_GROUPS: [icon: string, exts: string[]][] = [
   [fileWordIcon, ['doc', 'docx']],
-  [fileExcelIcon, ['xls', 'xlsx', 'csv', 'tsv']],
+  [fileExcelIcon, ['xls', 'xlsx', 'xlsm', 'csv', 'tsv']],
   [filePptIcon, ['ppt', 'pptx']],
   [filePdfIcon, ['pdf']],
   [fileImageIcon, ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'heic']],
@@ -102,6 +103,16 @@ function truncateCardName(name: string): string {
   return `${name.slice(0, lo).replace(/[-_.\s]+$/, '')}…`
 }
 
+/** Name the scope the way the user thinks of it: by column header when the
+ *  selection covers whole columns, by range only when it cannot be named. */
+function scopeLabel(range: string, columns: readonly string[] | null, t: TFunc): string {
+  if (columns?.length === 1) return t('aiScopeColumn', { name: columns[0] ?? '' })
+  if (columns && columns.length > 1) {
+    return t('aiScopeColumns', { names: columns.join(', '), count: columns.length })
+  }
+  return t('aiScopeRange', { range })
+}
+
 function formatAttachmentSize(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / (1024 * 1024)).toFixed(2)} MB`
@@ -151,12 +162,19 @@ const PANEL_WIDTH_KEY = 'sheets-ai-panel-width'
 const PANEL_WIDTH_MIN = 280
 
 function clampPanelWidth(w: number): number {
-  return Math.min(Math.max(w, PANEL_WIDTH_MIN), Math.min(720, Math.round(window.innerWidth * 0.6)))
+  // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
+  // shell lays it out), so never let the ceiling drop below the minimum
+  const max = Math.max(PANEL_WIDTH_MIN, Math.min(720, Math.round(window.innerWidth * 0.6)))
+  return Math.min(Math.max(w, PANEL_WIDTH_MIN), max)
 }
 
 function loadPanelWidth(): number | null {
   const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-  return Number.isFinite(saved) && saved > 0 ? clampPanelWidth(saved) : null
+  // static bounds only — clamping against the window here would bake a
+  // transiently small viewport into the restored preference
+  return Number.isFinite(saved) && saved > 0
+    ? Math.min(Math.max(saved, PANEL_WIDTH_MIN), 720)
+    : null
 }
 
 export interface AiToolChip {
@@ -178,10 +196,12 @@ export interface AiChatMessage {
   readonly isError?: boolean | undefined
   /** the run failed and this user message was rolled back out of the model context */
   readonly undelivered?: boolean | undefined
+  /** this user message was written to the project-store chat log (Retry re-persists when it wasn't) */
+  readonly persisted?: boolean | undefined
   /** the run failed because Genspark is signed out — render an inline sign-in button */
   readonly loginRequired?: boolean | undefined
   /** Set when this message reflects an auto-applied plan; renders an inline [Undo] button. */
-  readonly autoApplied?: { readonly opCount: number } | undefined
+  readonly autoApplied?: { readonly opCount: number; readonly undoSteps: number } | undefined
   /** attachments consumed from the composer by this user message (read-only echo chips) */
   readonly attachments?: readonly AttachmentMeta[] | undefined
 }
@@ -205,6 +225,11 @@ export function AiChatPanel({
   onStop,
   onNewChat,
   onUndo,
+  scopeRange,
+  scopeColumns,
+  scopeLocked,
+  onScopeDismiss,
+  onCitation,
   onExpand,
   onCollapse,
 }: {
@@ -228,11 +253,29 @@ export function AiChatPanel({
   readonly aiBusy: boolean
   readonly onPromptChange: (prompt: string) => void
   /** Send the composer text, or the given instruction when provided (used by the
-   *  failed-run Retry, which also resends the message's original attachments) */
-  readonly onSend: (instruction?: string, attachments?: readonly AttachmentMeta[]) => void
+   *  failed-run Retry, which also resends the message's original attachments;
+   *  retryIndex is the failed bubble's chat index so the send replaces it in place) */
+  readonly onSend: (
+    instruction?: string,
+    attachments?: readonly AttachmentMeta[],
+    retryIndex?: number,
+  ) => void
   readonly onStop: () => void
   readonly onNewChat: () => void
-  readonly onUndo: () => void
+  readonly onUndo: (steps: number) => void
+  /** A1 notation of the range this run is scoped to, or null when there is no
+   *  scope — a resting single-cell selection carries no intent worth showing,
+   *  and dismissing the chip clears it until the next selection change */
+  readonly scopeRange: string | null
+  /** header names when the scope covers whole columns; they label the chip in
+   *  place of the range */
+  readonly scopeColumns: readonly string[] | null
+  /** the range belongs to a run in flight: it is what that run targets, so it
+   *  is shown without the dismiss control */
+  readonly scopeLocked: boolean
+  readonly onScopeDismiss: () => void
+  /** citation link in an answer ([B12](sheetnav://B12)) */
+  readonly onCitation: (href: string) => void
   readonly onExpand: () => void
   readonly onCollapse: () => void
 }): React.JSX.Element {
@@ -295,23 +338,30 @@ export function AiChatPanel({
     if (aiBusy) busyStartRef.current = Date.now()
   }, [aiBusy])
 
+  // preferred = the user's chosen width (the only value persisted); the CSS var
+  // gets the clamped display width. Deriving the display width from the
+  // preference means a transiently small window never permanently shrinks the panel.
+  const preferredWidthRef = useRef<number | null>(null)
+
   // Restore the persisted panel width (the grid column tracks --copilot-width on .sheet-body)
   useEffect(() => {
     if (!isOpen) return
     const saved = loadPanelWidth()
     if (saved === null) return
+    preferredWidthRef.current = saved
     const area = asideRef.current?.closest('.sheet-body') as HTMLElement | null
-    area?.style.setProperty('--copilot-width', `${saved}px`)
+    area?.style.setProperty('--copilot-width', `${clampPanelWidth(saved)}px`)
   }, [isOpen])
 
-  // Re-clamp the panel width when the window shrinks (max is 60% of the window)
+  // Re-derive the display width on window resize (max is 60% of the window);
+  // growing the window back restores the preferred width
   useEffect(() => {
     if (!isOpen) return
     const onResize = (): void => {
       const area = asideRef.current?.closest('.sheet-body') as HTMLElement | null
-      const current = parseFloat(area?.style.getPropertyValue('--copilot-width') ?? '')
-      if (!area || !Number.isFinite(current)) return
-      area.style.setProperty('--copilot-width', `${clampPanelWidth(current)}px`)
+      const preferred = preferredWidthRef.current
+      if (!area || preferred === null) return
+      area.style.setProperty('--copilot-width', `${clampPanelWidth(preferred)}px`)
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -340,6 +390,7 @@ export function AiChatPanel({
     let width = 0
     const onMove = (ev: PointerEvent): void => {
       width = clampPanelWidth(ev.clientX)
+      preferredWidthRef.current = width
       area.style.setProperty('--copilot-width', `${width}px`)
     }
     let done = false
@@ -388,6 +439,9 @@ export function AiChatPanel({
   }
 
   const canSend = prompt.trim().length > 0 && !aiBusy
+
+  /** [B12](sheetnav://B12) links in answers jump the grid to the cited range */
+  const citationNav = { scheme: SHEET_NAV_SCHEME, onNavigate: onCitation }
 
   const send = (): void => {
     if (!canSend) return
@@ -481,7 +535,7 @@ export function AiChatPanel({
                   <SentAttachments atts={entry.attachments} previews={attachmentPreviews} />
                 )}
                 {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} />}
+                {entry.text && <Markdown text={entry.text} nav={citationNav} />}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
@@ -514,7 +568,7 @@ export function AiChatPanel({
                     {!aiBusy && (
                       <button
                         className="ai-retry-btn"
-                        onClick={() => onSend(entry.text, entry.attachments ?? [])}
+                        onClick={() => onSend(entry.text, entry.attachments ?? [], index)}
                       >
                         {t('aiRetry')}
                       </button>
@@ -526,7 +580,7 @@ export function AiChatPanel({
               <>
                 {entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
                 {entry.text ? (
-                  <Markdown text={entry.text} />
+                  <Markdown text={entry.text} nav={citationNav} />
                 ) : (
                   entry.streaming && (
                     <span className="ai-typing-row">
@@ -541,17 +595,27 @@ export function AiChatPanel({
                     <span className="ai-auto-applied-text">
                       {t('aiAutoApplied', { count: entry.autoApplied.opCount })}
                     </span>
-                    <button className="ai-undo-btn" onClick={onUndo} data-tip={t('aiUndoTitle')}>
-                      {t('aiUndo')}
-                    </button>
+                    {/* undoSteps 0 = the batch exceeded the undo budget and
+                        kept no stack entry; a forced 1-step undo would revert
+                        the user's own previous action instead. */}
+                    {(entry.autoApplied.undoSteps ?? 1) > 0 && (
+                      <button
+                        className="ai-undo-btn"
+                        onClick={() => onUndo(Math.max(1, entry.autoApplied?.undoSteps ?? 1))}
+                        data-tip={t('aiUndoTitle')}
+                      >
+                        {t('aiUndo')}
+                      </button>
+                    )}
                   </div>
                 )}
                 {entry.loginRequired && (
-                  // Fork: login do agente é via gateway Hermes (sem fluxo Genspark) —
-                  // o prompt de login não se aplica; a ribbon mostra o status do gateway.
-                  <span className="ai-login-btn" role="status">
-                    {t('aiGatewayLoginBtn')}
-                  </span>
+                  <button
+                    className="ai-login-btn"
+                    onClick={() => void window.desktopApi.aiGskLogin()}
+                  >
+                    {t('aiGskLoginBtn')}
+                  </button>
                 )}
               </>
             )}
@@ -611,75 +675,107 @@ export function AiChatPanel({
         {attachNotice && <div className="ai-attach-notice">{attachNotice}</div>}
         <AiComposer
           header={
-            attachments.length > 0 && (
-              <div className="ai-attachments" onScroll={onAttachmentsScroll}>
-                {attachments.map((attachment) =>
-                  ATTACHMENT_IMAGE_EXTS.has(attachment.ext) ? (
-                    <span
-                      key={attachment.path}
-                      className="ai-attachment-thumb"
-                      data-tip={attachment.path}
-                    >
-                      {attachmentPreviews[attachment.path] ? (
-                        <img src={attachmentPreviews[attachment.path]} alt={attachment.name} />
-                      ) : (
-                        <span className="ai-attachment-thumb-pending" aria-hidden>
-                          <img src={fileImageIcon} alt="" />
-                        </span>
-                      )}
+            <>
+              {/* Only a deliberate multi-cell selection shows here: it tells the
+                  user what "this column / these rows" will resolve to, and the
+                  send freezes it so mid-run clicking cannot retarget the run.
+                  While that frozen scope is what shows, dropping it could not
+                  change the run any more, so the × goes away with it. */}
+              {scopeRange !== null && (
+                <div className="ai-scope-row">
+                  <span
+                    className={`ai-scope-hint${scopeLocked ? ' is-locked' : ''}`}
+                    data-tip={t('aiScopeRangeTip')}
+                  >
+                    {scopeLabel(scopeRange, scopeColumns, t)}
+                    {!scopeLocked && (
                       <button
-                        className="ai-attachment-thumb-remove"
-                        onClick={() => onRemoveAttachment(attachment.path)}
-                        data-tip={t('aiRemoveAttachment')}
-                        aria-label={t('aiRemoveAttachment')}
+                        className="ai-scope-clear"
+                        onClick={onScopeDismiss}
+                        data-tip={t('aiScopeClearTitle')}
+                        aria-label={t('aiScopeClearTitle')}
                       >
-                        <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                        <svg width="12" height="12" viewBox="0 0 32 32" aria-hidden>
                           <path
                             d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
                             fill="currentColor"
-                            stroke="currentColor"
-                            strokeWidth="0.25"
                           />
                         </svg>
                       </button>
-                    </span>
-                  ) : (
-                    <span
-                      key={attachment.path}
-                      className="ai-attachment-card"
-                      data-tip={attachment.path}
-                    >
-                      <span className="ai-attachment-card-icon">
-                        <AttachmentCardIcon ext={attachment.ext} />
-                      </span>
-                      <span className="ai-attachment-card-meta">
-                        <span className="ai-attachment-card-name">
-                          {truncateCardName(attachment.name)}
-                        </span>
-                        <span className="ai-attachment-card-size">
-                          {formatAttachmentSize(attachment.sizeBytes)}
-                        </span>
-                      </span>
-                      <button
-                        className="ai-attachment-thumb-remove"
-                        onClick={() => onRemoveAttachment(attachment.path)}
-                        data-tip={t('aiRemoveAttachment')}
-                        aria-label={t('aiRemoveAttachment')}
+                    )}
+                  </span>
+                </div>
+              )}
+              {attachments.length > 0 && (
+                <div className="ai-attachments" onScroll={onAttachmentsScroll}>
+                  {attachments.map((attachment) =>
+                    ATTACHMENT_IMAGE_EXTS.has(attachment.ext) ? (
+                      <span
+                        key={attachment.path}
+                        className="ai-attachment-thumb"
+                        data-tip={attachment.path}
                       >
-                        <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
-                          <path
-                            d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
-                            fill="currentColor"
-                            stroke="currentColor"
-                            strokeWidth="0.25"
-                          />
-                        </svg>
-                      </button>
-                    </span>
-                  ),
-                )}
-              </div>
-            )
+                        {attachmentPreviews[attachment.path] ? (
+                          <img src={attachmentPreviews[attachment.path]} alt={attachment.name} />
+                        ) : (
+                          <span className="ai-attachment-thumb-pending" aria-hidden>
+                            <img src={fileImageIcon} alt="" />
+                          </span>
+                        )}
+                        <button
+                          className="ai-attachment-thumb-remove"
+                          onClick={() => onRemoveAttachment(attachment.path)}
+                          data-tip={t('aiRemoveAttachment')}
+                          aria-label={t('aiRemoveAttachment')}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                            <path
+                              d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
+                              fill="currentColor"
+                              stroke="currentColor"
+                              strokeWidth="0.25"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                    ) : (
+                      <span
+                        key={attachment.path}
+                        className="ai-attachment-card"
+                        data-tip={attachment.path}
+                      >
+                        <span className="ai-attachment-card-icon">
+                          <AttachmentCardIcon ext={attachment.ext} />
+                        </span>
+                        <span className="ai-attachment-card-meta">
+                          <span className="ai-attachment-card-name">
+                            {truncateCardName(attachment.name)}
+                          </span>
+                          <span className="ai-attachment-card-size">
+                            {formatAttachmentSize(attachment.sizeBytes)}
+                          </span>
+                        </span>
+                        <button
+                          className="ai-attachment-thumb-remove"
+                          onClick={() => onRemoveAttachment(attachment.path)}
+                          data-tip={t('aiRemoveAttachment')}
+                          aria-label={t('aiRemoveAttachment')}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden>
+                            <path
+                              d="M24 9.4L22.6 8L16 14.6L9.4 8L8 9.4l6.6 6.6L8 22.6L9.4 24l6.6-6.6l6.6 6.6l1.4-1.4l-6.6-6.6L24 9.4z"
+                              fill="currentColor"
+                              stroke="currentColor"
+                              strokeWidth="0.25"
+                            />
+                          </svg>
+                        </button>
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
+            </>
           }
           value={prompt}
           busy={aiBusy}

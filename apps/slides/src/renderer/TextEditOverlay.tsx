@@ -5,10 +5,11 @@
  * paragraph/run structure (each run's format preserved independently) and go through IPC editText.
  */
 import React, { useEffect, useRef } from 'react'
+import { DEFAULT_INSETS_EMU, emuToPx } from '@hermesoffice/pptx-render'
 import type { GlyphRun, ShapeRenderNode, TextLine } from '@hermesoffice/pptx-render'
 import type { EditParagraph, EditRun, LinkTargetOp } from '../shared/ipc'
 import { decodeLinkTarget, encodeLinkTarget } from '../shared/run-link'
-import { displayFontFamily } from './konva-adapter'
+import { displayFontFamily, konvaBaselineDrop } from './konva-adapter'
 import { ZOOM_PREVIEW_EVENT } from './zoom-preview'
 import { FONT_SIZES } from './components/ribbon-shared'
 
@@ -31,6 +32,22 @@ interface Props {
   frameColor?: string
   /** Canvas CSS zoom: the outline divides by it to keep a constant on-screen weight */
   zoom?: number
+}
+
+/** First-strong-character inference over a paragraph's logical text (mirrors what dir="auto" does). */
+function inferParaRtl(paraLines: TextLine[]): boolean {
+  const runs = paraLines
+    .flatMap((l) => l.runs)
+    .filter((r) => !r.isBullet)
+    .sort((a, b) => (a.logicalOrder ?? 0) - (b.logicalOrder ?? 0))
+  for (const r of runs) {
+    for (const ch of r.text) {
+      if (/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/.test(ch)) return true
+      // eslint-disable-next-line no-misleading-character-class -- broad strong-LTR ranges; combining marks inside are irrelevant for a per-char strong-direction probe
+      if (/[A-Za-z\u00c0-\u058f\u0900-\ud7ff\uf900-\ufdcf]/.test(ch)) return false
+    }
+  }
+  return false
 }
 
 /** Layout lines → paragraph grouping (paraStart marks wrap boundaries; missing means an independent paragraph, backward compatible). */
@@ -110,38 +127,6 @@ function browserFontBox(
   return m
 }
 
-/** Where the canvas actually draws the baseline, relative to the engine's baselineY.
- * The Konva adapter positions Text by top = baselineY − 0.8em, and Konva paints with
- * canvas2d 'middle' semantics — so the visible baseline lands at top + emHeightAscent,
- * i.e. engineBaseline + (emHeightAscent − 0.8em). ≈0 for Latin sans (the 0.8 was tuned
- * for it) but several px for CJK/serif metrics; the editor must match the pixels. */
-let baselineDropCtx: CanvasRenderingContext2D | null = null
-const baselineDropCache = new Map<string, number>()
-function konvaBaselineDrop(
-  family: string,
-  sizePx: number,
-  bold?: boolean,
-  italic?: boolean,
-): number {
-  const key = `${family}|${Math.round(sizePx * 10)}|${bold ? 'b' : ''}${italic ? 'i' : ''}`
-  const hit = baselineDropCache.get(key)
-  if (hit !== undefined) return hit
-  baselineDropCtx ??= document.createElement('canvas').getContext('2d')
-  if (!baselineDropCtx) return 0
-  const ctx = baselineDropCtx
-  ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${sizePx}px ${family}`
-  // Same ink measured from both baselines: the ascent difference IS the exact distance
-  // from the 'middle' anchor down to the alphabetic baseline for this font (measuring
-  // beats modelling — Chromium derives 'middle' from per-font metrics)
-  ctx.textBaseline = 'alphabetic'
-  const a1 = ctx.measureText('Hg').actualBoundingBoxAscent
-  ctx.textBaseline = 'middle'
-  const a2 = ctx.measureText('Hg').actualBoundingBoxAscent
-  const drop = a1 > 0 || a2 > 0 ? sizePx / 2 + (a1 - a2) - 0.8 * sizePx : 0
-  baselineDropCache.set(key, drop)
-  return drop
-}
-
 /**
  * Layout lines → the editor's initial DOM: one <div> per model paragraph (data-src-para records
  * the source paragraph index, with paragraph alignment); wrap/word-split fragments merged back
@@ -153,6 +138,10 @@ function konvaBaselineDrop(
  * into height, spcBef/spcAft baked into gaps in line tops), so editing's vertical metrics match the canvas.
  * anchorDy = the whole offset that middle/bottom anchoring bakes into line tops (editing implements
  * anchoring with flex, so it must be removed from the first paragraph's top or the offset doubles).
+ * vertical = bodyPr vert editing (the contentEditable is in writing-mode: vertical-rl): layout
+ * "lines" are columns whose top/height/advance are column metrics, so every horizontal-flow
+ * baking (line-height, paragraph gaps, baseline/alignment compensation, fragment advances) is
+ * skipped and the browser lays the text out vertically itself.
  * Exported so tests can do "layout → DOM → extractParagraphs" round-trip assertions.
  */
 export function populateEditorDom(
@@ -160,6 +149,7 @@ export function populateEditorDom(
   lines: TextLine[],
   anchorDy = 0,
   innerW?: number,
+  vertical = false,
 ): void {
   div.innerHTML = ''
   delete div.dataset.layoutReleased
@@ -180,27 +170,35 @@ export function populateEditorDom(
     p.dataset.srcPara = String(pi)
     const first = paraLines[0]!
     const last = paraLines[paraLines.length - 1]!
-    p.style.lineHeight = `${first.height}px`
-    const gap = first.top - prevEnd
-    if (Math.abs(gap) > 0.01) p.style.marginTop = `${gap}px`
-    prevEnd = last.top + last.height
-    // RTL paragraphs (Arabic/Hebrew) align in editing as on canvas: the browser sets direction by the first strong character
-    p.dir = 'auto'
+    if (!vertical) {
+      p.style.lineHeight = `${first.advance ?? first.height}px`
+      const gap = first.top - prevEnd
+      if (Math.abs(gap) > 0.01) p.style.marginTop = `${gap}px`
+    }
+    // The DOM block ends one advance below the last line top (external leading renders
+    // inside the block, unlike the canvas) — margins of following paragraphs compensate
+    prevEnd = last.top + (last.advance ?? last.height)
+    // RTL paragraphs (Arabic/Hebrew) align in editing as on canvas: the browser sets direction
+    // by the first strong character. An explicit a:pPr rtl can disagree with that inference
+    // (TextLine.rtl carries the effective base) — then the browser needs an explicit dir
+    const effRtl = first.rtl === true
+    p.dir = effRtl === inferParaRtl(paraLines) ? 'auto' : effRtl ? 'rtl' : 'ltr'
     const align = paraLines[0]?.align
     if (align) p.style.textAlign = align
     // Body text starts at marL, exactly like the canvas (lists/indent used to snap to the
     // inset edge on entering edit); first-line indent applies only without a bullet
-    const marL = first.marLPx ?? 0
+    const marL = (!vertical && first.marLPx) || 0
     if (marL) p.style.marginLeft = `${marL}px`
-    const indentPx = first.indentPx ?? 0
+    const indentPx = (!vertical && first.indentPx) || 0
     if (indentPx && !first.runs.some((r) => r.isBullet)) p.style.textIndent = `${indentPx}px`
     // ── Glyph-position fidelity vs the canvas renderer ──
     // Vertical: the canvas draws the dominant run's baseline at
-    // lineTop + engineAscent + konvaBaselineDrop (the adapter's 0.8em top approximation
-    // filtered through Konva's 'middle'-baseline painting); CSS puts the DOM baseline at
-    // half-leading + browser ascent. The difference is several px on CJK/serif or
-    // lnSpc ≠ 100% text and reads as the text jumping when editing starts. Measure both
-    // sides and cancel the difference with a relative offset (flow is unaffected).
+    // lineTop + engineAscent + konvaBaselineDrop (0 for resolved faces, the fallback
+    // font's offset from the legacy 0.8em rule otherwise — see the adapter); CSS puts
+    // the DOM baseline at half-leading + browser ascent. The difference is several px
+    // on fallback-drawn CJK/serif or lnSpc ≠ 100% text and reads as the text jumping
+    // when editing starts. Measure both sides and cancel the difference with a
+    // relative offset (flow is unaffected).
     let engineAscent = 0
     let domBaseline = 0
     let dominant: GlyphRun | null = null
@@ -219,7 +217,8 @@ export function populateEditorDom(
           dominant.italic,
         )
       : 0
-    const canvasBaseline = engineAscent + drop
+    // lnSpc>100%: the canvas pins glyphs to the slot bottom (leadAbove below the line top)
+    const canvasBaseline = (first.leadAbove ?? 0) + engineAscent + drop
     const participants: Array<{ family: string; size: number; bold?: boolean; italic?: boolean }> =
       first.runs.map((r) => ({
         family: displayFontFamily(r.fontFamily ?? ''),
@@ -228,13 +227,17 @@ export function populateEditorDom(
         italic: r.italic,
       }))
     if (strutFont) participants.push({ family: strutFont.family, size: strutFont.size })
+    // Half-leading distributes over the CSS line-height, which is the advance
+    // (box + external leading) when the font has an hhea lineGap
+    const cssLineH = first.advance ?? first.height
     for (const f of participants) {
       if (!f.family || !f.size) continue
       const m = browserFontBox(f.family, f.size, f.bold, f.italic)
       if (!m.height) continue
-      domBaseline = Math.max(domBaseline, (first.height - m.height) / 2 + m.ascent)
+      domBaseline = Math.max(domBaseline, (cssLineH - m.height) / 2 + m.ascent)
     }
-    const dyFix = canvasBaseline > 0 && domBaseline > 0 ? canvasBaseline - domBaseline : 0
+    const dyFix =
+      !vertical && canvasBaseline > 0 && domBaseline > 0 ? canvasBaseline - domBaseline : 0
     // Horizontal: nowrap overflow — the canvas centers/right-aligns within the box and
     // spills both ways; the DOM block is max-content wide and anchored at the box's left.
     // The difference is a constant per box (zero when the content fits or the box wraps).
@@ -252,7 +255,7 @@ export function populateEditorDom(
     if (level) {
       p.dataset.level = String(level)
       // Visual indent hint only when the real marL isn't known (the canvas lays out by marL)
-      if (!marL) p.style.marginLeft = `${level * 24}px`
+      if (!marL && !vertical) p.style.marginLeft = `${level * 24}px`
     }
     // Original bullet kind, for the ribbon's toggle-off semantics while editing
     const bulletRun = first.runs.find((r) => r.isBullet)
@@ -289,6 +292,8 @@ export function populateEditorDom(
             if (run.srcFontFamily) span.dataset.font = run.srcFontFamily
           }
           span.style.color = normalizeCss(run.color)
+          // Text highlight: display-only (extraction never reads it back; the patch path keeps <a:highlight>)
+          if (run.highlight) span.style.backgroundColor = normalizeCss(run.highlight)
           p.appendChild(span)
         }
         const fragment = document.createElement('span')
@@ -297,7 +302,9 @@ export function populateEditorDom(
         // Each fragment occupies the exact advance measured by the layout engine. CJK is normally
         // one grapheme per fragment; Latin/SEA keep their script-aware token boundaries. RTL stays
         // in normal inline flow so Chromium can preserve joining and bidirectional shaping.
-        if (!run.rtl) {
+        // Vertical editing skips fixed advances entirely: the engine's widthPx is a horizontal
+        // measure, and inline-block cells would break writing-mode glyph orientation
+        if (!run.rtl && !vertical) {
           fragment.style.display = 'inline-block'
           fragment.style.width = `${run.widthPx}px`
         }
@@ -415,12 +422,36 @@ export function TextEditOverlay({
   }, [])
 
   const box = node.box
-  const insets = node.text?.insets ?? { l: 0, t: 0, r: 0, b: 0 }
-  const anchor = node.text?.anchor ?? 'top'
+  // A shape with no text body yet: preview the body setText is about to create so the
+  // content does not jump between typing and commit. Every fresh body gets the standard
+  // bodyPr insets (createTextBody writes them unconditionally); only an autoshape also
+  // gets the centered anchor/alignment — keep both halves in step with setText.
+  const freshBody = !node.text && node.type === 'shape'
+  const fresh = freshBody && !node.placeholder && !node.txBox
+  const insets =
+    node.text?.insets ??
+    (freshBody
+      ? {
+          l: emuToPx(DEFAULT_INSETS_EMU.l, scale),
+          t: emuToPx(DEFAULT_INSETS_EMU.t, scale),
+          r: emuToPx(DEFAULT_INSETS_EMU.r, scale),
+          b: emuToPx(DEFAULT_INSETS_EMU.b, scale),
+        }
+      : { l: 0, t: 0, r: 0, b: 0 })
+  const anchor = node.text?.anchor ?? (fresh ? 'middle' : 'top')
   // Editing uses layout viewport px directly (including viewport scale and autofit fontScale): layout height =
   // visual height, so the edit box isn't inflated; on commit extractParagraphs divides by norm back to model pt
   const norm = scale * (node.text?.fontScale ?? 1) || 1
   const wrap = node.text?.wrap !== false
+  // bodyPr vert: edit in a CSS vertical writing mode matching the canvas engine —
+  // eaVert: vertical-rl/mixed (CJK upright, Latin rotated, columns right→left);
+  // wordArtVert: vertical-lr/upright (every glyph upright, stacked, columns left→right);
+  // vert: vertical-rl/sideways (whole block rotated 90° cw, CJK included);
+  // vert270: sideways-lr (whole block rotated 90° ccw, lines flow left→right)
+  const vertMode = node.text?.vert
+  const vertText = !!vertMode
+  // Modes whose line stacking runs left→right (the frame flexes as a plain row there)
+  const vertLtr = vertMode === 'vert270' || vertMode === 'wordArtVert'
   const firstRun =
     node.text?.lines[0]?.runs.find((r) => !r.isBullet) ?? node.text?.lines[0]?.runs[0]
   // Fallback = the layout engine's 18pt default in px, so typing into an empty body
@@ -436,10 +467,21 @@ export function TextEditOverlay({
     const div = ref.current
     if (!div) return
     div.dataset.norm = String(norm) // The ribbon helpers for font size increase/decrease/set take the conversion factor from here
-    // Same anchor offset as the engine (the dy text-layout bakes into line tops), removed back during populate
-    const extraH = Math.max(box.h - insets.t - insets.b, 1) - (node.text?.contentHeight ?? 0)
+    // Same anchor offset as the engine (the dy text-layout bakes into line tops), removed back
+    // during populate — the engine anchors against the glyph extent (inkBottom), so mirror it
+    const extraH =
+      Math.max(box.h - insets.t - insets.b, 1) -
+      (node.text?.inkBottom ?? node.text?.contentHeight ?? 0)
     const anchorDy = anchor === 'middle' ? extraH / 2 : anchor === 'bottom' ? extraH : 0
-    populateEditorDom(div, node.text?.lines ?? [], anchorDy, box.w - insets.l - insets.r)
+    // Vertical: anchoring/overflow compensation are horizontal-flow corrections — the
+    // row-reverse frame flex implements the (right-edge-anchored) flow instead
+    populateEditorDom(
+      div,
+      node.text?.lines ?? [],
+      vertText ? 0 : anchorDy,
+      vertText ? undefined : box.w - insets.l - insets.r,
+      vertText,
+    )
     initialRef.current = JSON.stringify(extractParagraphs(div, norm))
     div.focus()
     const sel = window.getSelection()
@@ -532,9 +574,13 @@ export function TextEditOverlay({
         top: box.y,
         width: box.w,
         height: box.h,
+        transform: `rotate(${box.rotationDeg ?? 0}deg) scale(${box.flipH ? -1 : 1}, ${box.flipV ? -1 : 1})`,
+        transformOrigin: 'center center',
         zIndex: 20,
         display: 'flex',
-        flexDirection: 'column',
+        // Vertical text: the row direction keeps the anchor mapping (top = the
+        // flow-start edge, like the engine's anchoring)
+        flexDirection: vertText ? (vertLtr ? 'row' : 'row-reverse') : 'column',
         justifyContent:
           anchor === 'middle' ? 'center' : anchor === 'bottom' ? 'flex-end' : 'flex-start',
         // 2 device px, zoom-compensated: the canvas is CSS-scaled, and 2 CSS px reads
@@ -634,6 +680,9 @@ export function TextEditOverlay({
           // height); inflating a laid-out body distorts the flex vertical anchor — a
           // middle-anchored single line with tight spacing sat a few px too high in edit
           minHeight: node.text?.lines.length ? undefined : baseFontSize * 1.2 + insets.t + insets.b,
+          // extractParagraphs reads the root alignment back, so the fresh-shape preview
+          // is also what gets committed
+          ...(fresh ? { textAlign: 'center' as const } : {}),
           padding: `${insets.t}px ${insets.r}px ${insets.b}px ${insets.l}px`,
           fontSize: baseFontSize,
           fontFamily: baseFont,
@@ -644,6 +693,31 @@ export function TextEditOverlay({
           caretColor: baseColor,
           boxSizing: 'border-box',
           whiteSpace: wrap ? 'pre-wrap' : 'pre',
+          // Vertical editing: the browser lays out real vertical text (upright CJK, rotated
+          // Latin). The block axis is horizontal, so width follows content (columns) and the
+          // row flex stretch pins the height to the box so wrap breaks columns at box height.
+          ...(vertText
+            ? {
+                writingMode:
+                  vertMode === 'vert270'
+                    ? ('sideways-lr' as const)
+                    : vertMode === 'wordArtVert'
+                      ? ('vertical-lr' as const)
+                      : ('vertical-rl' as const),
+                textOrientation:
+                  vertMode === 'vert'
+                    ? ('sideways' as const)
+                    : vertMode === 'wordArtVert'
+                      ? ('upright' as const)
+                      : ('mixed' as const),
+                width: 'max-content',
+                minWidth: undefined,
+                minHeight: undefined,
+                // Keep natural column width: overflow spills left (the flow direction), it
+                // must not compress into extra column breaks
+                flexShrink: 0,
+              }
+            : {}),
         }}
       />
     </div>
@@ -790,6 +864,7 @@ export function extractParagraphs(root: HTMLElement, norm: number): EditParagrap
       if (sb != null) curFmt.spaceBeforePt = sb
       const sa = num(ds?.spaceAfterPt)
       if (sa != null) curFmt.spaceAfterPt = sa
+      if (ds?.rtl === '1' || ds?.rtl === '0') curFmt.rtl = ds.rtl === '1'
     }
     const style = el.style
     const cs = window.getComputedStyle(el)
@@ -942,6 +1017,7 @@ export function applySelectionParagraphFormat(patch: {
   lineSpacingPct?: number
   spaceBeforePt?: number
   spaceAfterPt?: number
+  rtl?: boolean
 }): boolean {
   const sel = window.getSelection()
   if (!sel?.rangeCount) return false
@@ -979,8 +1055,33 @@ export function applySelectionParagraphFormat(patch: {
     }
     if (patch.spaceBeforePt != null) b.dataset.spaceBeforePt = String(patch.spaceBeforePt)
     if (patch.spaceAfterPt != null) b.dataset.spaceAfterPt = String(patch.spaceAfterPt)
+    if (patch.rtl != null) {
+      b.dataset.rtl = patch.rtl ? '1' : '0'
+      b.dir = patch.rtl ? 'rtl' : 'ltr' // live preview; the canvas re-lays out on commit
+    }
   }
   return true
+}
+
+/** Effective base direction at the editing selection, read from the overlay DOM (computed
+ * direction covers dir="auto" inference and explicit toggles alike). undefined = no overlay
+ * mounted; null = mixed. */
+export function liveRtl(): boolean | null | undefined {
+  const root = document.querySelector('[data-src-para]')?.parentElement
+  if (!(root instanceof HTMLElement)) return undefined
+  const blocks = Array.from(root.children).filter(
+    (el): el is HTMLElement => el instanceof HTMLElement && el.tagName === 'DIV',
+  )
+  if (!blocks.length) return false
+  const sel = window.getSelection()
+  const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null
+  const found = new Set<boolean>()
+  for (const b of blocks) {
+    if (range && !range.intersectsNode(b)) continue
+    found.add(window.getComputedStyle(b).direction === 'rtl')
+  }
+  if (!found.size) for (const b of blocks) found.add(window.getComputedStyle(b).direction === 'rtl')
+  return found.size === 1 ? [...found][0]! : null
 }
 
 /** Bullet-gallery highlight while editing: union of the live paragraph marks across the edit

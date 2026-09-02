@@ -39,6 +39,10 @@
   --sheets-chip-bg: #f3f7f4;
   --sheets-member-bg: #f6f8f7;
   --sheets-member-ink: #5c6660;
+  --sheets-validation-prompt-bg: #ffffe1;
+  --sheets-validation-prompt-border: #808080;
+  --sheets-validation-prompt-ink: #555;
+  --sheets-validation-prompt-shadow: rgb(0 0 0 / 18%);
 
   /* content-side constants: charts, shapes and their selection chrome sit on
    * the paper-like grid and never follow the theme */
@@ -52,15 +56,16 @@
   --sheets-pie-label-in: #fff;
   --sheets-pie-label-out: #444;
   --sheets-pie-label-stroke: rgb(0 0 0 / 25%);
-  --sheets-select-blue: #1f5aa8;
-  --sheets-select-blue-bg: rgb(31 90 168 / 6%);
+  --sheets-select-frame: var(--excel-green);
+  /* Excel-blue grid overlays: formula-audit trace boxes (paired with the
+   * #1f5aa8 arrows in trace-arrows.tsx) and page-break preview lines */
+  --sheets-excel-blue: #1f5aa8;
+  --sheets-excel-blue-bg: rgb(31 90 168 / 6%);
   --sheets-el-selected: #107c41;
   --sheets-float-btn-bg: rgb(255 255 255 / 92%);
   --sheets-shape-border: #aeb4b8;
   --sheets-shape-bg: rgb(255 255 255 / 94%);
   --sheets-shape-ink: #596068;
-  --sheets-shape-err-border: #d9a4a4;
-  --sheets-shape-err-ink: #9a3030;
   --sheets-content-danger: #b42318;
 
   /* dark chips and black translucent masks/shadows hold in both themes */
@@ -123,6 +128,10 @@
   --sheets-chip-bg: #24312a;
   --sheets-member-bg: #2f2f2f;
   --sheets-member-ink: #a9b2ac;
+  --sheets-validation-prompt-bg: #3c3826;
+  --sheets-validation-prompt-border: #8f8663;
+  --sheets-validation-prompt-ink: #f2ecd0;
+  --sheets-validation-prompt-shadow: rgb(0 0 0 / 45%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -151,6 +160,10 @@
     --sheets-chip-bg: #24312a;
     --sheets-member-bg: #2f2f2f;
     --sheets-member-ink: #a9b2ac;
+    --sheets-validation-prompt-bg: #3c3826;
+    --sheets-validation-prompt-border: #8f8663;
+    --sheets-validation-prompt-ink: #f2ecd0;
+    --sheets-validation-prompt-shadow: rgb(0 0 0 / 45%);
   }
 }
 
@@ -174,18 +187,23 @@
 
 /* Cell-content font aliases (document data, theme-independent): without these,
  * Office sans families the OS lacks silently fall back to Chromium's serif
- * default on the grid canvas; local() keeps the real font first if installed. */
+ * default on the grid canvas. local() keeps a real installed font first; the
+ * bundled Carlito (metric-compatible with Calibri) guarantees Excel-matching
+ * widths before the Helvetica/Arial approximations. Canvas fillText never
+ * triggers @font-face downloads, so main.tsx loads these explicitly. */
 @font-face {
   font-family: Aptos;
-  src: local('Aptos'), local('Calibri'), local('Carlito'), local('Helvetica Neue'), local('Arial');
+  src:
+    local('Aptos'), local('Calibri'), local('Carlito'), url('./fonts/Carlito-Regular.ttf'),
+    local('Helvetica Neue'), local('Arial');
 }
 
 @font-face {
   font-family: Aptos;
   font-weight: bold;
   src:
-    local('Aptos Bold'), local('Calibri Bold'), local('Carlito Bold'), local('Helvetica Neue Bold'),
-    local('Arial Bold');
+    local('Aptos Bold'), local('Calibri Bold'), local('Carlito Bold'),
+    url('./fonts/Carlito-Bold.ttf'), local('Helvetica Neue Bold'), local('Arial Bold');
 }
 
 @font-face {
@@ -193,7 +211,7 @@
   font-style: italic;
   src:
     local('Aptos Italic'), local('Calibri Italic'), local('Carlito Italic'),
-    local('Helvetica Neue Italic'), local('Arial Italic');
+    url('./fonts/Carlito-Italic.ttf'), local('Helvetica Neue Italic'), local('Arial Italic');
 }
 
 @font-face {
@@ -202,37 +220,74 @@
   font-style: italic;
   src:
     local('Aptos Bold Italic'), local('Calibri Bold Italic'), local('Carlito Bold Italic'),
-    local('Helvetica Neue Bold Italic'), local('Arial Bold Italic');
-}
-
-@font-face {
-  font-family: Calibri;
-  src: local('Calibri'), local('Carlito'), local('Helvetica Neue'), local('Arial');
-}
-
-@font-face {
-  font-family: Calibri;
-  font-weight: bold;
-  src:
-    local('Calibri Bold'), local('Carlito Bold'), local('Helvetica Neue Bold'), local('Arial Bold');
-}
-
-@font-face {
-  font-family: Calibri;
-  font-style: italic;
-  src:
-    local('Calibri Italic'), local('Carlito Italic'), local('Helvetica Neue Italic'),
-    local('Arial Italic');
-}
-
-@font-face {
-  font-family: Calibri;
-  font-weight: bold;
-  font-style: italic;
-  src:
-    local('Calibri Bold Italic'), local('Carlito Bold Italic'), local('Helvetica Neue Bold Italic'),
+    url('./fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
     local('Arial Bold Italic');
 }
+
+/* 'Aptos Narrow' lives in CELL_FONT_ALIASES (cell-font-fallback.ts): a CSS
+ * face here would shadow the width-corrected substitute for italic runs.
+ * Italics synthesize from the corrected upright faces. */
+
+@font-face {
+  font-family: Carlito;
+  src: local('Carlito'), url('./fonts/Carlito-Regular.ttf');
+}
+
+@font-face {
+  font-family: Carlito;
+  font-weight: bold;
+  src: local('Carlito Bold'), url('./fonts/Carlito-Bold.ttf');
+}
+
+@font-face {
+  font-family: Carlito;
+  font-style: italic;
+  src: local('Carlito Italic'), url('./fonts/Carlito-Italic.ttf');
+}
+
+@font-face {
+  font-family: Carlito;
+  font-weight: bold;
+  font-style: italic;
+  src: local('Carlito Bold Italic'), url('./fonts/Carlito-BoldItalic.ttf');
+}
+
+@font-face {
+  font-family: Calibri;
+  src:
+    local('Calibri'), local('Carlito'), url('./fonts/Carlito-Regular.ttf'), local('Helvetica Neue'),
+    local('Arial');
+}
+
+@font-face {
+  font-family: Calibri;
+  font-weight: bold;
+  src:
+    local('Calibri Bold'), local('Carlito Bold'), url('./fonts/Carlito-Bold.ttf'),
+    local('Helvetica Neue Bold'), local('Arial Bold');
+}
+
+@font-face {
+  font-family: Calibri;
+  font-style: italic;
+  src:
+    local('Calibri Italic'), local('Carlito Italic'), url('./fonts/Carlito-Italic.ttf'),
+    local('Helvetica Neue Italic'), local('Arial Italic');
+}
+
+@font-face {
+  font-family: Calibri;
+  font-weight: bold;
+  font-style: italic;
+  src:
+    local('Calibri Bold Italic'), local('Carlito Bold Italic'),
+    url('./fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
+    local('Arial Bold Italic');
+}
+
+/* Hangul-named cell-font aliases ('맑은 고딕', '돋움') live in
+ * CELL_FONT_ALIASES (cell-font-fallback.ts), which supports the per-script
+ * width correction Malgun Gothic needs. */
 
 * {
   box-sizing: border-box;
@@ -380,6 +435,12 @@ textarea:disabled {
   user-select: none;
 }
 
+/* While a popover is open the row must deliver presses (drag regions swallow
+   them), so outside-press dismissal can see presses on the blank band */
+html.hermesoffice-popover-open .ribbon-tabs {
+  -webkit-app-region: no-drag;
+}
+
 /* standalone-window chrome insets; in a shell tab (mode=tab) the tab strip
    above owns the traffic lights / caption buttons */
 .ribbon-tabs-mac {
@@ -504,7 +565,8 @@ textarea:disabled {
 
 .autosave-text {
   font-size: 11px;
-  color: var(--text-muted);
+  /* same ink as the docs/slides autosave label */
+  color: var(--text-dim);
   white-space: nowrap;
 }
 
@@ -567,7 +629,7 @@ textarea:disabled {
   overflow-x: scroll;
   overflow-y: hidden;
   /* Slim visible scrollbar so mouse users can reach overflowed groups
-     (genspark-ai/genoffice#55). Its 5px lane is carved out of the bottom
+     (genspark-ai/hermesoffice#55). Its 5px lane is carved out of the bottom
      padding, keeping the 80px band and the content area unchanged; Chromium
      paints a thumb only while the row actually overflows. */
   padding: 6px 12px 1px;
@@ -1185,6 +1247,44 @@ textarea:disabled {
   anchor-scope: --menu-select;
 }
 
+/* Anchor positioning for the shared Word-style color panel (@hermesoffice/ui
+   .gcp-palette draws the chrome; this only places it under its trigger). */
+.sheets-color-pop {
+  position: fixed;
+  position-anchor: --menu-select;
+  top: calc(anchor(bottom) + 4px);
+  left: anchor(left);
+  position-try-fallbacks:
+    flip-inline,
+    flip-block,
+    flip-inline flip-block;
+  position-visibility: anchors-visible;
+  z-index: 60;
+}
+
+/* body-portal variant for transformed/clipping hosts (Univer float DOM);
+   left/top are set inline against the trigger's viewport rect */
+.sheets-color-pop-portal {
+  position: fixed;
+  z-index: 960;
+}
+
+/* plain color-well trigger (dialog / task-pane color pickers); the current
+   color is painted as an inline background on the button */
+.color-well {
+  width: 48px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color-well:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* invisible trigger stretched over the host tool (old cover-select markup) */
 .menu-select-cover {
   position: absolute;
@@ -1435,13 +1535,6 @@ button.check-item:hover {
   opacity: 0.45;
 }
 
-select.select-like {
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  font: inherit;
-  font-size: 12px;
-}
-
 /* AI panel on the left, spanning from the ribbon to the status bar (unified with docs);
  * its column is drag-resizable: driven by --copilot-width (updated by the AiChatPanel resizer) */
 .sheet-body {
@@ -1537,6 +1630,129 @@ select.select-like {
   min-width: 0;
   min-height: 0;
   background: var(--surface);
+}
+
+/* Floating selection Ask AI entry and send-now popover (docs/slides parity). */
+.ai-ask-trigger {
+  position: fixed;
+  z-index: 59;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-30);
+  background: var(--surface);
+  color: var(--color-ai-action);
+  font-family: var(--gs-font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  box-shadow: var(--sheets-shadow-menu);
+  cursor: pointer;
+}
+
+.ai-ask-trigger:hover {
+  background: var(--hover);
+}
+
+.ai-ask-pop {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-12);
+  background: var(--surface);
+  box-shadow: var(--sheets-shadow-menu);
+  font-family: var(--gs-font-sans);
+}
+
+.ai-ask-pop-title {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-ask-pop-sub {
+  margin-top: -4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.ai-ask-pop-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  outline: none;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.ai-ask-pop-input:focus {
+  border-color: var(--accent);
+}
+
+.ai-ask-pop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-ask-chip {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-30);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.ai-ask-chip:hover {
+  background: var(--hover);
+  color: var(--color-text-primary);
+}
+
+.ai-ask-pop-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ai-ask-cancel,
+.ai-ask-confirm {
+  padding: 6px 12px;
+  border-radius: var(--radius-6);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ai-ask-cancel {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.ai-ask-confirm {
+  border: 1px solid transparent;
+  background: var(--color-ai-action);
+  color: var(--color-ai-action-text);
+}
+
+.ai-ask-confirm:hover:not(:disabled) {
+  background: var(--color-ai-action-hover);
+}
+
+.ai-ask-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .copilot {
@@ -1791,7 +2007,7 @@ textarea:focus {
 .xlsx-image,
 .xlsx-shape,
 .xlsx-visual-loading,
-.xlsx-visual-error {
+.xlsx-visual-unavailable {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -1956,6 +2172,9 @@ textarea:focus {
 
 .chart-svg {
   width: 100%;
+  /* Wide anchors: without a height cap the aspect-derived height overflows
+     the frame and clips the bottom axis rows (side-legend layouts). */
+  max-height: 100%;
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -1982,6 +2201,19 @@ textarea:focus {
   display: block;
 }
 
+/* Rotated shape: the anchor box stores rotated bounds; the inner box
+   restores the true frame (sized in cq units by the component), centered
+   on the anchor center before the rotate. */
+.xlsx-shape-rotated {
+  container-type: size;
+}
+
+.xlsx-shape-rotated-inner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+
 .xlsx-shape-drawn .shape-text {
   position: absolute;
   inset: 0;
@@ -1992,6 +2224,31 @@ textarea:focus {
   font-size: 12px;
   color: var(--sheets-chart-ink);
   overflow: hidden;
+}
+
+/* File text boxes carry their own paragraph alignment and run styling;
+   the flow column replaces the centered grid. */
+.xlsx-shape-drawn .shape-text-rich {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  text-align: initial;
+  padding: 4px 8px;
+}
+
+.xlsx-shape-drawn .shape-anchor-t {
+  justify-content: flex-start;
+}
+
+.xlsx-shape-drawn .shape-anchor-b {
+  justify-content: flex-end;
+}
+
+.shape-paragraph {
+  display: block;
+  white-space: pre-wrap;
+  line-height: 1.3;
 }
 
 .shape-editable {
@@ -2009,7 +2266,7 @@ textarea:focus {
   content: '';
   position: absolute;
   inset: 0;
-  border: 2px solid var(--sheets-select-blue);
+  border: 2px solid var(--sheets-select-frame);
   pointer-events: none;
   z-index: 1;
 }
@@ -2024,7 +2281,7 @@ textarea:focus {
   display: none;
   width: 9px;
   height: 9px;
-  border: 1.5px solid var(--sheets-select-blue);
+  border: 1.5px solid var(--sheets-select-frame);
   border-radius: 50%;
   background: var(--sheets-paper);
   box-sizing: border-box;
@@ -2116,7 +2373,7 @@ textarea:focus {
   position: absolute;
   top: 0;
   left: 0;
-  border: 1.5px dashed var(--sheets-select-blue);
+  border: 1.5px dashed var(--sheets-select-frame);
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -2130,7 +2387,7 @@ textarea:focus {
   text-align: center;
   font-size: 12px;
   color: var(--sheets-chart-ink);
-  outline: 2px solid var(--sheets-select-blue);
+  outline: 2px solid var(--sheets-select-frame);
   outline-offset: -2px;
   cursor: text;
   overflow: hidden;
@@ -2141,8 +2398,8 @@ textarea:focus {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  border: 1.5px solid var(--sheets-select-blue);
-  background: var(--sheets-select-blue-bg);
+  border: 1.5px solid var(--sheets-excel-blue);
+  background: var(--sheets-excel-blue-bg);
   pointer-events: none;
 }
 
@@ -2152,6 +2409,148 @@ textarea:focus {
   display: block;
   overflow: visible;
   pointer-events: none;
+}
+
+.data-validation-dropdown-button {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  cursor: default;
+  appearance: none;
+}
+
+.univer-z-10:has(.data-validation-dropdown-button),
+.univer-z-10:has(.data-validation-input-message) {
+  overflow: visible !important;
+}
+
+.univer-z-10:has(.data-validation-input-message) > .univer-overflow-hidden {
+  overflow: visible !important;
+}
+
+.data-validation-dropdown-button:hover {
+  border-color: var(--border-hover);
+  background: var(--hover);
+  color: var(--text);
+}
+
+.data-validation-dropdown-button svg {
+  width: 8px;
+  height: 8px;
+  display: block;
+  fill: currentcolor;
+  pointer-events: none;
+}
+
+.data-validation-input-message {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid var(--sheets-validation-prompt-border);
+  background: var(--sheets-validation-prompt-bg);
+  box-shadow: 1px 1px 2px var(--sheets-validation-prompt-shadow);
+  color: var(--sheets-validation-prompt-ink);
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  user-select: none;
+  transform: translateY(4px);
+}
+
+.data-validation-input-message-title {
+  font-weight: 600;
+}
+
+.page-break-line {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.page-break-outline {
+  border: 2px solid var(--sheets-excel-blue);
+}
+
+.page-break-row {
+  border-top: 2px dashed var(--sheets-excel-blue);
+}
+
+.page-break-col {
+  border-left: 2px dashed var(--sheets-excel-blue);
+}
+
+.page-break-row.manual {
+  border-top-style: solid;
+}
+
+.page-break-col.manual {
+  border-left-style: solid;
+}
+
+.allow-edit-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.allow-edit-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.allow-edit-list li:last-child {
+  border-bottom: none;
+}
+
+.allow-edit-name {
+  font-weight: 600;
+  min-width: 90px;
+}
+
+.allow-edit-ref {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.dialog-actions-inline {
+  margin-top: 8px;
+}
+
+.page-break-watermark {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
 }
 
 .pie-layout {
@@ -2396,6 +2795,15 @@ textarea:focus {
   flex-direction: column-reverse;
 }
 
+/* Excel lays top/bottom pie legends out as a wrapping row, not a column. */
+.pie-legend-bottom > .chart-legend,
+.pie-legend-top > .chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 12px;
+}
+
 .pie-legend-left {
   flex-direction: row-reverse;
 }
@@ -2476,9 +2884,25 @@ textarea:focus {
   object-fit: contain;
 }
 
+/* In-cell rich-value picture: fits the cell box, aspect preserved (Excel). */
+.xlsx-cell-image {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.xlsx-cell-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .xlsx-shape,
-.xlsx-visual-loading,
-.xlsx-visual-error {
+.xlsx-visual-loading {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2489,11 +2913,6 @@ textarea:focus {
     12px 'Segoe UI',
     sans-serif;
   text-align: center;
-}
-
-.xlsx-visual-error {
-  border-color: var(--sheets-shape-err-border);
-  color: var(--sheets-shape-err-ink);
 }
 
 .inline-tools .color-tool {
@@ -2586,6 +3005,10 @@ textarea:focus {
 
 .dialog-grid select,
 .dialog-grid input:not([type='checkbox']):not([type='radio']) {
+  /* Fill the grid cell; intrinsic input width would otherwise force
+     narrow columns (e.g. the 3-column header/footer dialog) to overflow. */
+  width: 100%;
+  min-width: 0;
   height: 26px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-small);
@@ -2600,6 +3023,99 @@ textarea:focus {
   align-items: center;
   gap: 6px;
   align-self: end;
+}
+
+/* Autosave-recovery prompt (styled replacement for the native message box) */
+.recovery-dialog {
+  /* 400px was enough on macOS; Windows fonts/DPI plus a long filename
+     blew the implicit grid column past the card, so Restore sat outside. */
+  width: min(480px, calc(100vw - 32px));
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.recovery-dialog .dialog-body,
+.recovery-dialog .dialog-actions {
+  min-width: 0;
+}
+
+.recovery-dialog .dialog-actions {
+  flex-wrap: wrap;
+}
+
+.recovery-dialog .dialog-body {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.recovery-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.recovery-heading h2 {
+  margin: 0;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.recovery-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
+.recovery-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.recovery-body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.recovery-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-8);
+  padding: 8px 10px;
+  background: var(--surface-subtle);
+  font-size: 12px;
+}
+
+.recovery-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recovery-file-time {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 /* Format Cells → Number tab */
@@ -3387,7 +3903,7 @@ textarea:focus {
 }
 
 .ai-chat-empty {
-  margin-top: 32px;
+  margin-top: 36px;
   padding: 0 10px;
   text-align: center;
 }
@@ -3485,6 +4001,14 @@ textarea:focus {
   color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 14px;
+}
+
+/* in-answer citation links: click jumps the grid to the cited cell/range */
+.ai-md .ai-md-nav {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 /* Collapsible tool-activity group.
@@ -4119,6 +4643,52 @@ textarea:focus {
   filter: brightness(0.7);
 }
 
+/* Selection-scope chip above the composer: shown only for a deliberate
+   multi-cell selection, so the resting single-cell state adds no chrome. */
+.ai-scope-row {
+  padding: 13px 14px 0;
+}
+
+.ai-scope-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 10px;
+  border-radius: var(--radius-30);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-size: var(--text-caption);
+  font-weight: 500;
+}
+
+/* the run in flight owns this scope: no dismiss control, so no room for one */
+.ai-scope-hint.is-locked {
+  padding-right: 10px;
+}
+
+.ai-scope-hint::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ai-scope-clear {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.ai-scope-clear:hover {
+  opacity: 1;
+}
+
 /* attachment chips above the composer */
 .ai-attachments {
   display: flex;
@@ -4664,4 +5234,168 @@ textarea:focus {
 #univer-container.sheet-shape-drawing,
 #univer-container.sheet-shape-drawing * {
   cursor: crosshair !important;
+}
+
+/* Watch Window: floating non-modal panel (Formulas > Watch Window) */
+.watch-window {
+  position: fixed;
+  right: 18px;
+  bottom: 64px;
+  width: 420px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--sheets-shadow-slicer);
+  overflow: hidden;
+  z-index: 60;
+}
+
+.watch-window header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  background: var(--accent);
+  color: var(--sheets-on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.watch-title {
+  flex: 1;
+}
+
+.watch-add,
+.watch-close {
+  border: none;
+  background: transparent;
+  color: var(--sheets-on-accent);
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.watch-add:hover,
+.watch-close:hover {
+  background: var(--sheets-on-accent-hover);
+}
+
+.watch-empty {
+  margin: 0;
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.watch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  overflow-y: auto;
+}
+
+.watch-table th,
+.watch-table td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.watch-formula {
+  font-family: ui-monospace, monospace;
+}
+
+.watch-gone td {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.watch-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.watch-remove:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* View > Formula Bar toggle: an app-level setting (not in the file), hiding
+   Univer's formula-bar row; the flex workbench reflows the grid below. */
+#univer-container.formula-bar-hidden [data-u-comp='formula-bar'] {
+  display: none;
+}
+
+/* ── Shared dropdown (@hermesoffice/ui gs-dd) app sizing ──────────────────────
+   Ports the old native-select metrics per container so replacing <select>
+   with the themed Dropdown doesn't shift layout (reference: the matching
+   block in apps/slides styles.css). */
+
+/* dialog fields: fill the grid cell like the old `.dialog-grid select`
+   (100% × 26px) / `.numfmt-field select` rules */
+.dialog-grid .gs-dd,
+.numfmt-field .gs-dd {
+  width: 100%;
+  min-width: 0;
+}
+
+.dialog-grid .gs-dd-btn,
+.numfmt-field .gs-dd-btn {
+  border-radius: var(--radius-small);
+}
+
+/* pivot rows: the field pickers keep their old inline flex: 1 stretch */
+.pivot-dialog .gs-dd.pivot-dd-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* floating chart editor: old `.chart-editor select` was 120px+ × 24px, 11px type */
+.chart-editor .gs-dd {
+  min-width: 120px;
+}
+
+.chart-editor .gs-dd-btn {
+  height: 24px;
+  font-size: 11px;
+}
+
+/* chart format pane: old `.chart-format-pane select` was a fixed 120px */
+.chart-format-pane .gs-dd {
+  width: 120px;
+}
+
+/* custom-sort dialog: the old .select-like triggers were 28px tall; widths
+   come from the .sort-level grid columns */
+.sort-level .gs-dd {
+  min-width: 0;
+}
+
+.sort-level .gs-dd-btn {
+  height: 28px;
+}
+
+/* Insert Function filter row: a floor so the trigger doesn't resize with
+   each picked category (the old select sized to its longest option) */
+.fn-filter-row .gs-dd {
+  flex-shrink: 0;
+  min-width: 120px;
 }

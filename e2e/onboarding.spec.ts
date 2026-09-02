@@ -10,24 +10,16 @@ test.describe('first-run onboarding', () => {
     try {
       const overlay = page.locator('.onb-overlay')
       await expect(overlay).toBeVisible()
-      await expect(page.locator('.onb-slide.active .onb-title')).toHaveText(
-        'Welcome to HermesOffice',
-      )
+      await expect(page.locator('.onb-slide.active .onb-title')).toHaveText('Welcome to HermesOffice')
       await page.screenshot({ path: screenshotPath('onboarding-slide-1') })
 
-      // slide 2 (fork): Connect to Hermes, with the live gateway status pill
       await page.locator('.onb-next').click()
-      await expect(page.locator('.onb-slide.active .onb-title')).toHaveText('Connect to Hermes')
-      await expect(page.locator('.onb-slide.active .onb-hermes-status')).toBeVisible()
+      await expect(page.locator('.onb-slide.active .onb-offer')).toBeVisible()
       await page.screenshot({ path: screenshotPath('onboarding-slide-2') })
 
       await page.locator('.onb-next').click()
-      await expect(page.locator('.onb-slide.active .onb-offer:not(.onb-hermes)')).toBeVisible()
-      await page.screenshot({ path: screenshotPath('onboarding-slide-3') })
-
-      await page.locator('.onb-next').click()
       await expect(page.locator('.onb-slide.active .onb-title')).toHaveText('Free for everyone')
-      await page.screenshot({ path: screenshotPath('onboarding-slide-4') })
+      await page.screenshot({ path: screenshotPath('onboarding-slide-3') })
 
       // last slide's primary button finishes the onboarding
       await page.locator('.onb-next').click()

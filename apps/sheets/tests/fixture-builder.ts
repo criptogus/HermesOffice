@@ -218,18 +218,26 @@ const sheetsChart = `<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/dr
 /// Exercises sheet removal with owned satellite parts: "Deco" carries a
 /// drawing (image + chart with a color style), comments, legacy VML, and a
 /// table. Options add a second drawing on the surviving sheet sharing the
-/// image, a pivot-table relationship, a surviving structured reference into
-/// the table, or a defined name scoped to "Deco" that uses the table.
+/// image, a pivot-table relationship, a pivot cache sourced from "Deco"
+/// (its pivot lives elsewhere), a surviving structured reference into the
+/// table (canonical or differently-cased), or a defined name scoped to
+/// "Deco" that uses the table.
 export async function buildSatelliteSheetFixture(
   options: {
     sharedImage?: boolean
     pivot?: boolean
+    pivotSourceCache?: boolean
     tableRef?: boolean
+    tableRefLower?: boolean
     scopedTableName?: boolean
   } = {},
 ): Promise<Buffer> {
   const zip = new JSZip()
-  const keepFormula = options.tableRef ? '<c r="B1"><f>SUM(DecoTable[Amt])</f><v>3</v></c>' : ''
+  const keepFormula = options.tableRef
+    ? '<c r="B1"><f>SUM(DecoTable[Amt])</f><v>3</v></c>'
+    : options.tableRefLower
+      ? '<c r="B1"><f>SUM(decotable[Amt])</f><v>3</v></c>'
+      : ''
   const keepDrawing = options.sharedImage ? '<drawing r:id="rId1"/>' : ''
   // A name scoped to Deco (localSheetId 1) dies with the sheet, so its
   // structured reference into DecoTable must not block the removal.
@@ -363,6 +371,16 @@ export async function buildSatelliteSheetFixture(
       '<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
     )
   }
+  if (options.pivotSourceCache) {
+    // The pivot itself lives on the surviving sheet (no pivotTable rel on
+    // "Deco"); only the cache part records the source-sheet link.
+    zip.file(
+      'xl/pivotCache/pivotCacheDefinition1.xml',
+      '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<cacheSource type="worksheet"><worksheetSource ref="A1:A2" sheet="Deco"/></cacheSource>' +
+        '</pivotCacheDefinition>',
+    )
+  }
   zip.file('xl/media/image1.png', kitchenSinkPng)
   zip.file('xl/styles.xml', styles)
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
@@ -394,6 +412,42 @@ export async function buildKitchenSinkFixture(): Promise<Buffer> {
   zip.file('customXml/item1.xml', '<compatibility-marker value="must-survive"/>')
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
 }
+
+/// A macro-enabled workbook (.xlsm): the basic grid plus a vbaProject.bin
+/// payload and the macro-enabled workbook content type. The app never runs
+/// or parses the payload, so its bytes must round-trip a save verbatim.
+export async function buildMacroFixture(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file('[Content_Types].xml', macroContentTypes)
+  zip.file('_rels/.rels', packageRelationships)
+  zip.file('xl/workbook.xml', workbook)
+  zip.file('xl/_rels/workbook.xml.rels', macroWorkbookRelationships)
+  zip.file('xl/worksheets/sheet1.xml', worksheet)
+  zip.file('xl/styles.xml', styles)
+  zip.file('xl/vbaProject.bin', macroVbaProjectPayload)
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+}
+
+export const macroVbaProjectPayload = Buffer.from(
+  Array.from({ length: 256 }, (_, i) => (i * 37 + 11) % 256),
+)
+
+const macroContentTypes = `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`
+
+const macroWorkbookRelationships = `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>
+</Relationships>`
 
 const kitchenSinkContentTypes = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">

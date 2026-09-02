@@ -20,6 +20,11 @@ export interface RunStyle {
   fontSizePx: number
   bold: boolean
   italic: boolean
+  /** Apply kern pairs when measuring (PowerPoint kerns only at fontSize ≥ rPr kern; default true) */
+  kerning?: boolean
+  /** CJK substitution script for a missing fontFamily (from run altLang/lang or the
+   *  bucket @charset, PowerPoint semantics); overrides name-based classification */
+  substScript?: 'ja' | 'ko' | 'sc' | 'tc'
 }
 
 export interface FontMetrics {
@@ -27,8 +32,11 @@ export interface FontMetrics {
   ascent: number
   /** Descent at the font size (baseline to bottom, px, positive) */
   descent: number
-  /** Suggested line height (px) */
+  /** Suggested line height (px) — the line box, without external leading */
   lineHeight: number
+  /** External leading (hhea lineGap, px): advances the next line but sits outside the
+   *  line box (CoreText/PowerPoint single-spacing = lineHeight + externalLeading) */
+  externalLeading?: number
 }
 
 export interface FontMetricsProvider {
@@ -45,6 +53,13 @@ export interface FontMetricsProvider {
    * script (complex-script runs measure/draw with the same shaping font).
    */
   displayFamily?(style: RunStyle, text?: string): string
+  /**
+   * True when the requested family is missing and a same-script/class font was
+   * substituted. PowerPoint never kerns substituted text, so layout drops kerning for
+   * these runs. Metric-compatible alias resolutions (Calibri→Carlito) are NOT
+   * substitutions — PowerPoint has those fonts and kerns them. Unimplemented = never.
+   */
+  substituted?(style: RunStyle): boolean
 }
 
 // ── Grapheme clusters ───────────────────────────────────────────────
@@ -166,7 +181,10 @@ export interface OpentypeFontLike {
   unitsPerEm: number
   ascender: number
   descender: number
-  getAdvanceWidth(text: string, fontSize: number): number
+  /** hhea lineGap (external leading, font units); part of the single-spacing line height */
+  lineGap?: number
+  /** options matches opentype.js Font.getAdvanceWidth (kerning defaults to true) */
+  getAdvanceWidth(text: string, fontSize: number, options?: { kerning?: boolean }): number
   /** Optional: char → glyph index (0 = missing glyph). Used for the missing-glyph heuristic fallback. */
   charToGlyphIndex?(char: string): number
 }
@@ -187,7 +205,17 @@ export class OpentypeMetrics implements FontMetricsProvider {
     const scale = style.fontSizePx / font.unitsPerEm
     const ascent = font.ascender * scale
     const descent = Math.abs(font.descender) * scale
-    return { ascent, descent, lineHeight: ascent + descent }
+    // Single spacing includes the hhea lineGap as EXTERNAL leading: CoreText — and with
+    // it PowerPoint for Mac — paces Times New Roman/Arial at (asc+desc+gap) = 1.15em,
+    // not the bare asc+desc 1.107/1.117em (dropping the gap made multi-line text creep
+    // upward). The gap advances lines but stays outside the line box.
+    const lineGap = (font.lineGap ?? 0) * scale
+    return {
+      ascent,
+      descent,
+      lineHeight: ascent + descent,
+      ...(lineGap > 0 ? { externalLeading: lineGap } : {}),
+    }
   }
 
   measure(text: string, style: RunStyle): number {
@@ -202,7 +230,7 @@ export class OpentypeMetrics implements FontMetricsProvider {
           if (font.charToGlyphIndex(ch) === 0) return this.fallback.measure(text, style)
         }
       }
-      return font.getAdvanceWidth(text, style.fontSizePx)
+      return font.getAdvanceWidth(text, style.fontSizePx, { kerning: style.kerning !== false })
     } catch {
       return this.fallback.measure(text, style)
     }

@@ -2,7 +2,7 @@ import { Extension, Mark } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import {} from '@tiptap/pm/tables'
-import { cssCsFontFamily, cssDualFontFamily, cssFontFamily } from '../line-metrics'
+import { cssCsFontFamily, cssRunFontFamily } from '../line-metrics'
 import { isEastAsianFontName } from '../font-list'
 import { t } from '../i18n/locale'
 import {} from '@hermesoffice/docx-engine'
@@ -281,9 +281,7 @@ export const RevisionOriginalExtension = Extension.create({
               if (old.font || old.fontAscii) {
                 const ea = old.font ? String(old.font) : null
                 const ascii = old.fontAscii ? String(old.fontAscii) : null
-                styles.push(
-                  `font-family:${ea && ascii ? cssDualFontFamily(ascii, ea) : cssFontFamily((ea ?? ascii)!)}`,
-                )
+                styles.push(`font-family:${cssRunFontFamily(ascii, ea)}`)
               }
               decos.push(Decoration.inline(pos, pos + node.nodeSize, { style: styles.join(';') }))
             })
@@ -324,11 +322,14 @@ export const RprChangeMark = Mark.create({
   },
 })
 
-/** Generic inline field (DATE/TIME/NUMPAGES/FILENAME…): text is the cached result, recomputed on F9 */
+/** Generic inline field (DATE/TIME/NUMPAGES/FILENAME…): text is the cached result, recomputed on F9.
+ * inclusive: false — typing at the field edge must produce plain text, not extend the field */
 export const InstrFieldMark = Mark.create({
   name: 'instrField',
+  inclusive: false,
   addAttributes() {
-    return { instr: { default: '' } }
+    // beginXml: preserved w:fldChar begin run (form-field ffData) for verbatim write-back
+    return { instr: { default: '' }, beginXml: { default: null } }
   },
   parseHTML() {
     return [{ tag: 'span[data-instr-field]' }]
@@ -361,9 +362,15 @@ export function fontAttrsFromFamilyChain(chain: string | undefined): Record<stri
     .filter(
       (x) =>
         x &&
+        // var(--doc-latin-chain, ...) fragments from eastAsia-only chains
+        !/^var\(|\)$/.test(x) &&
         !/^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(x) &&
-        // internal fonts.css aliases (GenOffice Songti SC etc.) are not user picks
-        !/^genoffice /i.test(x),
+        // internal fonts.css aliases are not user picks: 'HermesOffice *', the
+        // '* GO' renamed/range-limited faces (Carlito GO, KR Theme Latin GO,
+        // Noto Sans/Serif CJK GO...) and the size-adjusted Noto Arabic aliases
+        !/^hermesoffice /i.test(x) &&
+        !/ go$/i.test(x) &&
+        !/^noto (naskh|sans) arabic (w|ta|tnr)$/i.test(x),
     )
   const ea = families.find(
     (f, i) => isEastAsianFontName(f) && (i === 0 || !/^noto (sans|serif) cjk sc$/i.test(f)),
@@ -371,6 +378,54 @@ export function fontAttrsFromFamilyChain(chain: string | undefined): Record<stri
   const latin = families.find((f) => !isEastAsianFontName(f))
   if (!ea && !latin) return {}
   return { font: ea ?? latin, ...(latin ? { fontAscii: latin } : {}) }
+}
+
+/**
+ * docTextStyle attrs that round-trip the clipboard exactly via the
+ * data-doc-style JSON payload (the CSS in renderHTML is lossy — highlight,
+ * shading, caps, emphasis and dual-font slots don't all survive the
+ * style-heuristic parse below). rawRPr/cs stay out: they are rendered:false
+ * save-side pass-throughs, deliberately kept off the DOM. (alpha ledger r117)
+ */
+const CLIPBOARD_TEXT_STYLE_TYPES: Record<string, 'string' | 'number' | 'boolean'> = {
+  color: 'string',
+  sizeHalfPoints: 'number',
+  font: 'string',
+  eaSlotEmpty: 'boolean',
+  fontAscii: 'string',
+  csFont: 'string',
+  charSpacingTwips: 'number',
+  charScaleEm: 'number',
+  highlight: 'string',
+  shading: 'string',
+  vertAlign: 'string',
+  em: 'string',
+  boldOff: 'boolean',
+  italicOff: 'boolean',
+  caps: 'string',
+  vanish: 'boolean',
+  styleId: 'string',
+}
+
+/** Exact attrs from our own data-doc-style JSON; null on legacy '1' or foreign/malformed values */
+function clipboardTextStyleAttrs(el: HTMLElement): Record<string, unknown> | null {
+  const raw = el.getAttribute?.('data-doc-style')
+  if (!raw || raw === '1') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const attrs: Record<string, unknown> = {}
+  for (const [key, type] of Object.entries(CLIPBOARD_TEXT_STYLE_TYPES)) {
+    const v = (parsed as Record<string, unknown>)[key]
+    if (typeof v !== type) continue
+    if (type === 'number' && !Number.isFinite(v)) continue
+    attrs[key] = v
+  }
+  return Object.keys(attrs).length > 0 ? attrs : null
 }
 
 /** Inline styles of foreign HTML → docTextStyle attrs (returns false when no usable style, so no mark is applied) */
@@ -431,19 +486,39 @@ export const TextStyleMark = Mark.create({
       // letter spacing (em, negative = condensed) converted from w:w scaling; precomputed by convert per run text
       charScaleEm: { default: null as number | null },
       highlight: { default: null as string | null },
+      // run shading fill, hex without '#' (w:shd w:fill)
+      shading: { default: null as string | null },
       vertAlign: { default: null as 'superscript' | 'subscript' | null },
       // East Asian emphasis mark (w:em val); saving is kept faithful by rawRPr
       em: { default: null as string | null },
+      // run-level explicit off (w:b/w:i w:val="0"): counters style-inherited bold/italic CSS
+      boldOff: { default: null as boolean | null },
+      italicOff: { default: null as boolean | null },
+      // w:caps ('all') / w:smallCaps ('small'), 'none' = explicit off; saving is kept faithful by rawRPr
+      caps: { default: null as 'all' | 'small' | 'none' | null },
+      // w:vanish hidden text (style chain resolved at parse); Word print hides it
+      vanish: { default: null as boolean | null },
+      // rtl run (w:rtl, explicit or style-inherited): save-side decode selects the Cs twins.
+      // Position must match runMarks' attr order (mark attrs are JSON-compared in signatures)
+      cs: { default: null as boolean | null, rendered: false },
+      // explicit w:rtl (tri-state); generate rebuilds the w:rtl group from the model
+      rtl: { default: null as boolean | null, rendered: false },
       styleId: { default: null as string | null },
       // raw rPr slice pass-through (not rendered; on save mergeRPrModel preserves unmodeled attributes)
       rawRPr: { default: null as string | null, rendered: false },
+      // JSON of Run.themeRFonts (theme-resolved font values); keeps raw theme refs from materializing on save
+      themeRFonts: { default: null as string | null, rendered: false },
     }
   },
   parseHTML() {
     return [
       {
         tag: 'span[data-doc-style]',
-        getAttrs: (el) => textStyleAttrsFromDom(el as HTMLElement) || {},
+        // own clipboard HTML: exact attrs from the JSON payload; legacy '1' or
+        // stripped payloads fall back to the lossy style heuristics
+        getAttrs: (el) =>
+          clipboardTextStyleAttrs(el as HTMLElement) ??
+          (textStyleAttrsFromDom(el as HTMLElement) || {}),
       },
       { tag: 'sup', attrs: { vertAlign: 'superscript' } },
       { tag: 'sub', attrs: { vertAlign: 'subscript' } },
@@ -464,9 +539,7 @@ export const TextStyleMark = Mark.create({
         `font-family:${
           cs
             ? cssCsFontFamily(cs, ascii ?? undefined, ea ?? undefined)
-            : ea && ascii
-              ? cssDualFontFamily(ascii, ea)
-              : cssFontFamily((ea ?? ascii)!)
+            : cssRunFontFamily(ascii, ea)
         }`,
       )
     }
@@ -475,6 +548,8 @@ export const TextStyleMark = Mark.create({
     if (spacingPt && scaleEm) styles.push(`letter-spacing:calc(${spacingPt}pt + ${scaleEm}em)`)
     else if (spacingPt) styles.push(`letter-spacing:${spacingPt}pt`)
     else if (scaleEm) styles.push(`letter-spacing:${scaleEm}em`)
+    // shading first: when both are set the later highlight declaration wins (Word behavior)
+    if (mark.attrs.shading) styles.push(`background-color:#${mark.attrs.shading}`)
     if (mark.attrs.highlight) {
       styles.push(
         `background-color:${HIGHLIGHT_CSS[mark.attrs.highlight as string] ?? mark.attrs.highlight}`,
@@ -490,7 +565,24 @@ export const TextStyleMark = Mark.create({
       const pos = em === 'comma' || em === 'circle' ? 'over' : 'under'
       styles.push(`text-emphasis:${shape}`, `text-emphasis-position:${pos} right`)
     }
-    const attrs: Record<string, string> = { 'data-doc-style': '1', style: styles.join(';') }
+    if (mark.attrs.boldOff) styles.push('font-weight:normal')
+    if (mark.attrs.italicOff) styles.push('font-style:normal')
+    if (mark.attrs.vanish) styles.push('display:none')
+    if (mark.attrs.caps === 'all') styles.push('text-transform:uppercase')
+    else if (mark.attrs.caps === 'small') styles.push('font-variant-caps:small-caps')
+    else if (mark.attrs.caps === 'none')
+      styles.push('text-transform:none', 'font-variant-caps:normal')
+    // the attr value carries the exact attrs for clipboard round-trip; '1'
+    // (nothing set) keeps the attribute present for CSS/selector consumers
+    const clip: Record<string, unknown> = {}
+    for (const key of Object.keys(CLIPBOARD_TEXT_STYLE_TYPES)) {
+      const v = mark.attrs[key]
+      if (v != null) clip[key] = v
+    }
+    const attrs: Record<string, string> = {
+      'data-doc-style': Object.keys(clip).length > 0 ? JSON.stringify(clip) : '1',
+      style: styles.join(';'),
+    }
     if (mark.attrs.styleId) attrs['data-style'] = String(mark.attrs.styleId)
     return ['span', attrs, 0]
   },

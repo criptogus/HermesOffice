@@ -1,7 +1,14 @@
 /**
  * 3.1/3.2 Konva canvas — renders one RenderSlide + selection/transform + text-edit triggering.
  */
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import {
   Stage,
   Layer,
@@ -24,7 +31,8 @@ import type {
   PictureRenderNode,
   GroupRenderNode,
 } from '@hermesoffice/pptx-render'
-import { fillToKonva, isEditableText } from './konva-adapter'
+import { boxPivotProps, fillToKonva, isEditableText } from './konva-adapter'
+import { tableCellAtPoint, tableLocalPointFromStage } from './table-hit'
 import {
   computeSnap,
   computeSpacingSnap,
@@ -43,6 +51,7 @@ import {
   type DrawRect,
 } from './draw-shape'
 import { shapePreviewPath } from './components/gallery-previews'
+import { adjustHandleSpecs } from './adjust-handles'
 
 /** Whether a node is a connector (read-only, no Transformer attached). */
 function isConnectorNode(node: RenderNode): boolean {
@@ -302,6 +311,8 @@ interface Props {
   onDrawCommit?: (rect: DrawRect) => void
   /** Draw mode cancelled from inside the canvas (Escape) */
   onDrawCancel?: () => void
+  /** Yellow adjust-handle drag: full avLst map; preview=true during the drag, false on release */
+  onAdjust?: (sourceId: string, adjust: Record<string, number>, preview: boolean) => void
 }
 
 /**
@@ -311,6 +322,21 @@ interface Props {
  * system unchanged), and the Stage container is absolutely positioned at -BLEED to align.
  */
 export const CANVAS_BLEED = 160
+
+/* Screenshot-automation hook (fidelity-compare): window.__hermesofficeHidePhPrompts = true +
+ * dispatching 'hermesoffice:hide-ph-prompts' hides empty-placeholder hints on the edit canvas. */
+const hidePhPromptsListeners = new Set<() => void>()
+window.addEventListener('hermesoffice:hide-ph-prompts', () => {
+  for (const l of hidePhPromptsListeners) l()
+})
+const subscribeHidePhPrompts = (cb: () => void) => {
+  hidePhPromptsListeners.add(cb)
+  return () => {
+    hidePhPromptsListeners.delete(cb)
+  }
+}
+const getHidePhPrompts = () =>
+  !!(window as { __hermesofficeHidePhPrompts?: boolean }).__hermesofficeHidePhPrompts
 
 /** Default rotate-handle snapping: lock onto 45° multiples (Shift switches to 15° steps) */
 const ROTATION_SNAPS = [0, 45, 90, 135, 180, 225, 270, 315]
@@ -392,6 +418,96 @@ function applyChromeZoom(tr: Konva.Transformer, zoom: number, nodeCount: number)
   tr.getLayer()?.batchDraw()
 }
 
+/** PowerPoint's adjust-handle yellow — canvas editing chrome, identical in both
+ * themes (like the Transformer's white anchors). */
+const ADJUST_HANDLE_FILL = '#ffc94d'
+const ADJUST_HANDLE_STROKE = '#a97d00'
+
+/**
+ * Yellow adjust handles for the single selected adjustable shape (preset avLst
+ * edit). The handle position derives from the committed node; during a drag it
+ * is pinned imperatively to the constraint path, and onAdjust fires throttled
+ * preview commits (the rebuilt slide re-renders the geometry live) with a final
+ * non-preview commit on release — one whole drag = one undo step.
+ */
+function AdjustHandles({
+  node,
+  zoom,
+  chromeScale,
+  onAdjust,
+}: {
+  node: ShapeRenderNode
+  zoom: number
+  chromeScale: number
+  onAdjust: (adjust: Record<string, number>, preview: boolean) => void
+}) {
+  const specs = adjustHandleSpecs(node)
+  if (!specs.length) return null
+  const b = node.box
+  const val = (k: string, d: number) => node.adjust?.[k] ?? d
+  /** Committed values for every handle key (the engine rewrites the whole avLst) */
+  const fullAdjust = (): Record<string, number> => {
+    const out: Record<string, number> = { ...(node.adjust ?? {}) }
+    for (const sp of specs) for (const k of sp.keys) if (out[k.name] == null) out[k.name] = k.def
+    return out
+  }
+  const rot = ((b.rotationDeg || 0) * Math.PI) / 180
+  const cos = Math.cos(rot)
+  const sin = Math.sin(rot)
+  const toStage = (px: number, py: number) => {
+    const lx = b.flipH ? b.w - px : px
+    const ly = b.flipV ? b.h - py : py
+    const dx = lx - b.w / 2
+    const dy = ly - b.h / 2
+    return { x: b.x + b.w / 2 + dx * cos - dy * sin, y: b.y + b.h / 2 + dx * sin + dy * cos }
+  }
+  const toLocal = (sx: number, sy: number) => {
+    const dx = sx - (b.x + b.w / 2)
+    const dy = sy - (b.y + b.h / 2)
+    let lx = b.w / 2 + dx * cos + dy * sin
+    let ly = b.h / 2 - dx * sin + dy * cos
+    if (b.flipH) lx = b.w - lx
+    if (b.flipV) ly = b.h - ly
+    return { x: lx, y: ly }
+  }
+  const z = Math.max(zoom, 0.1)
+  return (
+    <>
+      {specs.map((spec) => {
+        const p = spec.pos(b.w, b.h, val)
+        const s = toStage(p.x, p.y)
+        const valuesAt = (t: Konva.Node) => {
+          const l = toLocal(t.x(), t.y())
+          return spec.values(b.w, b.h, l.x, l.y, val)
+        }
+        return (
+          <Circle
+            key={spec.keys.map((k) => k.name).join('-')}
+            x={s.x}
+            y={s.y}
+            radius={(5 * chromeScale) / z}
+            fill={ADJUST_HANDLE_FILL}
+            stroke={ADJUST_HANDLE_STROKE}
+            strokeWidth={1 / z}
+            draggable
+            onDragMove={(e) => {
+              const merged = { ...fullAdjust(), ...valuesAt(e.target) }
+              // pin the handle onto its constraint path
+              const np = spec.pos(b.w, b.h, (k, d) => merged[k] ?? d)
+              const ns = toStage(np.x, np.y)
+              e.target.position(ns)
+              onAdjust(merged, true)
+            }}
+            onDragEnd={(e) => {
+              onAdjust({ ...fullAdjust(), ...valuesAt(e.target) }, false)
+            }}
+          />
+        )
+      })}
+    </>
+  )
+}
+
 export function SlideCanvas({
   slide,
   selectedIds,
@@ -414,6 +530,7 @@ export function SlideCanvas({
   drawMode,
   onDrawCommit,
   onDrawCancel,
+  onAdjust,
 }: Props) {
   const trRef = useRef<Konva.Transformer>(null)
   const layerRef = useRef<Konva.Layer>(null)
@@ -433,6 +550,23 @@ export function SlideCanvas({
     const t = window.setTimeout(() => setSettledZoom(zoom), 150)
     return () => window.clearTimeout(t)
   }, [zoom, settledZoom])
+
+  // Bundled @font-face fonts (Carlito) and Office-private FontFaces (doc-fonts.ts) may finish
+  // loading after the first draw; canvas text drawn with a fallback face must be redrawn once
+  // the real font is available. 'loadingdone' covers faces added at any later point.
+  useEffect(() => {
+    let live = true
+    const redraw = () => {
+      if (!live) return
+      for (const l of stageRef.current?.getLayers() ?? []) l.batchDraw()
+    }
+    document.fonts?.ready?.then(redraw).catch(() => {})
+    document.fonts?.addEventListener?.('loadingdone', redraw)
+    return () => {
+      live = false
+      document.fonts?.removeEventListener?.('loadingdone', redraw)
+    }
+  }, [])
 
   // Re-rasterize on settled zoom changes. The slide dep covers layers (re)created between
   // zoom changes; the resolution media query covers devicePixelRatio changes (window dragged
@@ -727,14 +861,9 @@ export function SlideCanvas({
           const raw = e.target.getStage()?.getPointerPosition()
           // Stage coordinates -> slide coordinates (remove the bleed offset)
           const pos = raw ? { x: raw.x - CANVAS_BLEED, y: raw.y - CANVAS_BLEED } : null
-          if (n && n.type === 'table' && !n.box.rotationDeg && pos) {
-            const hit = (n as TableRenderNode).cells.find(
-              (c) =>
-                pos.x - n.box.x >= c.x &&
-                pos.x - n.box.x < c.x + c.w &&
-                pos.y - n.box.y >= c.y &&
-                pos.y - n.box.y < c.y + c.h,
-            )
+          if (n && n.type === 'table' && pos) {
+            const local = tableLocalPointFromStage(pos, n.box)
+            const hit = tableCellAtPoint(n, local)
             if (hit) cell = { row: hit.row, col: hit.col }
           }
         }
@@ -843,8 +972,10 @@ export function SlideCanvas({
             return (
               <Rect
                 key={`sz_${id}`}
-                x={n.box.x - 2}
-                y={n.box.y - 2}
+                x={n.box.x + n.box.w / 2}
+                y={n.box.y + n.box.h / 2}
+                offsetX={n.box.w / 2 + 2}
+                offsetY={n.box.h / 2 + 2}
                 width={n.box.w + 4}
                 height={n.box.h + 4}
                 rotation={n.box.rotationDeg}
@@ -944,14 +1075,17 @@ export function SlideCanvas({
           // One grip per grid boundary; only boundaries a merged cell spans across are skipped
           const spansX = (b: number) => tbl.cells.some((c) => c.x < b - 0.5 && c.x + c.w > b + 0.5)
           const spansY = (b: number) => tbl.cells.some((c) => c.y < b - 0.5 && c.y + c.h > b + 0.5)
+          // rtl tables render mirrored: gridX stays logical, so visual boundary = width − gridX
+          const tblGridW = tbl.gridX[tbl.gridX.length - 1] ?? n.box.w
+          const visX = (i: number) => (tbl.rtl ? tblGridW - tbl.gridX[i]! : tbl.gridX[i]!)
           return [
-            ...tbl.gridX.slice(1).flatMap((b, col) =>
-              spansX(b)
+            ...tbl.gridX.slice(1).flatMap((_, col) =>
+              spansX(visX(col + 1))
                 ? []
                 : [
                     <Rect
                       key={`colgrip_${col}`}
-                      x={n.box.x + b - 3}
+                      x={n.box.x + visX(col + 1) - 3}
                       y={n.box.y}
                       width={6}
                       height={n.box.h}
@@ -967,7 +1101,13 @@ export function SlideCanvas({
                         if (st) st.container().style.cursor = 'default'
                       }}
                       onDragEnd={(e) => {
-                        const newW = Math.max(12, e.target.x() + 3 - (n.box.x + tbl.gridX[col]!))
+                        // rtl: the grip is the column's visual-left edge; width grows leftward
+                        const newW = Math.max(
+                          12,
+                          tbl.rtl
+                            ? n.box.x + visX(col) - (e.target.x() + 3)
+                            : e.target.x() + 3 - (n.box.x + tbl.gridX[col]!),
+                        )
                         onTableColResize(n.sourceId, col, newW)
                       }}
                     />,
@@ -1016,8 +1156,10 @@ export function SlideCanvas({
           return [
             <Rect
               key={`cxn_sel_${id}`}
-              x={b.x - 3}
-              y={b.y - 3}
+              x={b.x + b.w / 2}
+              y={b.y + b.h / 2}
+              offsetX={b.w / 2 + 3}
+              offsetY={b.h / 2 + 3}
               width={b.w + 6}
               height={b.h + 6}
               rotation={b.rotationDeg}
@@ -1131,6 +1273,24 @@ export function SlideCanvas({
             setSizeMatch(null)
           }}
         />
+        {onAdjust &&
+          selectedIds.length === 1 &&
+          !editingText &&
+          (() => {
+            // Top-level shapes only: entered-group children live in group-local
+            // coordinates, which the handle math doesn't map yet
+            const n = slide.nodes.find((x) => x.sourceId === selectedIds[0])
+            if (!n || (n.type !== 'shape' && n.type !== 'text') || isConnectorNode(n)) return null
+            const id = n.sourceId
+            return (
+              <AdjustHandles
+                node={n as ShapeRenderNode}
+                zoom={zoom}
+                chromeScale={chromeScale}
+                onAdjust={(adjust, preview) => onAdjust(id, adjust, preview)}
+              />
+            )
+          })()}
       </Layer>
     </Stage>
   )
@@ -1356,12 +1516,38 @@ function NodeView({
   selHairline,
 }: NodeProps) {
   const { t } = useI18n()
+  // screenshot automation (fidelity-compare) hides the hint to match print output; the
+  // event-backed store re-renders even when no slide switch follows (single-slide decks)
+  const hidePhPrompts = useSyncExternalStore(subscribeHidePhPrompts, getHidePhPrompts)
   const { box } = node
   const groupRef = useRef<Konva.Group>(null)
   /** Most recently rendered model width/height (preview responses update it; during a gesture, scale is always relative to it) */
   const boxRef = useRef({ w: box.w, h: box.h })
   const transformingRef = useRef(false)
   const lastPreviewRef = useRef(0)
+  /** Node position captured on every transform event: boxPivotProps derives Konva x/y from
+   * box.w/h, so a live-preview re-render would otherwise teleport the node mid-gesture. */
+  const gesturePosRef = useRef<{ x: number; y: number } | null>(null)
+  // Option+drag ghost: while Alt is held mid-drag, the dragged node becomes the semi-transparent
+  // "copy" (dashed frame) and a static render of the original stays at the source position.
+  const [altDragging, setAltDragging] = useState(false)
+  const altDraggingRef = useRef(false)
+  const setAltDrag = (on: boolean) => {
+    if (altDraggingRef.current === on) return
+    altDraggingRef.current = on
+    setAltDragging(on)
+  }
+  /** Window key listeners active during a drag, so pressing/releasing Alt with a still pointer
+   * still toggles the ghost (drop semantics keep reading Alt from the mouse event on release). */
+  const altKeyCleanupRef = useRef<(() => void) | null>(null)
+  /** Live drag position: the ghost toggle re-renders mid-drag, and the controlled x/y from
+   * boxPivotProps must not teleport the node back to the model position (same idea as gesturePosRef). */
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null)
+  useLayoutEffect(() => {
+    const g = groupRef.current
+    if (g && dragPosRef.current && g.isDragging()) g.position(dragPosRef.current)
+  })
+  useEffect(() => () => altKeyCleanupRef.current?.(), [])
 
   // The Transformer's frame/scale basis defaults to getClientRect() (content bounding box). When text
   // overflows the shape box (autofit off and content too tall), overflowing glyphs inflate the bounding
@@ -1392,12 +1578,15 @@ function NodeView({
 
   // Resize-preview response arrived (children already rendered at the new box): rebase the gesture's
   // temporary scale onto the new box so visual size (box × scale) stays continuous — frame follows the hand, content doesn't stretch or flicker.
+  // Position must be restored too: the controlled x/y (box center per boxPivotProps) depend on
+  // box.w/h, so the re-render would otherwise re-pin the node to the stale model x/y.
   useLayoutEffect(() => {
     const g = groupRef.current
     const prev = boxRef.current
     if (g && transformingRef.current && (prev.w !== box.w || prev.h !== box.h)) {
       if (box.w > 0) g.scaleX(g.scaleX() * (prev.w / box.w))
       if (box.h > 0) g.scaleY(g.scaleY() * (prev.h / box.h))
+      if (gesturePosRef.current) g.position(gesturePosRef.current)
     }
     boxRef.current = { w: box.w, h: box.h }
   })
@@ -1408,17 +1597,13 @@ function NodeView({
   // Chips are select-only; tables/charts support p:xfrm patch persistence, so they can be dragged/resized.
   // Full-page backgrounds stay in place: a drag on them rubber-bands (Stage-level marquee) instead of moving them.
   const draggable = node.type !== 'placeholder-chip' && !node.background
-  // Flip mirrors within the original box: add width offset to x then scale -1 (subtracted back when the drag reports)
-  const flipOffX = box.flipH ? box.w : 0
-  const flipOffY = box.flipV ? box.h : 0
+  // Rotation/flip pivot on the box center (boxPivotProps): the Konva position IS the box
+  // center, so model x/y = position − half size — including mid-gesture, since the offset
+  // point stays the drawn box's center under any scale.
 
   const common = {
     id: `node_${node.sourceId}`,
-    x: box.x + flipOffX,
-    y: box.y + flipOffY,
-    rotation: box.rotationDeg,
-    scaleX: box.flipH ? -1 : 1,
-    scaleY: box.flipV ? -1 : 1,
+    ...boxPivotProps(box),
     draggable,
     // A slight hand slip on click-select (3~5px is common on trackpads) shouldn't trigger a drag: Konva's
     // default 3px threshold is too sensitive, and once it becomes a drag, onDragMove snapping amplifies it into a visible 6px+ jump that commits to the model.
@@ -1432,7 +1617,22 @@ function NodeView({
       onSelect(node.sourceId, e.evt.shiftKey || e.evt.metaKey)
     },
     onTap: () => onSelect(node.sourceId),
+    onDragStart: () => {
+      dragPosRef.current = null
+      if (!(onDuplicateTo && !multiDrag && !insideGroupId)) return
+      const onKey = (ev: KeyboardEvent) => setAltDrag(ev.altKey)
+      window.addEventListener('keydown', onKey)
+      window.addEventListener('keyup', onKey)
+      altKeyCleanupRef.current = () => {
+        window.removeEventListener('keydown', onKey)
+        window.removeEventListener('keyup', onKey)
+        altKeyCleanupRef.current = null
+      }
+    },
     onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => {
+      // Alt held mid-drag = duplicate gesture: show the ghost (Alt can be pressed/released at any time during the drag)
+      setAltDrag(!!(e.evt?.altKey && onDuplicateTo && !multiDrag && !insideGroupId))
+      dragPosRef.current = { x: e.target.x(), y: e.target.y() }
       // Children in in-group editing use a different coordinate system from page snap targets; don't snap
       if (insideGroupId) {
         onDragGuides([])
@@ -1441,7 +1641,7 @@ function NodeView({
       const t = e.target
       // Snap threshold semantics are "6 screen px": convert back by the canvas CSS zoom (same as dragDistance)
       const thr = 6 / Math.max(zoom, 0.1)
-      const raw = { x: t.x() - flipOffX, y: t.y() - flipOffY }
+      const raw = { x: t.x() - box.w / 2, y: t.y() - box.h / 2 }
       // Multi-select drag: snap the selection bounding box as a whole. All selected
       // nodes fire their own dragmove under the Transformer's proxy drag, but each computes the same snap
       // delta from the same model bounding box + its own fixed offset -> relative positions stay unchanged.
@@ -1478,18 +1678,22 @@ function NodeView({
           indicators.push(...sp.indicators.filter((i) => i.axis === 'y'))
         }
       }
-      if (fx != null) t.x(raw.x + (fx - bb.x) + flipOffX)
-      if (fy != null) t.y(raw.y + (fy - bb.y) + flipOffY)
+      if (fx != null) t.x(raw.x + (fx - bb.x) + box.w / 2)
+      if (fy != null) t.y(raw.y + (fy - bb.y) + box.h / 2)
+      dragPosRef.current = { x: t.x(), y: t.y() }
       onDragGuides(snap.guides, indicators)
     },
     onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
+      altKeyCleanupRef.current?.()
+      dragPosRef.current = null
+      setAltDrag(false)
       onDragGuides([])
-      const dropX = e.target.x() - flipOffX
-      const dropY = e.target.y() - flipOffY
+      const dropX = e.target.x() - box.w / 2
+      const dropY = e.target.y() - box.h / 2
       // Option+drag = duplicate at the drop point;
       // original snaps back (model unchanged, the Konva node position must be manually restored); multi-select/in-group gestures not supported yet
       if (e.evt?.altKey && onDuplicateTo && !multiDrag && !insideGroupId) {
-        e.target.position({ x: box.x + flipOffX, y: box.y + flipOffY })
+        e.target.position({ x: box.x + box.w / 2, y: box.y + box.h / 2 })
         onDuplicateTo(node.sourceId, dropX - box.x, dropY - box.y)
         return
       }
@@ -1509,8 +1713,12 @@ function NodeView({
     onTransformStart: () => {
       transformingRef.current = true
       lastPreviewRef.current = 0
+      gesturePosRef.current = null
     },
     onTransform: (e: Konva.KonvaEventObject<Event>) => {
+      // Track the live position first: the preview re-render below re-applies controlled
+      // x/y, and the rebase effect restores this value to keep the gesture continuous
+      gesturePosRef.current = { x: e.target.x(), y: e.target.y() }
       // Live preview during drag: re-lay out text at the new box size (font size unchanged).
       // Commit width/height only (x/y are managed by the Konva gesture and land in the model with the final commit on release).
       // Offset conversion for flipped elements relies on a one-shot back-calculation at gesture end; preview stays disabled for them.
@@ -1536,14 +1744,17 @@ function NodeView({
     },
     onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
       transformingRef.current = false
+      gesturePosRef.current = null
       const t = e.target
       const sx = Math.abs(t.scaleX())
       const sy = Math.abs(t.scaleY())
       onTransform(
         node.sourceId,
         {
-          x: t.x() - flipOffX * sx,
-          y: t.y() - flipOffY * sy,
+          // The offset point stays the drawn box's center at any scale, so the model's
+          // unrotated top-left is always position − half of the NEW size
+          x: t.x() - (box.w * sx) / 2,
+          y: t.y() - (box.h * sy) / 2,
           w: box.w * sx,
           h: box.h * sy,
           rotationDeg: t.rotation(),
@@ -1563,14 +1774,7 @@ function NodeView({
     // ext/chExt scaling is already baked into child geometry (including text layout), so it no longer affects overlay alignment.
     const plain = !box.rotationDeg && !box.flipH && !box.flipV
     return (
-      <Group
-        id={`node_${node.sourceId}`}
-        x={box.x + flipOffX}
-        y={box.y + flipOffY}
-        rotation={box.rotationDeg}
-        scaleX={box.flipH ? -1 : 1}
-        scaleY={box.flipV ? -1 : 1}
-      >
+      <Group id={`node_${node.sourceId}`} {...boxPivotProps(box)}>
         {/* In-group boundary indicator (dashed frame while editing a group) */}
         <Rect
           width={box.w}
@@ -1631,22 +1835,20 @@ function NodeView({
     }
     onEnterGroup(node.sourceId, childId)
   }
-  // Table: double-click hits a cell (pointer coordinates -> table-local coordinates; editing rotated tables not supported yet)
+  // Table: double-click hits a cell in table-local coordinates, regardless of rotation/flip.
   const onTableDblClick = (e: Konva.KonvaEventObject<Event>) => {
-    if (node.type !== 'table' || box.rotationDeg) return
+    if (node.type !== 'table') return
     const pos = e.target.getStage()?.getPointerPosition()
     if (!pos) return
-    const rx = pos.x - CANVAS_BLEED - box.x
-    const ry = pos.y - CANVAS_BLEED - box.y
-    const cell = (node as TableRenderNode).cells.find(
-      (c) => rx >= c.x && rx < c.x + c.w && ry >= c.y && ry < c.y + c.h,
-    )
+    const local = tableLocalPointFromStage(pos, box, CANVAS_BLEED)
+    const cell = tableCellAtPoint(node, local)
     if (cell) onEditTableCell(node.sourceId, cell.row, cell.col)
   }
   // Audio/video (image is the poster frame): double-click opens the playback overlay
   const isMedia = node.type === 'picture' && !!(node as PictureRenderNode).media && !!onPlayMedia
   // Empty placeholder: canvas draws a gray click hint (edit canvas only, not in thumbnails/export)
   const phPrompt = (() => {
+    if (hidePhPrompts) return null
     if (node.type !== 'shape' && node.type !== 'text') return null
     const sh = node as ShapeRenderNode
     const kind = sh.placeholder
@@ -1662,67 +1864,85 @@ function NodeView({
     )
   })()
   return (
-    <Group
-      ref={groupRef}
-      {...common}
-      {...(editable
-        ? {
-            onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) =>
-              onEditText(node.sourceId, { x: e.evt.clientX, y: e.evt.clientY }),
-            onDblTap: () => onEditText(node.sourceId),
+    <>
+      {/* Option+drag: the original stays rendered at the source position while the dragged ghost travels */}
+      {altDragging && <StaticNode key="ghost-src" node={node} images={images} />}
+      <Group
+        key="node"
+        ref={groupRef}
+        opacity={altDragging ? 0.5 : 1}
+        {...common}
+        {...(editable
+          ? {
+              onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) =>
+                onEditText(node.sourceId, { x: e.evt.clientX, y: e.evt.clientY }),
+              onDblTap: () => onEditText(node.sourceId),
+            }
+          : node.type === 'group' && !insideGroupId && onEnterGroup
+            ? { onDblClick: onGroupDblClick, onDblTap: onGroupDblClick }
+            : node.type === 'table' && !insideGroupId
+              ? { onDblClick: onTableDblClick, onDblTap: onTableDblClick }
+              : isMedia && !insideGroupId
+                ? {
+                    onDblClick: () => onPlayMedia!(node.sourceId),
+                    onDblTap: () => onPlayMedia!(node.sourceId),
+                  }
+                : {})}
+      >
+        {/* group children don't take hits (listening=false); add a transparent hit area so the whole group can be selected/dragged */}
+        {node.type === 'group' && <Rect width={box.w} height={box.h} fill="transparent" />}
+        <NodeBody
+          node={node}
+          images={images}
+          hideText={!!editingText && editingText.sourceId === node.sourceId && !editingText.cell}
+          hideCellText={
+            editingText && editingText.sourceId === node.sourceId ? editingText.cell : undefined
           }
-        : node.type === 'group' && !insideGroupId && onEnterGroup
-          ? { onDblClick: onGroupDblClick, onDblTap: onGroupDblClick }
-          : node.type === 'table' && !insideGroupId
-            ? { onDblClick: onTableDblClick, onDblTap: onTableDblClick }
-            : isMedia && !insideGroupId
-              ? {
-                  onDblClick: () => onPlayMedia!(node.sourceId),
-                  onDblTap: () => onPlayMedia!(node.sourceId),
-                }
-              : {})}
-    >
-      {/* group children don't take hits (listening=false); add a transparent hit area so the whole group can be selected/dragged */}
-      {node.type === 'group' && <Rect width={box.w} height={box.h} fill="transparent" />}
-      <NodeBody
-        node={node}
-        images={images}
-        hideText={!!editingText && editingText.sourceId === node.sourceId && !editingText.cell}
-        hideCellText={
-          editingText && editingText.sourceId === node.sourceId ? editingText.cell : undefined
-        }
-      />
-      {/* Multi-select: PowerPoint-style per-element border so every selected element is visibly selected
-          (the shared Transformer only draws one combined box). Lives inside the node group so it follows drags/transforms. */}
-      {multiDrag && !isConnectorNode(node) && (
-        <Rect
-          width={box.w}
-          height={box.h}
-          stroke={selStroke}
-          strokeWidth={selHairline ?? chromeHairline(zoom)}
-          strokeScaleEnabled={false}
-          listening={false}
         />
-      )}
-      {phPrompt &&
-        (() => {
-          const sh = node as ShapeRenderNode
-          const ins = sh.text?.insets ?? { l: 8, t: 4, r: 8, b: 4 }
-          return (
-            <Text
-              text={phPrompt}
-              x={ins.l}
-              y={ins.t}
-              width={Math.max(box.w - ins.l - ins.r, 20)}
-              height={Math.max(box.h - ins.t - ins.b, 16)}
-              align={sh.placeholder === 'body' ? 'left' : 'center'}
-              verticalAlign={sh.text?.anchor ?? (sh.placeholder === 'body' ? 'top' : 'middle')}
-              fontSize={Math.min(28, Math.max(14, box.h * 0.22))}
-              fill="#8e8e93"
-            />
-          )
-        })()}
-    </Group>
+        {/* Multi-select: PowerPoint-style per-element border so every selected element is visibly selected
+          (the shared Transformer only draws one combined box). Lives inside the node group so it follows drags/transforms. */}
+        {multiDrag && !isConnectorNode(node) && (
+          <Rect
+            width={box.w}
+            height={box.h}
+            stroke={selStroke}
+            strokeWidth={selHairline ?? chromeHairline(zoom)}
+            strokeScaleEnabled={false}
+            listening={false}
+          />
+        )}
+        {/* Option+drag ghost: dashed frame marks the travelling copy */}
+        {altDragging && (
+          <Rect
+            width={box.w}
+            height={box.h}
+            stroke={selStroke}
+            strokeWidth={selHairline ?? chromeHairline(zoom)}
+            strokeScaleEnabled={false}
+            dash={[4, 4]}
+            listening={false}
+          />
+        )}
+        {phPrompt &&
+          (() => {
+            const sh = node as ShapeRenderNode
+            const ins = sh.text?.insets ?? { l: 8, t: 4, r: 8, b: 4 }
+            return (
+              <Text
+                text={phPrompt}
+                x={ins.l}
+                y={ins.t}
+                width={Math.max(box.w - ins.l - ins.r, 20)}
+                height={Math.max(box.h - ins.t - ins.b, 16)}
+                align={sh.placeholder === 'body' ? 'left' : 'center'}
+                verticalAlign={sh.text?.anchor ?? (sh.placeholder === 'body' ? 'top' : 'middle')}
+                fontSize={Math.min(28, Math.max(14, box.h * 0.22))}
+                fill="#8e8e93"
+              />
+            )
+          })()}
+      </Group>
+    </>
   )
 }
 

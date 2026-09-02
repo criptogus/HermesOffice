@@ -16,10 +16,16 @@ export default defineConfig({
   // must be bundled — externalizing them yields ERR_MODULE_NOT_FOUND under Node
   // (same setup as apps/slides).
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils', '@hermesoffice/font-metrics'] }),
+    ],
     resolve: { alias: localAlias },
   },
-  preload: {},
+  preload: {
+    // Sandboxed preload scripts cannot require arbitrary npm packages at
+    // runtime, so the drop-open bridge must be bundled, not externalized.
+    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils'] })],
+  },
   renderer: {
     plugins: [react()],
     resolve: { alias: localAlias },

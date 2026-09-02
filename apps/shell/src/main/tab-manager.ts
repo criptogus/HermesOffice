@@ -6,18 +6,26 @@ import {
   createDocsView,
   docsQueryDirty,
   markDocsNewBlank,
+  queueDocsAiContent,
   requestDocsClose,
   setActiveDocsResolver,
   teardownDocsRenderer,
 } from '../../../docs/src/main/docs-main'
+import type { AiDocContent } from '../../../docs/src/shared/ipc'
 import {
   createMarkdownView,
   markdownIsDirty,
   requestMarkdownClose,
 } from '../../../markdown/src/main/markdown-main'
-import { createPdfView, pdfIsDirty, requestPdfClose } from '../../../pdf/src/main/pdf-main'
+import {
+  createPdfView,
+  clearPdfDirty,
+  pdfIsDirty,
+  requestPdfClose,
+} from '../../../pdf/src/main/pdf-main'
 import {
   createSheetsView,
+  queueWorkbookForView,
   requestSheetsClose,
   setActiveSheetsWebContents,
   setSheetsNewBlank,
@@ -58,6 +66,10 @@ export class TabManager {
   private nextId = 1
   /** tab whose page entered HTML fullscreen (e.g. slides slideshow) — its view covers the tab strip */
   private htmlFullScreenId: string | null = null
+  /** webContents ids whose view must cover the tab strip without HTML fullscreen
+   *  (slides show: the window snaps via simpleFullScreen and asks for the bleed
+   *  over IPC, since requestFullscreen would animate the native transition) */
+  private readonly bleedWcIds = new Set<number>()
   /** tabs mid unsaved-changes prompt, so a second close click doesn't stack dialogs */
   private readonly closingIds = new Set<string>()
 
@@ -88,7 +100,18 @@ export class TabManager {
     if (this.htmlFullScreenId !== null && this.htmlFullScreenId === this.activeId) {
       return { x: 0, y: 0, width, height }
     }
+    const active = this.tabs.find((t) => t.id === this.activeId)
+    if (active?.view && this.bleedWcIds.has(active.view.webContents.id)) {
+      return { x: 0, y: 0, width, height }
+    }
     return { x: 0, y: TAB_STRIP_HEIGHT, width, height: Math.max(0, height - TAB_STRIP_HEIGHT) }
+  }
+
+  /** Grow/restore a tab view over the tab strip on request (slides show fullscreen) */
+  setContentBleed(wc: WebContents, on: boolean): void {
+    if (on) this.bleedWcIds.add(wc.id)
+    else this.bleedWcIds.delete(wc.id)
+    this.layout()
   }
 
   /**
@@ -129,10 +152,14 @@ export class TabManager {
     this.activateTab(HOME_ID)
   }
 
-  openDocsTab(openPath?: string, options?: { newBlank?: boolean }): string {
+  openDocsTab(
+    openPath?: string,
+    options?: { newBlank?: boolean; aiContent?: AiDocContent },
+  ): string {
     const view = createDocsView(openPath)
     const id = `t${this.nextId++}`
     if (options?.newBlank) markDocsNewBlank(view.webContents.id)
+    if (options?.aiContent) queueDocsAiContent(view.webContents.id, options.aiContent)
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
     this.trackHtmlFullScreen(id, view)
@@ -150,6 +177,10 @@ export class TabManager {
   openSheetsTab(openPath?: string, options?: { newBlank?: boolean }): string {
     if (options?.newBlank) setSheetsNewBlank()
     const view = createSheetsView({ includeAiHandlers: false })
+    // bind the path to this tab's webContents: a multi-select Open creates
+    // several sheets tabs in one loop, so a single global path would be
+    // overwritten before the earlier tabs consume it
+    if (openPath) queueWorkbookForView(view.webContents, openPath)
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
@@ -193,6 +224,15 @@ export class TabManager {
     return id
   }
 
+  /** Remount the tab's renderer so it re-reads its file from disk (View > Reload). */
+  reloadTab(id: string): void {
+    const tab = this.tabs.find((t) => t.id === id)
+    const wc = tab?.view?.webContents
+    if (!wc || wc.isDestroyed()) return
+    if (tab.kind === 'pdf') clearPdfDirty(wc.id)
+    wc.reload()
+  }
+
   openMarkdownTab(openPath?: string): string {
     const view = createMarkdownView(openPath)
     const id = `t${this.nextId++}`
@@ -216,11 +256,21 @@ export class TabManager {
     for (const t of this.tabs) t.view?.setVisible(t.id === id)
     if (target.view) target.view.setBounds(this.contentBounds())
     this.activeId = id
+    this.refreshActiveTargets()
+    this.onChanged()
+  }
+
+  /** Re-point the process-global active-editor targets and the app menu at this
+   *  window's active tab. Called on every activation and on shell-window focus:
+   *  a detached editor window ("Open in New Window") claims the same globals
+   *  while it is focused. */
+  refreshActiveTargets(): void {
+    const target = this.tabs.find((t) => t.id === this.activeId)
+    if (!target) return
     setActiveDocsResolver(target.kind === 'docs' ? () => target.view!.webContents : () => null)
     if (target.kind === 'sheets' && target.view) setActiveSheetsWebContents(target.view.webContents)
     if (target.kind === 'slides' && target.view) setActiveSlidesWebContents(target.view.webContents)
     this.applyMenuFor(target.kind)
-    this.onChanged()
   }
 
   /** move a tab to a new index in the strip; Home is pinned at index 0 */
@@ -382,20 +432,6 @@ export class TabManager {
 
   findPdfTabByPath(path: string): string | undefined {
     return this.tabs.find((t) => t.kind === 'pdf' && t.filePath === path)?.id
-  }
-
-  /** the active tab's kind + on-disk path, for main-process actions (e.g. share) */
-  activeTabFilePath(): { kind: TabKind; filePath?: string } | undefined {
-    const tab = this.tabs.find((t) => t.id === this.activeId)
-    if (!tab) return undefined
-    return { kind: tab.kind, filePath: tab.filePath }
-  }
-
-  /** every editor tab's on-disk path, for cloud sync watchers */
-  openFilePaths(): string[] {
-    return this.tabs
-      .map((tab) => tab.filePath)
-      .filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0)
   }
 
   findMarkdownTabByPath(path: string): string | undefined {

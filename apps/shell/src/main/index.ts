@@ -1,6 +1,4 @@
 import { execSync, spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { createServer } from 'node:http'
 import {
   copyFileSync,
   cpSync,
@@ -23,7 +21,7 @@ import {
   shell,
   webContents,
 } from 'electron'
-import type { MenuItemConstructorOptions, NativeImage } from 'electron'
+import type { MenuItemConstructorOptions, NativeImage, WebContents } from 'electron'
 import menuDocxIcon1x from './assets/menu-docx.png?asset'
 import menuDocxIcon2x from './assets/menu-docx@2x.png?asset'
 import menuXlsxIcon1x from './assets/menu-xlsx.png?asset'
@@ -36,17 +34,11 @@ import menuMdIcon1x from './assets/menu-md.png?asset'
 import menuMdIcon2x from './assets/menu-md@2x.png?asset'
 import menuHomeIcon1x from './assets/menu-home.png?asset'
 import menuHomeIcon2x from './assets/menu-home@2x.png?asset'
-import {
-  createI18n,
-  htmlLang,
-  isLang,
-  normalizeLang,
-  setUiLang,
-  type Lang,
-} from '@hermesoffice/i18n'
-import { hermesHealthUrl } from '@hermesoffice/ai-provider'
+import { createI18n, isLang, normalizeLang, setUiLang, type Lang } from '@hermesoffice/i18n'
 import {
   DEFAULT_SAVE_DIR_KEY,
+  DROP_OPEN_CHANNEL,
+  GITHUB_REPO_URL,
   appMenuLabels,
   contextMenuLabels,
   editMenuTemplate,
@@ -57,42 +49,46 @@ import {
   showSaveDialogWithMemory,
   windowMenuTemplate,
 } from '@hermesoffice/electron-utils'
-import { readAppSettings, writeAppSetting } from './app-settings'
+import { readAppSettings, writeAppSetting, writeAppSettings } from './app-settings'
+import {
+  ANALYTICS_ENABLED_KEY,
+  analyticsEnabledFrom,
+  createAnalytics,
+  ensureAnalyticsClientState,
+  extractPackagedAnalyticsKeys,
+  markAnalyticsFirstLaunchSent,
+} from './analytics'
+import type { Analytics, AnalyticsKeys } from './analytics'
+import {
+  LAST_RUN_VERSION_KEY,
+  STAR_PROMPT_KEY,
+  asStarPromptState,
+  isUpgradeLaunch,
+  shouldShowStarPrompt,
+  shouldShowUpgradeStarPrompt,
+  withDocOpen,
+  withFirstRun,
+  withResolved,
+  withShown,
+} from './star-prompt'
+import {
+  clearCloudProjectsStore,
+  cloudProjectExternalUrl,
+  readCloudProjectsStore,
+  syncCloudProjects,
+} from './cloud-projects'
+import { handleDroppedFiles } from './dropped-files'
 import { ProjectStore } from '@hermesoffice/project-store'
 import {
-  buildTarget,
-  listShareTargets,
-  openShareWindow,
-  registerShareIpc,
-  resolveHermesBin,
-  sendFileToTarget,
-  withHomeChannelFallbacks,
-  type ShareStrings,
-  type ShareWindowSendRequest,
-  type ShareWindowState,
-} from '@hermesoffice/hermes-share'
-import {
-  CLOUD_CHANNELS,
-  CloudSyncManager,
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  TokenStore,
-  buildAuthUrl,
-  driveAuthState,
-  exchangeCode,
-  loadCloudConfig,
-  normalizeCloudConfig,
-  saveCloudConfig,
-  type CloudConfig,
-  type CloudFileState,
-} from '@hermesoffice/hermes-cloud'
-import {
   ensureGenofficeLogin,
+  hermesofficeLogout,
   gskConvertPdfToDocx,
   gskLoginInfo,
   hasGskAuth,
+  loadGenofficeAuth,
   resolveGskEntry,
   setGskProxyUrl,
+  startGenofficeLogin,
 } from '@hermesoffice/ai-search'
 
 import {
@@ -113,17 +109,20 @@ import {
   setDocsExtraFileMenuItems,
   setDocsMenuGate,
   setDocsShellHooks,
+  createAiDocument,
   projectFileRenamed,
   setDocsShellWindow,
   setDocsFileSavedHook,
+  setDocsFileOpenedHook,
   setSessionPathResolver,
   defaultSaveDir,
   uniquePathIn,
 } from '../../../docs/src/main/docs-main'
 import { blankXlsxBuffer } from '../../../sheets/src/gateway/csv-import'
+import { blankPdfBuffer } from '../../../pdf/src/main/blank-pdf'
 import {
   configureSheetsRuntime,
-  hasQueuedWorkbook,
+  hasActiveQueuedWorkbook,
   installSheetsMenu,
   markSheetsShuttingDown,
   requestSheetsClose,
@@ -131,7 +130,6 @@ import {
   markSheetsUntitledPath,
   sendSheetsMenuAction,
   sheetsFileRenamed,
-  setForcedWorkbookPath,
   setSheetsCloseTabHook,
   setSheetsExtraFileMenuItems,
   setSheetsShellWindow,
@@ -148,29 +146,46 @@ import {
   setSlidesExtraFileMenuItems,
   setSlidesOpenedHook,
   setSlidesShellWindow,
+  setSlidesShowBleed,
   slidesFileRenamed,
 } from '../../../slides/src/main/slides-main'
 import {
   configurePdfRuntime,
   flushPdfSave,
+  markPdfUntitledPath,
   pdfIsDirty,
   requestPdfClose,
   requestPdfSaveAs,
+  sendPdfPrintRequest,
+  setPdfRenamedHook,
   setPdfSaveAsInFlight,
 } from '../../../pdf/src/main/pdf-main'
+import { PDF_CHANNELS } from '../../../pdf/src/shared/ipc'
+import { convertPdfFileToDocxLocalWithPrompt, PdfLoadError } from './pdf2docx-local'
+import { convertPdfFileToPptxLocalWithPrompt } from './pdf2pptx-local'
+import { convertPdfFileToXlsxLocalWithPrompt } from './pdf2xlsx-local'
+import { closePdfPasswordDialog, promptPdfPassword } from './pdf-password-dialog'
 import {
   configureMarkdownRuntime,
   markdownFileRenamed,
   requestMarkdownClose,
   requestMarkdownSave,
   sendMarkdownExportRequest,
+  sendMarkdownPrintRequest,
   setMarkdownDocxExportedHook,
   setMarkdownFileSavedHook,
 } from '../../../markdown/src/main/markdown-main'
-import type { RecentEntry, RecentPage, RenameResult, UiTheme } from '../shared/home-api'
+import type {
+  AccountLoginEvent,
+  RecentEntry,
+  RecentPage,
+  RenameResult,
+  StarPromptShow,
+  UiTheme,
+} from '../shared/home-api'
 import { HOME_CHANNELS } from '../shared/home-api'
-import { TABS_CHANNELS } from '../shared/tabs-api'
 import type { TabKind } from '../shared/tabs-api'
+import { TABS_CHANNELS } from '../shared/tabs-api'
 import { showErrorDialog } from './error-dialog'
 import { normalizeRecentQuery, pageRecentPaths, statExistingPaths } from './recent-files'
 import { TabManager } from './tab-manager'
@@ -239,21 +254,29 @@ configureSheetsRuntime({
   rendererUrl: process.env.SHEETS_RENDERER_URL,
   rendererFile: join(SHEETS_OUT, 'renderer', 'index.html'),
   sidecarPath: SIDECAR_BIN,
+  openGeneratedPath: (path) => openGeneratedDocument(path),
+  // The sheets AI's create_document (docx/pdf/md) funnels into the docs-owned
+  // creation flow, like the pdf app below.
+  createDocument: createAiDocument,
 })
 configureSlidesRuntime({
   preloadPath: join(SLIDES_OUT, 'preload', 'index.js'),
   rendererDevUrl: process.env.SLIDES_RENDERER_URL,
   rendererFilePath: join(SLIDES_OUT, 'renderer', 'index.html'),
+  openGeneratedPath: (path) => openGeneratedDocument(path),
 })
 configurePdfRuntime({
   preloadPath: join(PDF_OUT, 'preload', 'index.js'),
   rendererUrl: process.env.PDF_RENDERER_URL,
   rendererFile: join(PDF_OUT, 'renderer', 'index.html'),
+  openGeneratedPath: (path) => openGeneratedDocument(path),
+  createDocument: createAiDocument,
 })
 configureMarkdownRuntime({
   preloadPath: join(MARKDOWN_OUT, 'preload', 'index.js'),
   rendererUrl: process.env.MARKDOWN_RENDERER_URL,
   rendererFile: join(MARKDOWN_OUT, 'renderer', 'index.html'),
+  openGeneratedPath: (path) => openGeneratedDocument(path),
 })
 
 // ---- UI language ----
@@ -302,15 +325,132 @@ function currentTheme(): UiTheme {
   return cachedTheme
 }
 
+// ---- anonymous usage analytics (see src/main/analytics.ts) ----
+// Stays a no-op until initAnalytics() runs at startup; keyless builds
+// (source/forks) keep the no-op forever, so every track() call is safe.
+
+let analytics: Analytics = { active: false, track: () => {} }
+
+let cachedAnalyticsEnabled: boolean | null = null
+
+function analyticsEnabled(): boolean {
+  cachedAnalyticsEnabled ??= analyticsEnabledFrom(readAppSettings(APP_SETTINGS_PATH()))
+  return cachedAnalyticsEnabled
+}
+
+function resolveAnalyticsKeys(): AnalyticsKeys | null {
+  // Only packaged extraMetadata is authoritative. Source/dev runs never read
+  // runtime credentials and therefore remain a strict no-op.
+  if (!app.isPackaged) return null
+  try {
+    return extractPackagedAnalyticsKeys(
+      JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')),
+      app.isPackaged,
+    )
+  } catch {
+    return null
+  }
+}
+
+function persistAnalyticsPreference(enabled: boolean): boolean {
+  const previous = cachedAnalyticsEnabled
+  // Change the in-memory gate before touching disk. The synchronous atomic
+  // write prevents another event from being handled in between.
+  cachedAnalyticsEnabled = enabled
+  try {
+    writeAppSettings(APP_SETTINGS_PATH(), { [ANALYTICS_ENABLED_KEY]: enabled })
+    return true
+  } catch (error) {
+    cachedAnalyticsEnabled = previous
+    throw error
+  }
+}
+
+function initAnalytics(): void {
+  try {
+    let clientState: ReturnType<typeof ensureAnalyticsClientState> | null = null
+    const getClientState = () => (clientState ??= ensureAnalyticsClientState(APP_SETTINGS_PATH()))
+    analytics = createAnalytics({
+      keys: resolveAnalyticsKeys(),
+      getClientId: () => getClientState().clientId,
+      isEnabled: analyticsEnabled,
+      shouldTrackFirstLaunch: () => getClientState().firstLaunchPending,
+      onFirstLaunchSent: () => markAnalyticsFirstLaunchSent(APP_SETTINGS_PATH()),
+      // Country-only approximation from OS regional settings. This avoids an
+      // IP lookup while populating GA4's built-in Country dimension.
+      getCountryCode: () => app.getLocaleCountryCode(),
+      // evaluated per event: ui_lang follows live language switches
+      baseParams: () => ({
+        app_version: app.getVersion(),
+        platform: process.platform,
+        os_version: process.getSystemVersion(),
+        ui_lang: currentLang(),
+      }),
+    })
+  } catch {
+    // analytics must never block startup
+  }
+}
+
 // ---- first-run onboarding ----
-// The GenTeam community page opened from the onboarding's second slide.
-// Stable short link served by the genoffice.ai site; it 302s to the tokened
+// O link de comunidade abre o repo do HermesOffice.
+// Stable short link served by the hermesoffice.ai site; it 302s to the tokened
 // invite link, which stays out of this repo and rotates server-side.
-const GENTEAM_URL = 'https://www.genspark.ai/hermesoffice/join'
+const HERMESOFFICE_REPO_URL = 'https://github.com/criptogus/HermesOffice'
 
 // Genspark credit-usage page opened from the account menu's credits row.
 // Kept main-side so the renderer never supplies the URL.
 const CREDIT_USAGE_URL = 'https://www.genspark.ai/credit-usage'
+
+// ---- "star us on GitHub" prompt (see star-prompt.ts for the rules) ----
+
+const readStarPrompt = () =>
+  asStarPromptState(readAppSettings(APP_SETTINGS_PATH())[STAR_PROMPT_KEY])
+const writeStarPrompt = (state: ReturnType<typeof readStarPrompt>) =>
+  writeAppSetting(APP_SETTINGS_PATH(), STAR_PROMPT_KEY, state)
+
+/** set at startup when this is the first launch after an upgrade; consumed by
+ * the first starPromptShouldShow query of the session */
+let upgradeStarPromptPending = false
+
+/** a granted show, cached for the session: repeated queries (React StrictMode
+ * double-effects, AppFrame remounts) must return the same answer instead of
+ * burning another lifetime show or flipping to a snoozed "false" */
+let starPromptSessionGrant: StarPromptShow | null = null
+
+/** every successful document open counts toward the prompt's value threshold */
+function recordStarPromptDocOpen(): void {
+  try {
+    const state = readStarPrompt()
+    const next = withDocOpen(state)
+    if (next !== state) writeStarPrompt(next)
+  } catch {
+    // settings write failures must never break opening a document
+  }
+}
+
+// Stargazer count for the settings About pane; fetched main-side (the
+// renderer CSP has no api.github.com) and cached per session — the exact
+// number is decoration, staleness is fine.
+let cachedGithubStars: number | null = null
+
+async function fetchGithubStars(): Promise<number | null> {
+  if (cachedGithubStars !== null) return cachedGithubStars
+  try {
+    const response = await fetch('https://api.github.com/repos/genspark-ai/hermesoffice', {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!response.ok) return null
+    const body: unknown = await response.json()
+    const count = (body as { stargazers_count?: unknown }).stargazers_count
+    if (typeof count !== 'number' || !Number.isFinite(count)) return null
+    cachedGithubStars = count
+    return count
+  } catch {
+    return null
+  }
+}
 
 const tMain = createI18n({
   zh: {
@@ -322,10 +462,13 @@ const tMain = createI18n({
     untitledDoc: '未命名文档',
     untitledDeck: '未命名演示文稿',
     untitledMarkdown: '未命名 Markdown',
+    untitledPdf: '未命名 PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: '导出为 PDF…',
     menuOpenInDocs: '转换为 Docs 文档并打开',
+    menuPrint: '打印…',
     menuOpen: '打开…',
     menuSave: '保存',
     menuSaveAs: '另存为…',
@@ -334,21 +477,6 @@ const tMain = createI18n({
     menuWindow: '窗口',
     menuHome: '首页',
     backToHome: '返回首页',
-    menuSendTo: '发送到…',
-    shareTitle: '发送到…',
-    shareFileLabel: '文件',
-    shareTargetLabel: '频道',
-    shareMessageLabel: '消息',
-    shareOptional: '可选',
-    shareSend: '发送',
-    shareCancel: '取消',
-    shareSending: '发送中…',
-    shareSent: '已发送',
-    shareFailed: '发送失败',
-    shareNoHermes: 'Hermes 不可用。请安装 Hermes CLI 后分享文件。',
-    shareNoTargets: '未配置频道。请运行 `hermes gateway setup` 配置。',
-    shareNoFile: '请先保存文档',
-    shareClose: '关闭',
     dlgOpenTitle: '打开文件',
     filterSupported: '支持的文件',
     filterWord: 'Word 文档',
@@ -378,6 +506,39 @@ const tMain = createI18n({
     pdfDocxFailedMsg: '导出为 Word 失败',
     pdfDocxNoCliMsg: '无法登录 Genspark：缺少必需组件（gsk），请重新安装应用。',
     pdfDocxBusyMsg: '正在转换中，请等待当前导出完成。',
+    menuExportDocxLocal: '导出为 Word（本地转换）…',
+    menuExportDocxCloud: '导出为 Word（云端转换）…',
+    menuExportPptx: '导出为 PPT…',
+    pdfPptxFailedMsg: '导出为 PPT 失败',
+    pdfPptxBusyMsg: '正在转换中，请等待当前导出完成。',
+    pdfPptxLocalScannedDetail: '本地转换已按图片保真导出各页，幻灯片中的文字不可编辑。',
+    menuExportXlsx: '导出为 Excel…',
+    pdfXlsxFailedMsg: '导出为 Excel 失败',
+    pdfXlsxBusyMsg: '正在转换中，请等待当前导出完成。',
+    pdfXlsxLocalScannedDetail: '扫描页无法转换为单元格，对应工作表中已写入提示行。',
+    pdfXlsxLocalSkippedMsg: '部分页面未转换为单元格',
+    pdfXlsxLocalSkippedDetail: '第 {pages} 页无法转换为单元格，对应工作表中已写入提示行。',
+    pdfDocxLocalScannedMsg: '检测到扫描件',
+    pdfDocxLocalScannedDetail:
+      '本地转换已按图片保真导出各页。如需可编辑的文本，请使用云端转换（支持 OCR）。',
+    pdfDocxLocalDegradedMsg: '部分页面已按图片导出',
+    pdfDocxLocalDegradedDetail: '第 {pages} 页版面无法可靠重建，已按整页图片保真导出。',
+    pdfDocxLocalOcrMsg: '扫描页已转换为可编辑文本',
+    pdfDocxLocalOcrDetail:
+      '第 {pages} 页为扫描件，已通过本地 OCR 识别为可编辑文字，建议校对识别结果。',
+    pdfDocxLocalEncryptedDetail: '此 PDF 已加密，未提供正确的密码，无法转换。',
+    pdfDocxLocalUnsupportedEncDetail:
+      '该文件使用证书加密或不支持的加密方式，无法在本地转换，可尝试云端转换。',
+    pdfPwdTitle: '输入密码',
+    pdfPwdPrompt: '此 PDF 已加密，请输入打开密码：',
+    pdfPwdRetryPrompt: '密码不正确，请重试。',
+    pdfPwdOk: '确定',
+    pdfPwdVerifying: '正在验证密码…',
+    pdfPwdLabel: '密码',
+    pdfPwdPlaceholder: '输入打开密码',
+    pdfPwdShow: '显示密码',
+    pdfPwdHide: '隐藏密码',
+    pdfDocxLocalCorruptDetail: '文件已损坏或不是有效的 PDF，无法转换。',
     dlgPickSaveDir: '选择默认保存位置',
     errSaveDirUnusable: '所选文件夹不可写，无法用作默认保存位置',
   },
@@ -390,10 +551,13 @@ const tMain = createI18n({
     untitledDoc: 'Untitled Document',
     untitledDeck: 'Untitled Presentation',
     untitledMarkdown: 'Untitled Markdown',
+    untitledPdf: 'Untitled PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Export as PDF…',
-    menuOpenInDocs: 'Convert & Open in AI Docs',
+    menuOpenInDocs: 'Convert and Open in Docs',
+    menuPrint: 'Print…',
     menuOpen: 'Open…',
     menuSave: 'Save',
     menuSaveAs: 'Save As…',
@@ -402,21 +566,6 @@ const tMain = createI18n({
     menuWindow: 'Window',
     menuHome: 'Home',
     backToHome: 'Back to Home',
-    menuSendTo: 'Send to…',
-    shareTitle: 'Send to…',
-    shareFileLabel: 'File',
-    shareTargetLabel: 'Channel',
-    shareMessageLabel: 'Message',
-    shareOptional: 'optional',
-    shareSend: 'Send',
-    shareCancel: 'Cancel',
-    shareSending: 'Sending…',
-    shareSent: 'Sent',
-    shareFailed: 'Send failed',
-    shareNoHermes: 'Hermes is not available. Install the Hermes CLI to share files.',
-    shareNoTargets: 'No channels configured. Set one up with `hermes gateway setup`.',
-    shareNoFile: 'Save the document first',
-    shareClose: 'Close',
     dlgOpenTitle: 'Open File',
     filterSupported: 'Supported Files',
     filterWord: 'Word Documents',
@@ -449,6 +598,44 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Cannot sign in to Genspark: a required component (gsk) is missing. Please reinstall the app.',
     pdfDocxBusyMsg: 'A Word export is already in progress. Please wait for it to finish.',
+    menuExportDocxLocal: 'Export as Word (Local)…',
+    menuExportDocxCloud: 'Export as Word (Cloud)…',
+    menuExportPptx: 'Export as PowerPoint…',
+    pdfPptxFailedMsg: 'Export as PowerPoint failed',
+    pdfPptxBusyMsg: 'An export is already in progress. Please wait for it to finish.',
+    pdfPptxLocalScannedDetail:
+      'Each page was exported as a full-page image; the text on the slides is not editable.',
+    menuExportXlsx: 'Export as Excel…',
+    pdfXlsxFailedMsg: 'Export as Excel failed',
+    pdfXlsxBusyMsg: 'An export is already in progress. Please wait for it to finish.',
+    pdfXlsxLocalScannedDetail:
+      "Scanned pages cannot be converted to cells; each page's worksheet carries a notice row instead.",
+    pdfXlsxLocalSkippedMsg: 'Some pages were not converted to cells',
+    pdfXlsxLocalSkippedDetail:
+      'Pages {pages} could not be converted to cells; their worksheets carry a notice row instead.',
+    pdfDocxLocalScannedMsg: 'Scanned document detected',
+    pdfDocxLocalScannedDetail:
+      'The local conversion exported the pages as images to preserve their appearance. For editable text, use the cloud conversion (with OCR).',
+    pdfDocxLocalDegradedMsg: 'Some pages were exported as images',
+    pdfDocxLocalDegradedDetail:
+      'Page(s) {pages} could not be reliably reconstructed and were exported as full-page images.',
+    pdfDocxLocalOcrMsg: 'Scanned pages converted to editable text',
+    pdfDocxLocalOcrDetail:
+      'Page(s) {pages} were scans; their text was recovered with on-device OCR. Please proofread the result.',
+    pdfDocxLocalEncryptedDetail:
+      'This PDF is encrypted and could not be opened without the correct password.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'This PDF uses certificate-based or otherwise unsupported encryption and cannot be converted locally. Try the cloud conversion instead.',
+    pdfPwdTitle: 'Enter Password',
+    pdfPwdPrompt: 'This PDF is encrypted. Enter the password to open it:',
+    pdfPwdRetryPrompt: 'Incorrect password. Please try again.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Verifying password…',
+    pdfPwdLabel: 'Password',
+    pdfPwdPlaceholder: 'Enter the open password',
+    pdfPwdShow: 'Show password',
+    pdfPwdHide: 'Hide password',
+    pdfDocxLocalCorruptDetail: 'The file is damaged or not a valid PDF and cannot be converted.',
     dlgPickSaveDir: 'Choose Default Save Location',
     errSaveDirUnusable:
       'The selected folder is not writable and cannot be used as the default save location',
@@ -462,10 +649,13 @@ const tMain = createI18n({
     untitledDoc: '無題のドキュメント',
     untitledDeck: '無題のプレゼンテーション',
     untitledMarkdown: '無題の Markdown',
+    untitledPdf: '無題の PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'PDF として書き出す…',
     menuOpenInDocs: 'Docs 文書に変換して開く',
+    menuPrint: '印刷…',
     menuOpen: '開く…',
     menuSave: '保存',
     menuSaveAs: '名前を付けて保存…',
@@ -474,22 +664,6 @@ const tMain = createI18n({
     menuWindow: 'ウィンドウ',
     menuHome: 'ホーム',
     backToHome: 'ホームに戻る',
-    menuSendTo: '送信…',
-    shareTitle: '送信…',
-    shareFileLabel: 'ファイル',
-    shareTargetLabel: 'チャンネル',
-    shareMessageLabel: 'メッセージ',
-    shareOptional: '任意',
-    shareSend: '送信',
-    shareCancel: 'キャンセル',
-    shareSending: '送信中…',
-    shareSent: '送信しました',
-    shareFailed: '送信に失敗しました',
-    shareNoHermes:
-      'Hermes が利用できません。ファイルを共有するには Hermes CLI をインストールしてください。',
-    shareNoTargets: 'チャンネルが設定されていません。`hermes gateway setup` で設定してください。',
-    shareNoFile: '先にドキュメントを保存してください',
-    shareClose: '閉じる',
     dlgOpenTitle: 'ファイルを開く',
     filterSupported: '対応ファイル',
     filterWord: 'Word 文書',
@@ -522,6 +696,44 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Genspark にサインインできません：必要なコンポーネント（gsk）が見つかりません。アプリを再インストールしてください。',
     pdfDocxBusyMsg: 'Word への書き出しが進行中です。完了までお待ちください。',
+    menuExportDocxLocal: 'Word として書き出す（ローカル変換）…',
+    menuExportDocxCloud: 'Word として書き出す（クラウド変換）…',
+    menuExportPptx: 'PowerPoint として書き出す…',
+    pdfPptxFailedMsg: 'PowerPoint への書き出しに失敗しました',
+    pdfPptxBusyMsg: '変換が進行中です。現在の書き出しが完了するまでお待ちください。',
+    pdfPptxLocalScannedDetail:
+      '各ページは画像として書き出されたため、スライド内のテキストは編集できません。',
+    menuExportXlsx: 'Excel として書き出す…',
+    pdfXlsxFailedMsg: 'Excel への書き出しに失敗しました',
+    pdfXlsxBusyMsg: '変換が進行中です。現在の書き出しが完了するまでお待ちください。',
+    pdfXlsxLocalScannedDetail:
+      'スキャンされたページはセルに変換できないため、各ページのワークシートに通知行を書き込みました。',
+    pdfXlsxLocalSkippedMsg: '一部のページはセルに変換されませんでした',
+    pdfXlsxLocalSkippedDetail:
+      'ページ {pages} はセルに変換できなかったため、対応するワークシートに通知行を書き込みました。',
+    pdfDocxLocalScannedMsg: 'スキャン文書を検出しました',
+    pdfDocxLocalScannedDetail:
+      'ローカル変換では、見た目を保つため各ページを画像として書き出しました。編集可能なテキストが必要な場合は、クラウド変換（OCR 対応）をご利用ください。',
+    pdfDocxLocalDegradedMsg: '一部のページを画像として書き出しました',
+    pdfDocxLocalDegradedDetail:
+      'ページ {pages} はレイアウトを正確に再構築できなかったため、ページ全体を画像として書き出しました。',
+    pdfDocxLocalOcrMsg: 'スキャンページを編集可能なテキストに変換しました',
+    pdfDocxLocalOcrDetail:
+      'ページ {pages} はスキャン画像のため、ローカル OCR でテキストを復元しました。内容の確認をおすすめします。',
+    pdfDocxLocalEncryptedDetail:
+      'このPDFは暗号化されており、正しいパスワードがないため変換できませんでした。',
+    pdfDocxLocalUnsupportedEncDetail:
+      'このPDFは証明書ベースまたは未対応の暗号化方式を使用しているため、ローカルでは変換できません。クラウド変換をお試しください。',
+    pdfPwdTitle: 'パスワードを入力',
+    pdfPwdPrompt: 'このPDFは暗号化されています。開くためのパスワードを入力してください：',
+    pdfPwdRetryPrompt: 'パスワードが正しくありません。もう一度お試しください。',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'パスワードを確認しています…',
+    pdfPwdLabel: 'パスワード',
+    pdfPwdPlaceholder: '開くパスワードを入力',
+    pdfPwdShow: 'パスワードを表示',
+    pdfPwdHide: 'パスワードを非表示',
+    pdfDocxLocalCorruptDetail: 'ファイルが破損しているか有効なPDFではないため、変換できません。',
     dlgPickSaveDir: '既定の保存先を選択',
     errSaveDirUnusable:
       '選択したフォルダーは書き込みできないため、既定の保存先として使用できません',
@@ -535,10 +747,13 @@ const tMain = createI18n({
     untitledDoc: '제목 없는 문서',
     untitledDeck: '제목 없는 프레젠테이션',
     untitledMarkdown: '제목 없는 Markdown',
+    untitledPdf: '제목 없는 PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'PDF로 내보내기…',
     menuOpenInDocs: 'Docs 문서로 변환하여 열기',
+    menuPrint: '인쇄…',
     menuOpen: '열기…',
     menuSave: '저장',
     menuSaveAs: '다른 이름으로 저장…',
@@ -547,21 +762,6 @@ const tMain = createI18n({
     menuWindow: '창',
     menuHome: '홈',
     backToHome: '홈으로 돌아가기',
-    menuSendTo: '보내기…',
-    shareTitle: '보내기…',
-    shareFileLabel: '파일',
-    shareTargetLabel: '채널',
-    shareMessageLabel: '메시지',
-    shareOptional: '선택 사항',
-    shareSend: '보내기',
-    shareCancel: '취소',
-    shareSending: '보내는 중…',
-    shareSent: '전송됨',
-    shareFailed: '전송 실패',
-    shareNoHermes: 'Hermes를 사용할 수 없습니다. 파일을 공유하려면 Hermes CLI를 설치하세요.',
-    shareNoTargets: '채널이 구성되지 않았습니다. `hermes gateway setup`으로 설정하세요.',
-    shareNoFile: '문서를 먼저 저장하세요',
-    shareClose: '닫기',
     dlgOpenTitle: '파일 열기',
     filterSupported: '지원되는 파일',
     filterWord: 'Word 문서',
@@ -594,6 +794,44 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Genspark에 로그인할 수 없습니다. 필수 구성 요소(gsk)가 없습니다. 앱을 다시 설치해 주세요.',
     pdfDocxBusyMsg: 'Word 내보내기가 이미 진행 중입니다. 완료될 때까지 기다려 주세요.',
+    menuExportDocxLocal: 'Word로 내보내기(로컬 변환)…',
+    menuExportDocxCloud: 'Word로 내보내기(클라우드 변환)…',
+    menuExportPptx: 'PowerPoint로 내보내기…',
+    pdfPptxFailedMsg: 'PowerPoint 내보내기 실패',
+    pdfPptxBusyMsg: '변환이 진행 중입니다. 현재 내보내기가 완료될 때까지 기다려 주세요.',
+    pdfPptxLocalScannedDetail:
+      '각 페이지가 이미지로 내보내져 슬라이드의 텍스트를 편집할 수 없습니다.',
+    menuExportXlsx: 'Excel로 내보내기…',
+    pdfXlsxFailedMsg: 'Excel 내보내기 실패',
+    pdfXlsxBusyMsg: '변환이 진행 중입니다. 현재 내보내기가 완료될 때까지 기다려 주세요.',
+    pdfXlsxLocalScannedDetail:
+      '스캔된 페이지는 셀로 변환할 수 없어 각 페이지의 워크시트에 알림 행을 기록했습니다.',
+    pdfXlsxLocalSkippedMsg: '일부 페이지가 셀로 변환되지 않았습니다',
+    pdfXlsxLocalSkippedDetail:
+      '{pages} 페이지는 셀로 변환할 수 없어 해당 워크시트에 알림 행을 기록했습니다.',
+    pdfDocxLocalScannedMsg: '스캔 문서가 감지되었습니다',
+    pdfDocxLocalScannedDetail:
+      '로컬 변환은 모양을 유지하기 위해 각 페이지를 이미지로 내보냈습니다. 편집 가능한 텍스트가 필요하면 클라우드 변환(OCR 지원)을 사용하세요.',
+    pdfDocxLocalDegradedMsg: '일부 페이지가 이미지로 내보내졌습니다',
+    pdfDocxLocalDegradedDetail:
+      '{pages}쪽은 레이아웃을 안정적으로 재구성할 수 없어 전체 페이지 이미지로 내보냈습니다.',
+    pdfDocxLocalOcrMsg: '스캔 페이지를 편집 가능한 텍스트로 변환했습니다',
+    pdfDocxLocalOcrDetail:
+      '{pages}페이지는 스캔 이미지로, 로컬 OCR로 텍스트를 복원했습니다. 결과를 검토해 주세요.',
+    pdfDocxLocalEncryptedDetail:
+      '이 PDF는 암호화되어 있으며 올바른 비밀번호가 없어 변환할 수 없습니다.',
+    pdfDocxLocalUnsupportedEncDetail:
+      '이 PDF는 인증서 기반이거나 지원되지 않는 암호화 방식을 사용하므로 로컬에서 변환할 수 없습니다. 클라우드 변환을 사용해 보세요.',
+    pdfPwdTitle: '비밀번호 입력',
+    pdfPwdPrompt: '이 PDF는 암호화되어 있습니다. 열기 위한 비밀번호를 입력하세요:',
+    pdfPwdRetryPrompt: '비밀번호가 올바르지 않습니다. 다시 시도하세요.',
+    pdfPwdOk: '확인',
+    pdfPwdVerifying: '비밀번호 확인 중…',
+    pdfPwdLabel: '암호',
+    pdfPwdPlaceholder: '열기 암호 입력',
+    pdfPwdShow: '암호 표시',
+    pdfPwdHide: '암호 숨기기',
+    pdfDocxLocalCorruptDetail: '파일이 손상되었거나 유효한 PDF가 아니어서 변환할 수 없습니다.',
     dlgPickSaveDir: '기본 저장 위치 선택',
     errSaveDirUnusable: '선택한 폴더에 쓸 수 없어 기본 저장 위치로 사용할 수 없습니다',
   },
@@ -606,10 +844,13 @@ const tMain = createI18n({
     untitledDoc: 'Document sans titre',
     untitledDeck: 'Présentation sans titre',
     untitledMarkdown: 'Markdown sans titre',
+    untitledPdf: 'PDF sans titre',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Exporter en PDF…',
-    menuOpenInDocs: 'Convertir et ouvrir dans AI Docs',
+    menuOpenInDocs: 'Convertir et ouvrir dans Docs',
+    menuPrint: 'Imprimer…',
     menuOpen: 'Ouvrir…',
     menuSave: 'Enregistrer',
     menuSaveAs: 'Enregistrer sous…',
@@ -618,22 +859,6 @@ const tMain = createI18n({
     menuWindow: 'Fenêtre',
     menuHome: 'Accueil',
     backToHome: "Retour à l'accueil",
-    menuSendTo: 'Envoyer à…',
-    shareTitle: 'Envoyer à…',
-    shareFileLabel: 'Fichier',
-    shareTargetLabel: 'Canal',
-    shareMessageLabel: 'Message',
-    shareOptional: 'facultatif',
-    shareSend: 'Envoyer',
-    shareCancel: 'Annuler',
-    shareSending: 'Envoi…',
-    shareSent: 'Envoyé',
-    shareFailed: "Échec de l'envoi",
-    shareNoHermes:
-      "Hermes n'est pas disponible. Installez la CLI Hermes pour partager des fichiers.",
-    shareNoTargets: 'Aucun canal configuré. Configurez-en un avec `hermes gateway setup`.',
-    shareNoFile: "Enregistrez d'abord le document",
-    shareClose: 'Fermer',
     dlgOpenTitle: 'Ouvrir un fichier',
     filterSupported: 'Fichiers pris en charge',
     filterWord: 'Documents Word',
@@ -666,6 +891,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       "Connexion à Genspark impossible : un composant requis (gsk) est manquant. Veuillez réinstaller l'application.",
     pdfDocxBusyMsg: "Un export en Word est déjà en cours. Veuillez attendre qu'il se termine.",
+    menuExportDocxLocal: 'Exporter en Word (local)…',
+    menuExportDocxCloud: 'Exporter en Word (cloud)…',
+    menuExportPptx: 'Exporter en PowerPoint…',
+    pdfPptxFailedMsg: "Échec de l'exportation en PowerPoint",
+    pdfPptxBusyMsg: "Une exportation est déjà en cours. Veuillez attendre qu'elle se termine.",
+    pdfPptxLocalScannedDetail:
+      "Chaque page a été exportée sous forme d'image ; le texte des diapositives n'est pas modifiable.",
+    menuExportXlsx: 'Exporter en Excel…',
+    pdfXlsxFailedMsg: "Échec de l'exportation en Excel",
+    pdfXlsxBusyMsg: "Une exportation est déjà en cours. Veuillez attendre qu'elle se termine.",
+    pdfXlsxLocalScannedDetail:
+      "Les pages numérisées ne peuvent pas être converties en cellules ; la feuille de chaque page contient une ligne d'avertissement.",
+    pdfXlsxLocalSkippedMsg: "Certaines pages n'ont pas été converties en cellules",
+    pdfXlsxLocalSkippedDetail:
+      "Les pages {pages} n'ont pas pu être converties en cellules ; leurs feuilles contiennent une ligne d'avertissement.",
+    pdfDocxLocalScannedMsg: 'Document numérisé détecté',
+    pdfDocxLocalScannedDetail:
+      "La conversion locale a exporté les pages sous forme d'images pour préserver leur apparence. Pour un texte modifiable, utilisez la conversion cloud (avec OCR).",
+    pdfDocxLocalDegradedMsg: 'Certaines pages ont été exportées en images',
+    pdfDocxLocalDegradedDetail:
+      "Les pages {pages} n'ont pas pu être reconstruites de manière fiable et ont été exportées en images pleine page.",
+    pdfDocxLocalOcrMsg: 'Pages numérisées converties en texte modifiable',
+    pdfDocxLocalOcrDetail:
+      'Les pages {pages} étaient des numérisations ; leur texte a été restitué par OCR local. Veuillez relire le résultat.',
+    pdfDocxLocalEncryptedDetail:
+      "Ce PDF est chiffré et n'a pas pu être ouvert sans le mot de passe correct.",
+    pdfDocxLocalUnsupportedEncDetail:
+      'Ce PDF utilise un chiffrement par certificat ou un chiffrement non pris en charge et ne peut pas être converti localement. Essayez la conversion cloud.',
+    pdfPwdTitle: 'Saisir le mot de passe',
+    pdfPwdPrompt: "Ce PDF est chiffré. Saisissez le mot de passe pour l'ouvrir :",
+    pdfPwdRetryPrompt: 'Mot de passe incorrect. Veuillez réessayer.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Vérification du mot de passe…',
+    pdfPwdLabel: 'Mot de passe',
+    pdfPwdPlaceholder: 'Saisissez le mot de passe d’ouverture',
+    pdfPwdShow: 'Afficher le mot de passe',
+    pdfPwdHide: 'Masquer le mot de passe',
+    pdfDocxLocalCorruptDetail:
+      "Le fichier est endommagé ou n'est pas un PDF valide et ne peut pas être converti.",
     dlgPickSaveDir: "Choisir l'emplacement d'enregistrement par défaut",
     errSaveDirUnusable:
       "Le dossier sélectionné n'est pas accessible en écriture et ne peut pas servir d'emplacement d'enregistrement par défaut",
@@ -679,10 +943,13 @@ const tMain = createI18n({
     untitledDoc: 'Unbenanntes Dokument',
     untitledDeck: 'Unbenannte Präsentation',
     untitledMarkdown: 'Unbenanntes Markdown',
+    untitledPdf: 'Unbenanntes PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Als PDF exportieren…',
-    menuOpenInDocs: 'In AI Docs umwandeln und öffnen',
+    menuOpenInDocs: 'In Docs umwandeln und öffnen',
+    menuPrint: 'Drucken…',
     menuOpen: 'Öffnen…',
     menuSave: 'Speichern',
     menuSaveAs: 'Speichern unter…',
@@ -691,22 +958,6 @@ const tMain = createI18n({
     menuWindow: 'Fenster',
     menuHome: 'Startseite',
     backToHome: 'Zurück zur Startseite',
-    menuSendTo: 'Senden an…',
-    shareTitle: 'Senden an…',
-    shareFileLabel: 'Datei',
-    shareTargetLabel: 'Kanal',
-    shareMessageLabel: 'Nachricht',
-    shareOptional: 'optional',
-    shareSend: 'Senden',
-    shareCancel: 'Abbrechen',
-    shareSending: 'Senden…',
-    shareSent: 'Gesendet',
-    shareFailed: 'Senden fehlgeschlagen',
-    shareNoHermes:
-      'Hermes ist nicht verfügbar. Installieren Sie die Hermes-CLI, um Dateien zu teilen.',
-    shareNoTargets: 'Keine Kanäle konfiguriert. Richten Sie einen mit `hermes gateway setup` ein.',
-    shareNoFile: 'Speichern Sie zuerst das Dokument',
-    shareClose: 'Schließen',
     dlgOpenTitle: 'Datei öffnen',
     filterSupported: 'Unterstützte Dateien',
     filterWord: 'Word-Dokumente',
@@ -739,6 +990,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Anmeldung bei Genspark nicht möglich: Eine erforderliche Komponente (gsk) fehlt. Bitte installieren Sie die App neu.',
     pdfDocxBusyMsg: 'Ein Word-Export läuft bereits. Bitte warten Sie, bis er abgeschlossen ist.',
+    menuExportDocxLocal: 'Als Word exportieren (lokal)…',
+    menuExportDocxCloud: 'Als Word exportieren (Cloud)…',
+    menuExportPptx: 'Als PowerPoint exportieren…',
+    pdfPptxFailedMsg: 'Export als PowerPoint fehlgeschlagen',
+    pdfPptxBusyMsg: 'Ein Export läuft bereits. Bitte warten Sie, bis er abgeschlossen ist.',
+    pdfPptxLocalScannedDetail:
+      'Jede Seite wurde als Bild exportiert; der Text auf den Folien ist nicht bearbeitbar.',
+    menuExportXlsx: 'Als Excel exportieren…',
+    pdfXlsxFailedMsg: 'Export als Excel fehlgeschlagen',
+    pdfXlsxBusyMsg: 'Ein Export läuft bereits. Bitte warten Sie, bis er abgeschlossen ist.',
+    pdfXlsxLocalScannedDetail:
+      'Gescannte Seiten können nicht in Zellen umgewandelt werden; das Arbeitsblatt jeder Seite enthält stattdessen eine Hinweiszeile.',
+    pdfXlsxLocalSkippedMsg: 'Einige Seiten wurden nicht in Zellen umgewandelt',
+    pdfXlsxLocalSkippedDetail:
+      'Die Seiten {pages} konnten nicht in Zellen umgewandelt werden; ihre Arbeitsblätter enthalten stattdessen eine Hinweiszeile.',
+    pdfDocxLocalScannedMsg: 'Gescanntes Dokument erkannt',
+    pdfDocxLocalScannedDetail:
+      'Die lokale Konvertierung hat die Seiten als Bilder exportiert, um ihr Aussehen zu erhalten. Für bearbeitbaren Text nutzen Sie die Cloud-Konvertierung (mit OCR).',
+    pdfDocxLocalDegradedMsg: 'Einige Seiten wurden als Bilder exportiert',
+    pdfDocxLocalDegradedDetail:
+      'Seite(n) {pages} konnten nicht zuverlässig rekonstruiert werden und wurden als ganzseitige Bilder exportiert.',
+    pdfDocxLocalOcrMsg: 'Gescannte Seiten in bearbeitbaren Text umgewandelt',
+    pdfDocxLocalOcrDetail:
+      'Seite(n) {pages} waren Scans; der Text wurde per lokaler OCR wiederhergestellt. Bitte prüfen Sie das Ergebnis.',
+    pdfDocxLocalEncryptedDetail:
+      'Diese PDF ist verschlüsselt und konnte ohne das richtige Passwort nicht geöffnet werden.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Diese PDF verwendet eine zertifikatsbasierte oder nicht unterstützte Verschlüsselung und kann nicht lokal konvertiert werden. Versuchen Sie die Cloud-Konvertierung.',
+    pdfPwdTitle: 'Passwort eingeben',
+    pdfPwdPrompt: 'Diese PDF ist verschlüsselt. Geben Sie das Passwort zum Öffnen ein:',
+    pdfPwdRetryPrompt: 'Falsches Passwort. Bitte versuchen Sie es erneut.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Passwort wird überprüft…',
+    pdfPwdLabel: 'Passwort',
+    pdfPwdPlaceholder: 'Passwort zum Öffnen eingeben',
+    pdfPwdShow: 'Passwort anzeigen',
+    pdfPwdHide: 'Passwort ausblenden',
+    pdfDocxLocalCorruptDetail:
+      'Die Datei ist beschädigt oder keine gültige PDF und kann nicht konvertiert werden.',
     dlgPickSaveDir: 'Standard-Speicherort auswählen',
     errSaveDirUnusable:
       'Der ausgewählte Ordner ist nicht beschreibbar und kann nicht als Standard-Speicherort verwendet werden',
@@ -752,10 +1042,13 @@ const tMain = createI18n({
     untitledDoc: 'Documento sin título',
     untitledDeck: 'Presentación sin título',
     untitledMarkdown: 'Markdown sin título',
+    untitledPdf: 'PDF sin título',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Exportar como PDF…',
-    menuOpenInDocs: 'Convertir y abrir en AI Docs',
+    menuOpenInDocs: 'Convertir y abrir en Docs',
+    menuPrint: 'Imprimir…',
     menuOpen: 'Abrir…',
     menuSave: 'Guardar',
     menuSaveAs: 'Guardar como…',
@@ -764,21 +1057,6 @@ const tMain = createI18n({
     menuWindow: 'Ventana',
     menuHome: 'Inicio',
     backToHome: 'Volver al inicio',
-    menuSendTo: 'Enviar a…',
-    shareTitle: 'Enviar a…',
-    shareFileLabel: 'Archivo',
-    shareTargetLabel: 'Canal',
-    shareMessageLabel: 'Mensaje',
-    shareOptional: 'opcional',
-    shareSend: 'Enviar',
-    shareCancel: 'Cancelar',
-    shareSending: 'Enviando…',
-    shareSent: 'Enviado',
-    shareFailed: 'Error al enviar',
-    shareNoHermes: 'Hermes no está disponible. Instala la CLI de Hermes para compartir archivos.',
-    shareNoTargets: 'No hay canales configurados. Configura uno con `hermes gateway setup`.',
-    shareNoFile: 'Guarda primero el documento',
-    shareClose: 'Cerrar',
     dlgOpenTitle: 'Abrir archivo',
     filterSupported: 'Archivos compatibles',
     filterWord: 'Documentos de Word',
@@ -811,6 +1089,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'No se puede iniciar sesión en Genspark: falta un componente necesario (gsk). Reinstale la aplicación.',
     pdfDocxBusyMsg: 'Ya hay una exportación a Word en curso. Espera a que termine.',
+    menuExportDocxLocal: 'Exportar como Word (local)…',
+    menuExportDocxCloud: 'Exportar como Word (nube)…',
+    menuExportPptx: 'Exportar como PowerPoint…',
+    pdfPptxFailedMsg: 'Error al exportar como PowerPoint',
+    pdfPptxBusyMsg: 'Ya hay una exportación en curso. Espere a que termine.',
+    pdfPptxLocalScannedDetail:
+      'Cada página se exportó como imagen; el texto de las diapositivas no es editable.',
+    menuExportXlsx: 'Exportar como Excel…',
+    pdfXlsxFailedMsg: 'Error al exportar como Excel',
+    pdfXlsxBusyMsg: 'Ya hay una exportación en curso. Espere a que termine.',
+    pdfXlsxLocalScannedDetail:
+      'Las páginas escaneadas no se pueden convertir en celdas; la hoja de cada página incluye una fila de aviso.',
+    pdfXlsxLocalSkippedMsg: 'Algunas páginas no se convirtieron en celdas',
+    pdfXlsxLocalSkippedDetail:
+      'Las páginas {pages} no se pudieron convertir en celdas; sus hojas incluyen una fila de aviso.',
+    pdfDocxLocalScannedMsg: 'Documento escaneado detectado',
+    pdfDocxLocalScannedDetail:
+      'La conversión local exportó las páginas como imágenes para conservar su aspecto. Para texto editable, usa la conversión en la nube (con OCR).',
+    pdfDocxLocalDegradedMsg: 'Algunas páginas se exportaron como imágenes',
+    pdfDocxLocalDegradedDetail:
+      'Las páginas {pages} no se pudieron reconstruir de forma fiable y se exportaron como imágenes de página completa.',
+    pdfDocxLocalOcrMsg: 'Páginas escaneadas convertidas en texto editable',
+    pdfDocxLocalOcrDetail:
+      'Las páginas {pages} eran escaneos; su texto se recuperó con OCR local. Revise el resultado.',
+    pdfDocxLocalEncryptedDetail:
+      'Este PDF está cifrado y no se pudo abrir sin la contraseña correcta.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Este PDF usa cifrado basado en certificados u otro cifrado no compatible y no se puede convertir localmente. Prueba la conversión en la nube.',
+    pdfPwdTitle: 'Introducir contraseña',
+    pdfPwdPrompt: 'Este PDF está cifrado. Introduzca la contraseña para abrirlo:',
+    pdfPwdRetryPrompt: 'Contraseña incorrecta. Inténtelo de nuevo.',
+    pdfPwdOk: 'Aceptar',
+    pdfPwdVerifying: 'Verificando la contraseña…',
+    pdfPwdLabel: 'Contraseña',
+    pdfPwdPlaceholder: 'Escriba la contraseña de apertura',
+    pdfPwdShow: 'Mostrar contraseña',
+    pdfPwdHide: 'Ocultar contraseña',
+    pdfDocxLocalCorruptDetail:
+      'El archivo está dañado o no es un PDF válido y no se puede convertir.',
     dlgPickSaveDir: 'Elegir ubicación de guardado predeterminada',
     errSaveDirUnusable:
       'La carpeta seleccionada no admite escritura y no puede usarse como ubicación de guardado predeterminada',
@@ -824,10 +1141,13 @@ const tMain = createI18n({
     untitledDoc: 'เอกสารไม่มีชื่อ',
     untitledDeck: 'งานนำเสนอไม่มีชื่อ',
     untitledMarkdown: 'Markdown ไม่มีชื่อ',
+    untitledPdf: 'PDF ไม่มีชื่อ',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'ส่งออกเป็น PDF…',
-    menuOpenInDocs: 'แปลงและเปิดใน AI Docs',
+    menuOpenInDocs: 'แปลงและเปิดใน Docs',
+    menuPrint: 'พิมพ์…',
     menuOpen: 'เปิด…',
     menuSave: 'บันทึก',
     menuSaveAs: 'บันทึกเป็น…',
@@ -836,21 +1156,6 @@ const tMain = createI18n({
     menuWindow: 'หน้าต่าง',
     menuHome: 'หน้าแรก',
     backToHome: 'กลับไปหน้าแรก',
-    menuSendTo: 'ส่งไปที่…',
-    shareTitle: 'ส่งไปที่…',
-    shareFileLabel: 'ไฟล์',
-    shareTargetLabel: 'ช่องทาง',
-    shareMessageLabel: 'ข้อความ',
-    shareOptional: 'ไม่บังคับ',
-    shareSend: 'ส่ง',
-    shareCancel: 'ยกเลิก',
-    shareSending: 'กำลังส่ง…',
-    shareSent: 'ส่งแล้ว',
-    shareFailed: 'การส่งล้มเหลว',
-    shareNoHermes: 'ไม่พบ Hermes กรุณาติดตั้ง Hermes CLI เพื่อแชร์ไฟล์',
-    shareNoTargets: 'ยังไม่ได้ตั้งค่าช่องทาง ตั้งค่าด้วย `hermes gateway setup`',
-    shareNoFile: 'บันทึกเอกสารก่อน',
-    shareClose: 'ปิด',
     dlgOpenTitle: 'เปิดไฟล์',
     filterSupported: 'ไฟล์ที่รองรับ',
     filterWord: 'เอกสาร Word',
@@ -882,6 +1187,42 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'ไม่สามารถลงชื่อเข้าใช้ Genspark ได้: ไม่พบคอมโพเนนต์ที่จำเป็น (gsk) โปรดติดตั้งแอปใหม่',
     pdfDocxBusyMsg: 'กำลังส่งออกเป็น Word อยู่ โปรดรอให้เสร็จสิ้นก่อน',
+    menuExportDocxLocal: 'ส่งออกเป็น Word (แปลงในเครื่อง)…',
+    menuExportDocxCloud: 'ส่งออกเป็น Word (แปลงบนคลาวด์)…',
+    menuExportPptx: 'ส่งออกเป็น PowerPoint…',
+    pdfPptxFailedMsg: 'การส่งออกเป็น PowerPoint ล้มเหลว',
+    pdfPptxBusyMsg: 'กำลังแปลงอยู่ โปรดรอให้การส่งออกปัจจุบันเสร็จสิ้น',
+    pdfPptxLocalScannedDetail: 'แต่ละหน้าถูกส่งออกเป็นรูปภาพ ข้อความในสไลด์จึงแก้ไขไม่ได้',
+    menuExportXlsx: 'ส่งออกเป็น Excel…',
+    pdfXlsxFailedMsg: 'การส่งออกเป็น Excel ล้มเหลว',
+    pdfXlsxBusyMsg: 'กำลังแปลงอยู่ โปรดรอให้การส่งออกปัจจุบันเสร็จสิ้น',
+    pdfXlsxLocalScannedDetail:
+      'หน้าที่สแกนไม่สามารถแปลงเป็นเซลล์ได้ เวิร์กชีตของแต่ละหน้าจึงมีแถวแจ้งเตือนแทน',
+    pdfXlsxLocalSkippedMsg: 'บางหน้าไม่ได้ถูกแปลงเป็นเซลล์',
+    pdfXlsxLocalSkippedDetail:
+      'หน้า {pages} ไม่สามารถแปลงเป็นเซลล์ได้ เวิร์กชีตของหน้าดังกล่าวมีแถวแจ้งเตือนแทน',
+    pdfDocxLocalScannedMsg: 'ตรวจพบเอกสารสแกน',
+    pdfDocxLocalScannedDetail:
+      'การแปลงในเครื่องได้ส่งออกแต่ละหน้าเป็นรูปภาพเพื่อคงรูปลักษณ์เดิม หากต้องการข้อความที่แก้ไขได้ โปรดใช้การแปลงบนคลาวด์ (รองรับ OCR)',
+    pdfDocxLocalDegradedMsg: 'บางหน้าถูกส่งออกเป็นรูปภาพ',
+    pdfDocxLocalDegradedDetail:
+      'หน้า {pages} ไม่สามารถสร้างเลย์เอาต์ใหม่ได้อย่างน่าเชื่อถือ จึงส่งออกเป็นรูปภาพทั้งหน้า',
+    pdfDocxLocalOcrMsg: 'แปลงหน้าสแกนเป็นข้อความที่แก้ไขได้แล้ว',
+    pdfDocxLocalOcrDetail:
+      'หน้า {pages} เป็นภาพสแกน ระบบกู้คืนข้อความด้วย OCR ในเครื่องแล้ว โปรดตรวจทานผลลัพธ์',
+    pdfDocxLocalEncryptedDetail: 'PDF นี้ถูกเข้ารหัสและไม่สามารถเปิดได้โดยไม่มีรหัสผ่านที่ถูกต้อง',
+    pdfDocxLocalUnsupportedEncDetail:
+      'PDF นี้ใช้การเข้ารหัสแบบใบรับรองหรือการเข้ารหัสที่ไม่รองรับ จึงไม่สามารถแปลงในเครื่องได้ ลองใช้การแปลงบนคลาวด์แทน',
+    pdfPwdTitle: 'ป้อนรหัสผ่าน',
+    pdfPwdPrompt: 'PDF นี้ถูกเข้ารหัส โปรดป้อนรหัสผ่านเพื่อเปิด:',
+    pdfPwdRetryPrompt: 'รหัสผ่านไม่ถูกต้อง โปรดลองอีกครั้ง',
+    pdfPwdOk: 'ตกลง',
+    pdfPwdVerifying: 'กำลังตรวจสอบรหัสผ่าน…',
+    pdfPwdLabel: 'รหัสผ่าน',
+    pdfPwdPlaceholder: 'ป้อนรหัสผ่านเพื่อเปิด',
+    pdfPwdShow: 'แสดงรหัสผ่าน',
+    pdfPwdHide: 'ซ่อนรหัสผ่าน',
+    pdfDocxLocalCorruptDetail: 'ไฟล์เสียหายหรือไม่ใช่ PDF ที่ถูกต้อง จึงไม่สามารถแปลงได้',
     dlgPickSaveDir: 'เลือกตำแหน่งบันทึกเริ่มต้น',
     errSaveDirUnusable: 'โฟลเดอร์ที่เลือกไม่สามารถเขียนได้ จึงใช้เป็นตำแหน่งบันทึกเริ่มต้นไม่ได้',
   },
@@ -894,10 +1235,13 @@ const tMain = createI18n({
     untitledDoc: 'Dokumen tanpa judul',
     untitledDeck: 'Presentasi tanpa judul',
     untitledMarkdown: 'Markdown tanpa judul',
+    untitledPdf: 'PDF tanpa judul',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Ekspor sebagai PDF…',
-    menuOpenInDocs: 'Konversi & buka di AI Docs',
+    menuOpenInDocs: 'Konversi dan buka di Docs',
+    menuPrint: 'Cetak…',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -906,21 +1250,6 @@ const tMain = createI18n({
     menuWindow: 'Jendela',
     menuHome: 'Beranda',
     backToHome: 'Kembali ke Beranda',
-    menuSendTo: 'Kirim ke…',
-    shareTitle: 'Kirim ke…',
-    shareFileLabel: 'Berkas',
-    shareTargetLabel: 'Saluran',
-    shareMessageLabel: 'Pesan',
-    shareOptional: 'opsional',
-    shareSend: 'Kirim',
-    shareCancel: 'Batal',
-    shareSending: 'Mengirim…',
-    shareSent: 'Terkirim',
-    shareFailed: 'Gagal mengirim',
-    shareNoHermes: 'Hermes tidak tersedia. Instal CLI Hermes untuk berbagi file.',
-    shareNoTargets: 'Belum ada saluran. Atur dengan `hermes gateway setup`.',
-    shareNoFile: 'Simpan dokumen terlebih dahulu',
-    shareClose: 'Tutup',
     dlgOpenTitle: 'Buka File',
     filterSupported: 'File yang Didukung',
     filterWord: 'Dokumen Word',
@@ -953,6 +1282,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Tidak dapat masuk ke Genspark: komponen yang diperlukan (gsk) tidak ditemukan. Silakan instal ulang aplikasi.',
     pdfDocxBusyMsg: 'Ekspor ke Word sedang berlangsung. Harap tunggu hingga selesai.',
+    menuExportDocxLocal: 'Ekspor sebagai Word (lokal)…',
+    menuExportDocxCloud: 'Ekspor sebagai Word (cloud)…',
+    menuExportPptx: 'Ekspor sebagai PowerPoint…',
+    pdfPptxFailedMsg: 'Gagal mengekspor sebagai PowerPoint',
+    pdfPptxBusyMsg: 'Ekspor sedang berlangsung. Harap tunggu hingga selesai.',
+    pdfPptxLocalScannedDetail:
+      'Setiap halaman diekspor sebagai gambar; teks pada slide tidak dapat diedit.',
+    menuExportXlsx: 'Ekspor sebagai Excel…',
+    pdfXlsxFailedMsg: 'Gagal mengekspor sebagai Excel',
+    pdfXlsxBusyMsg: 'Ekspor sedang berlangsung. Harap tunggu hingga selesai.',
+    pdfXlsxLocalScannedDetail:
+      'Halaman hasil pindaian tidak dapat diubah menjadi sel; lembar kerja setiap halaman berisi baris pemberitahuan.',
+    pdfXlsxLocalSkippedMsg: 'Beberapa halaman tidak diubah menjadi sel',
+    pdfXlsxLocalSkippedDetail:
+      'Halaman {pages} tidak dapat diubah menjadi sel; lembar kerjanya berisi baris pemberitahuan.',
+    pdfDocxLocalScannedMsg: 'Dokumen hasil pindaian terdeteksi',
+    pdfDocxLocalScannedDetail:
+      'Konversi lokal mengekspor halaman sebagai gambar untuk mempertahankan tampilannya. Untuk teks yang dapat diedit, gunakan konversi cloud (dengan OCR).',
+    pdfDocxLocalDegradedMsg: 'Beberapa halaman diekspor sebagai gambar',
+    pdfDocxLocalDegradedDetail:
+      'Halaman {pages} tidak dapat direkonstruksi dengan andal dan diekspor sebagai gambar satu halaman penuh.',
+    pdfDocxLocalOcrMsg: 'Halaman pindaian diubah menjadi teks yang dapat diedit',
+    pdfDocxLocalOcrDetail:
+      'Halaman {pages} adalah hasil pindaian; teksnya dipulihkan dengan OCR lokal. Harap periksa hasilnya.',
+    pdfDocxLocalEncryptedDetail:
+      'PDF ini terenkripsi dan tidak dapat dibuka tanpa kata sandi yang benar.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'PDF ini menggunakan enkripsi berbasis sertifikat atau enkripsi yang tidak didukung dan tidak dapat dikonversi secara lokal. Coba konversi cloud.',
+    pdfPwdTitle: 'Masukkan Kata Sandi',
+    pdfPwdPrompt: 'PDF ini terenkripsi. Masukkan kata sandi untuk membukanya:',
+    pdfPwdRetryPrompt: 'Kata sandi salah. Silakan coba lagi.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Memverifikasi kata sandi…',
+    pdfPwdLabel: 'Kata sandi',
+    pdfPwdPlaceholder: 'Masukkan kata sandi buka',
+    pdfPwdShow: 'Tampilkan kata sandi',
+    pdfPwdHide: 'Sembunyikan kata sandi',
+    pdfDocxLocalCorruptDetail:
+      'File rusak atau bukan PDF yang valid sehingga tidak dapat dikonversi.',
     dlgPickSaveDir: 'Pilih Lokasi Penyimpanan Default',
     errSaveDirUnusable:
       'Folder yang dipilih tidak dapat ditulis dan tidak bisa digunakan sebagai lokasi penyimpanan default',
@@ -966,10 +1334,13 @@ const tMain = createI18n({
     untitledDoc: 'Документ без названия',
     untitledDeck: 'Презентация без названия',
     untitledMarkdown: 'Markdown без названия',
+    untitledPdf: 'PDF без названия',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Экспортировать в PDF…',
-    menuOpenInDocs: 'Преобразовать и открыть в AI Docs',
+    menuOpenInDocs: 'Преобразовать и открыть в Docs',
+    menuPrint: 'Печать…',
     menuOpen: 'Открыть…',
     menuSave: 'Сохранить',
     menuSaveAs: 'Сохранить как…',
@@ -978,21 +1349,6 @@ const tMain = createI18n({
     menuWindow: 'Окно',
     menuHome: 'Главная',
     backToHome: 'Вернуться на главную',
-    menuSendTo: 'Отправить…',
-    shareTitle: 'Отправить…',
-    shareFileLabel: 'Файл',
-    shareTargetLabel: 'Канал',
-    shareMessageLabel: 'Сообщение',
-    shareOptional: 'необязательно',
-    shareSend: 'Отправить',
-    shareCancel: 'Отмена',
-    shareSending: 'Отправка…',
-    shareSent: 'Отправлено',
-    shareFailed: 'Ошибка отправки',
-    shareNoHermes: 'Hermes недоступен. Установите CLI Hermes, чтобы отправлять файлы.',
-    shareNoTargets: 'Каналы не настроены. Настройте с помощью `hermes gateway setup`.',
-    shareNoFile: 'Сначала сохраните документ',
-    shareClose: 'Закрыть',
     dlgOpenTitle: 'Открытие файла',
     filterSupported: 'Поддерживаемые файлы',
     filterWord: 'Документы Word',
@@ -1025,6 +1381,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Не удаётся войти в Genspark: отсутствует необходимый компонент (gsk). Переустановите приложение.',
     pdfDocxBusyMsg: 'Экспорт в Word уже выполняется. Дождитесь его завершения.',
+    menuExportDocxLocal: 'Экспортировать в Word (локально)…',
+    menuExportDocxCloud: 'Экспортировать в Word (облако)…',
+    menuExportPptx: 'Экспортировать в PowerPoint…',
+    pdfPptxFailedMsg: 'Не удалось экспортировать в PowerPoint',
+    pdfPptxBusyMsg: 'Экспорт уже выполняется. Дождитесь его завершения.',
+    pdfPptxLocalScannedDetail:
+      'Каждая страница экспортирована как изображение; текст на слайдах нельзя редактировать.',
+    menuExportXlsx: 'Экспортировать в Excel…',
+    pdfXlsxFailedMsg: 'Не удалось экспортировать в Excel',
+    pdfXlsxBusyMsg: 'Экспорт уже выполняется. Дождитесь его завершения.',
+    pdfXlsxLocalScannedDetail:
+      'Отсканированные страницы нельзя преобразовать в ячейки; на листе каждой страницы добавлена строка с уведомлением.',
+    pdfXlsxLocalSkippedMsg: 'Некоторые страницы не были преобразованы в ячейки',
+    pdfXlsxLocalSkippedDetail:
+      'Страницы {pages} не удалось преобразовать в ячейки; на их листах добавлена строка с уведомлением.',
+    pdfDocxLocalScannedMsg: 'Обнаружен отсканированный документ',
+    pdfDocxLocalScannedDetail:
+      'Локальное преобразование экспортировало страницы как изображения, чтобы сохранить их вид. Для редактируемого текста используйте облачное преобразование (с OCR).',
+    pdfDocxLocalDegradedMsg: 'Некоторые страницы экспортированы как изображения',
+    pdfDocxLocalDegradedDetail:
+      'Страницы {pages} не удалось надёжно реконструировать; они экспортированы как полностраничные изображения.',
+    pdfDocxLocalOcrMsg: 'Отсканированные страницы преобразованы в редактируемый текст',
+    pdfDocxLocalOcrDetail:
+      'Страницы {pages} были сканами; текст восстановлен локальным OCR. Проверьте результат.',
+    pdfDocxLocalEncryptedDetail:
+      'Этот PDF зашифрован, и его не удалось открыть без правильного пароля.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Этот PDF использует шифрование на основе сертификата или другое неподдерживаемое шифрование, локальное преобразование невозможно. Попробуйте облачное преобразование.',
+    pdfPwdTitle: 'Введите пароль',
+    pdfPwdPrompt: 'Этот PDF зашифрован. Введите пароль, чтобы открыть его:',
+    pdfPwdRetryPrompt: 'Неверный пароль. Попробуйте ещё раз.',
+    pdfPwdOk: 'ОК',
+    pdfPwdVerifying: 'Проверка пароля…',
+    pdfPwdLabel: 'Пароль',
+    pdfPwdPlaceholder: 'Введите пароль для открытия',
+    pdfPwdShow: 'Показать пароль',
+    pdfPwdHide: 'Скрыть пароль',
+    pdfDocxLocalCorruptDetail:
+      'Файл повреждён или не является корректным PDF, преобразование невозможно.',
     dlgPickSaveDir: 'Выбрать папку сохранения по умолчанию',
     errSaveDirUnusable:
       'Выбранная папка недоступна для записи и не может использоваться как папка сохранения по умолчанию',
@@ -1038,10 +1433,13 @@ const tMain = createI18n({
     untitledDoc: 'مستند بدون عنوان',
     untitledDeck: 'عرض تقديمي بدون عنوان',
     untitledMarkdown: 'Markdown بدون عنوان',
+    untitledPdf: 'PDF بدون عنوان',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'تصدير بتنسيق PDF…',
-    menuOpenInDocs: 'التحويل والفتح في AI Docs',
+    menuOpenInDocs: 'التحويل والفتح في Docs',
+    menuPrint: 'طباعة…',
     menuOpen: 'فتح…',
     menuSave: 'حفظ',
     menuSaveAs: 'حفظ باسم…',
@@ -1050,21 +1448,6 @@ const tMain = createI18n({
     menuWindow: 'نافذة',
     menuHome: 'الصفحة الرئيسية',
     backToHome: 'العودة إلى الصفحة الرئيسية',
-    menuSendTo: 'إرسال إلى…',
-    shareTitle: 'إرسال إلى…',
-    shareFileLabel: 'ملف',
-    shareTargetLabel: 'القناة',
-    shareMessageLabel: 'الرسالة',
-    shareOptional: 'اختياري',
-    shareSend: 'إرسال',
-    shareCancel: 'إلغاء',
-    shareSending: 'جارٍ الإرسال…',
-    shareSent: 'تم الإرسال',
-    shareFailed: 'فشل الإرسال',
-    shareNoHermes: 'Hermes غير متاح. ثبّت CLI الخاص بـ Hermes لمشاركة الملفات.',
-    shareNoTargets: 'لا توجد قنوات مكوّنة. أنشئ قناة عبر `hermes gateway setup`.',
-    shareNoFile: 'احفظ المستند أولاً',
-    shareClose: 'إغلاق',
     dlgOpenTitle: 'فتح ملف',
     filterSupported: 'الملفات المدعومة',
     filterWord: 'مستندات Word',
@@ -1096,6 +1479,42 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'تعذّر تسجيل الدخول إلى Genspark: المكوّن المطلوب (gsk) مفقود. يُرجى إعادة تثبيت التطبيق.',
     pdfDocxBusyMsg: 'يجري حاليًا تصدير إلى Word. يُرجى الانتظار حتى يكتمل.',
+    menuExportDocxLocal: 'تصدير كملف Word (تحويل محلي)…',
+    menuExportDocxCloud: 'تصدير كملف Word (تحويل سحابي)…',
+    menuExportPptx: 'تصدير كملف PowerPoint…',
+    pdfPptxFailedMsg: 'فشل التصدير كملف PowerPoint',
+    pdfPptxBusyMsg: 'هناك عملية تصدير قيد التنفيذ. يرجى الانتظار حتى تكتمل.',
+    pdfPptxLocalScannedDetail: 'تم تصدير كل صفحة كصورة؛ النص في الشرائح غير قابل للتحرير.',
+    menuExportXlsx: 'تصدير كملف Excel…',
+    pdfXlsxFailedMsg: 'فشل التصدير كملف Excel',
+    pdfXlsxBusyMsg: 'هناك عملية تصدير قيد التنفيذ. يرجى الانتظار حتى تكتمل.',
+    pdfXlsxLocalScannedDetail:
+      'لا يمكن تحويل الصفحات الممسوحة ضوئيًا إلى خلايا؛ تحتوي ورقة كل صفحة على صف تنبيه بدلاً من ذلك.',
+    pdfXlsxLocalSkippedMsg: 'لم يتم تحويل بعض الصفحات إلى خلايا',
+    pdfXlsxLocalSkippedDetail:
+      'تعذر تحويل الصفحات {pages} إلى خلايا؛ تحتوي أوراقها على صف تنبيه بدلاً من ذلك.',
+    pdfDocxLocalScannedMsg: 'تم اكتشاف مستند ممسوح ضوئيًا',
+    pdfDocxLocalScannedDetail:
+      'قام التحويل المحلي بتصدير الصفحات كصور للحفاظ على مظهرها. للحصول على نص قابل للتحرير، استخدم التحويل السحابي (مع OCR).',
+    pdfDocxLocalDegradedMsg: 'تم تصدير بعض الصفحات كصور',
+    pdfDocxLocalDegradedDetail:
+      'تعذّرت إعادة بناء الصفحات {pages} بشكل موثوق، وتم تصديرها كصور لكامل الصفحة.',
+    pdfDocxLocalOcrMsg: 'تم تحويل الصفحات الممسوحة ضوئيًا إلى نص قابل للتحرير',
+    pdfDocxLocalOcrDetail:
+      'الصفحات {pages} كانت صورًا ممسوحة؛ تم استرداد النص عبر OCR المحلي. يُرجى مراجعة النتيجة.',
+    pdfDocxLocalEncryptedDetail: 'هذا الملف PDF مشفّر وتعذّر فتحه دون كلمة المرور الصحيحة.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'يستخدم ملف PDF هذا تشفيرًا قائمًا على الشهادات أو تشفيرًا غير مدعوم ولا يمكن تحويله محليًا. جرّب التحويل السحابي.',
+    pdfPwdTitle: 'إدخال كلمة المرور',
+    pdfPwdPrompt: 'هذا الملف PDF مشفّر. أدخل كلمة المرور لفتحه:',
+    pdfPwdRetryPrompt: 'كلمة المرور غير صحيحة. حاول مرة أخرى.',
+    pdfPwdOk: 'موافق',
+    pdfPwdVerifying: 'جارٍ التحقق من كلمة المرور…',
+    pdfPwdLabel: 'كلمة المرور',
+    pdfPwdPlaceholder: 'أدخل كلمة مرور الفتح',
+    pdfPwdShow: 'إظهار كلمة المرور',
+    pdfPwdHide: 'إخفاء كلمة المرور',
+    pdfDocxLocalCorruptDetail: 'الملف تالف أو ليس ملف PDF صالحًا ولا يمكن تحويله.',
     dlgPickSaveDir: 'اختيار موقع الحفظ الافتراضي',
     errSaveDirUnusable: 'المجلد المحدد غير قابل للكتابة ولا يمكن استخدامه كموقع حفظ افتراضي',
   },
@@ -1108,10 +1527,13 @@ const tMain = createI18n({
     untitledDoc: 'Documento sem título',
     untitledDeck: 'Apresentação sem título',
     untitledMarkdown: 'Markdown sem título',
+    untitledPdf: 'PDF sem título',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Exportar como PDF…',
-    menuOpenInDocs: 'Converter e abrir no AI Docs',
+    menuOpenInDocs: 'Converter e abrir no Docs',
+    menuPrint: 'Imprimir…',
     menuOpen: 'Abrir…',
     menuSave: 'Salvar',
     menuSaveAs: 'Salvar Como…',
@@ -1120,22 +1542,6 @@ const tMain = createI18n({
     menuWindow: 'Janela',
     menuHome: 'Início',
     backToHome: 'Voltar ao início',
-    menuSendTo: 'Enviar para…',
-    shareTitle: 'Enviar para…',
-    shareFileLabel: 'Arquivo',
-    shareTargetLabel: 'Canal',
-    shareMessageLabel: 'Mensagem',
-    shareOptional: 'opcional',
-    shareSend: 'Enviar',
-    shareCancel: 'Cancelar',
-    shareSending: 'Enviando…',
-    shareSent: 'Enviado',
-    shareFailed: 'Falha ao enviar',
-    shareNoHermes:
-      'O Hermes não está disponível. Instale o CLI do Hermes para compartilhar arquivos.',
-    shareNoTargets: 'Nenhum canal configurado. Configure um com `hermes gateway setup`.',
-    shareNoFile: 'Salve o documento primeiro',
-    shareClose: 'Fechar',
     dlgOpenTitle: 'Abrir arquivo',
     filterSupported: 'Arquivos compatíveis',
     filterWord: 'Documentos do Word',
@@ -1168,6 +1574,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Não é possível iniciar sessão no Genspark: falta um componente necessário (gsk). Reinstale o aplicativo.',
     pdfDocxBusyMsg: 'Já há uma exportação para Word em andamento. Aguarde a conclusão.',
+    menuExportDocxLocal: 'Exportar como Word (local)…',
+    menuExportDocxCloud: 'Exportar como Word (nuvem)…',
+    menuExportPptx: 'Exportar como PowerPoint…',
+    pdfPptxFailedMsg: 'Falha ao exportar como PowerPoint',
+    pdfPptxBusyMsg: 'Já há uma exportação em andamento. Aguarde a conclusão.',
+    pdfPptxLocalScannedDetail:
+      'Cada página foi exportada como imagem; o texto dos slides não é editável.',
+    menuExportXlsx: 'Exportar como Excel…',
+    pdfXlsxFailedMsg: 'Falha ao exportar como Excel',
+    pdfXlsxBusyMsg: 'Já há uma exportação em andamento. Aguarde a conclusão.',
+    pdfXlsxLocalScannedDetail:
+      'Páginas digitalizadas não podem ser convertidas em células; a planilha de cada página contém uma linha de aviso.',
+    pdfXlsxLocalSkippedMsg: 'Algumas páginas não foram convertidas em células',
+    pdfXlsxLocalSkippedDetail:
+      'As páginas {pages} não puderam ser convertidas em células; suas planilhas contêm uma linha de aviso.',
+    pdfDocxLocalScannedMsg: 'Documento digitalizado detectado',
+    pdfDocxLocalScannedDetail:
+      'A conversão local exportou as páginas como imagens para preservar a aparência. Para texto editável, use a conversão na nuvem (com OCR).',
+    pdfDocxLocalDegradedMsg: 'Algumas páginas foram exportadas como imagens',
+    pdfDocxLocalDegradedDetail:
+      'As páginas {pages} não puderam ser reconstruídas de forma confiável e foram exportadas como imagens de página inteira.',
+    pdfDocxLocalOcrMsg: 'Páginas digitalizadas convertidas em texto editável',
+    pdfDocxLocalOcrDetail:
+      'As páginas {pages} eram digitalizações; o texto foi recuperado com OCR local. Revise o resultado.',
+    pdfDocxLocalEncryptedDetail:
+      'Este PDF está criptografado e não pôde ser aberto sem a senha correta.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Este PDF usa criptografia baseada em certificado ou outra criptografia sem suporte e não pode ser convertido localmente. Experimente a conversão na nuvem.',
+    pdfPwdTitle: 'Digitar senha',
+    pdfPwdPrompt: 'Este PDF está criptografado. Digite a senha para abri-lo:',
+    pdfPwdRetryPrompt: 'Senha incorreta. Tente novamente.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Verificando a senha…',
+    pdfPwdLabel: 'Senha',
+    pdfPwdPlaceholder: 'Digite a senha de abertura',
+    pdfPwdShow: 'Mostrar senha',
+    pdfPwdHide: 'Ocultar senha',
+    pdfDocxLocalCorruptDetail:
+      'O arquivo está danificado ou não é um PDF válido e não pode ser convertido.',
     dlgPickSaveDir: 'Escolher local de salvamento padrão',
     errSaveDirUnusable:
       'A pasta selecionada não permite gravação e não pode ser usada como local de salvamento padrão',
@@ -1181,10 +1626,13 @@ const tMain = createI18n({
     untitledDoc: 'Documento senza titolo',
     untitledDeck: 'Presentazione senza titolo',
     untitledMarkdown: 'Markdown senza titolo',
+    untitledPdf: 'PDF senza titolo',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Esporta come PDF…',
-    menuOpenInDocs: 'Converti e apri in AI Docs',
+    menuOpenInDocs: 'Converti e apri in Docs',
+    menuPrint: 'Stampa…',
     menuOpen: 'Apri…',
     menuSave: 'Salva',
     menuSaveAs: 'Salva con nome…',
@@ -1193,21 +1641,6 @@ const tMain = createI18n({
     menuWindow: 'Finestra',
     menuHome: 'Home',
     backToHome: 'Torna alla Home',
-    menuSendTo: 'Invia a…',
-    shareTitle: 'Invia a…',
-    shareFileLabel: 'File',
-    shareTargetLabel: 'Canale',
-    shareMessageLabel: 'Messaggio',
-    shareOptional: 'facoltativo',
-    shareSend: 'Invia',
-    shareCancel: 'Annulla',
-    shareSending: 'Invio…',
-    shareSent: 'Inviato',
-    shareFailed: 'Invio non riuscito',
-    shareNoHermes: 'Hermes non è disponibile. Installa la CLI di Hermes per condividere file.',
-    shareNoTargets: 'Nessun canale configurato. Configuralo con `hermes gateway setup`.',
-    shareNoFile: 'Salva prima il documento',
-    shareClose: 'Chiudi',
     dlgOpenTitle: 'Apri file',
     filterSupported: 'File supportati',
     filterWord: 'Documenti Word',
@@ -1240,6 +1673,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       "Impossibile accedere a Genspark: manca un componente necessario (gsk). Reinstallare l'app.",
     pdfDocxBusyMsg: "Un'esportazione in Word è già in corso. Attendi il completamento.",
+    menuExportDocxLocal: 'Esporta come Word (locale)…',
+    menuExportDocxCloud: 'Esporta come Word (cloud)…',
+    menuExportPptx: 'Esporta come PowerPoint…',
+    pdfPptxFailedMsg: 'Esportazione come PowerPoint non riuscita',
+    pdfPptxBusyMsg: "Un'esportazione è già in corso. Attendere che finisca.",
+    pdfPptxLocalScannedDetail:
+      'Ogni pagina è stata esportata come immagine; il testo delle diapositive non è modificabile.',
+    menuExportXlsx: 'Esporta come Excel…',
+    pdfXlsxFailedMsg: 'Esportazione come Excel non riuscita',
+    pdfXlsxBusyMsg: "Un'esportazione è già in corso. Attendere che finisca.",
+    pdfXlsxLocalScannedDetail:
+      'Le pagine scansionate non possono essere convertite in celle; il foglio di ogni pagina contiene una riga di avviso.',
+    pdfXlsxLocalSkippedMsg: 'Alcune pagine non sono state convertite in celle',
+    pdfXlsxLocalSkippedDetail:
+      'Le pagine {pages} non hanno potuto essere convertite in celle; i loro fogli contengono una riga di avviso.',
+    pdfDocxLocalScannedMsg: 'Rilevato documento scansionato',
+    pdfDocxLocalScannedDetail:
+      "La conversione locale ha esportato le pagine come immagini per preservarne l'aspetto. Per testo modificabile, usa la conversione cloud (con OCR).",
+    pdfDocxLocalDegradedMsg: 'Alcune pagine sono state esportate come immagini',
+    pdfDocxLocalDegradedDetail:
+      'Non è stato possibile ricostruire in modo affidabile le pagine {pages}; sono state esportate come immagini a pagina intera.',
+    pdfDocxLocalOcrMsg: 'Pagine scansionate convertite in testo modificabile',
+    pdfDocxLocalOcrDetail:
+      'Le pagine {pages} erano scansioni; il testo è stato recuperato con OCR locale. Si consiglia di rileggere il risultato.',
+    pdfDocxLocalEncryptedDetail:
+      'Questo PDF è crittografato e non è stato possibile aprirlo senza la password corretta.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Questo PDF usa una crittografia basata su certificati o comunque non supportata e non può essere convertito localmente. Prova la conversione cloud.',
+    pdfPwdTitle: 'Inserisci password',
+    pdfPwdPrompt: 'Questo PDF è crittografato. Inserisci la password per aprirlo:',
+    pdfPwdRetryPrompt: 'Password errata. Riprova.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Verifica della password…',
+    pdfPwdLabel: 'Password',
+    pdfPwdPlaceholder: 'Inserisci la password di apertura',
+    pdfPwdShow: 'Mostra password',
+    pdfPwdHide: 'Nascondi password',
+    pdfDocxLocalCorruptDetail:
+      'Il file è danneggiato o non è un PDF valido e non può essere convertito.',
     dlgPickSaveDir: 'Scegli la posizione di salvataggio predefinita',
     errSaveDirUnusable:
       'La cartella selezionata non è scrivibile e non può essere usata come posizione di salvataggio predefinita',
@@ -1253,10 +1725,13 @@ const tMain = createI18n({
     untitledDoc: 'Dokument bez tytułu',
     untitledDeck: 'Prezentacja bez tytułu',
     untitledMarkdown: 'Markdown bez tytułu',
+    untitledPdf: 'PDF bez tytułu',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Eksportuj jako PDF…',
-    menuOpenInDocs: 'Konwertuj i otwórz w AI Docs',
+    menuOpenInDocs: 'Konwertuj i otwórz w Docs',
+    menuPrint: 'Drukuj…',
     menuOpen: 'Otwórz…',
     menuSave: 'Zapisz',
     menuSaveAs: 'Zapisz jako…',
@@ -1265,21 +1740,6 @@ const tMain = createI18n({
     menuWindow: 'Okno',
     menuHome: 'Strona główna',
     backToHome: 'Wróć do strony głównej',
-    menuSendTo: 'Wyślij do…',
-    shareTitle: 'Wyślij do…',
-    shareFileLabel: 'Plik',
-    shareTargetLabel: 'Kanał',
-    shareMessageLabel: 'Wiadomość',
-    shareOptional: 'opcjonalne',
-    shareSend: 'Wyślij',
-    shareCancel: 'Anuluj',
-    shareSending: 'Wysyłanie…',
-    shareSent: 'Wysłano',
-    shareFailed: 'Błąd wysyłania',
-    shareNoHermes: 'Hermes jest niedostępny. Zainstaluj CLI Hermes, aby udostępniać pliki.',
-    shareNoTargets: 'Brak skonfigurowanych kanałów. Skonfiguruj je przez `hermes gateway setup`.',
-    shareNoFile: 'Najpierw zapisz dokument',
-    shareClose: 'Zamknij',
     dlgOpenTitle: 'Otwieranie pliku',
     filterSupported: 'Obsługiwane pliki',
     filterWord: 'Dokumenty programu Word',
@@ -1312,6 +1772,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Nie można zalogować się do Genspark: brakuje wymaganego komponentu (gsk). Zainstaluj aplikację ponownie.',
     pdfDocxBusyMsg: 'Eksport do formatu Word już trwa. Poczekaj na jego zakończenie.',
+    menuExportDocxLocal: 'Eksportuj jako Word (lokalnie)…',
+    menuExportDocxCloud: 'Eksportuj jako Word (chmura)…',
+    menuExportPptx: 'Eksportuj jako PowerPoint…',
+    pdfPptxFailedMsg: 'Eksport jako PowerPoint nie powiódł się',
+    pdfPptxBusyMsg: 'Eksport już trwa. Poczekaj na jego zakończenie.',
+    pdfPptxLocalScannedDetail:
+      'Każda strona została wyeksportowana jako obraz; tekst na slajdach nie jest edytowalny.',
+    menuExportXlsx: 'Eksportuj jako Excel…',
+    pdfXlsxFailedMsg: 'Eksport jako Excel nie powiódł się',
+    pdfXlsxBusyMsg: 'Eksport już trwa. Poczekaj na jego zakończenie.',
+    pdfXlsxLocalScannedDetail:
+      'Zeskanowanych stron nie można przekształcić w komórki; arkusz każdej strony zawiera wiersz z informacją.',
+    pdfXlsxLocalSkippedMsg: 'Niektóre strony nie zostały przekształcone w komórki',
+    pdfXlsxLocalSkippedDetail:
+      'Stron {pages} nie udało się przekształcić w komórki; ich arkusze zawierają wiersz z informacją.',
+    pdfDocxLocalScannedMsg: 'Wykryto zeskanowany dokument',
+    pdfDocxLocalScannedDetail:
+      'Konwersja lokalna wyeksportowała strony jako obrazy, aby zachować ich wygląd. Aby uzyskać edytowalny tekst, użyj konwersji w chmurze (z OCR).',
+    pdfDocxLocalDegradedMsg: 'Niektóre strony wyeksportowano jako obrazy',
+    pdfDocxLocalDegradedDetail:
+      'Stron {pages} nie udało się wiarygodnie odtworzyć; wyeksportowano je jako obrazy całych stron.',
+    pdfDocxLocalOcrMsg: 'Zeskanowane strony przekonwertowano na edytowalny tekst',
+    pdfDocxLocalOcrDetail:
+      'Strony {pages} były skanami; tekst odzyskano lokalnym OCR. Sprawdź wynik.',
+    pdfDocxLocalEncryptedDetail:
+      'Ten PDF jest zaszyfrowany i nie można go otworzyć bez prawidłowego hasła.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Ten PDF używa szyfrowania opartego na certyfikatach lub innego nieobsługiwanego szyfrowania i nie można go przekonwertować lokalnie. Wypróbuj konwersję w chmurze.',
+    pdfPwdTitle: 'Wprowadź hasło',
+    pdfPwdPrompt: 'Ten PDF jest zaszyfrowany. Wprowadź hasło, aby go otworzyć:',
+    pdfPwdRetryPrompt: 'Nieprawidłowe hasło. Spróbuj ponownie.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Weryfikowanie hasła…',
+    pdfPwdLabel: 'Hasło',
+    pdfPwdPlaceholder: 'Wprowadź hasło otwarcia',
+    pdfPwdShow: 'Pokaż hasło',
+    pdfPwdHide: 'Ukryj hasło',
+    pdfDocxLocalCorruptDetail:
+      'Plik jest uszkodzony lub nie jest prawidłowym plikiem PDF i nie można go przekonwertować.',
     dlgPickSaveDir: 'Wybierz domyślną lokalizację zapisu',
     errSaveDirUnusable:
       'Wybrany folder nie pozwala na zapis i nie może być domyślną lokalizacją zapisu',
@@ -1325,10 +1824,13 @@ const tMain = createI18n({
     untitledDoc: 'Naamloos document',
     untitledDeck: 'Naamloze presentatie',
     untitledMarkdown: 'Naamloos Markdown',
+    untitledPdf: 'Naamloze PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Exporteren als PDF…',
-    menuOpenInDocs: 'Converteren en openen in AI Docs',
+    menuOpenInDocs: 'Converteren en openen in Docs',
+    menuPrint: 'Afdrukken…',
     menuOpen: 'Openen…',
     menuSave: 'Opslaan',
     menuSaveAs: 'Opslaan als…',
@@ -1337,21 +1839,6 @@ const tMain = createI18n({
     menuWindow: 'Venster',
     menuHome: 'Start',
     backToHome: 'Terug naar start',
-    menuSendTo: 'Verzenden naar…',
-    shareTitle: 'Verzenden naar…',
-    shareFileLabel: 'Bestand',
-    shareTargetLabel: 'Kanaal',
-    shareMessageLabel: 'Bericht',
-    shareOptional: 'optioneel',
-    shareSend: 'Verzenden',
-    shareCancel: 'Annuleren',
-    shareSending: 'Verzenden…',
-    shareSent: 'Verzonden',
-    shareFailed: 'Verzenden mislukt',
-    shareNoHermes: 'Hermes is niet beschikbaar. Installeer de Hermes CLI om bestanden te delen.',
-    shareNoTargets: 'Geen kanalen geconfigureerd. Stel er een in met `hermes gateway setup`.',
-    shareNoFile: 'Sla eerst het document op',
-    shareClose: 'Sluiten',
     dlgOpenTitle: 'Bestand openen',
     filterSupported: 'Ondersteunde bestanden',
     filterWord: 'Word-documenten',
@@ -1384,6 +1871,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Kan niet inloggen bij Genspark: een vereist onderdeel (gsk) ontbreekt. Installeer de app opnieuw.',
     pdfDocxBusyMsg: 'Er is al een Word-export bezig. Wacht tot deze is voltooid.',
+    menuExportDocxLocal: 'Exporteren als Word (lokaal)…',
+    menuExportDocxCloud: 'Exporteren als Word (cloud)…',
+    menuExportPptx: 'Exporteren als PowerPoint…',
+    pdfPptxFailedMsg: 'Exporteren als PowerPoint mislukt',
+    pdfPptxBusyMsg: 'Er is al een export bezig. Wacht tot deze is voltooid.',
+    pdfPptxLocalScannedDetail:
+      'Elke pagina is als afbeelding geëxporteerd; de tekst op de dia’s is niet bewerkbaar.',
+    menuExportXlsx: 'Exporteren als Excel…',
+    pdfXlsxFailedMsg: 'Exporteren als Excel mislukt',
+    pdfXlsxBusyMsg: 'Er is al een export bezig. Wacht tot deze is voltooid.',
+    pdfXlsxLocalScannedDetail:
+      "Gescande pagina's kunnen niet naar cellen worden omgezet; het werkblad van elke pagina bevat een meldingsrij.",
+    pdfXlsxLocalSkippedMsg: "Sommige pagina's zijn niet naar cellen omgezet",
+    pdfXlsxLocalSkippedDetail:
+      "Pagina's {pages} konden niet naar cellen worden omgezet; hun werkbladen bevatten een meldingsrij.",
+    pdfDocxLocalScannedMsg: 'Gescand document gedetecteerd',
+    pdfDocxLocalScannedDetail:
+      "De lokale conversie heeft de pagina's als afbeeldingen geëxporteerd om hun uiterlijk te behouden. Gebruik voor bewerkbare tekst de cloudconversie (met OCR).",
+    pdfDocxLocalDegradedMsg: "Sommige pagina's zijn als afbeeldingen geëxporteerd",
+    pdfDocxLocalDegradedDetail:
+      "Pagina's {pages} konden niet betrouwbaar worden gereconstrueerd en zijn als paginagrote afbeeldingen geëxporteerd.",
+    pdfDocxLocalOcrMsg: 'Gescande pagina’s omgezet naar bewerkbare tekst',
+    pdfDocxLocalOcrDetail:
+      'Pagina(’s) {pages} waren scans; de tekst is hersteld met lokale OCR. Controleer het resultaat.',
+    pdfDocxLocalEncryptedDetail:
+      'Deze PDF is versleuteld en kon niet worden geopend zonder het juiste wachtwoord.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'Deze PDF gebruikt certificaatgebaseerde of anderszins niet-ondersteunde versleuteling en kan niet lokaal worden geconverteerd. Probeer de cloudconversie.',
+    pdfPwdTitle: 'Wachtwoord invoeren',
+    pdfPwdPrompt: 'Deze PDF is versleuteld. Voer het wachtwoord in om te openen:',
+    pdfPwdRetryPrompt: 'Onjuist wachtwoord. Probeer het opnieuw.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Wachtwoord controleren…',
+    pdfPwdLabel: 'Wachtwoord',
+    pdfPwdPlaceholder: 'Voer het openingswachtwoord in',
+    pdfPwdShow: 'Wachtwoord tonen',
+    pdfPwdHide: 'Wachtwoord verbergen',
+    pdfDocxLocalCorruptDetail:
+      'Het bestand is beschadigd of geen geldige PDF en kan niet worden geconverteerd.',
     dlgPickSaveDir: 'Standaard opslaglocatie kiezen',
     errSaveDirUnusable:
       'De geselecteerde map is niet beschrijfbaar en kan niet als standaard opslaglocatie worden gebruikt',
@@ -1397,10 +1923,13 @@ const tMain = createI18n({
     untitledDoc: 'Dokumen tanpa tajuk',
     untitledDeck: 'Persembahan tanpa tajuk',
     untitledMarkdown: 'Markdown tanpa tajuk',
+    untitledPdf: 'PDF tanpa tajuk',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'Eksport sebagai PDF…',
-    menuOpenInDocs: 'Tukar & buka dalam AI Docs',
+    menuOpenInDocs: 'Tukar dan buka dalam Docs',
+    menuPrint: 'Cetak…',
     menuOpen: 'Buka…',
     menuSave: 'Simpan',
     menuSaveAs: 'Simpan Sebagai…',
@@ -1409,21 +1938,6 @@ const tMain = createI18n({
     menuWindow: 'Tetingkap',
     menuHome: 'Laman Utama',
     backToHome: 'Kembali ke Laman Utama',
-    menuSendTo: 'Hantar ke…',
-    shareTitle: 'Hantar ke…',
-    shareFileLabel: 'Fail',
-    shareTargetLabel: 'Saluran',
-    shareMessageLabel: 'Mesej',
-    shareOptional: 'pilihan',
-    shareSend: 'Hantar',
-    shareCancel: 'Batal',
-    shareSending: 'Menghantar…',
-    shareSent: 'Dihantar',
-    shareFailed: 'Gagal menghantar',
-    shareNoHermes: 'Hermes tidak tersedia. Pasang CLI Hermes untuk berkongsi fail.',
-    shareNoTargets: 'Tiada saluran dikonfigurasikan. Sediakan dengan `hermes gateway setup`.',
-    shareNoFile: 'Simpan dokumen dahulu',
-    shareClose: 'Tutup',
     dlgOpenTitle: 'Buka Fail',
     filterSupported: 'Fail yang Disokong',
     filterWord: 'Dokumen Word',
@@ -1456,6 +1970,44 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Tidak dapat log masuk ke Genspark: komponen yang diperlukan (gsk) tiada. Sila pasang semula aplikasi.',
     pdfDocxBusyMsg: 'Eksport ke Word sedang dijalankan. Sila tunggu sehingga selesai.',
+    menuExportDocxLocal: 'Eksport sebagai Word (setempat)…',
+    menuExportDocxCloud: 'Eksport sebagai Word (awan)…',
+    menuExportPptx: 'Eksport sebagai PowerPoint…',
+    pdfPptxFailedMsg: 'Eksport sebagai PowerPoint gagal',
+    pdfPptxBusyMsg: 'Eksport sedang berjalan. Sila tunggu sehingga selesai.',
+    pdfPptxLocalScannedDetail:
+      'Setiap halaman dieksport sebagai imej; teks pada slaid tidak boleh diedit.',
+    menuExportXlsx: 'Eksport sebagai Excel…',
+    pdfXlsxFailedMsg: 'Eksport sebagai Excel gagal',
+    pdfXlsxBusyMsg: 'Eksport sedang berjalan. Sila tunggu sehingga selesai.',
+    pdfXlsxLocalScannedDetail:
+      'Halaman imbasan tidak boleh ditukar kepada sel; helaian setiap halaman mengandungi baris makluman.',
+    pdfXlsxLocalSkippedMsg: 'Sesetengah halaman tidak ditukar kepada sel',
+    pdfXlsxLocalSkippedDetail:
+      'Halaman {pages} tidak dapat ditukar kepada sel; helaiannya mengandungi baris makluman.',
+    pdfDocxLocalScannedMsg: 'Dokumen imbasan dikesan',
+    pdfDocxLocalScannedDetail:
+      'Penukaran setempat mengeksport halaman sebagai imej untuk mengekalkan rupanya. Untuk teks boleh edit, gunakan penukaran awan (dengan OCR).',
+    pdfDocxLocalDegradedMsg: 'Sesetengah halaman dieksport sebagai imej',
+    pdfDocxLocalDegradedDetail:
+      'Halaman {pages} tidak dapat dibina semula dengan pasti dan telah dieksport sebagai imej halaman penuh.',
+    pdfDocxLocalOcrMsg: 'Halaman imbasan ditukar kepada teks boleh edit',
+    pdfDocxLocalOcrDetail:
+      'Halaman {pages} ialah imbasan; teksnya dipulihkan dengan OCR setempat. Sila semak hasilnya.',
+    pdfDocxLocalEncryptedDetail:
+      'PDF ini disulitkan dan tidak dapat dibuka tanpa kata laluan yang betul.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'PDF ini menggunakan penyulitan berasaskan sijil atau penyulitan yang tidak disokong dan tidak boleh ditukar secara setempat. Cuba penukaran awan.',
+    pdfPwdTitle: 'Masukkan Kata Laluan',
+    pdfPwdPrompt: 'PDF ini disulitkan. Masukkan kata laluan untuk membukanya:',
+    pdfPwdRetryPrompt: 'Kata laluan salah. Sila cuba lagi.',
+    pdfPwdOk: 'OK',
+    pdfPwdVerifying: 'Mengesahkan kata laluan…',
+    pdfPwdLabel: 'Kata laluan',
+    pdfPwdPlaceholder: 'Masukkan kata laluan buka',
+    pdfPwdShow: 'Tunjukkan kata laluan',
+    pdfPwdHide: 'Sembunyikan kata laluan',
+    pdfDocxLocalCorruptDetail: 'Fail rosak atau bukan PDF yang sah dan tidak dapat ditukar.',
     dlgPickSaveDir: 'Pilih Lokasi Simpanan Lalai',
     errSaveDirUnusable:
       'Folder yang dipilih tidak boleh ditulis dan tidak dapat digunakan sebagai lokasi simpanan lalai',
@@ -1469,10 +2021,13 @@ const tMain = createI18n({
     untitledDoc: 'מסמך ללא שם',
     untitledDeck: 'מצגת ללא שם',
     untitledMarkdown: 'Markdown ללא שם',
+    untitledPdf: 'PDF ללא שם',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'ייצוא כ-PDF…',
-    menuOpenInDocs: 'המרה ופתיחה ב-AI Docs',
+    menuOpenInDocs: 'המרה ופתיחה ב-Docs',
+    menuPrint: 'הדפסה…',
     menuOpen: 'פתיחה…',
     menuSave: 'שמירה',
     menuSaveAs: 'שמירה בשם…',
@@ -1481,21 +2036,6 @@ const tMain = createI18n({
     menuWindow: 'חלון',
     menuHome: 'דף הבית',
     backToHome: 'חזרה לדף הבית',
-    menuSendTo: 'שלח אל…',
-    shareTitle: 'שלח אל…',
-    shareFileLabel: 'קובץ',
-    shareTargetLabel: 'ערוץ',
-    shareMessageLabel: 'הודעה',
-    shareOptional: 'אופציונלי',
-    shareSend: 'שלח',
-    shareCancel: 'ביטול',
-    shareSending: 'שולח…',
-    shareSent: 'נשלח',
-    shareFailed: 'נכשל',
-    shareNoHermes: 'Hermes אינו זמין. התקן את CLI של Hermes כדי לשתף קבצים.',
-    shareNoTargets: 'לא הוגדרו ערוצים. הגדר עם `hermes gateway setup`.',
-    shareNoFile: 'שמור את המסמך תחילה',
-    shareClose: 'סגור',
     dlgOpenTitle: 'פתיחת קובץ',
     filterSupported: 'קבצים נתמכים',
     filterWord: 'מסמכי Word',
@@ -1525,6 +2065,42 @@ const tMain = createI18n({
     pdfDocxFailedMsg: 'הייצוא כ-Word נכשל',
     pdfDocxNoCliMsg: 'לא ניתן להתחבר ל-Genspark: רכיב נדרש (gsk) חסר. נא להתקין מחדש את האפליקציה.',
     pdfDocxBusyMsg: 'ייצוא ל-Word כבר מתבצע. נא להמתין לסיומו.',
+    menuExportDocxLocal: 'ייצוא כ-Word (המרה מקומית)…',
+    menuExportDocxCloud: 'ייצוא כ-Word (המרה בענן)…',
+    menuExportPptx: 'ייצוא כ-PowerPoint…',
+    pdfPptxFailedMsg: 'הייצוא כ-PowerPoint נכשל',
+    pdfPptxBusyMsg: 'ייצוא כבר מתבצע. יש להמתין לסיומו.',
+    pdfPptxLocalScannedDetail: 'כל עמוד יוצא כתמונה; הטקסט בשקופיות אינו ניתן לעריכה.',
+    menuExportXlsx: 'ייצוא כ-Excel…',
+    pdfXlsxFailedMsg: 'הייצוא כ-Excel נכשל',
+    pdfXlsxBusyMsg: 'ייצוא כבר מתבצע. יש להמתין לסיומו.',
+    pdfXlsxLocalScannedDetail:
+      'עמודים סרוקים אינם ניתנים להמרה לתאים; בגיליון של כל עמוד נוספה שורת הודעה.',
+    pdfXlsxLocalSkippedMsg: 'חלק מהעמודים לא הומרו לתאים',
+    pdfXlsxLocalSkippedDetail:
+      'לא ניתן היה להמיר את העמודים {pages} לתאים; בגיליונות שלהם נוספה שורת הודעה.',
+    pdfDocxLocalScannedMsg: 'זוהה מסמך סרוק',
+    pdfDocxLocalScannedDetail:
+      'ההמרה המקומית ייצאה את העמודים כתמונות כדי לשמר את המראה. לטקסט הניתן לעריכה, השתמשו בהמרה בענן (עם OCR).',
+    pdfDocxLocalDegradedMsg: 'חלק מהעמודים יוצאו כתמונות',
+    pdfDocxLocalDegradedDetail:
+      'לא ניתן היה לשחזר באופן אמין את עמודים {pages}, והם יוצאו כתמונות של עמוד מלא.',
+    pdfDocxLocalOcrMsg: 'עמודים סרוקים הומרו לטקסט הניתן לעריכה',
+    pdfDocxLocalOcrDetail:
+      'עמודים {pages} היו סריקות; הטקסט שוחזר באמצעות OCR מקומי. מומלץ להגיה את התוצאה.',
+    pdfDocxLocalEncryptedDetail: 'קובץ PDF זה מוצפן ולא ניתן היה לפתוח אותו ללא הסיסמה הנכונה.',
+    pdfDocxLocalUnsupportedEncDetail:
+      'קובץ PDF זה משתמש בהצפנה מבוססת אישורים או בהצפנה שאינה נתמכת ולא ניתן להמירו מקומית. נסו את ההמרה בענן.',
+    pdfPwdTitle: 'הזנת סיסמה',
+    pdfPwdPrompt: 'קובץ PDF זה מוצפן. הזינו את הסיסמה כדי לפתוח אותו:',
+    pdfPwdRetryPrompt: 'סיסמה שגויה. נסו שוב.',
+    pdfPwdOk: 'אישור',
+    pdfPwdVerifying: 'מאמת את הסיסמה…',
+    pdfPwdLabel: 'סיסמה',
+    pdfPwdPlaceholder: 'הזינו את סיסמת הפתיחה',
+    pdfPwdShow: 'הצג סיסמה',
+    pdfPwdHide: 'הסתר סיסמה',
+    pdfDocxLocalCorruptDetail: 'הקובץ פגום או שאינו PDF תקין ולא ניתן להמירו.',
     dlgPickSaveDir: 'בחירת מיקום שמירה כברירת מחדל',
     errSaveDirUnusable:
       'התיקייה שנבחרה אינה ניתנת לכתיבה ולא ניתן להשתמש בה כמיקום שמירה כברירת מחדל',
@@ -1538,10 +2114,13 @@ const tMain = createI18n({
     untitledDoc: 'बिना शीर्षक दस्तावेज़',
     untitledDeck: 'बिना शीर्षक प्रस्तुति',
     untitledMarkdown: 'अनाम Markdown',
+    untitledPdf: 'अनाम PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: 'PDF के रूप में निर्यात…',
-    menuOpenInDocs: 'AI Docs में बदलें और खोलें',
+    menuOpenInDocs: 'Docs में बदलें और खोलें',
+    menuPrint: 'प्रिंट करें…',
     menuOpen: 'खोलें…',
     menuSave: 'सहेजें',
     menuSaveAs: 'इस रूप में सहेजें…',
@@ -1550,21 +2129,6 @@ const tMain = createI18n({
     menuWindow: 'विंडो',
     menuHome: 'होम',
     backToHome: 'होम पर वापस जाएँ',
-    menuSendTo: 'भेजें…',
-    shareTitle: 'भेजें…',
-    shareFileLabel: 'फ़ाइल',
-    shareTargetLabel: 'चैनल',
-    shareMessageLabel: 'संदेश',
-    shareOptional: 'वैकल्पिक',
-    shareSend: 'भेजें',
-    shareCancel: 'रद्द करें',
-    shareSending: 'भेज रहा है…',
-    shareSent: 'भेजा गया',
-    shareFailed: 'भेजना विफल',
-    shareNoHermes: 'Hermes उपलब्ध नहीं है। फ़ाइलें साझा करने के लिए Hermes CLI इंस्टॉल करें।',
-    shareNoTargets: 'कोई चैनल कॉन्फ़िगर नहीं है। `hermes gateway setup` से सेट करें।',
-    shareNoFile: 'पहले दस्तावेज़ सहेजें',
-    shareClose: 'बंद करें',
     dlgOpenTitle: 'फ़ाइल खोलें',
     filterSupported: 'समर्थित फ़ाइलें',
     filterWord: 'Word दस्तावेज़',
@@ -1597,6 +2161,45 @@ const tMain = createI18n({
     pdfDocxNoCliMsg:
       'Genspark में साइन इन नहीं किया जा सकता: आवश्यक घटक (gsk) मौजूद नहीं है। कृपया ऐप को फिर से इंस्टॉल करें।',
     pdfDocxBusyMsg: 'Word के रूप में निर्यात पहले से चल रहा है। कृपया पूरा होने तक प्रतीक्षा करें।',
+    menuExportDocxLocal: 'Word के रूप में निर्यात करें (लोकल)…',
+    menuExportDocxCloud: 'Word के रूप में निर्यात करें (क्लाउड)…',
+    menuExportPptx: 'PowerPoint के रूप में निर्यात करें…',
+    pdfPptxFailedMsg: 'PowerPoint के रूप में निर्यात विफल रहा',
+    pdfPptxBusyMsg: 'एक निर्यात पहले से चल रहा है। कृपया उसके पूरा होने की प्रतीक्षा करें।',
+    pdfPptxLocalScannedDetail:
+      'प्रत्येक पृष्ठ छवि के रूप में निर्यात किया गया; स्लाइड का टेक्स्ट संपादन योग्य नहीं है।',
+    menuExportXlsx: 'Excel के रूप में निर्यात करें…',
+    pdfXlsxFailedMsg: 'Excel के रूप में निर्यात विफल रहा',
+    pdfXlsxBusyMsg: 'एक निर्यात पहले से चल रहा है। कृपया उसके पूरा होने की प्रतीक्षा करें।',
+    pdfXlsxLocalScannedDetail:
+      'स्कैन किए गए पेज सेल में परिवर्तित नहीं किए जा सकते; प्रत्येक पेज की वर्कशीट में एक सूचना पंक्ति जोड़ी गई है।',
+    pdfXlsxLocalSkippedMsg: 'कुछ पेज सेल में परिवर्तित नहीं हुए',
+    pdfXlsxLocalSkippedDetail:
+      'पेज {pages} सेल में परिवर्तित नहीं किए जा सके; उनकी वर्कशीट में एक सूचना पंक्ति जोड़ी गई है।',
+    pdfDocxLocalScannedMsg: 'स्कैन किया गया दस्तावेज़ मिला',
+    pdfDocxLocalScannedDetail:
+      'लोकल रूपांतरण ने पृष्ठों का स्वरूप बनाए रखने के लिए उन्हें छवियों के रूप में निर्यात किया। संपादन योग्य टेक्स्ट के लिए क्लाउड रूपांतरण (OCR सहित) का उपयोग करें।',
+    pdfDocxLocalDegradedMsg: 'कुछ पृष्ठ छवियों के रूप में निर्यात किए गए',
+    pdfDocxLocalDegradedDetail:
+      'पृष्ठ {pages} का लेआउट विश्वसनीय रूप से पुनर्निर्मित नहीं हो सका, इसलिए उन्हें पूर्ण-पृष्ठ छवियों के रूप में निर्यात किया गया।',
+    pdfDocxLocalOcrMsg: 'स्कैन किए गए पृष्ठ संपादन योग्य टेक्स्ट में बदले गए',
+    pdfDocxLocalOcrDetail:
+      'पृष्ठ {pages} स्कैन थे; स्थानीय OCR से टेक्स्ट पुनर्प्राप्त किया गया। कृपया परिणाम जाँचें।',
+    pdfDocxLocalEncryptedDetail:
+      'यह PDF एन्क्रिप्टेड है और सही पासवर्ड के बिना इसे खोला नहीं जा सका।',
+    pdfDocxLocalUnsupportedEncDetail:
+      'यह PDF प्रमाणपत्र-आधारित या असमर्थित एन्क्रिप्शन का उपयोग करता है और इसे स्थानीय रूप से परिवर्तित नहीं किया जा सकता। क्लाउड रूपांतरण आज़माएँ।',
+    pdfPwdTitle: 'पासवर्ड दर्ज करें',
+    pdfPwdPrompt: 'यह PDF एन्क्रिप्टेड है। खोलने के लिए पासवर्ड दर्ज करें:',
+    pdfPwdRetryPrompt: 'पासवर्ड गलत है। कृपया फिर से प्रयास करें।',
+    pdfPwdOk: 'ठीक है',
+    pdfPwdVerifying: 'पासवर्ड सत्यापित किया जा रहा है…',
+    pdfPwdLabel: 'पासवर्ड',
+    pdfPwdPlaceholder: 'खोलने का पासवर्ड दर्ज करें',
+    pdfPwdShow: 'पासवर्ड दिखाएँ',
+    pdfPwdHide: 'पासवर्ड छिपाएँ',
+    pdfDocxLocalCorruptDetail:
+      'फ़ाइल क्षतिग्रस्त है या मान्य PDF नहीं है, इसलिए रूपांतरण नहीं हो सकता।',
     dlgPickSaveDir: 'डिफ़ॉल्ट सहेजने का स्थान चुनें',
     errSaveDirUnusable:
       'चयनित फ़ोल्डर में लिखा नहीं जा सकता, इसलिए इसे डिफ़ॉल्ट सहेजने के स्थान के रूप में उपयोग नहीं किया जा सकता',
@@ -1610,10 +2213,13 @@ const tMain = createI18n({
     untitledDoc: '未命名文件',
     untitledDeck: '未命名簡報',
     untitledMarkdown: '未命名 Markdown',
+    untitledPdf: '未命名 PDF',
     menuNewSlide: 'AI Slides',
     menuNewMarkdown: 'AI Markdown',
+    menuNewPdf: 'AI PDF',
     menuExportPdf: '匯出為 PDF…',
     menuOpenInDocs: '轉換為 Docs 文件並開啟',
+    menuPrint: '列印…',
     menuOpen: '開啟…',
     menuSave: '儲存',
     menuSaveAs: '另存新檔…',
@@ -1622,21 +2228,6 @@ const tMain = createI18n({
     menuWindow: '視窗',
     menuHome: '首頁',
     backToHome: '返回首頁',
-    menuSendTo: '傳送到…',
-    shareTitle: '傳送到…',
-    shareFileLabel: '檔案',
-    shareTargetLabel: '頻道',
-    shareMessageLabel: '訊息',
-    shareOptional: '選填',
-    shareSend: '傳送',
-    shareCancel: '取消',
-    shareSending: '傳送中…',
-    shareSent: '已傳送',
-    shareFailed: '傳送失敗',
-    shareNoHermes: 'Hermes 無法使用。請安裝 Hermes CLI 以分享檔案。',
-    shareNoTargets: '尚未設定頻道。請用 `hermes gateway setup` 設定。',
-    shareNoFile: '請先儲存文件',
-    shareClose: '關閉',
     dlgOpenTitle: '開啟檔案',
     filterSupported: '支援的檔案',
     filterWord: 'Word 文件',
@@ -1666,6 +2257,39 @@ const tMain = createI18n({
     pdfDocxFailedMsg: '匯出為 Word 失敗',
     pdfDocxNoCliMsg: '無法登入 Genspark：缺少必要元件（gsk），請重新安裝應用程式。',
     pdfDocxBusyMsg: '正在轉換中，請等待目前的匯出完成。',
+    menuExportDocxLocal: '匯出為 Word（本機轉換）…',
+    menuExportDocxCloud: '匯出為 Word（雲端轉換）…',
+    menuExportPptx: '匯出為 PPT…',
+    pdfPptxFailedMsg: '匯出為 PPT 失敗',
+    pdfPptxBusyMsg: '正在轉換中，請等待目前匯出完成。',
+    pdfPptxLocalScannedDetail: '本機轉換已將各頁以圖片保真匯出，簡報中的文字無法編輯。',
+    menuExportXlsx: '匯出為 Excel…',
+    pdfXlsxFailedMsg: '匯出為 Excel 失敗',
+    pdfXlsxBusyMsg: '正在轉換中，請等待目前匯出完成。',
+    pdfXlsxLocalScannedDetail: '掃描頁無法轉換為儲存格，對應工作表中已寫入提示列。',
+    pdfXlsxLocalSkippedMsg: '部分頁面未轉換為儲存格',
+    pdfXlsxLocalSkippedDetail: '第 {pages} 頁無法轉換為儲存格，對應工作表中已寫入提示列。',
+    pdfDocxLocalScannedMsg: '偵測到掃描文件',
+    pdfDocxLocalScannedDetail:
+      '本機轉換已將各頁以圖片方式保真匯出。如需可編輯的文字，請使用雲端轉換（支援 OCR）。',
+    pdfDocxLocalDegradedMsg: '部分頁面已以圖片匯出',
+    pdfDocxLocalDegradedDetail: '第 {pages} 頁的版面無法可靠重建，已以整頁圖片保真匯出。',
+    pdfDocxLocalOcrMsg: '掃描頁已轉換為可編輯文字',
+    pdfDocxLocalOcrDetail:
+      '第 {pages} 頁為掃描件，已透過本機 OCR 辨識為可編輯文字，建議校對辨識結果。',
+    pdfDocxLocalEncryptedDetail: '此 PDF 已加密，未提供正確的密碼，無法轉換。',
+    pdfDocxLocalUnsupportedEncDetail:
+      '該檔案使用憑證加密或不支援的加密方式，無法在本機轉換，可嘗試雲端轉換。',
+    pdfPwdTitle: '輸入密碼',
+    pdfPwdPrompt: '此 PDF 已加密，請輸入開啟密碼：',
+    pdfPwdRetryPrompt: '密碼不正確，請重試。',
+    pdfPwdOk: '確定',
+    pdfPwdVerifying: '正在驗證密碼…',
+    pdfPwdLabel: '密碼',
+    pdfPwdPlaceholder: '輸入開啟密碼',
+    pdfPwdShow: '顯示密碼',
+    pdfPwdHide: '隱藏密碼',
+    pdfDocxLocalCorruptDetail: '檔案已損壞或不是有效的 PDF，無法轉換。',
     dlgPickSaveDir: '選擇預設儲存位置',
     errSaveDirUnusable: '所選資料夾無法寫入，無法作為預設儲存位置',
   },
@@ -1695,9 +2319,10 @@ function applyPendingProject(filePath: string): void {
   const ext = extname(filePath).slice(1).toLowerCase()
   let key: string | undefined
   if (ext === 'docx') key = 'doc'
-  else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') key = 'sheet'
+  else if (ext === 'xlsx' || ext === 'xlsm' || ext === 'xls' || ext === 'csv') key = 'sheet'
   else if (ext === 'pptx') key = 'slide'
   else if (ext === 'md' || ext === 'markdown') key = 'markdown'
+  else if (ext === 'pdf') key = 'pdf'
   if (!key) return
   const projectId = pendingNewFileProject.get(key)
   if (!projectId) return
@@ -1756,14 +2381,14 @@ function createShellWindow(): void {
   shellWindow = win
   // dragging the window by the tab strip's blank (draggable) area produces no
   // DOM event anywhere — will-move is the only signal to dismiss popovers
-  win.on('will-move', broadcastChromePressed)
+  win.on('will-move', () => broadcastChromePressed())
+  // A detached editor window claims the process-global menu/active-editor targets
+  // while focused; take them back when the shell window regains focus
+  win.on('focus', () => tabManager?.refreshActiveTargets())
 
   const manager = new TabManager(
     win,
-    () => {
-      win.webContents.send(TABS_CHANNELS.changed, manager.list())
-      resyncCloudWatchers()
-    },
+    () => win.webContents.send(TABS_CHANNELS.changed, manager.list()),
     applyMenuFor,
     // no extension: these tabs have no file on disk yet; the title becomes the
     // real filename (the localized untitled default + .docx etc.) once the first save lands
@@ -1784,8 +2409,11 @@ function createShellWindow(): void {
   setDocsShellWindow(win)
   setSheetsShellWindow(win)
   setSlidesShellWindow(win)
+  setSlidesShowBleed((wc, on) => manager.setContentBleed(wc, on))
   setDocsShellHooks({
     openTab: (openPath, options) => manager.openDocsTab(openPath, options),
+    openAiDocTab: (content) =>
+      manager.openDocsTab(undefined, { newBlank: true, aiContent: content }),
     listTabs: () =>
       manager
         .list()
@@ -1793,9 +2421,16 @@ function createShellWindow(): void {
         .map((t) => ({ id: t.id, title: t.title, focused: t.active })),
     focusTab: (id) => manager.activateTab(id),
     closeActiveTab: () => manager.closeActiveTab(),
+    openGeneratedPath: (path) => openGeneratedDocument(path),
   })
   setSheetsCloseTabHook(() => manager.closeActiveTab())
-  setSlidesCloseTabHook(() => manager.closeActiveTab())
+  // ⌘W targets the focused window: in a detached slides editor window it closes
+  // that window (running its own close guard), not the shell's active tab
+  setSlidesCloseTabHook(() => {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused && focused !== win) focused.close()
+    else manager.closeActiveTab()
+  })
   // When ⌘O opens a file inside a tab, sync the tab title/path (used for de-dup by path) and record it as recent.
   // The first save / save-as fires this too, so applyPendingProject also runs here.
   setSheetsWorkbookOpenedHook((wc, path) => {
@@ -1814,11 +2449,25 @@ function createShellWindow(): void {
     recordRecentFile(path)
     applyPendingProject(path)
   })
+  // ⌘O / open-path inside a docs tab: sync the tab title immediately, same
+  // contract as the sheets/slides opened hooks (a plain save to the original
+  // path never renames the tab, so the open must — r115)
+  setDocsFileOpenedHook((wcId, path) => {
+    manager.setTabFileFor(wcId, path)
+    recordRecentFile(path)
+    applyPendingProject(path)
+  })
   // markdown untitled first save / Save As lands on a new path
   setMarkdownFileSavedHook((wc, path) => {
     manager.setTabFileFor(wc.id, path)
     recordRecentFile(path)
     applyPendingProject(path)
+  })
+  // pdf content-derived auto-rename: the file moved on disk, follow it everywhere
+  setPdfRenamedHook((wc, oldPath, newPath) => {
+    manager.setTabFileFor(wc.id, newPath)
+    replaceRecentFile(oldPath, newPath)
+    projectFileRenamed(oldPath, newPath)
   })
   // markdown "convert & open in Docs" → route the fresh .docx to a docs tab
   setMarkdownDocxExportedHook((path) => {
@@ -1888,13 +2537,13 @@ function createShellWindow(): void {
 // ---- routing: one dispatch function for every open path ----
 
 const DOCX_RE = /\.docx$/i
-const XLSX_RE = /\.(xlsx|xls|csv)$/i
+const XLSX_RE = /\.(xlsx|xlsm|xls|csv)$/i
 const PPTX_RE = /\.pptx$/i
 const PDF_RE = /\.pdf$/i
 const MD_RE = /\.(md|markdown)$/i
 
 /** document formats we recognize but don't open — surfaced as a dialog, not silently dropped */
-const UNSUPPORTED_DOC_RE = /\.(doc|rtf|odt|ppt|pps|odp|ods|xlsm|xlsb|pages|key|numbers)$/i
+const UNSUPPORTED_DOC_RE = /\.(doc|rtf|odt|ppt|pps|odp|ods|xlsb|pages|key|numbers)$/i
 
 /**
  * Single source of truth for the open-dialog filter. Includes the
@@ -1905,6 +2554,7 @@ const OPEN_DIALOG_EXTENSIONS = [
   'docx',
   'doc',
   'xlsx',
+  'xlsm',
   'xls',
   'csv',
   'pptx',
@@ -1934,7 +2584,12 @@ function unsupportedFileIn(argv: string[]): string | null {
 
 function notifyUnsupportedFile(filePath: string): void {
   const ext = extname(filePath).slice(1).toLowerCase() || basename(filePath)
-  const options = { type: 'warning' as const, message: tm('errUnsupportedExt', { ext }) }
+  showAppWarning(tm('errUnsupportedExt', { ext }))
+}
+
+/** shell-hosted warning box; focused when a shell window exists, standalone otherwise */
+function showAppWarning(message: string): void {
+  const options = { type: 'warning' as const, message }
   if (shellWindow) {
     shellWindow.show()
     shellWindow.focus()
@@ -1944,8 +2599,53 @@ function notifyUnsupportedFile(filePath: string): void {
   }
 }
 
+/**
+ * Files dropped from the OS into any renderer arrive via installDropOpenBridge
+ * and route through the normal File > Open pipeline; detached editor windows
+ * can host the drop target, so the shell must reveal itself after opening.
+ */
+function registerDroppedFilesIpc(): void {
+  ipcMain.on(DROP_OPEN_CHANNEL, (_event, raw: unknown) =>
+    handleDroppedFiles(raw, {
+      openDocumentPath,
+      revealShellWindow,
+      showWarning: showAppWarning,
+      unsupportedMessage: (exts) => tm('errUnsupportedExt', { ext: exts.join(', ') }),
+    }),
+  )
+}
+
 /** the single router: extension decides which module owns the file; false = nothing opened */
 function openDocumentPath(filePath: string): boolean {
+  const opened = routeDocumentPath(filePath)
+  if (opened) {
+    recordStarPromptDocOpen()
+    // extension only — never the file name or path
+    analytics.track('file_open', { ext: extname(filePath).slice(1).toLowerCase() })
+  }
+  return opened
+}
+
+/**
+ * Open a just-written export. Unlike File > Open, an already-open PDF tab is
+ * reloaded from disk so a re-export to the same path shows the new bytes
+ * instead of the previous in-memory document (which may also hold unsaved
+ * annotations). In-memory edits on that tab are discarded — Save would
+ * overwrite the file we just exported.
+ */
+function openGeneratedDocument(filePath: string): boolean {
+  if (tabManager && PDF_RE.test(filePath)) {
+    const existing = tabManager.findPdfTabByPath(filePath)
+    if (existing) {
+      tabManager.reloadTab(existing)
+      tabManager.activateTab(existing)
+      return true
+    }
+  }
+  return openDocumentPath(filePath)
+}
+
+function routeDocumentPath(filePath: string): boolean {
   if (!existsSync(filePath) || !tabManager) return false
   if (DOCX_RE.test(filePath)) {
     recordRecentFile(filePath)
@@ -1960,7 +2660,6 @@ function openDocumentPath(filePath: string): boolean {
     if (existing) {
       tabManager.activateTab(existing)
     } else {
-      setForcedWorkbookPath(filePath)
       tabManager.openSheetsTab(filePath)
       startQueuedWorkbookNudge()
     }
@@ -2007,7 +2706,10 @@ async function newSheetTab(): Promise<void> {
     writeFileSync(filePath, await blankXlsxBuffer())
     // eligible for content-derived auto-rename after the first AI generation
     markSheetsUntitledPath(filePath)
-    openDocumentPath(filePath)
+    // route directly (not via openDocumentPath) so creating a sheet emits
+    // only file_new — the file_open event is reserved for opening existing files
+    if (routeDocumentPath(filePath)) recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'xlsx' })
   } catch (err) {
     console.warn('[shell] blank workbook create failed, opening in-memory blank tab:', err)
     try {
@@ -2032,6 +2734,9 @@ function surfaceNewTabError(err: unknown): void {
 function newDocTab(): void {
   try {
     tabManager?.openDocsTab(undefined, { newBlank: true })
+    // creating a document is as much a value moment as opening one
+    recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'docx' })
   } catch (err) {
     surfaceNewTabError(err)
   }
@@ -2040,6 +2745,8 @@ function newDocTab(): void {
 function newSlideTab(): void {
   try {
     tabManager?.openSlidesTab()
+    recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'pptx' })
   } catch (err) {
     surfaceNewTabError(err)
   }
@@ -2048,6 +2755,30 @@ function newSlideTab(): void {
 function newMarkdownTab(): void {
   try {
     tabManager?.openMarkdownTab()
+    recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'md' })
+  } catch (err) {
+    surfaceNewTabError(err)
+  }
+}
+
+/**
+ * "New PDF" creates a blank single-page .pdf in the default folder up front and
+ * opens it as a regular file tab — the PDF module has no in-memory blank mode
+ * (openPdfTab requires a path), same pattern as the blank workbook above.
+ */
+async function newPdfTab(): Promise<void> {
+  try {
+    const filePath = uniquePathIn(defaultSaveDir(), `${tm('untitledPdf')}.pdf`)
+    writeFileSync(filePath, await blankPdfBuffer())
+    // Opt the file into content-derived auto-naming on its first save
+    markPdfUntitledPath(filePath)
+    // PDF has no opened/saved shell hook — assign the pending project right here
+    applyPendingProject(filePath)
+    // route directly (not via openDocumentPath) so creating a pdf emits only
+    // file_new and counts one doc-open — same as the blank workbook above
+    if (routeDocumentPath(filePath)) recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'pdf' })
   } catch (err) {
     surfaceNewTabError(err)
   }
@@ -2057,7 +2788,10 @@ function newMarkdownTab(): void {
  * The sheets renderer subscribes to menu actions only after Univer finishes
  * mounting (seconds on cold start), so a single 'open' can fire into the
  * void. Re-send until the queued workbook is consumed; consumption clears the
- * queue flag main-side (sheets-main), which stops the loop.
+ * queue entry main-side (sheets-main), which stops the loop. The nudge only
+ * reaches the active tab, so it gates on that tab's own queue entry —
+ * background tabs from a multi-select Open pull their path themselves via the
+ * renderer's has-queued-workbook poll.
  */
 let workbookNudgeTimer: ReturnType<typeof setInterval> | null = null
 
@@ -2066,7 +2800,11 @@ function startQueuedWorkbookNudge(): void {
   const startedAt = Date.now()
   sendSheetsMenuAction('open')
   workbookNudgeTimer = setInterval(() => {
-    if (!hasQueuedWorkbook() || Date.now() - startedAt > 30_000 || !tabManager?.findSheetsTab()) {
+    if (
+      !hasActiveQueuedWorkbook() ||
+      Date.now() - startedAt > 30_000 ||
+      !tabManager?.findSheetsTab()
+    ) {
       if (workbookNudgeTimer) clearInterval(workbookNudgeTimer)
       workbookNudgeTimer = null
       return
@@ -2082,8 +2820,8 @@ function statEntries(paths: string[]): RecentEntry[] {
 }
 
 function registerHomeIpc(): void {
-  // Fork: signed-in means the local Hermes gateway is reachable — no remote
-  // account, no gsk CLI. The health endpoint answers {status, version}.
+  // signed-in means HermesOffice's own device-code login; the shared gsk CLI key
+  // is only a silent fallback, deliberately not shown here to nudge users onto our key
   ipcMain.handle(HOME_CHANNELS.accountStatus, async () => {
     try {
       const ctrl = new AbortController()
@@ -2100,18 +2838,38 @@ function registerHomeIpc(): void {
     }
   })
 
-  // Fork: sem fluxo de login em browser — o "login" apenas re-checa o gateway
-  ipcMain.handle(HOME_CHANNELS.accountLogin, async () => {
-    return null
+  // login progress is streamed to the requesting renderer; the auth URL is
+  // kept main-side so the "open manually" rescue never opens a renderer-supplied URL
+  let pendingLoginUrl = ''
+  ipcMain.handle(HOME_CHANNELS.accountLogin, async (event) => {
+    // Fork: sem fluxo de login em browser — re-checa o gateway local e avisa o renderer.
+    const sender = event.sender
+    const send = (payload: AccountLoginEvent) => {
+      if (!sender.isDestroyed()) sender.send(HOME_CHANNELS.accountLoginEvent, payload)
+    }
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 1500)
+      const resp = await fetch('http://127.0.0.1:8642/health', { signal: ctrl.signal })
+      clearTimeout(t)
+      send({ phase: resp.ok ? 'success' : 'error', url: '' })
+      return resp.ok
+    } catch {
+      send({ phase: 'error', url: '' })
+      return false
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-    // Fork: no remote login flow, nothing to open
+    if (pendingLoginUrl) void shell.openExternal(pendingLoginUrl)
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {
-    // Fork: não há conta remota para encerrar sessão; só limpa o cache local
+    await hermesofficeLogout()
+    // the cloud projects cache belongs to the account that just signed out
+    clearCloudProjectsStore(cloudProjectsStorePath())
   })
+
   ipcMain.handle(HOME_CHANNELS.getAppVersion, (): string => app.getVersion())
 
   ipcMain.handle(HOME_CHANNELS.recents, (_event, query: unknown): RecentPage =>
@@ -2150,14 +2908,14 @@ function registerHomeIpc(): void {
       filters: [
         { name: tm('filterSupported'), extensions: OPEN_DIALOG_EXTENSIONS },
         { name: tm('filterWord'), extensions: ['docx', 'doc'] },
-        { name: tm('filterExcel'), extensions: ['xlsx', 'xls', 'csv'] },
+        { name: tm('filterExcel'), extensions: ['xlsx', 'xlsm', 'xls', 'csv'] },
         { name: tm('filterPpt'), extensions: ['pptx', 'ppt'] },
         { name: tm('filterPdf'), extensions: ['pdf'] },
         { name: tm('filterMarkdown'), extensions: ['md', 'markdown'] },
       ],
-      properties: ['openFile'],
+      properties: ['openFile', 'multiSelections'],
     })
-    if (!result.canceled && result.filePaths[0]) openDocumentPath(result.filePaths[0])
+    if (!result.canceled) for (const path of result.filePaths) openDocumentPath(path)
   })
 
   ipcMain.handle(HOME_CHANNELS.newDoc, (_event, opts?: { projectId?: string }) => {
@@ -2186,6 +2944,13 @@ function registerHomeIpc(): void {
       pendingNewFileProject.set('markdown', opts.projectId)
     }
     newMarkdownTab()
+  })
+
+  ipcMain.handle(HOME_CHANNELS.newPdf, (_event, opts?: { projectId?: string }) => {
+    if (opts?.projectId && opts.projectId !== 'default') {
+      pendingNewFileProject.set('pdf', opts.projectId)
+    }
+    void newPdfTab()
   })
 
   ipcMain.handle(HOME_CHANNELS.removeRecent, (_event, paths: unknown) => {
@@ -2291,8 +3056,13 @@ function registerHomeIpc(): void {
     (): boolean => readAppSettings(APP_SETTINGS_PATH()).onboardingSeen === true,
   )
 
-  ipcMain.handle(HOME_CHANNELS.setOnboardingSeen, () => {
-    writeAppSetting(APP_SETTINGS_PATH(), 'onboardingSeen', true)
+  ipcMain.handle(HOME_CHANNELS.setOnboardingSeen, (): boolean => {
+    try {
+      writeAppSetting(APP_SETTINGS_PATH(), 'onboardingSeen', true)
+      return true
+    } catch {
+      return false
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.getTheme, (): UiTheme => currentTheme())
@@ -2306,6 +3076,13 @@ function registerHomeIpc(): void {
     writeAppSetting(APP_SETTINGS_PATH(), 'theme', theme)
     nativeTheme.themeSource = theme
     for (const wc of webContents.getAllWebContents()) wc.send('app:theme-changed', theme)
+  })
+
+  ipcMain.handle(HOME_CHANNELS.getAnalyticsEnabled, (): boolean => analyticsEnabled())
+
+  ipcMain.handle(HOME_CHANNELS.setAnalyticsEnabled, (_event, enabled: unknown): boolean => {
+    if (typeof enabled !== 'boolean') return false
+    return persistAnalyticsPreference(enabled)
   })
 
   // effective folder where new/untitled files land; the editor mains resolve
@@ -2328,55 +3105,71 @@ function registerHomeIpc(): void {
     return picked
   })
 
-  ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {
-    shell.openExternal(GENTEAM_URL).catch(() => {
+  ipcMain.handle(HOME_CHANNELS.openGitHub, () => {
+    shell.openExternal(HERMESOFFICE_REPO_URL).catch(() => {
       // no browser handler available; nothing actionable for the user here
     })
-  })
-
-  registerShareIpc({
-    listChannels: async () => {
-      if (!hermesBin) return { channels: [], platforms: [] }
-      const targets = await listShareTargets(hermesBin)
-      const withTargets = {
-        ...targets,
-        channels: targets.channels.map((channel) => ({
-          ...channel,
-          target: buildTarget(channel),
-        })),
-      }
-      // configured-but-undiscovered platforms (e.g. a WhatsApp self-chat
-      // bridge) still get a home-channel entry in the picker
-      return withHomeChannelFallbacks(withTargets)
-    },
-    send: async (request: ShareWindowSendRequest & { filePath?: string }) => {
-      if (!hermesBin) return { ok: false, error: 'Hermes CLI not found' }
-      if (!request.filePath) return { ok: false, error: 'No file to share' }
-      return sendFileToTarget(hermesBin, {
-        filePath: request.filePath,
-        target: request.target,
-        message: request.message,
-      })
-    },
-  })
-
-  registerCloudIpc()
-  resyncCloudWatchers()
-
-  // fork: probe the local Hermes gateway (onboarding)
-  ipcMain.handle(HOME_CHANNELS.hermesStatus, async (): Promise<'ok' | 'offline'> => {
-    try {
-      const response = await fetch(hermesHealthUrl(''), { signal: AbortSignal.timeout(2000) })
-      return response.ok ? 'ok' : 'offline'
-    } catch {
-      return 'offline'
-    }
   })
 
   ipcMain.handle(HOME_CHANNELS.openCreditUsage, () => {
     shell.openExternal(CREDIT_USAGE_URL).catch(() => {
       // no browser handler available; nothing actionable for the user here
     })
+  })
+
+  ipcMain.handle(HOME_CHANNELS.openGitHubRepo, () => {
+    shell.openExternal(GITHUB_REPO_URL).catch(() => {
+      // no browser handler available; nothing actionable for the user here
+    })
+  })
+
+  ipcMain.handle(HOME_CHANNELS.githubStars, () => fetchGithubStars())
+
+  // returning true also counts as "shown": the renderer displays it
+  // unconditionally, so no separate mark-shown round-trip is needed
+  ipcMain.handle(HOME_CHANNELS.starPromptShouldShow, (): StarPromptShow => {
+    if (starPromptSessionGrant) return starPromptSessionGrant
+    const now = Date.now()
+    const state = readStarPrompt()
+    const docOpens = state.docOpens ?? 0
+    // dev preview of the card without waiting out the value thresholds
+    // (same pattern as HERMESOFFICE_FAKE_UPDATE); nothing is recorded
+    if (!app.isPackaged && process.env.HERMESOFFICE_FORCE_STAR_PROMPT) return { show: true, docOpens }
+    const grant = (): StarPromptShow => {
+      writeStarPrompt(withShown(state, now))
+      starPromptSessionGrant = { show: true, docOpens }
+      return starPromptSessionGrant
+    }
+    // first launch after an upgrade: skip the value gates once for a
+    // never-prompted user (they are a proven repeat user already)
+    if (upgradeStarPromptPending) {
+      upgradeStarPromptPending = false
+      if (shouldShowUpgradeStarPrompt(state)) return grant()
+    }
+    if (!shouldShowStarPrompt(state, now)) return { show: false, docOpens }
+    return grant()
+  })
+
+  ipcMain.handle(HOME_CHANNELS.starPromptAction, (_event, action: unknown) => {
+    if (action !== 'starred' && action !== 'later') return
+    // the card was reacted to — drop the session grant so a later query (new
+    // shell window on macOS) re-evaluates the real rules (snooze / resolved)
+    starPromptSessionGrant = null
+    // 'later' needs no write: the display was already counted by the query
+    if (action === 'starred') writeStarPrompt(withResolved(readStarPrompt()))
+  })
+
+  const cloudProjectsStorePath = () => join(app.getPath('userData'), 'cloud-projects.json')
+
+  ipcMain.handle(HOME_CHANNELS.cloudProjectsCached, () =>
+    readCloudProjectsStore(cloudProjectsStorePath()),
+  )
+
+  ipcMain.handle(HOME_CHANNELS.cloudProjects, () => syncCloudProjects(cloudProjectsStorePath()))
+
+  ipcMain.handle(HOME_CHANNELS.openCloudProject, (_event, projectUrl: unknown) => {
+    const url = cloudProjectExternalUrl(projectUrl)
+    if (url) void shell.openExternal(url)
   })
 }
 
@@ -2424,20 +3217,26 @@ const TAB_MENU_ICON: Record<TabKind, keyof MenuIconSet> = {
 }
 
 // tab views see neither DOM events nor a focus change when the user clicks the
-// shell chrome — relay the press so open popovers in documents can dismiss
-function broadcastChromePressed(): void {
-  for (const wc of webContents.getAllWebContents()) wc.send('app:chrome-pressed')
+// shell chrome — relay the press so open popovers in documents can dismiss.
+// The pressed document must be excluded: it already dismissed (or is opening)
+// its own popovers via its local pointerdown listeners, and the async IPC
+// round-trip would otherwise close a popover that very press just opened
+// (home row menus died this way: pointerdown → broadcast → menu unmounts
+// before the click event ever reached the menu item).
+function broadcastChromePressed(exclude?: WebContents): void {
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc !== exclude) wc.send('app:chrome-pressed')
+  }
 }
 
 function registerTabsIpc(): void {
-  ipcMain.on(TABS_CHANNELS.chromePressed, broadcastChromePressed)
+  ipcMain.on(TABS_CHANNELS.chromePressed, (event) => broadcastChromePressed(event.sender))
   ipcMain.handle(TABS_CHANNELS.list, () => tabManager?.list() ?? [])
   ipcMain.handle(TABS_CHANNELS.activate, (_event, id: string) => tabManager?.activateTab(id))
   ipcMain.handle(TABS_CHANNELS.close, (_event, id: string) => tabManager?.closeTab(id))
   ipcMain.handle(TABS_CHANNELS.reorder, (_event, id: string, toIndex: number) => {
     if (typeof id === 'string' && Number.isInteger(toIndex)) tabManager?.reorderTab(id, toIndex)
   })
-  ipcMain.handle(TABS_CHANNELS.shareActive, () => shareActiveTab())
   // "all tabs" overflow menu — native popup because the editors' WebContentsView
   // would cover any DOM dropdown the shell renderer draws below the tab strip
   ipcMain.handle(TABS_CHANNELS.showMenu, (_event, x: unknown, y: unknown) => {
@@ -2485,6 +3284,11 @@ function registerTabsIpc(): void {
         icon: menuIcons().md,
         click: () => newMarkdownTab(),
       },
+      {
+        label: tm('menuNewPdf'),
+        icon: menuIcons().pdf,
+        click: () => void newPdfTab(),
+      },
       { type: 'separator' },
       { label: tm('menuOpen'), click: () => void openFileViaDialog() },
     ])
@@ -2504,9 +3308,9 @@ async function openFileViaDialog(): Promise<void> {
   if (!win) return
   const result = await showOpenDialogWithMemory(dialog, win, {
     filters: [{ name: tm('filterSupported'), extensions: OPEN_DIALOG_EXTENSIONS }],
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
   })
-  if (!result.canceled && result.filePaths[0]) openDocumentPath(result.filePaths[0])
+  if (!result.canceled) for (const path of result.filePaths) openDocumentPath(path)
 }
 
 function buildHomeMenu(): void {
@@ -2528,6 +3332,7 @@ function buildHomeMenu(): void {
         },
         { label: tm('menuNewSlide'), click: () => newSlideTab() },
         { label: tm('menuNewMarkdown'), click: () => newMarkdownTab() },
+        { label: tm('menuNewPdf'), click: () => void newPdfTab() },
         { type: 'separator' },
         {
           label: tm('menuOpen'),
@@ -2584,14 +3389,34 @@ function buildPdfMenu(): void {
           click: () => void savePdfAs(),
         },
         { type: 'separator' },
+        // local pdf2docx is the default Word export; cloud stays as a
+        // secondary option because scanned PDFs still need its OCR
         {
           label: tm('menuExportDocx'),
+          click: () => void exportPdfAsDocxLocal(),
+        },
+        {
+          label: tm('menuExportDocxCloud'),
           click: () => void exportPdfAsDocx(),
+        },
+        // local pdf2pptx (P25): one slide per page, no cloud counterpart
+        {
+          label: tm('menuExportPptx'),
+          click: () => void exportPdfAsPptxLocal(),
+        },
+        // local pdf2xlsx (P26): one worksheet per page, no cloud counterpart
+        {
+          label: tm('menuExportXlsx'),
+          click: () => void exportPdfAsXlsxLocal(),
         },
         { type: 'separator' },
         {
-          label: tm('menuSendTo'),
-          click: () => shareActiveTab(),
+          label: tm('menuPrint'),
+          accelerator: 'CmdOrCtrl+P',
+          click: () => {
+            const tab = tabManager?.activePdfTab()
+            if (tab) sendPdfPrintRequest(tab.webContents)
+          },
         },
         { type: 'separator' },
         {
@@ -2669,6 +3494,15 @@ function buildMarkdownMenu(): void {
           click: () => {
             const tab = tabManager?.activeMarkdownTab()
             if (tab) sendMarkdownExportRequest(tab.webContents, 'docs')
+          },
+        },
+        { type: 'separator' },
+        {
+          label: tm('menuPrint'),
+          accelerator: 'CmdOrCtrl+P',
+          click: () => {
+            const tab = tabManager?.activeMarkdownTab()
+            if (tab) sendMarkdownPrintRequest(tab.webContents)
           },
         },
         { type: 'separator' },
@@ -2830,261 +3664,377 @@ async function exportPdfAsDocx(): Promise<void> {
   }
 }
 
+/**
+ * Export as Word for pdf tabs, fully local (pdf2docx P4): flush pending
+ * edits, pick the destination, convert in-process via PDFium wasm, write the
+ * file and open it in a Docs tab. No login, no credits. Shares the in-flight
+ * guard with the cloud export so the two can never run concurrently.
+ */
+async function exportPdfAsDocxLocal(): Promise<void> {
+  const tab = tabManager?.activePdfTab()
+  if (!tab?.filePath || !shellWindow) return
+  if (exportingPdfDocx) {
+    void dialog.showMessageBox(shellWindow, {
+      type: 'info',
+      message: tm('pdfDocxBusyMsg'),
+    })
+    return
+  }
+  exportingPdfDocx = true
+  try {
+    if (!(await flushPdfSave(tab.webContents))) return
+    const picked = await showSaveDialogWithMemory(dialog, shellWindow, {
+      defaultPath: tab.filePath.replace(/\.pdf$/i, '.docx'),
+      filters: [{ name: tm('filterWord'), extensions: ['docx'] }],
+    })
+    if (picked.canceled || !picked.filePath) return
+    // same stale-tab handling as the cloud export (see exportPdfAsDocx)
+    const staleTabId = tabManager?.findDocsTabByPath(picked.filePath)
+    if (staleTabId) {
+      await tabManager?.closeTab(staleTabId)
+      tabManager?.activateTab(tab.id)
+      if (tabManager?.findDocsTabByPath(picked.filePath)) return
+    }
+    shellWindow.setProgressBar(2)
+    // encrypted PDFs prompt for the password (P23), looping on wrong entries;
+    // null result = user cancelled the prompt → abort silently
+    const pdfPath = tab.filePath
+    const result = await convertPdfFileToDocxLocalWithPrompt(
+      pdfPath,
+      (retry) =>
+        promptPdfPassword(shellWindow, {
+          fileName: basename(pdfPath),
+          retry,
+          busy: false,
+          lang: currentLang(),
+          strings: {
+            title: tm('pdfPwdTitle'),
+            prompt: tm('pdfPwdPrompt'),
+            retryPrompt: tm('pdfPwdRetryPrompt'),
+            ok: tm('pdfPwdOk'),
+            cancel: tm('btnCancel'),
+            verifying: tm('pdfPwdVerifying'),
+            label: tm('pdfPwdLabel'),
+            placeholder: tm('pdfPwdPlaceholder'),
+            show: tm('pdfPwdShow'),
+            hide: tm('pdfPwdHide'),
+          },
+        }),
+      (page, total) => {
+        if (shellWindow && !shellWindow.isDestroyed() && total > 0) {
+          shellWindow.setProgressBar(page / total)
+        }
+      },
+    )
+    if (result === null) return
+    writeFileSync(picked.filePath, result.docx)
+
+    // degrade transparency (plan §7.6 dual-track split): whole scan → point
+    // to the cloud/OCR flow; individual image-fallback pages → name them;
+    // OCR-recovered scans ('ocr') are SUCCESSES — announce the recovery (the
+    // user should proofread machine-read text), never the image-export notice
+    const ocrPages = result.pageResults.filter((r) => r.status === 'ocr').map((r) => r.page)
+    const imagePages = result.pageResults
+      .filter((r) => r.status !== 'ok' && r.status !== 'ocr')
+      .map((r) => r.page)
+    if (result.scannedDocument) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalScannedMsg'),
+        detail: tm('pdfDocxLocalScannedDetail'),
+      })
+    } else if (imagePages.length > 0 && ocrPages.length > 0) {
+      // mixed documents surface BOTH facts in one dialog: which pages shipped
+      // as images and which carry machine-read text the user should proofread
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalDegradedMsg'),
+        detail:
+          tm('pdfDocxLocalDegradedDetail', { pages: imagePages.join(', ') }) +
+          '\n\n' +
+          tm('pdfDocxLocalOcrDetail', { pages: ocrPages.join(', ') }),
+      })
+    } else if (imagePages.length > 0) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalDegradedMsg'),
+        detail: tm('pdfDocxLocalDegradedDetail', { pages: imagePages.join(', ') }),
+      })
+    } else if (ocrPages.length > 0) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalOcrMsg'),
+        detail: tm('pdfDocxLocalOcrDetail', { pages: ocrPages.join(', ') }),
+      })
+    }
+    openDocumentPath(picked.filePath)
+  } catch (err) {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      // structured load failures (P22): password-protected / damaged PDFs get
+      // a human-readable explanation instead of the raw PDFium error string
+      const detail =
+        err instanceof PdfLoadError
+          ? err.code === 'password-required'
+            ? tm('pdfDocxLocalEncryptedDetail')
+            : err.code === 'unsupported'
+              ? // certificate-based or otherwise unsupported security (FPDF
+                // error 5): a hard PDFium boundary — no password can open it
+                // locally, so the message must NOT suggest one (P24 C)
+                tm('pdfDocxLocalUnsupportedEncDetail')
+              : tm('pdfDocxLocalCorruptDetail')
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      void dialog.showMessageBox(shellWindow, {
+        type: 'error',
+        message: tm('pdfDocxFailedMsg'),
+        detail,
+      })
+    }
+  } finally {
+    // the prompt window may still be open when the loop exits through cancel
+    // or a non-password error thrown mid-retry
+    closePdfPasswordDialog()
+    exportingPdfDocx = false
+    if (shellWindow && !shellWindow.isDestroyed()) shellWindow.setProgressBar(-1)
+  }
+}
+
+/**
+ * Export as PowerPoint for pdf tabs, fully local (pdf2pptx P25): flush
+ * pending edits, pick the destination, convert in-process via PDFium wasm,
+ * write the file and open it in a Slides tab. No login, no credits. Shares
+ * the in-flight guard with the Word exports so pdfium never runs two
+ * conversions at once.
+ */
+async function exportPdfAsPptxLocal(): Promise<void> {
+  const tab = tabManager?.activePdfTab()
+  if (!tab?.filePath || !shellWindow) return
+  if (exportingPdfDocx) {
+    void dialog.showMessageBox(shellWindow, {
+      type: 'info',
+      message: tm('pdfPptxBusyMsg'),
+    })
+    return
+  }
+  exportingPdfDocx = true
+  try {
+    if (!(await flushPdfSave(tab.webContents))) return
+    const picked = await showSaveDialogWithMemory(dialog, shellWindow, {
+      defaultPath: tab.filePath.replace(/\.pdf$/i, '.pptx'),
+      filters: [{ name: tm('filterPpt'), extensions: ['pptx'] }],
+    })
+    if (picked.canceled || !picked.filePath) return
+    // same stale-tab handling as the Word exports (see exportPdfAsDocx),
+    // against the slides tab that may already show the destination file
+    const staleTabId = tabManager?.findSlidesTabByPath(picked.filePath)
+    if (staleTabId) {
+      await tabManager?.closeTab(staleTabId)
+      tabManager?.activateTab(tab.id)
+      if (tabManager?.findSlidesTabByPath(picked.filePath)) return
+    }
+    shellWindow.setProgressBar(2)
+    // encrypted PDFs prompt for the password (P23), looping on wrong entries;
+    // null result = user cancelled the prompt → abort silently
+    const pdfPath = tab.filePath
+    const result = await convertPdfFileToPptxLocalWithPrompt(
+      pdfPath,
+      (retry) =>
+        promptPdfPassword(shellWindow, {
+          fileName: basename(pdfPath),
+          retry,
+          busy: false,
+          lang: currentLang(),
+          strings: {
+            title: tm('pdfPwdTitle'),
+            prompt: tm('pdfPwdPrompt'),
+            retryPrompt: tm('pdfPwdRetryPrompt'),
+            ok: tm('pdfPwdOk'),
+            cancel: tm('btnCancel'),
+            verifying: tm('pdfPwdVerifying'),
+            label: tm('pdfPwdLabel'),
+            placeholder: tm('pdfPwdPlaceholder'),
+            show: tm('pdfPwdShow'),
+            hide: tm('pdfPwdHide'),
+          },
+        }),
+      (page, total) => {
+        if (shellWindow && !shellWindow.isDestroyed() && total > 0) {
+          shellWindow.setProgressBar(page / total)
+        }
+      },
+    )
+    if (result === null) return
+    writeFileSync(picked.filePath, result.pptx)
+
+    // degrade transparency (same split as the Word export): whole scan vs
+    // individual image-fallback pages
+    const imagePages = result.pageResults.filter((r) => r.status !== 'ok').map((r) => r.page)
+    if (result.scannedDocument) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalScannedMsg'),
+        detail: tm('pdfPptxLocalScannedDetail'),
+      })
+    } else if (imagePages.length > 0) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalDegradedMsg'),
+        detail: tm('pdfDocxLocalDegradedDetail', { pages: imagePages.join(', ') }),
+      })
+    }
+    openDocumentPath(picked.filePath)
+  } catch (err) {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      // structured load failures (P22): same explanations as the Word export
+      const detail =
+        err instanceof PdfLoadError
+          ? err.code === 'password-required'
+            ? tm('pdfDocxLocalEncryptedDetail')
+            : err.code === 'unsupported'
+              ? tm('pdfDocxLocalUnsupportedEncDetail')
+              : tm('pdfDocxLocalCorruptDetail')
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      void dialog.showMessageBox(shellWindow, {
+        type: 'error',
+        message: tm('pdfPptxFailedMsg'),
+        detail,
+      })
+    }
+  } finally {
+    closePdfPasswordDialog()
+    exportingPdfDocx = false
+    if (shellWindow && !shellWindow.isDestroyed()) shellWindow.setProgressBar(-1)
+  }
+}
+
+/**
+ * Export as Excel for pdf tabs, fully local (pdf2xlsx P26): flush pending
+ * edits, pick the destination, convert in-process via PDFium wasm, write the
+ * file and open it in a Sheets tab. No login, no credits. Shares the
+ * in-flight guard with the Word/PowerPoint exports so pdfium never runs two
+ * conversions at once.
+ */
+async function exportPdfAsXlsxLocal(): Promise<void> {
+  const tab = tabManager?.activePdfTab()
+  if (!tab?.filePath || !shellWindow) return
+  if (exportingPdfDocx) {
+    void dialog.showMessageBox(shellWindow, {
+      type: 'info',
+      message: tm('pdfXlsxBusyMsg'),
+    })
+    return
+  }
+  exportingPdfDocx = true
+  try {
+    if (!(await flushPdfSave(tab.webContents))) return
+    const picked = await showSaveDialogWithMemory(dialog, shellWindow, {
+      defaultPath: tab.filePath.replace(/\.pdf$/i, '.xlsx'),
+      filters: [{ name: tm('filterExcel'), extensions: ['xlsx'] }],
+    })
+    if (picked.canceled || !picked.filePath) return
+    // same stale-tab handling as the Word exports (see exportPdfAsDocx),
+    // against the sheets tab that may already show the destination file
+    const staleTabId = tabManager?.findSheetsTabByPath(picked.filePath)
+    if (staleTabId) {
+      await tabManager?.closeTab(staleTabId)
+      tabManager?.activateTab(tab.id)
+      if (tabManager?.findSheetsTabByPath(picked.filePath)) return
+    }
+    shellWindow.setProgressBar(2)
+    // encrypted PDFs prompt for the password (P23), looping on wrong entries;
+    // null result = user cancelled the prompt → abort silently
+    const pdfPath = tab.filePath
+    const result = await convertPdfFileToXlsxLocalWithPrompt(
+      pdfPath,
+      (retry) =>
+        promptPdfPassword(shellWindow, {
+          fileName: basename(pdfPath),
+          retry,
+          busy: false,
+          lang: currentLang(),
+          strings: {
+            title: tm('pdfPwdTitle'),
+            prompt: tm('pdfPwdPrompt'),
+            retryPrompt: tm('pdfPwdRetryPrompt'),
+            ok: tm('pdfPwdOk'),
+            cancel: tm('btnCancel'),
+            verifying: tm('pdfPwdVerifying'),
+            label: tm('pdfPwdLabel'),
+            placeholder: tm('pdfPwdPlaceholder'),
+            show: tm('pdfPwdShow'),
+            hide: tm('pdfPwdHide'),
+          },
+        }),
+      (page, total) => {
+        if (shellWindow && !shellWindow.isDestroyed() && total > 0) {
+          shellWindow.setProgressBar(page / total)
+        }
+      },
+    )
+    if (result === null) return
+    writeFileSync(picked.filePath, result.xlsx)
+
+    // degrade transparency: pages that could not become cells got a notice
+    // row on their worksheet instead of an image (a spreadsheet has none)
+    const noticePages = result.pageResults.filter((r) => r.status !== 'ok').map((r) => r.page)
+    if (result.scannedDocument) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfDocxLocalScannedMsg'),
+        detail: tm('pdfXlsxLocalScannedDetail'),
+      })
+    } else if (noticePages.length > 0) {
+      await dialog.showMessageBox(shellWindow, {
+        type: 'info',
+        message: tm('pdfXlsxLocalSkippedMsg'),
+        detail: tm('pdfXlsxLocalSkippedDetail', { pages: noticePages.join(', ') }),
+      })
+    }
+    openDocumentPath(picked.filePath)
+  } catch (err) {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      // structured load failures (P22): same explanations as the Word export
+      const detail =
+        err instanceof PdfLoadError
+          ? err.code === 'password-required'
+            ? tm('pdfDocxLocalEncryptedDetail')
+            : err.code === 'unsupported'
+              ? tm('pdfDocxLocalUnsupportedEncDetail')
+              : tm('pdfDocxLocalCorruptDetail')
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      void dialog.showMessageBox(shellWindow, {
+        type: 'error',
+        message: tm('pdfXlsxFailedMsg'),
+        detail,
+      })
+    }
+  } finally {
+    closePdfPasswordDialog()
+    exportingPdfDocx = false
+    if (shellWindow && !shellWindow.isDestroyed()) shellWindow.setProgressBar(-1)
+  }
+}
+
+// The pdf renderer's converter dropdown funnels into the same local conversion
+// flows as the File menu items (dialogs, password prompt, in-flight guard included)
+ipcMain.handle(PDF_CHANNELS.convertOffice, async (e, format: unknown) => {
+  // only the active pdf tab may trigger a conversion (its file is the source)
+  if (tabManager?.activePdfTab()?.webContents.id !== e.sender.id) return
+  if (format === 'docx') await exportPdfAsDocxLocal()
+  else if (format === 'xlsx') await exportPdfAsXlsxLocal()
+  else if (format === 'pptx') await exportPdfAsPptxLocal()
+})
+
 function openThirdPartyNotices(): Promise<string> {
   const path = app.isPackaged
     ? join(process.resourcesPath, 'THIRD-PARTY-NOTICES.txt')
     : join(app.getAppPath(), 'build', 'THIRD-PARTY-NOTICES.txt')
   return shell.openPath(path)
-}
-
-// ---- share: deliver the active document to a messaging channel via the Hermes CLI ----
-// `hermes send` reuses the Hermes gateway credentials (Telegram, WhatsApp,
-// email, …) and attaches the document as a native media bubble.
-
-/** resolved once at startup; the share window shows a hint when absent */
-const hermesBin = resolveHermesBin()
-
-function shareStrings(): ShareStrings {
-  return {
-    title: tm('shareTitle'),
-    fileLabel: tm('shareFileLabel'),
-    targetLabel: tm('shareTargetLabel'),
-    messageLabel: tm('shareMessageLabel'),
-    optional: tm('shareOptional'),
-    send: tm('shareSend'),
-    cancel: tm('shareCancel'),
-    sending: tm('shareSending'),
-    sent: tm('shareSent'),
-    failed: tm('shareFailed'),
-    noHermes: tm('shareNoHermes'),
-    noTargets: tm('shareNoTargets'),
-    noFile: tm('shareNoFile'),
-    close: tm('shareClose'),
-  }
-}
-
-function shareWindowState(filePath: string | undefined): ShareWindowState {
-  return {
-    filePath,
-    hermesAvailable: hermesBin !== null,
-    lang: htmlLang(currentLang()),
-    strings: shareStrings(),
-  }
-}
-
-/** File → Send to… opens the share window for the active tab's document */
-function shareActiveTab(): void {
-  const active = tabManager?.activeTabFilePath()
-  openShareWindow({
-    parent: shellWindow,
-    filePath: active?.filePath,
-    state: shareWindowState(active?.filePath),
-  })
-}
-
-/** menu item injected into every editor's File menu */
-function shareTargetItem(): MenuItemConstructorOptions {
-  return {
-    label: tm('menuSendTo'),
-    click: () => shareActiveTab(),
-  }
-}
-
-// ---- cloud: sync open documents to Google Drive (embedded OAuth) ----
-// The app ships its own OAuth client (public desktop client, minimal
-// drive.file scope). "Connect" opens the Google consent page in a small
-// window; the loopback redirect lands back in the app, the code is exchanged
-// for tokens, and the token is persisted under userData. No third-party
-// relay, no agent loop — uploads call the Drive API directly.
-
-const cloudConfigPath = join(app.getPath('userData'), 'cloud-config.json')
-const cloudTokenPath = join(app.getPath('userData'), 'google-token.json')
-const cloudAuthPort = 5371
-let cloudConfig: CloudConfig = loadCloudConfig(cloudConfigPath)
-
-const cloudSync = new CloudSyncManager({
-  bin: hermesBin,
-  tokenPath: cloudTokenPath,
-  config: () => cloudConfig,
-  onStatesChanged: (states) => {
-    if (shellWindow && !shellWindow.isDestroyed()) {
-      shellWindow.webContents.send(CLOUD_CHANNELS.statesChanged, states)
-    }
-  },
-})
-
-/** keep the file watchers aligned with the open tabs (only when autoSync is on) */
-function resyncCloudWatchers(): void {
-  if (!tabManager) return
-  cloudSync.syncWith(cloudConfig.autoSync ? tabManager.openFilePaths() : [])
-}
-
-function registerCloudIpc(): void {
-  ipcMain.handle(CLOUD_CHANNELS.getConfig, () => cloudConfig)
-  ipcMain.handle(CLOUD_CHANNELS.setConfig, (_event, input: unknown) => {
-    cloudConfig = normalizeCloudConfig(input)
-    saveCloudConfig(cloudConfigPath, cloudConfig)
-    resyncCloudWatchers()
-    return cloudConfig
-  })
-  ipcMain.handle(CLOUD_CHANNELS.uploadNow, async (_event, filePath: unknown) => {
-    const target =
-      typeof filePath === 'string' && filePath
-        ? filePath
-        : tabManager?.activeTabFilePath()?.filePath
-    if (!target) {
-      return { filePath: '', error: 'No active file to upload' } as CloudFileState
-    }
-    return cloudSync.uploadNow(target)
-  })
-  ipcMain.handle(CLOUD_CHANNELS.getStates, () => cloudSync.getFileStates())
-  ipcMain.handle(CLOUD_CHANNELS.getAuthState, () =>
-    driveAuthState({
-      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
-      tokenPath: cloudTokenPath,
-    }),
-  )
-  ipcMain.handle(CLOUD_CHANNELS.connect, () => runGoogleConnectFlow())
-  ipcMain.handle(CLOUD_CHANNELS.disconnect, () => {
-    new TokenStore(cloudTokenPath).clear()
-    broadcastCloudAuth()
-    return true
-  })
-}
-
-function broadcastCloudAuth(): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
-    const state = driveAuthState({
-      config: { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
-      tokenPath: cloudTokenPath,
-    })
-    shellWindow.webContents.send(CLOUD_CHANNELS.authChanged, state)
-  }
-}
-
-/** embedded OAuth flow: consent window → loopback redirect → token stored */
-// OAuth via the system browser (market standard: VS Code, Slack, Notion):
-// the app opens the Google consent page in the user's default browser (where
-// they are usually already signed in — zero typing) and captures the loopback
-// redirect on 127.0.0.1:<cloudAuthPort> to exchange the code for a token.
-const GOOGLE_AUTH_DONE_HTML = (ok: boolean, message: string): string => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${ok ? 'Connected' : 'Not connected'} - HermesOffice</title>
-<style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-    font-family:-apple-system,'Segoe UI',sans-serif;background:#f6f7f9;color:#242424}
-  .card{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:32px 40px;
-    max-width:360px;text-align:center;box-shadow:0 10px 25px rgb(0 0 0 / 6%)}
-  .dot{width:44px;height:44px;border-radius:50%;display:inline-flex;align-items:center;
-    justify-content:center;margin-bottom:14px;font-size:22px}
-  .dot.ok{background:#e8f5ec;color:#15803d}.dot.bad{background:#fdecec;color:#b91c1c}
-  h1{font-size:16px;margin:0 0 8px}
-  p{font-size:13px;color:#606366;margin:0;line-height:1.5}
-</style>
-</head>
-<body><div class="card">
-  <div class="dot ${ok ? 'ok' : 'bad'}">${ok ? '\u2713' : '\u2717'}</div>
-  <h1>${ok ? 'Google Drive conectado' : 'Conexão não concluída'}</h1>
-  <p>${message}</p>
-</div></body>
-</html>`
-
-let authServer: import('node:http').Server | null = null
-let pendingAuth: {
-  state: string
-  timer: NodeJS.Timeout
-  finish: (result: { ok: boolean; error?: string }) => void
-} | null = null
-
-function settlePendingAuth(result: { ok: boolean; error?: string }): void {
-  const pending = pendingAuth
-  if (!pending) return
-  pendingAuth = null
-  clearTimeout(pending.timer)
-  broadcastCloudAuth()
-  pending.finish(result)
-}
-
-/** one lazy server on the loopback port; each connect() swaps the state/finish */
-function ensureAuthServer(): void {
-  if (authServer) return
-  authServer = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', `http://localhost:${cloudAuthPort}`)
-    const pending = pendingAuth
-    res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    if (!pending) {
-      res.statusCode = 400
-      res.end(
-        GOOGLE_AUTH_DONE_HTML(
-          false,
-          'Nenhuma conexão ativa. Feche esta aba e tente novamente no app.',
-        ),
-      )
-      return
-    }
-    const code = url.searchParams.get('code')
-    const error = url.searchParams.get('error')
-    const returnedState = url.searchParams.get('state')
-    if (error) {
-      res.end(GOOGLE_AUTH_DONE_HTML(false, `Autorização recusada (${error}). Feche esta aba.`))
-      settlePendingAuth({ ok: false, error: `Authorization failed: ${error}` })
-      return
-    }
-    if (!code || returnedState !== pending.state) {
-      res.statusCode = 400
-      res.end(GOOGLE_AUTH_DONE_HTML(false, 'Retorno inválido. Feche esta aba e tente novamente.'))
-      settlePendingAuth({ ok: false, error: 'Authorization failed: invalid callback' })
-      return
-    }
-    // success: reply immediately (browser tab closes on its own) and exchange
-    // the code in the background
-    res.end(GOOGLE_AUTH_DONE_HTML(true, 'Pode fechar esta aba e voltar ao HermesOffice.'))
-    void (async () => {
-      const exchanged = await exchangeCode(
-        { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
-        code,
-        cloudAuthPort,
-      )
-      if (!exchanged.ok || !exchanged.token) {
-        settlePendingAuth({ ok: false, error: exchanged.error ?? 'Authorization failed' })
-        return
-      }
-      new TokenStore(cloudTokenPath).save(exchanged.token)
-      settlePendingAuth({ ok: true })
-    })()
-  })
-  authServer.on('error', (err: NodeJS.ErrnoException) => {
-    settlePendingAuth({
-      ok: false,
-      error: `Could not start the local callback server: ${err.message}`,
-    })
-  })
-  authServer.listen(cloudAuthPort, '127.0.0.1')
-}
-
-function runGoogleConnectFlow(): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const state = randomBytes(16).toString('hex')
-    const authUrl = buildAuthUrl(
-      { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET },
-      cloudAuthPort,
-      state,
-    )
-    // 5 minutes: a real login (password + 2FA) takes time; a short timeout
-    // would kill the flow mid-way and read as "the app is broken".
-    const timer = setTimeout(
-      () => settlePendingAuth({ ok: false, error: 'Connection timed out' }),
-      300_000,
-    )
-    pendingAuth = { state, timer, finish: resolve }
-    ensureAuthServer()
-    void shell.openExternal(authUrl).catch(() => {
-      settlePendingAuth({ ok: false, error: 'Could not open the browser' })
-    })
-  })
 }
 
 /** every module's File menu gets a way back to the launcher */
@@ -3094,10 +4044,9 @@ function installBackToHomeItems(): void {
     accelerator: 'Shift+CmdOrCtrl+H',
     click: () => tabManager?.openHomeTab(),
   }
-  const shareItem = shareTargetItem()
-  setDocsExtraFileMenuItems([backToHomeItem, shareItem])
-  setSheetsExtraFileMenuItems([backToHomeItem, shareItem])
-  setSlidesExtraFileMenuItems([backToHomeItem, shareItem])
+  setDocsExtraFileMenuItems([backToHomeItem])
+  setSheetsExtraFileMenuItems([backToHomeItem])
+  setSlidesExtraFileMenuItems([backToHomeItem])
 }
 
 function installDockMenu(): void {
@@ -3115,6 +4064,7 @@ function installDockMenu(): void {
       },
       { label: tm('menuNewSlide'), click: () => newSlideTab() },
       { label: tm('menuNewMarkdown'), click: () => newMarkdownTab() },
+      { label: tm('menuNewPdf'), click: () => void newPdfTab() },
     ]),
   )
 }
@@ -3124,6 +4074,9 @@ function installDockMenu(): void {
 // Prefer proxy env vars (terminal launch); a packaged app launched from Finder inherits no shell
 // env vars, so fall back to the system HTTP proxy. The renderer uses Chromium's system proxy and
 // is unaffected. Same bootstrap as slides-main startSlidesStandalone.
+// awaited by login IPC so the first status probe / login click cannot race the proxy resolution
+let proxyBootstrap: Promise<void> = Promise.resolve()
+
 async function installMainProcessProxy(): Promise<void> {
   let proxyUrl = [
     process.env.HTTPS_PROXY,
@@ -3201,6 +4154,7 @@ registerProjectIpc()
 registerDocsIpc()
 registerHomeIpc()
 registerTabsIpc()
+registerDroppedFilesIpc()
 
 // sheets' project:resolveChat goes through the handler registered by docs-main; the sessionId reverse lookup hooks in here
 setSessionPathResolver(resolveSheetsSessionPath)
@@ -3246,7 +4200,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  installMainProcessProxy()
+  proxyBootstrap = installMainProcessProxy()
   app.setAccessibilitySupportEnabled(true)
   // Settle the shared uiLang from saved settings BEFORE any tab renderer can
   // ask 'app:get-language': the editor handlers return the i18n module's
@@ -3255,6 +4209,31 @@ app.whenReady().then(async () => {
   currentLang()
   // native menus/dialogs/scrollbars follow the persisted theme from first paint
   nativeTheme.themeSource = currentTheme()
+  // stamp the star-prompt install-age clock on the first launch carrying the feature,
+  // and detect upgrade launches (version changed since the previous run)
+  try {
+    const settings = readAppSettings(APP_SETTINGS_PATH())
+    const starState = readStarPrompt()
+    const stamped = withFirstRun(starState, Date.now())
+    if (stamped !== starState) writeStarPrompt(stamped)
+
+    const prevVersion =
+      typeof settings[LAST_RUN_VERSION_KEY] === 'string'
+        ? (settings[LAST_RUN_VERSION_KEY] as string)
+        : null
+    const currentVersion = app.getVersion()
+    upgradeStarPromptPending = isUpgradeLaunch(
+      prevVersion,
+      currentVersion,
+      settings.onboardingSeen === true,
+    )
+    if (prevVersion !== currentVersion)
+      writeAppSetting(APP_SETTINGS_PATH(), LAST_RUN_VERSION_KEY, currentVersion)
+  } catch {
+    // settings write failures must never block startup
+  }
+  initAnalytics()
+  analytics.track('app_launch')
   startSheetsCaptureServer()
   createShellWindow()
   // deferred to ready: labels need currentLang(), which reads app.getLocale()
@@ -3278,5 +4257,4 @@ app.on('before-quit', () => {
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()
-  cloudSync.dispose()
 })

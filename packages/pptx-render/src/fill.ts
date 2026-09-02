@@ -26,17 +26,52 @@ export function resolveFill(
         kind: 'gradient',
         stops: fill.stops.map((s) => ({ pos: s.pos, color: s.color })),
         angleDeg: fill.angle != null ? fill.angle / 60000 : 0,
-        ...(fill.path ? { radial: true } : {}),
+        ...(fill.scaled ? { scaled: true } : {}),
+        ...(fill.path ? { radial: true, path: fill.path } : {}),
+        ...(fill.path && fill.fillTo
+          ? {
+              center: {
+                x: (fill.fillTo.l + (1 - fill.fillTo.r)) / 2,
+                y: (fill.fillTo.t + (1 - fill.fillTo.b)) / 2,
+              },
+            }
+          : {}),
       }
-    case 'image':
+    case 'image': {
+      // Tile natural size: PowerPoint lays dpi-less bitmaps out at 144dpi (measured on
+      // page_transparent_bitmap: 94px tile = 0.653in), i.e. 2/3 of a 96dpi unit
+      const pxPerImagePx = vp.scale * (96 / 144)
       return {
         kind: 'image',
         dataUrl: media?.(fill.mediaRef),
         mode: fill.mode ?? 'stretch',
+        ...(fill.alpha != null ? { alpha: fill.alpha } : {}),
+        ...(fill.fillRect ? { fillRect: fill.fillRect } : {}),
+        ...(fill.duotone ? { duotone: fill.duotone } : {}),
+        ...(fill.lum ? { lum: fill.lum } : {}),
+        ...(fill.clrChange ? { clrChange: fill.clrChange } : {}),
+        ...(fill.tile
+          ? {
+              tile: {
+                scaleX: pxPerImagePx * fill.tile.sx,
+                scaleY: pxPerImagePx * fill.tile.sy,
+                txPx: emuToPx(fill.tile.tx, vp.scale),
+                tyPx: emuToPx(fill.tile.ty, vp.scale),
+                algn: fill.tile.algn,
+              },
+            }
+          : {}),
       }
+    }
     case 'pattern':
-      // Pattern fills are approximated with the foreground color for now (Phase 2 skips 8x8 tile replication)
-      return { kind: 'solid', color: fill.fg }
+      // 8x8 preset mask, one mask pixel per 96dpi pixel (PowerPoint measured on n820786)
+      return {
+        kind: 'pattern',
+        preset: fill.preset,
+        fg: fill.fg,
+        bg: fill.bg,
+        cellPx: 8 * vp.scale,
+      }
     default:
       return { kind: 'none' }
   }
@@ -46,17 +81,30 @@ export function resolveStroke(stroke: Stroke | undefined, vp: Viewport): RenderS
   if (!stroke) return undefined
   const rf = stroke.fill
   let color = '#000000'
+  let gradient: RenderStroke['gradient']
   if (rf.type === 'solid') color = rf.color
-  else if (rf.type === 'none') return undefined
+  else if (rf.type === 'gradient' && rf.stops.length) {
+    gradient = {
+      stops: rf.stops.map((s) => ({ pos: s.pos, color: s.color })),
+      angleDeg: rf.angle != null ? rf.angle / 60000 : 0,
+      ...(rf.scaled ? { scaled: true } : {}),
+    }
+    color = rf.stops[0]!.color
+  } else if (rf.type === 'none') return undefined
   const widthPx = Math.max(emuToPx(stroke.width || 12700, vp.scale), 0.5)
   const widthPt = (stroke.width || 12700) / EMU_PER_PT
   const dash = dashPreset(stroke.dash, widthPx)
+  const capMap = { flat: 'butt', round: 'round', square: 'square' } as const
   return {
     color,
     widthPx,
     widthPt,
     ...(dash ? { dash } : {}),
     ...(stroke.dash && stroke.dash !== 'solid' ? { dashPreset: stroke.dash } : {}),
+    ...(stroke.cap ? { cap: capMap[stroke.cap] } : {}),
+    ...(stroke.join ? { join: stroke.join } : {}),
+    ...(stroke.compound ? { compound: stroke.compound } : {}),
+    ...(gradient ? { gradient } : {}),
   }
 }
 
@@ -67,6 +115,19 @@ export function resolveGlow(
 ): import('./render-tree').RenderGlow | undefined {
   if (!glow) return undefined
   return { color: glow.color, blurPx: emuToPx(glow.radius, vp.scale) }
+}
+
+export function resolveReflection(
+  reflection: import('@hermesoffice/pptx-engine').ReflectionEffect | undefined,
+  vp: Viewport,
+): import('./render-tree').RenderReflection | undefined {
+  if (!reflection) return undefined
+  return {
+    blurPx: emuToPx(reflection.blurRad, vp.scale),
+    startAlpha: reflection.startA,
+    endPos: reflection.endPos,
+    distPx: emuToPx(reflection.dist, vp.scale),
+  }
 }
 
 export function resolveShadow(
@@ -81,6 +142,14 @@ export function resolveShadow(
     blurPx: emuToPx(shadow.blurRad, vp.scale),
     offsetX: Math.cos(rad) * distPx,
     offsetY: Math.sin(rad) * distPx,
+    distPx,
+    dirDeg: shadow.dirDeg,
+    ...(shadow.inner ? { inner: true } : {}),
+    ...(shadow.sx != null ? { scaleX: shadow.sx } : {}),
+    ...(shadow.sy != null ? { scaleY: shadow.sy } : {}),
+    ...(shadow.kxDeg ? { skewXDeg: shadow.kxDeg } : {}),
+    ...(shadow.kyDeg ? { skewYDeg: shadow.kyDeg } : {}),
+    ...(shadow.algn ? { algn: shadow.algn } : {}),
   }
 }
 
