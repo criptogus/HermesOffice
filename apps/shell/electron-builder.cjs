@@ -514,7 +514,9 @@ const config = {
 const winSignMode = process.env.HERMESOFFICE_WIN_SIGN_MODE
 if (winSignMode) {
   if (winSignMode !== 'test' && winSignMode !== 'production') {
-    throw new Error(`HERMESOFFICE_WIN_SIGN_MODE must be "test" or "production", got "${winSignMode}"`)
+    throw new Error(
+      `HERMESOFFICE_WIN_SIGN_MODE must be "test" or "production", got "${winSignMode}"`,
+    )
   }
   config.win.signtoolOptions = {
     // Single pass per file: the sha1+sha256 dual-signing default is a

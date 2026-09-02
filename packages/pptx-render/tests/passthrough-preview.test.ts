@@ -3,7 +3,12 @@
  * OLE previewPicture → picture node filling the frame, media images carry a media flag.
  */
 import { describe, it, expect } from 'vitest'
-import type { PassthroughElement, PictureElement, Slide, SlideDeck } from '@hermesoffice/pptx-engine'
+import type {
+  PassthroughElement,
+  PictureElement,
+  Slide,
+  SlideDeck,
+} from '@hermesoffice/pptx-engine'
 import { buildRenderSlide } from '../src/index'
 import type { GroupRenderNode, PictureRenderNode } from '../src/render-tree'
 

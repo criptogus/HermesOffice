@@ -22,7 +22,11 @@ import {
   type TextElement,
   type TextRun,
 } from '@hermesoffice/pptx-engine'
-import { buildRenderSlide, EMU_PER_PX_96, type FontMetricsProvider } from '@hermesoffice/pptx-render'
+import {
+  buildRenderSlide,
+  EMU_PER_PX_96,
+  type FontMetricsProvider,
+} from '@hermesoffice/pptx-render'
 import { coverCropFractions } from '../shared/cover-crop'
 
 export const SPEC_CANVAS_W = 1280

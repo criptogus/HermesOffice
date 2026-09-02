@@ -3134,7 +3134,8 @@ function registerHomeIpc(): void {
     const docOpens = state.docOpens ?? 0
     // dev preview of the card without waiting out the value thresholds
     // (same pattern as HERMESOFFICE_FAKE_UPDATE); nothing is recorded
-    if (!app.isPackaged && process.env.HERMESOFFICE_FORCE_STAR_PROMPT) return { show: true, docOpens }
+    if (!app.isPackaged && process.env.HERMESOFFICE_FORCE_STAR_PROMPT)
+      return { show: true, docOpens }
     const grant = (): StarPromptShow => {
       writeStarPrompt(withShown(state, now))
       starPromptSessionGrant = { show: true, docOpens }

@@ -27,7 +27,9 @@ export default defineConfig({
   },
   preload: {
     // i18n and electron-utils ship as TS source — must be bundled, not left external
-    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] }),
+    ],
   },
   renderer: {
     plugins: [

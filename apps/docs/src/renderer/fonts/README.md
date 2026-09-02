@@ -49,8 +49,8 @@ chain order; advances are 1.0em everywhere, so line breaking is unchanged.
 
 ## Korean fallback
 
-| Font                                 | Role                                                        |
-| ------------------------------------ | ----------------------------------------------------------- |
+| Font                                    | Role                                                        |
+| --------------------------------------- | ----------------------------------------------------------- |
 | HermesOffice Serif KR (subset woff2)    | Batang-metric stand-in for Korean serif families            |
 | HermesOffice Sans KR (subset woff2)     | fallback for Korean sans families (Malgun etc.)             |
 | HermesOffice Che Latin KR (ASCII woff2) | half-width Latin for BatangChe/GulimChe/DotumChe/GungsuhChe |
@@ -84,8 +84,8 @@ copyright (Adobe 2017–2024), and full OFL 1.1 text are in `LICENSE-OFL.txt`.
 
 ### HermesOffice Gothic KR
 
-| Font                               | Role                                            |
-| ---------------------------------- | ----------------------------------------------- |
+| Font                                  | Role                                            |
+| ------------------------------------- | ----------------------------------------------- |
 | HermesOffice Gothic KR (subset woff2) | real-metric face for NanumGothic-declaring docs |
 
 Source: NanumGothic Regular from [google/fonts](https://github.com/google/fonts/tree/main/ofl/nanumgothic)
@@ -103,8 +103,8 @@ OFL 1.1 text are in `LICENSE-OFL.txt`.
 
 ## Tamil fallback
 
-| Font                    | Role                                     |
-| ----------------------- | ---------------------------------------- |
+| Font                       | Role                                     |
+| -------------------------- | ---------------------------------------- |
 | HermesOffice Tamil (woff2) | Latha-metric stand-in for Tamil families |
 
 Source: Noto Sans Tamil Regular from [notofonts](https://github.com/notofonts/notofonts.github.io)
@@ -137,8 +137,8 @@ serif, so unknown Arabic families default to the Naskh chain.
 
 ## PUA blanker
 
-| Font                              | Role                                             |
-| --------------------------------- | ------------------------------------------------ |
+| Font                                 | Role                                             |
+| ------------------------------------ | ------------------------------------------------ |
 | HermesOffice PUA Blank (woff2, 312B) | blank 1em glyph for all of U+E000-F8FF (BMP PUA) |
 
 Generated from scratch by `tools/build-pua-blank-font.py` (no upstream font;

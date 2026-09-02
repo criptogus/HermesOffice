@@ -587,7 +587,8 @@ export const strings = {
     onbBody1:
       '文書の作成、表計算、プレゼン作成、PDF のレビュー。あらゆるステップに AI が組み込まれています。',
     onbTitle2: 'これはまだ始まりにすぎません',
-    onbBody2: 'HermesOffice はオープンソースです。GitHub でコントリビュートし、今後の開発を一緒に形作りましょう。',
+    onbBody2:
+      'HermesOffice はオープンソースです。GitHub でコントリビュートし、今後の開発を一緒に形作りましょう。',
     onbOpenSource: '**100% オープンソース**、無償です。',
     onbJoinGitHub: 'GitHub で貢献',
     onbSkip: 'スキップ',
@@ -791,7 +792,8 @@ export const strings = {
     onbBody1:
       '문서 작성, 스프레드시트 제작, 프레젠테이션 생성, PDF 검토. 모든 단계에 AI가 녹아 있습니다.',
     onbTitle2: '이제 시작일 뿐입니다',
-    onbBody2: 'HermesOffice는 오픈소스입니다. GitHub에서 기여하며 앞으로의 방향을 함께 만들어 가세요.',
+    onbBody2:
+      'HermesOffice는 오픈소스입니다. GitHub에서 기여하며 앞으로의 방향을 함께 만들어 가세요.',
     onbOpenSource: '**100% 오픈소스**, 무료입니다.',
     onbJoinGitHub: 'GitHub에서 기여',
     onbSkip: '건너뛰기',
@@ -1211,7 +1213,8 @@ export const strings = {
     onbBody1:
       'Dokumente erstellen, Tabellen bauen, Präsentationen gestalten und PDFs prüfen. KI ist in jedem Schritt integriert.',
     onbTitle2: 'Das ist erst der Anfang',
-    onbBody2: 'HermesOffice ist Open Source. Tragen Sie auf GitHub bei und gestalten Sie die Zukunft mit.',
+    onbBody2:
+      'HermesOffice ist Open Source. Tragen Sie auf GitHub bei und gestalten Sie die Zukunft mit.',
     onbOpenSource: '**100% Open Source** - keine Lizenzgebühren.',
     onbJoinGitHub: 'Auf GitHub beitragen',
     onbSkip: 'Überspringen',
@@ -1421,7 +1424,8 @@ export const strings = {
     onbBody1:
       'Crea documentos, hojas de cálculo y presentaciones, y revisa PDF. La IA está integrada en cada paso.',
     onbTitle2: 'Esto es solo el comienzo',
-    onbBody2: 'HermesOffice es open source. Contribuye en GitHub y ayuda a dar forma a lo que viene.',
+    onbBody2:
+      'HermesOffice es open source. Contribuye en GitHub y ayuda a dar forma a lo que viene.',
     onbOpenSource: '**100% open source** - sin licencias.',
     onbJoinGitHub: 'Contribuir en GitHub',
     onbSkip: 'Omitir',
@@ -1830,7 +1834,8 @@ export const strings = {
     onbBody1:
       'Buat dokumen, susun spreadsheet, rancang presentasi, dan tinjau PDF. AI hadir di setiap langkah.',
     onbTitle2: 'Ini baru permulaan',
-    onbBody2: 'HermesOffice bersifat open source. Berkontribusi di GitHub dan bantu menentukan arah ke depan.',
+    onbBody2:
+      'HermesOffice bersifat open source. Berkontribusi di GitHub dan bantu menentukan arah ke depan.',
     onbOpenSource: '**100% open source** - tanpa biaya lisensi.',
     onbJoinGitHub: 'Berkontribusi di GitHub',
     onbSkip: 'Lewati',
@@ -2036,7 +2041,8 @@ export const strings = {
     onbBody1:
       'Создавайте документы, таблицы и презентации, работайте с PDF. ИИ встроен в каждый шаг.',
     onbTitle2: 'Это только начало',
-    onbBody2: 'HermesOffice - это open source. Вносите вклад на GitHub и помогайте формировать дальнейшее развитие.',
+    onbBody2:
+      'HermesOffice - это open source. Вносите вклад на GitHub и помогайте формировать дальнейшее развитие.',
     onbOpenSource: '**100% open source**, бесплатно.',
     onbJoinGitHub: 'Внести вклад на GitHub',
     onbSkip: 'Пропустить',
@@ -2436,7 +2442,8 @@ export const strings = {
     onbBody1:
       'Crie documentos, planilhas e apresentações e revise PDFs. A IA está integrada em cada etapa.',
     onbTitle2: 'Isto é só o começo',
-    onbBody2: 'O HermesOffice é open source. Contribua no GitHub e ajude a moldar o que vem a seguir.',
+    onbBody2:
+      'O HermesOffice é open source. Contribua no GitHub e ajude a moldar o que vem a seguir.',
     onbOpenSource: '**100% open source**, sem licenças.',
     onbJoinGitHub: 'Contribuir no GitHub',
     onbSkip: 'Pular',
@@ -2633,7 +2640,8 @@ export const strings = {
     onbBody1:
       'Crea documenti, fogli di calcolo e presentazioni e rivedi i PDF. L’IA è integrata in ogni passaggio.',
     onbTitle2: 'Questo è solo l’inizio',
-    onbBody2: 'HermesOffice è open source. Contribuisci su GitHub e contribuisci a plasmare il futuro.',
+    onbBody2:
+      'HermesOffice è open source. Contribuisci su GitHub e contribuisci a plasmare il futuro.',
     onbOpenSource: '**100% open source**, senza licenze.',
     onbJoinGitHub: 'Contribuisci su GitHub',
     onbSkip: 'Salta',
@@ -2829,7 +2837,8 @@ export const strings = {
     onbBody1:
       'Twórz dokumenty, arkusze i prezentacje oraz przeglądaj pliki PDF. AI jest wbudowana w każdy etap.',
     onbTitle2: 'To dopiero początek',
-    onbBody2: 'HermesOffice to open source. Wnieś wkład na GitHubie i pomóż kształtować jego przyszłość.',
+    onbBody2:
+      'HermesOffice to open source. Wnieś wkład na GitHubie i pomóż kształtować jego przyszłość.',
     onbOpenSource: '**100% open source**, bez licencji.',
     onbJoinGitHub: 'Wnieś wkład na GitHubie',
     onbSkip: 'Pomiń',
@@ -3222,7 +3231,8 @@ export const strings = {
     onbBody1:
       'Cipta dokumen, bina hamparan, hasilkan persembahan dan semak PDF. AI tersedia pada setiap langkah.',
     onbTitle2: 'Ini baru permulaan',
-    onbBody2: 'HermesOffice ialah sumber terbuka. Sumbang di GitHub dan bantu membentuk masa depannya.',
+    onbBody2:
+      'HermesOffice ialah sumber terbuka. Sumbang di GitHub dan bantu membentuk masa depannya.',
     onbOpenSource: '**Sumber terbuka 100%**, tanpa lesen.',
     onbJoinGitHub: 'Sumbang di GitHub',
     onbSkip: 'Langkau',
@@ -3610,7 +3620,8 @@ export const strings = {
     onbBody1:
       'दस्तावेज़ बनाएँ, स्प्रेडशीट तैयार करें, प्रस्तुतियाँ बनाएँ और PDF की समीक्षा करें। AI हर चरण में शामिल है।',
     onbTitle2: 'यह तो बस शुरुआत है',
-    onbBody2: 'HermesOffice ओपन सोर्स है। GitHub पर योगदान करें और आगे की दिशा तय करने में मदद करें।',
+    onbBody2:
+      'HermesOffice ओपन सोर्स है। GitHub पर योगदान करें और आगे की दिशा तय करने में मदद करें।',
     onbOpenSource: '**100% ओपन सोर्स**, मुफ़्त।',
     onbJoinGitHub: 'GitHub पर योगदान करें',
     onbSkip: 'छोड़ें',

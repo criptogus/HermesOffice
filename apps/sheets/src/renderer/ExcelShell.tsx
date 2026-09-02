@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { platformShortcuts } from '@hermesoffice/i18n'
-import { Dropdown, SHAPE_GALLERY_GROUPS, ShapePreview, useDismissablePopover } from '@hermesoffice/ui'
+import {
+  Dropdown,
+  SHAPE_GALLERY_GROUPS,
+  ShapePreview,
+  useDismissablePopover,
+} from '@hermesoffice/ui'
 
 import {
   CaretIcon,

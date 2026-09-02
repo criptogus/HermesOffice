@@ -158,7 +158,7 @@ async function openAiCompatibleTurn(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
       ...gensparkAttributionHeaders(baseUrl),
-        ...(options.extraHeaders ?? {}),
+      ...(options.extraHeaders ?? {}),
     },
     body: JSON.stringify({
       model: config.model,
@@ -309,7 +309,7 @@ export async function chatOpenAiCompatible(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
       ...gensparkAttributionHeaders(baseUrl),
-        ...(options.extraHeaders ?? {}),
+      ...(options.extraHeaders ?? {}),
     },
     body: JSON.stringify({
       model: config.model,

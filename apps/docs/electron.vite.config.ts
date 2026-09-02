@@ -17,7 +17,9 @@ export default defineConfig({
   // (same setup as apps/slides).
   main: {
     plugins: [
-      externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils', '@hermesoffice/font-metrics'] }),
+      externalizeDepsPlugin({
+        exclude: ['@hermesoffice/electron-utils', '@hermesoffice/font-metrics'],
+      }),
     ],
     resolve: { alias: localAlias },
   },
