@@ -303,10 +303,8 @@ function currentTheme(): UiTheme {
 }
 
 // ---- first-run onboarding ----
-// The GenTeam community page opened from the onboarding's second slide.
-// Stable short link served by the genoffice.ai site; it 302s to the tokened
-// invite link, which stays out of this repo and rotates server-side.
-const GENTEAM_URL = 'https://www.genspark.ai/hermesoffice/join'
+// Fork: link de comunidade abre o repo do HermesOffice.
+const HERMESOFFICE_REPO_URL = 'https://github.com/criptogus/HermesOffice'
 
 // Genspark credit-usage page opened from the account menu's credits row.
 // Kept main-side so the renderer never supplies the URL.
@@ -2328,8 +2326,8 @@ function registerHomeIpc(): void {
     return picked
   })
 
-  ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {
-    shell.openExternal(GENTEAM_URL).catch(() => {
+  ipcMain.handle(HOME_CHANNELS.openGitHub, () => {
+    shell.openExternal(HERMESOFFICE_REPO_URL).catch(() => {
       // no browser handler available; nothing actionable for the user here
     })
   })
