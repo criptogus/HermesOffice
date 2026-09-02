@@ -116,6 +116,8 @@ describe('vision capability fallback', () => {
 
   it('does not send screenshots to text-only models under a vision-capable provider', () => {
     const settings = defaultAiSettings()
+    // Fork: default provider is hermes; this test isolates the genspark vision policy.
+    settings.provider = 'genspark'
     settings.providers.genspark.model = 'deep-seek-v4-flash'
     expect(settingsSupportVision(settings)).toBe(false)
     settings.providers.genspark.model = 'claude-opus-4-7'
