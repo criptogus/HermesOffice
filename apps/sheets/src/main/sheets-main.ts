@@ -60,7 +60,6 @@ import {
   isAiOverloadedError,
   chatForProvider,
   defaultAiSettings,
-  activeProvider,
   cloudToolsEnabled,
   resolveAiSettings,
   setRescueFetch,

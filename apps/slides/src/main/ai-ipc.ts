@@ -22,7 +22,6 @@ import {
   isAiNetworkError,
   isAiOverloadedError,
   defaultAiSettings,
-  activeProvider,
   cloudToolsEnabled,
   resolveAiSettings,
   setRescueFetch,
