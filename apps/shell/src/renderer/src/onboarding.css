@@ -435,8 +435,7 @@
 
 [data-theme='dark'] .onb-card {
   background: var(--onb-card-bg);
-  box-shadow:
-    var(--onb-shadow);
+  box-shadow: var(--onb-shadow);
 }
 
 [data-theme='dark'] .onb-join,
