@@ -2952,7 +2952,7 @@ export function registerSheetsAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
-    settings.provider = activeProvider(settings)
+    settings.provider = 'hermes'
     return settings
   })
 

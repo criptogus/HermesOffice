@@ -2620,7 +2620,7 @@ export function registerAiIpc(): void {
     }
     const settings = resolveAiSettings(stored, defaultAiSettings())
     // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
-    settings.provider = activeProvider(settings)
+    settings.provider = 'hermes'
     return settings
   })
 
