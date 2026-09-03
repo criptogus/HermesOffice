@@ -523,7 +523,7 @@ body.vib .home {
 
 /* segmented control: gray track, active segment = white card */
 /* segmented filter control: gray track, active segment = white card.
-   One shared 40px rail for the recents page and the Genspark Projects
+   One shared 40px rail for the recents page and the Web Projects
    toolbar (where it lines up with the 40px refresh button and search box). */
 .filter-pills,
 .cloud-seg {
@@ -1609,7 +1609,7 @@ body.vib .home {
   margin-top: 0;
 }
 
-/* Genspark Projects list styled like the recent-files table: bordered
+/* Web Projects list styled like the recent-files table: bordered
    rounded container, column header, grid rows with hairline dividers */
 .cloud-table {
   border: 1px solid var(--border);
