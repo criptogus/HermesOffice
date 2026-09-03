@@ -9,7 +9,7 @@ import {
 
 import {
   CaretIcon,
-  GensparkMark,
+  HermesMark,
   RIBBON_GLYPH_ICONS,
   RedoIcon,
   SaveAsIcon,
@@ -2482,10 +2482,10 @@ function Ribbon({
           onClick={onAiToggle}
         >
           <span className="tool-icon-row">
-            <GensparkMark size={26} />
+            <HermesMark size={26} />
           </span>
           <span>
-            <strong>Genspark AI</strong>
+            <strong>Hermes AI</strong>
           </span>
         </button>
         <button
