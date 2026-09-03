@@ -3613,8 +3613,7 @@ export const strings = {
     navRecent: '最近',
     navStarred: '收藏',
     navCloud: '網頁專案',
-    cloudSubtitle:
-      '在網頁端建立的 AI 專案。編輯在瀏覽器中繼續——點擊任意專案即可開啟。',
+    cloudSubtitle: '在網頁端建立的 AI 專案。編輯在瀏覽器中繼續——點擊任意專案即可開啟。',
     cloudSearchPlaceholder: '搜尋 {n} 個專案…',
     cloudNoResults: '沒有符合的專案。',
     cloudGroupThisWeek: '本週',
