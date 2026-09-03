@@ -4,8 +4,8 @@ export const strings = {
     // Sidebar navigation
     navRecent: '最近',
     navStarred: '收藏',
-    navCloud: 'Genspark Projects',
-    cloudSubtitle: '在网页端用 Genspark AI 创建的项目。编辑在浏览器中继续——点击任意项目即可打开。',
+    navCloud: '网页项目',
+    cloudSubtitle: '在网页端创建的 AI 项目。编辑在浏览器中继续——点击任意项目即可打开。',
     cloudSearchPlaceholder: '搜索 {n} 个项目…',
     cloudNoResults: '没有匹配的项目。',
     cloudGroupThisWeek: '本周',
@@ -14,7 +14,7 @@ export const strings = {
     cloudSortRecent: '最近',
     cloudSortOldest: '最早',
     cloudRefresh: '刷新',
-    cloudLoginHint: '登录 Genspark 账号，查看你在网页端创建的项目。',
+    cloudLoginHint: '登录后即可查看你在网页端创建的项目。',
     cloudEmpty: '还没有网页端项目。',
     cloudError: '加载失败，请稍后重试。',
     cloudRetry: '重试',
@@ -200,9 +200,9 @@ export const strings = {
   en: {
     navRecent: 'Recent',
     navStarred: 'Starred',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Web Projects',
     cloudSubtitle:
-      'Projects created on the web with Genspark AI. Editing continues in your browser — click any project to open it.',
+      'AI projects created on the web. Editing continues in your browser — click any project to open it.',
     cloudSearchPlaceholder: 'Search {n} projects…',
     cloudNoResults: 'No matching projects.',
     cloudGroupThisWeek: 'This week',
@@ -211,7 +211,7 @@ export const strings = {
     cloudSortRecent: 'Recent',
     cloudSortOldest: 'Oldest',
     cloudRefresh: 'Refresh',
-    cloudLoginHint: 'Sign in to your Genspark account to see projects you created on the web.',
+    cloudLoginHint: 'Sign in to see projects you created on the web.',
     cloudEmpty: 'No web projects yet.',
     cloudError: 'Failed to load. Try again later.',
     cloudRetry: 'Retry',
@@ -394,9 +394,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: '最近使用',
     navStarred: 'お気に入り',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Web プロジェクト',
     cloudSubtitle:
-      'Web で Genspark AI を使って作成したプロジェクト。編集はブラウザで続行します。クリックで開きます。',
+      'Web で作成した AI プロジェクト。編集はブラウザで続行します。クリックで開きます。',
     cloudSearchPlaceholder: '{n} 件のプロジェクトを検索…',
     cloudNoResults: '一致するプロジェクトはありません。',
     cloudGroupThisWeek: '今週',
@@ -405,8 +405,7 @@ export const strings = {
     cloudSortRecent: '新しい順',
     cloudSortOldest: '古い順',
     cloudRefresh: '更新',
-    cloudLoginHint:
-      'Genspark アカウントにサインインすると、Web で作成したプロジェクトを表示できます。',
+    cloudLoginHint: 'サインインすると、Web で作成したプロジェクトを表示できます。',
     cloudEmpty: 'Web のプロジェクトはまだありません。',
     cloudError: '読み込みに失敗しました。後でもう一度お試しください。',
     cloudRetry: '再試行',
@@ -604,9 +603,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: '최근 사용',
     navStarred: '즐겨찾기',
-    navCloud: 'Genspark Projects',
+    navCloud: '웹 프로젝트',
     cloudSubtitle:
-      'Genspark AI로 웹에서 만든 프로젝트입니다. 편집은 브라우저에서 계속됩니다. 프로젝트를 클릭하면 열립니다.',
+      '웹에서 만든 AI 프로젝트입니다. 편집은 브라우저에서 계속됩니다. 프로젝트를 클릭하면 열립니다.',
     cloudSearchPlaceholder: '프로젝트 {n}개 검색…',
     cloudNoResults: '일치하는 프로젝트가 없습니다.',
     cloudGroupThisWeek: '이번 주',
@@ -615,7 +614,7 @@ export const strings = {
     cloudSortRecent: '최신순',
     cloudSortOldest: '오래된순',
     cloudRefresh: '새로고침',
-    cloudLoginHint: 'Genspark 계정에 로그인하면 웹에서 만든 프로젝트를 볼 수 있습니다.',
+    cloudLoginHint: '로그인하면 웹에서 만든 프로젝트를 볼 수 있습니다.',
     cloudEmpty: '아직 웹 프로젝트가 없습니다.',
     cloudError: '불러오지 못했습니다. 나중에 다시 시도해 주세요.',
     cloudRetry: '다시 시도',
@@ -809,9 +808,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Récents',
     navStarred: 'Favoris',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Projets web',
     cloudSubtitle:
-      "Projets créés sur le web avec Genspark AI. L'édition continue dans votre navigateur — cliquez sur un projet pour l'ouvrir.",
+      'Projets IA créés sur le web. La modification se poursuit dans le navigateur — cliquez sur un projet pour l’ouvrir.',
     cloudSearchPlaceholder: 'Rechercher parmi {n} projets…',
     cloudNoResults: 'Aucun projet correspondant.',
     cloudGroupThisWeek: 'Cette semaine',
@@ -820,8 +819,7 @@ export const strings = {
     cloudSortRecent: 'Récents',
     cloudSortOldest: 'Plus anciens',
     cloudRefresh: 'Actualiser',
-    cloudLoginHint:
-      'Connectez-vous à votre compte Genspark pour voir les projets créés sur le web.',
+    cloudLoginHint: 'Connectez-vous pour voir les projets créés sur le web.',
     cloudEmpty: 'Aucun projet web pour le moment.',
     cloudError: 'Échec du chargement. Réessayez plus tard.',
     cloudRetry: 'Réessayer',
@@ -1018,9 +1016,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Zuletzt verwendet',
     navStarred: 'Favoriten',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Web-Projekte',
     cloudSubtitle:
-      'Mit Genspark AI im Web erstellte Projekte. Die Bearbeitung läuft im Browser weiter – klicken Sie auf ein Projekt, um es zu öffnen.',
+      'Im Web erstellte KI-Projekte. Die Bearbeitung läuft im Browser weiter – klicken Sie auf ein Projekt, um es zu öffnen.',
     cloudSearchPlaceholder: '{n} Projekte durchsuchen…',
     cloudNoResults: 'Keine passenden Projekte.',
     cloudGroupThisWeek: 'Diese Woche',
@@ -1029,8 +1027,7 @@ export const strings = {
     cloudSortRecent: 'Neueste',
     cloudSortOldest: 'Älteste',
     cloudRefresh: 'Aktualisieren',
-    cloudLoginHint:
-      'Melden Sie sich bei Ihrem Genspark-Konto an, um Ihre im Web erstellten Projekte zu sehen.',
+    cloudLoginHint: 'Melden Sie sich an, um Ihre im Web erstellten Projekte zu sehen.',
     cloudEmpty: 'Noch keine Web-Projekte.',
     cloudError: 'Laden fehlgeschlagen. Bitte später erneut versuchen.',
     cloudRetry: 'Erneut versuchen',
@@ -1230,9 +1227,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Recientes',
     navStarred: 'Destacados',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Proyectos web',
     cloudSubtitle:
-      'Proyectos creados en la web con Genspark AI. La edición continúa en tu navegador: haz clic en un proyecto para abrirlo.',
+      'Proyectos de IA creados en la web. La edición continúa en tu navegador: haz clic en un proyecto para abrirlo.',
     cloudSearchPlaceholder: 'Buscar entre {n} proyectos…',
     cloudNoResults: 'No hay proyectos coincidentes.',
     cloudGroupThisWeek: 'Esta semana',
@@ -1241,8 +1238,7 @@ export const strings = {
     cloudSortRecent: 'Recientes',
     cloudSortOldest: 'Más antiguos',
     cloudRefresh: 'Actualizar',
-    cloudLoginHint:
-      'Inicia sesión en tu cuenta de Genspark para ver los proyectos creados en la web.',
+    cloudLoginHint: 'Inicia sesión para ver los proyectos creados en la web.',
     cloudEmpty: 'Aún no hay proyectos en la web.',
     cloudError: 'Error al cargar. Inténtalo más tarde.',
     cloudRetry: 'Reintentar',
@@ -1441,9 +1437,8 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'ล่าสุด',
     navStarred: 'รายการโปรด',
-    navCloud: 'Genspark Projects',
-    cloudSubtitle:
-      'โปรเจกต์ที่สร้างบนเว็บด้วย Genspark AI แก้ไขต่อได้ในเบราว์เซอร์ — คลิกโปรเจกต์เพื่อเปิด',
+    navCloud: 'โปรเจกต์เว็บ',
+    cloudSubtitle: 'โปรเจกต์ AI ที่สร้างบนเว็บ แก้ไขต่อได้ในเบราว์เซอร์ — คลิกโปรเจกต์เพื่อเปิด',
     cloudSearchPlaceholder: 'ค้นหา {n} โปรเจกต์…',
     cloudNoResults: 'ไม่มีโปรเจกต์ที่ตรงกัน',
     cloudGroupThisWeek: 'สัปดาห์นี้',
@@ -1452,7 +1447,7 @@ export const strings = {
     cloudSortRecent: 'ล่าสุด',
     cloudSortOldest: 'เก่าสุด',
     cloudRefresh: 'รีเฟรช',
-    cloudLoginHint: 'ลงชื่อเข้าใช้บัญชี Genspark เพื่อดูโปรเจกต์ที่คุณสร้างบนเว็บ',
+    cloudLoginHint: 'ลงชื่อเข้าใช้เพื่อดูโปรเจกต์ที่คุณสร้างบนเว็บ',
     cloudEmpty: 'ยังไม่มีโปรเจกต์บนเว็บ',
     cloudError: 'โหลดไม่สำเร็จ โปรดลองอีกครั้งภายหลัง',
     cloudRetry: 'ลองอีกครั้ง',
@@ -1644,9 +1639,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Terbaru',
     navStarred: 'Berbintang',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Proyek Web',
     cloudSubtitle:
-      'Proyek yang dibuat di web dengan Genspark AI. Pengeditan berlanjut di browser — klik proyek untuk membukanya.',
+      'Proyek AI yang dibuat di web. Pengeditan berlanjut di browser — klik proyek untuk membukanya.',
     cloudSearchPlaceholder: 'Cari {n} proyek…',
     cloudNoResults: 'Tidak ada proyek yang cocok.',
     cloudGroupThisWeek: 'Minggu ini',
@@ -1655,7 +1650,7 @@ export const strings = {
     cloudSortRecent: 'Terbaru',
     cloudSortOldest: 'Terlama',
     cloudRefresh: 'Segarkan',
-    cloudLoginHint: 'Masuk ke akun Genspark untuk melihat proyek yang Anda buat di web.',
+    cloudLoginHint: 'Masuk untuk melihat proyek yang Anda buat di web.',
     cloudEmpty: 'Belum ada proyek web.',
     cloudError: 'Gagal memuat. Coba lagi nanti.',
     cloudRetry: 'Coba lagi',
@@ -1851,9 +1846,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Недавние',
     navStarred: 'Избранное',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Веб-проекты',
     cloudSubtitle:
-      'Проекты, созданные в вебе с Genspark AI. Редактирование продолжается в браузере — нажмите на проект, чтобы открыть его.',
+      'Проекты ИИ, созданные в вебе. Редактирование продолжается в браузере — нажмите на проект, чтобы открыть его.',
     cloudSearchPlaceholder: 'Поиск среди {n} проектов…',
     cloudNoResults: 'Нет подходящих проектов.',
     cloudGroupThisWeek: 'На этой неделе',
@@ -1862,7 +1857,7 @@ export const strings = {
     cloudSortRecent: 'Сначала новые',
     cloudSortOldest: 'Сначала старые',
     cloudRefresh: 'Обновить',
-    cloudLoginHint: 'Войдите в аккаунт Genspark, чтобы увидеть проекты, созданные в вебе.',
+    cloudLoginHint: 'Войдите, чтобы увидеть проекты, созданные в вебе.',
     cloudEmpty: 'Пока нет веб-проектов.',
     cloudError: 'Не удалось загрузить. Повторите попытку позже.',
     cloudRetry: 'Повторить',
@@ -2058,9 +2053,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'الأخيرة',
     navStarred: 'المفضلة',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Веб-проекты',
     cloudSubtitle:
-      'مشاريع أُنشئت على الويب باستخدام Genspark AI. يستمر التحرير في المتصفح — انقر على أي مشروع لفتحه.',
+      'Проекты ИИ, созданные в вебе. Редактирование продолжается в браузере — нажмите на проект, чтобы открыть его.',
     cloudSearchPlaceholder: 'ابحث في {n} مشروعًا…',
     cloudNoResults: 'لا توجد مشاريع مطابقة.',
     cloudGroupThisWeek: 'هذا الأسبوع',
@@ -2069,7 +2064,7 @@ export const strings = {
     cloudSortRecent: 'الأحدث',
     cloudSortOldest: 'الأقدم',
     cloudRefresh: 'تحديث',
-    cloudLoginHint: 'سجّل الدخول إلى حساب Genspark لعرض المشاريع التي أنشأتها على الويب.',
+    cloudLoginHint: 'سجّل الدخول لعرض المشاريع التي أنشأتها على الويب.',
     cloudEmpty: 'لا توجد مشاريع على الويب بعد.',
     cloudError: 'فشل التحميل. حاول مرة أخرى لاحقًا.',
     cloudRetry: 'إعادة المحاولة',
@@ -2260,9 +2255,9 @@ export const strings = {
   pt: {
     navRecent: 'Recentes',
     navStarred: 'Favoritos',
-    navCloud: 'Genspark Projects',
+    navCloud: 'مشاريع الويب',
     cloudSubtitle:
-      'Projetos criados na web com o Genspark AI. A edição continua no navegador — clique em um projeto para abri-lo.',
+      'مشاريع ذكاء اصطناعي أُنشئت على الويب. يستمر التحرير في المتصفح — انقر على أي مشروع لفتحه.',
     cloudSearchPlaceholder: 'Pesquisar {n} projetos…',
     cloudNoResults: 'Nenhum projeto correspondente.',
     cloudGroupThisWeek: 'Esta semana',
@@ -2271,7 +2266,7 @@ export const strings = {
     cloudSortRecent: 'Recentes',
     cloudSortOldest: 'Mais antigos',
     cloudRefresh: 'Atualizar',
-    cloudLoginHint: 'Entre na sua conta Genspark para ver os projetos criados na web.',
+    cloudLoginHint: 'Entre para ver os projetos criados na web.',
     cloudEmpty: 'Ainda não há projetos na web.',
     cloudError: 'Falha ao carregar. Tente novamente mais tarde.',
     cloudRetry: 'Tentar novamente',
@@ -2458,9 +2453,9 @@ export const strings = {
   it: {
     navRecent: 'Recenti',
     navStarred: 'Preferiti',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Projetos Web',
     cloudSubtitle:
-      'Progetti creati sul web con Genspark AI. La modifica continua nel browser: fai clic su un progetto per aprirlo.',
+      'Projetos de IA criados na web. A edição continua no navegador — clique em um projeto para abri-lo.',
     cloudSearchPlaceholder: 'Cerca tra {n} progetti…',
     cloudNoResults: 'Nessun progetto corrispondente.',
     cloudGroupThisWeek: 'Questa settimana',
@@ -2469,7 +2464,7 @@ export const strings = {
     cloudSortRecent: 'Recenti',
     cloudSortOldest: 'Meno recenti',
     cloudRefresh: 'Aggiorna',
-    cloudLoginHint: 'Accedi al tuo account Genspark per vedere i progetti creati sul web.',
+    cloudLoginHint: 'Accedi per vedere i progetti creati sul web.',
     cloudEmpty: 'Ancora nessun progetto web.',
     cloudError: 'Caricamento non riuscito. Riprova più tardi.',
     cloudRetry: 'Riprova',
@@ -2656,9 +2651,9 @@ export const strings = {
   pl: {
     navRecent: 'Ostatnie',
     navStarred: 'Ulubione',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Progetti web',
     cloudSubtitle:
-      'Projekty utworzone w sieci za pomocą Genspark AI. Edycja jest kontynuowana w przeglądarce — kliknij projekt, aby go otworzyć.',
+      'Progetti di IA creati sul web. La modifica continua nel browser: fai clic su un progetto per aprirlo.',
     cloudSearchPlaceholder: 'Szukaj wśród {n} projektów…',
     cloudNoResults: 'Brak pasujących projektów.',
     cloudGroupThisWeek: 'W tym tygodniu',
@@ -2667,7 +2662,7 @@ export const strings = {
     cloudSortRecent: 'Najnowsze',
     cloudSortOldest: 'Najstarsze',
     cloudRefresh: 'Odśwież',
-    cloudLoginHint: 'Zaloguj się na konto Genspark, aby zobaczyć projekty utworzone w sieci.',
+    cloudLoginHint: 'Zaloguj się, aby zobaczyć projekty utworzone w sieci.',
     cloudEmpty: 'Brak projektów w sieci.',
     cloudError: 'Nie udało się wczytać. Spróbuj ponownie później.',
     cloudRetry: 'Spróbuj ponownie',
@@ -2853,9 +2848,9 @@ export const strings = {
   nl: {
     navRecent: 'Recent',
     navStarred: 'Favorieten',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Projekty web',
     cloudSubtitle:
-      'Projecten gemaakt op het web met Genspark AI. Bewerken gaat verder in je browser — klik op een project om het te openen.',
+      'Projekty AI utworzone w sieci. Edycja jest kontynuowana w przeglądarce — kliknij projekt, aby go otworzyć.',
     cloudSearchPlaceholder: 'Zoek in {n} projecten…',
     cloudNoResults: 'Geen overeenkomende projecten.',
     cloudGroupThisWeek: 'Deze week',
@@ -2864,8 +2859,7 @@ export const strings = {
     cloudSortRecent: 'Recent',
     cloudSortOldest: 'Oudste',
     cloudRefresh: 'Vernieuwen',
-    cloudLoginHint:
-      'Log in op je Genspark-account om projecten te zien die je op het web hebt gemaakt.',
+    cloudLoginHint: 'Log in om projecten te zien die je op het web hebt gemaakt.',
     cloudEmpty: 'Nog geen webprojecten.',
     cloudError: 'Laden mislukt. Probeer het later opnieuw.',
     cloudRetry: 'Opnieuw proberen',
@@ -3050,9 +3044,9 @@ export const strings = {
   ms: {
     navRecent: 'Terkini',
     navStarred: 'Berbintang',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Webprojecten',
     cloudSubtitle:
-      'Projek yang dicipta di web dengan Genspark AI. Penyuntingan diteruskan dalam pelayar — klik projek untuk membukanya.',
+      'AI-projecten gemaakt op het web. Bewerken gaat verder in je browser — klik op een project om het te openen.',
     cloudSearchPlaceholder: 'Cari {n} projek…',
     cloudNoResults: 'Tiada projek sepadan.',
     cloudGroupThisWeek: 'Minggu ini',
@@ -3061,7 +3055,7 @@ export const strings = {
     cloudSortRecent: 'Terbaru',
     cloudSortOldest: 'Terlama',
     cloudRefresh: 'Muat semula',
-    cloudLoginHint: 'Log masuk ke akaun Genspark untuk melihat projek yang anda cipta di web.',
+    cloudLoginHint: 'Log masuk untuk melihat projek yang anda cipta di web.',
     cloudEmpty: 'Belum ada projek web.',
     cloudError: 'Gagal memuatkan. Cuba lagi kemudian.',
     cloudRetry: 'Cuba lagi',
@@ -3247,9 +3241,9 @@ export const strings = {
   he: {
     navRecent: 'אחרונים',
     navStarred: 'מועדפים',
-    navCloud: 'Genspark Projects',
+    navCloud: 'Projek Web',
     cloudSubtitle:
-      'פרויקטים שנוצרו באינטרנט עם Genspark AI. העריכה נמשכת בדפדפן — לחצו על פרויקט כדי לפתוח אותו.',
+      'Projek AI yang dicipta di web. Penyuntingan diteruskan dalam pelayar — klik projek untuk membukanya.',
     cloudSearchPlaceholder: 'חיפוש בין {n} פרויקטים…',
     cloudNoResults: 'אין פרויקטים תואמים.',
     cloudGroupThisWeek: 'השבוע',
@@ -3258,7 +3252,7 @@ export const strings = {
     cloudSortRecent: 'החדשים ביותר',
     cloudSortOldest: 'הישנים ביותר',
     cloudRefresh: 'רענון',
-    cloudLoginHint: 'התחברו לחשבון Genspark כדי לראות פרויקטים שיצרתם באתר.',
+    cloudLoginHint: 'התחברו כדי לראות פרויקטים שיצרתם באתר.',
     cloudEmpty: 'אין עדיין פרויקטים מהאתר.',
     cloudError: 'הטעינה נכשלה. נסו שוב מאוחר יותר.',
     cloudRetry: 'נסו שוב',
@@ -3438,9 +3432,9 @@ export const strings = {
   hi: {
     navRecent: 'हाल के',
     navStarred: 'तारांकित',
-    navCloud: 'Genspark Projects',
+    navCloud: 'פרויקטי אינטרנט',
     cloudSubtitle:
-      'Genspark AI के साथ वेब पर बनाए गए प्रोजेक्ट। संपादन ब्राउज़र में जारी रहता है — खोलने के लिए किसी प्रोजेक्ट पर क्लिक करें।',
+      'वेब पर बनाए गए AI प्रोजेक्ट। संपादन ब्राउज़र में जारी रहता है — खोलने के लिए किसी प्रोजेक्ट पर क्लिक करें।',
     cloudSearchPlaceholder: '{n} प्रोजेक्ट खोजें…',
     cloudNoResults: 'कोई मिलान वाला प्रोजेक्ट नहीं।',
     cloudGroupThisWeek: 'इस सप्ताह',
@@ -3449,7 +3443,7 @@ export const strings = {
     cloudSortRecent: 'हाल के',
     cloudSortOldest: 'सबसे पुराने',
     cloudRefresh: 'रीफ़्रेश',
-    cloudLoginHint: 'वेब पर बनाए गए प्रोजेक्ट देखने के लिए अपने Genspark खाते में साइन इन करें।',
+    cloudLoginHint: 'साइन इन करके वेब पर बनाए गए प्रोजेक्ट देखें।',
     cloudEmpty: 'अभी तक कोई वेब प्रोजेक्ट नहीं है।',
     cloudError: 'लोड नहीं हो सका। बाद में फिर से कोशिश करें।',
     cloudRetry: 'फिर से कोशिश करें',
@@ -3636,8 +3630,9 @@ export const strings = {
   'zh-TW': {
     navRecent: '最近',
     navStarred: '收藏',
-    navCloud: 'Genspark Projects',
-    cloudSubtitle: '在網頁端用 Genspark AI 建立的專案。編輯在瀏覽器中繼續——點擊任意專案即可開啟。',
+    navCloud: 'वेब प्रोजेक्ट',
+    cloudSubtitle:
+      'वेब पर बनाए गए AI प्रोजेक्ट। संपादन ब्राउज़र में जारी रहता है — खोलने के लिए किसी प्रोजेक्ट पर क्लिक करें।',
     cloudSearchPlaceholder: '搜尋 {n} 個專案…',
     cloudNoResults: '沒有符合的專案。',
     cloudGroupThisWeek: '本週',
@@ -3646,7 +3641,7 @@ export const strings = {
     cloudSortRecent: '最近',
     cloudSortOldest: '最早',
     cloudRefresh: '重新整理',
-    cloudLoginHint: '登入 Genspark 帳號，查看你在網頁端建立的專案。',
+    cloudLoginHint: 'साइन इन करके वेब पर बनाए गए प्रोजेक्ट देखें।',
     cloudEmpty: '還沒有網頁端專案。',
     cloudError: '載入失敗，請稍後再試。',
     cloudRetry: '重試',
