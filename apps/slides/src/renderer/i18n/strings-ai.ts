@@ -20,7 +20,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: '版式检查已停止',
     aiQcCapped: '其余 {count} 页未检查(单次上限)',
     aiGskLoginBtn: '登录 Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: '打开 AI 助手',
     aiFactCheckBtn: 'AI 事实核查',
     aiFactCheckPrompt: '核查这份幻灯片的内容:检查数据、日期、名称和论断是否属实,指出并纠正错误',
@@ -109,7 +109,7 @@ export const aiStrings = defineStrings({
     aiErrStreamTimeout: 'AI 请求超时：网络长时间无响应，已停止。请检查网络后重试',
     aiErrOverloaded: 'AI 服务当前繁忙，请稍后重试',
     aiErrNetwork: '网络有问题，无法连接 AI 服务。请检查网络后重试',
-    aiCreditsExhausted: 'Genspark 积分已用完，请前往 genspark.ai/pricing 充值后重试',
+    aiCreditsExhausted: '云服务额度已用完，请检查你的套餐后重试',
     aiErrRequestFailed: '请求发送失败: {msg}',
     aiErrGenerateFailed: '生成失败',
     aiErrRegenFailed: '重做页面失败',
@@ -261,7 +261,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Layout check stopped',
     aiQcCapped: '{count} more page(s) not checked (per-run cap)',
     aiGskLoginBtn: 'Sign in to Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Open AI assistant',
     aiFactCheckBtn: 'AI Fact Check',
     aiFactCheckPrompt:
@@ -356,8 +356,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'The AI service is busy right now — please try again in a moment',
     aiErrNetwork:
       'Network problem: could not reach the AI service. Check your connection and try again',
-    aiCreditsExhausted:
-      'Your Genspark credits have run out. Visit genspark.ai/pricing to top up, then try again',
+    aiCreditsExhausted: 'Your cloud credits have run out. Check your plan, then try again',
     aiErrRequestFailed: 'Failed to send request: {msg}',
     aiErrGenerateFailed: 'Generation failed',
     aiErrRegenFailed: 'Slide redo failed',
@@ -509,7 +508,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'レイアウトチェックを停止しました',
     aiQcCapped: '残り {count} ページは未チェック(1回の上限)',
     aiGskLoginBtn: 'Genspark にサインイン',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'AI アシスタントを開く',
     aiFactCheckBtn: 'AI ファクトチェック',
     aiFactCheckPrompt:
@@ -604,7 +603,7 @@ export const aiStrings = defineStrings({
     aiErrNetwork:
       'ネットワークに問題があり、AI サービスに接続できません。接続を確認して再試行してください',
     aiCreditsExhausted:
-      'Gensparkクレジットを使い切りました。genspark.ai/pricing でチャージしてから再試行してください',
+      'クラウドのクレジットを使い切りました。プランを確認してから再試行してください',
     aiErrRequestFailed: 'リクエストの送信に失敗しました: {msg}',
     aiErrGenerateFailed: '生成に失敗しました',
     aiErrRegenFailed: 'ページの再生成に失敗しました',
@@ -756,7 +755,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: '레이아웃 검사를 중지했습니다',
     aiQcCapped: '나머지 {count}페이지는 검사하지 않음(회당 상한)',
     aiGskLoginBtn: 'Genspark 로그인',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'AI 도우미 열기',
     aiFactCheckBtn: 'AI 팩트체크',
     aiFactCheckPrompt:
@@ -852,7 +851,7 @@ export const aiStrings = defineStrings({
     aiErrNetwork:
       '네트워크에 문제가 있어 AI 서비스에 연결할 수 없습니다. 연결을 확인한 후 다시 시도해 주세요',
     aiCreditsExhausted:
-      'Genspark 크레딧을 모두 사용했습니다. genspark.ai/pricing에서 충전한 후 다시 시도해 주세요',
+      '클라우드 크레딧을 모두 사용했습니다. 요금제를 확인한 후 다시 시도해 주세요',
     aiErrRequestFailed: '요청 전송 실패: {msg}',
     aiErrGenerateFailed: '생성 실패',
     aiErrRegenFailed: '페이지 다시 생성 실패',
@@ -1004,7 +1003,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Vérification de la mise en page arrêtée',
     aiQcCapped: '{count} page(s) restante(s) non vérifiée(s) (limite par exécution)',
     aiGskLoginBtn: 'Se connecter à Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: "Ouvrir l'assistant IA",
     aiFactCheckBtn: 'Vérification IA',
     aiFactCheckPrompt:
@@ -1101,8 +1100,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: "Le service d'IA est actuellement surchargé — réessayez dans un instant",
     aiErrNetwork:
       'Problème réseau : impossible de joindre le service IA. Vérifiez votre connexion et réessayez',
-    aiCreditsExhausted:
-      'Vos crédits Genspark sont épuisés. Rechargez sur genspark.ai/pricing puis réessayez',
+    aiCreditsExhausted: 'Vos crédits cloud sont épuisés. Vérifiez votre forfait puis réessayez',
     aiErrRequestFailed: "Échec de l'envoi de la requête : {msg}",
     aiErrGenerateFailed: 'Échec de la génération',
     aiErrRegenFailed: 'Échec de la régénération de la diapositive',
@@ -1255,7 +1253,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Layoutprüfung gestoppt',
     aiQcCapped: '{count} weitere Seite(n) nicht geprüft (Limit pro Lauf)',
     aiGskLoginBtn: 'Bei Genspark anmelden',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'KI-Assistenten öffnen',
     aiFactCheckBtn: 'KI-Faktencheck',
     aiFactCheckPrompt:
@@ -1353,7 +1351,7 @@ export const aiStrings = defineStrings({
     aiErrNetwork:
       'Netzwerkproblem: Der KI-Dienst ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut',
     aiCreditsExhausted:
-      'Deine Genspark-Credits sind aufgebraucht. Lade unter genspark.ai/pricing auf und versuche es erneut',
+      'Deine Cloud-Guthaben sind aufgebraucht. Prüfe deinen Plan und versuche es erneut',
     aiErrRequestFailed: 'Senden der Anfrage fehlgeschlagen: {msg}',
     aiErrGenerateFailed: 'Generierung fehlgeschlagen',
     aiErrRegenFailed: 'Neuerstellung der Folie fehlgeschlagen',
@@ -1505,7 +1503,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Comprobación de diseño detenida',
     aiQcCapped: '{count} página(s) más sin comprobar (límite por ejecución)',
     aiGskLoginBtn: 'Iniciar sesión en Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Abrir el asistente de IA',
     aiFactCheckBtn: 'Verificación IA',
     aiFactCheckPrompt:
@@ -1603,8 +1601,7 @@ export const aiStrings = defineStrings({
       'El servicio de IA está saturado en este momento; inténtalo de nuevo en unos instantes',
     aiErrNetwork:
       'Problema de red: no se pudo conectar con el servicio de IA. Comprueba tu conexión e inténtalo de nuevo',
-    aiCreditsExhausted:
-      'Tus créditos de Genspark se han agotado. Recarga en genspark.ai/pricing e inténtalo de nuevo',
+    aiCreditsExhausted: 'Tus créditos de  se han agotado. Recarga en  e inténtalo de nuevo',
     aiErrRequestFailed: 'No se pudo enviar la solicitud: {msg}',
     aiErrGenerateFailed: 'Error de generación',
     aiErrRegenFailed: 'No se pudo rehacer la diapositiva',
@@ -1756,7 +1753,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'หยุดการตรวจสอบเลย์เอาต์แล้ว',
     aiQcCapped: 'อีก {count} หน้าไม่ได้ตรวจสอบ (ขีดจำกัดต่อครั้ง)',
     aiGskLoginBtn: 'ลงชื่อเข้าใช้ Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'เปิดผู้ช่วย AI',
     aiFactCheckBtn: 'ตรวจสอบข้อเท็จจริง AI',
     aiFactCheckPrompt:
@@ -1849,8 +1846,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'บริการ AI มีผู้ใช้งานจำนวนมากในขณะนี้ โปรดลองอีกครั้งในอีกสักครู่',
     aiErrNetwork:
       'เครือข่ายมีปัญหา ไม่สามารถเชื่อมต่อบริการ AI ได้ โปรดตรวจสอบการเชื่อมต่อแล้วลองใหม่',
-    aiCreditsExhausted:
-      'เครดิต Genspark ของคุณหมดแล้ว โปรดเติมเครดิตที่ genspark.ai/pricing แล้วลองใหม่',
+    aiCreditsExhausted: 'เครดิต  ของคุณหมดแล้ว โปรดเติมเครดิตที่  แล้วลองใหม่',
     aiErrRequestFailed: 'ส่งคำขอไม่สำเร็จ: {msg}',
     aiErrGenerateFailed: 'สร้างไม่สำเร็จ',
     aiErrRegenFailed: 'ทำหน้าใหม่ไม่สำเร็จ',
@@ -2002,7 +1998,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Pemeriksaan tata letak dihentikan',
     aiQcCapped: '{count} halaman lagi tidak diperiksa (batas per proses)',
     aiGskLoginBtn: 'Masuk ke Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Buka asisten AI',
     aiFactCheckBtn: 'Cek Fakta AI',
     aiFactCheckPrompt:
@@ -2098,8 +2094,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'Layanan AI sedang sibuk — silakan coba lagi sebentar lagi',
     aiErrNetwork:
       'Masalah jaringan: tidak dapat terhubung ke layanan AI. Periksa koneksi Anda lalu coba lagi',
-    aiCreditsExhausted:
-      'Kredit Genspark Anda telah habis. Isi ulang di genspark.ai/pricing lalu coba lagi',
+    aiCreditsExhausted: 'Kredit  Anda telah habis. Isi ulang di  lalu coba lagi',
     aiErrRequestFailed: 'Gagal mengirim permintaan: {msg}',
     aiErrGenerateFailed: 'Pembuatan gagal',
     aiErrRegenFailed: 'Gagal membuat ulang halaman',
@@ -2251,7 +2246,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Проверка макета остановлена',
     aiQcCapped: 'Ещё {count} стр. не проверено (лимит за один запуск)',
     aiGskLoginBtn: 'Войти в Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Открыть ИИ-помощника',
     aiFactCheckBtn: 'ИИ-фактчекинг',
     aiFactCheckPrompt:
@@ -2347,8 +2342,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'Сервис ИИ сейчас перегружен — повторите попытку чуть позже',
     aiErrNetwork:
       'Проблема с сетью: не удалось подключиться к сервису ИИ. Проверьте подключение и повторите попытку',
-    aiCreditsExhausted:
-      'Кредиты Genspark исчерпаны. Пополните баланс на genspark.ai/pricing и повторите попытку',
+    aiCreditsExhausted: 'Кредиты  исчерпаны. Пополните баланс на  и повторите попытку',
     aiErrRequestFailed: 'Не удалось отправить запрос: {msg}',
     aiErrGenerateFailed: 'Сбой генерации',
     aiErrRegenFailed: 'Не удалось переделать слайд',
@@ -2500,7 +2494,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'تم إيقاف فحص التخطيط',
     aiQcCapped: '{count} صفحة أخرى لم تُفحص (حد لكل تشغيل)',
     aiGskLoginBtn: 'تسجيل الدخول إلى Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'فتح مساعد الذكاء الاصطناعي',
     aiFactCheckBtn: 'تدقيق حقائق AI',
     aiFactCheckPrompt:
@@ -2593,8 +2587,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'خدمة الذكاء الاصطناعي مشغولة حاليًا — يرجى المحاولة مرة أخرى بعد قليل',
     aiErrNetwork:
       'مشكلة في الشبكة: تعذّر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من الاتصال وحاول مجددًا',
-    aiCreditsExhausted:
-      'نفدت أرصدة Genspark لديك. يرجى إعادة الشحن عبر genspark.ai/pricing ثم المحاولة مجددًا',
+    aiCreditsExhausted: 'نفدت أرصدة  لديك. يرجى إعادة الشحن عبر  ثم المحاولة مجددًا',
     aiErrRequestFailed: 'فشل إرسال الطلب: {msg}',
     aiErrGenerateFailed: 'فشل الإنشاء',
     aiErrRegenFailed: 'فشلت إعادة إنشاء الصفحة',
@@ -2746,7 +2739,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Verificação de layout interrompida',
     aiQcCapped: 'Mais {count} página(s) não verificada(s) (limite por execução)',
     aiGskLoginBtn: 'Entrar no Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Abrir assistente de IA',
     aiFactCheckBtn: 'Checagem IA',
     aiFactCheckPrompt:
@@ -2843,8 +2836,7 @@ export const aiStrings = defineStrings({
       'O serviço de IA está sobrecarregado no momento — tente novamente em instantes',
     aiErrNetwork:
       'Problema de rede: não foi possível conectar ao serviço de IA. Verifique sua conexão e tente novamente',
-    aiCreditsExhausted:
-      'Seus créditos Genspark acabaram. Recarregue em genspark.ai/pricing e tente novamente',
+    aiCreditsExhausted: 'Seus créditos  acabaram. Recarregue em  e tente novamente',
     aiErrRequestFailed: 'Falha ao enviar a solicitação: {msg}',
     aiErrGenerateFailed: 'Falha na geração',
     aiErrRegenFailed: 'Falha ao refazer o slide',
@@ -2996,7 +2988,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Controllo del layout interrotto',
     aiQcCapped: 'Altre {count} pagina/e non controllate (limite per esecuzione)',
     aiGskLoginBtn: 'Accedi a Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: "Apri l'assistente IA",
     aiFactCheckBtn: 'Fact-check IA',
     aiFactCheckPrompt:
@@ -3092,8 +3084,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'Il servizio IA è momentaneamente sovraccarico — riprova tra poco',
     aiErrNetwork:
       'Problema di rete: impossibile raggiungere il servizio IA. Controlla la connessione e riprova',
-    aiCreditsExhausted:
-      'I tuoi crediti Genspark sono esauriti. Ricarica su genspark.ai/pricing e riprova',
+    aiCreditsExhausted: 'I tuoi crediti  sono esauriti. Ricarica su  e riprova',
     aiErrRequestFailed: 'Invio della richiesta non riuscito: {msg}',
     aiErrGenerateFailed: 'Generazione non riuscita',
     aiErrRegenFailed: 'Rigenerazione della diapositiva non riuscita',
@@ -3245,7 +3236,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Sprawdzanie układu zatrzymane',
     aiQcCapped: 'Pozostałe {count} stron(y) nie sprawdzono (limit na uruchomienie)',
     aiGskLoginBtn: 'Zaloguj się do Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Otwórz asystenta AI',
     aiFactCheckBtn: 'Weryfikacja AI',
     aiFactCheckPrompt:
@@ -3341,8 +3332,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'Usługa AI jest obecnie przeciążona — spróbuj ponownie za chwilę',
     aiErrNetwork:
       'Problem z siecią: nie można połączyć się z usługą AI. Sprawdź połączenie i spróbuj ponownie',
-    aiCreditsExhausted:
-      'Twoje kredyty Genspark wyczerpały się. Doładuj konto na genspark.ai/pricing i spróbuj ponownie',
+    aiCreditsExhausted: 'Twoje kredyty  wyczerpały się. Doładuj konto na  i spróbuj ponownie',
     aiErrRequestFailed: 'Wysłanie żądania nie powiodło się: {msg}',
     aiErrGenerateFailed: 'Generowanie nie powiodło się',
     aiErrRegenFailed: 'Ponowne wygenerowanie slajdu nie powiodło się',
@@ -3494,7 +3484,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Lay-outcontrole gestopt',
     aiQcCapped: 'Nog {count} pagina(’s) niet gecontroleerd (limiet per run)',
     aiGskLoginBtn: 'Aanmelden bij Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'AI-assistent openen',
     aiFactCheckBtn: 'AI-factcheck',
     aiFactCheckPrompt:
@@ -3591,8 +3581,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'De AI-service is momenteel overbelast — probeer het zo opnieuw',
     aiErrNetwork:
       'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
-    aiCreditsExhausted:
-      'Je Genspark-credits zijn op. Waardeer op via genspark.ai/pricing en probeer het opnieuw',
+    aiCreditsExhausted: 'Je -credits zijn op. Waardeer op via  en probeer het opnieuw',
     aiErrRequestFailed: 'Verzenden van verzoek mislukt: {msg}',
     aiErrGenerateFailed: 'Genereren mislukt',
     aiErrRegenFailed: 'Dia opnieuw genereren mislukt',
@@ -3744,7 +3733,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'Semakan susun atur dihentikan',
     aiQcCapped: '{count} halaman lagi tidak disemak (had setiap larian)',
     aiGskLoginBtn: 'Log masuk ke Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'Buka pembantu AI',
     aiFactCheckBtn: 'Semak Fakta AI',
     aiFactCheckPrompt:
@@ -3841,8 +3830,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'Perkhidmatan AI sedang sibuk — sila cuba lagi sebentar lagi',
     aiErrNetwork:
       'Masalah rangkaian: tidak dapat menghubungi perkhidmatan AI. Semak sambungan anda dan cuba lagi',
-    aiCreditsExhausted:
-      'Kredit Genspark anda telah habis. Tambah nilai di genspark.ai/pricing dan cuba lagi',
+    aiCreditsExhausted: 'Kredit  anda telah habis. Tambah nilai di  dan cuba lagi',
     aiErrRequestFailed: 'Gagal menghantar permintaan: {msg}',
     aiErrGenerateFailed: 'Penjanaan gagal',
     aiErrRegenFailed: 'Gagal membuat semula slaid',
@@ -3994,7 +3982,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'בדיקת הפריסה הופסקה',
     aiQcCapped: 'עוד {count} עמודים לא נבדקו (מגבלה לכל הרצה)',
     aiGskLoginBtn: 'התחבר ל-Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'פתיחת עוזר ה-AI',
     aiFactCheckBtn: 'בדיקת עובדות AI',
     aiFactCheckPrompt:
@@ -4087,7 +4075,7 @@ export const aiStrings = defineStrings({
       'תם הזמן לבקשת ה-AI: אין תגובה מהרשת וההרצה הופסקה. בדוק את החיבור ונסה שוב',
     aiErrOverloaded: 'שירות ה-AI עמוס כרגע — נסו שוב בעוד רגע',
     aiErrNetwork: 'בעיית רשת: לא ניתן להתחבר לשירות ה-AI. בדוק את החיבור ונסה שוב',
-    aiCreditsExhausted: 'קרדיטי Genspark שלך אזלו. טען מחדש ב-genspark.ai/pricing ונסה שוב',
+    aiCreditsExhausted: 'קרדיטי  שלך אזלו. טען מחדש ב- ונסה שוב',
     aiErrRequestFailed: 'שליחת הבקשה נכשלה: {msg}',
     aiErrGenerateFailed: 'היצירה נכשלה',
     aiErrRegenFailed: 'יצירת השקופית מחדש נכשלה',
@@ -4239,7 +4227,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: 'लेआउट जाँच रोक दी गई',
     aiQcCapped: 'शेष {count} पेज नहीं जाँचे गए (प्रति रन सीमा)',
     aiGskLoginBtn: 'Genspark में साइन इन करें',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: 'AI सहायक खोलें',
     aiFactCheckBtn: 'AI तथ्य जाँच',
     aiFactCheckPrompt:
@@ -4334,8 +4322,7 @@ export const aiStrings = defineStrings({
     aiErrOverloaded: 'AI सेवा अभी व्यस्त है — कृपया थोड़ी देर बाद फिर से प्रयास करें',
     aiErrNetwork:
       'नेटवर्क समस्या: AI सेवा से कनेक्ट नहीं हो सका। कनेक्शन जांचें और फिर से प्रयास करें',
-    aiCreditsExhausted:
-      'आपके Genspark क्रेडिट समाप्त हो गए हैं। genspark.ai/pricing पर रिचार्ज करें और फिर से प्रयास करें',
+    aiCreditsExhausted: 'आपके  क्रेडिट समाप्त हो गए हैं।  पर रिचार्ज करें और फिर से प्रयास करें',
     aiErrRequestFailed: 'अनुरोध भेजने में विफल: {msg}',
     aiErrGenerateFailed: 'जनरेशन विफल',
     aiErrRegenFailed: 'स्लाइड फिर से बनाने में विफल',
@@ -4487,7 +4474,7 @@ export const aiStrings = defineStrings({
     aiQcStopped: '版式檢查已停止',
     aiQcCapped: '其餘 {count} 頁未檢查(單次上限)',
     aiGskLoginBtn: '登入 Genspark',
-    aiPanelTitle: 'Genspark',
+    aiPanelTitle: 'Hermes AI',
     aiOpenAssistant: '開啟 AI 助手',
     aiFactCheckBtn: 'AI 事實核查',
     aiFactCheckPrompt: '核查這份簡報的內容:檢查數據、日期、名稱和論斷是否屬實,指出並糾正錯誤',
@@ -4576,7 +4563,7 @@ export const aiStrings = defineStrings({
     aiErrStreamTimeout: 'AI 請求逾時：網路長時間無回應，已停止。請檢查網路後重試',
     aiErrOverloaded: 'AI 服務目前繁忙，請稍後重試',
     aiErrNetwork: '網路有問題，無法連接 AI 服務。請檢查網路後重試',
-    aiCreditsExhausted: 'Genspark 點數已用完，請前往 genspark.ai/pricing 儲值後重試',
+    aiCreditsExhausted: '雲端服務額度已用完，請檢查你的方案後重試',
     aiErrRequestFailed: '要求傳送失敗: {msg}',
     aiErrGenerateFailed: '產生失敗',
     aiErrRegenFailed: '重做頁面失敗',

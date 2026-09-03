@@ -496,12 +496,12 @@ export function AiChatPanel({
         onPointerDown={startResize}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Genspark"
+        aria-label="Hermes AI"
       />
       <header className="ai-panel-header">
         <span className="ai-panel-title">
           <HermesMark size={22} />
-          Genspark
+          Hermes AI
         </span>
         <div className="ai-panel-header-actions">
           {(chat.length > 0 || historicChat.length > 0) && (

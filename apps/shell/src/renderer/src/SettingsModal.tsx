@@ -174,6 +174,9 @@ function AiModelPane({ t }: { t: TFunc }) {
   }, [])
 
   if (!settings) return null
+  // genspark is invisible in the fork: it stays as backend capability but is
+  // never offered as a selectable provider in the UI (only Hermes + BYOK).
+  const visibleCatalog = catalog.filter((c) => c.id !== 'genspark')
   const provider = settings.provider
   const meta = catalog.find((c) => c.id === provider)
   const config = settings.providers[provider] ?? {
@@ -237,7 +240,7 @@ function AiModelPane({ t }: { t: TFunc }) {
           className="set-dd"
           value={provider}
           ariaLabel={t('setAiProvider')}
-          options={catalog.map((c) => ({
+          options={visibleCatalog.map((c) => ({
             value: c.id,
             label: c.label,
             render: (
