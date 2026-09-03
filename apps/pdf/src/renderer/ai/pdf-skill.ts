@@ -33,7 +33,7 @@ const SYSTEM_PROMPT = `You are HermesOffice's PDF assistant, helping the user re
 const SELECTION_CONTEXT_CHARS = 12_000
 
 const GSK_TOOLS_OFF_NOTE =
-  '\n\nNote: generate_image is currently unavailable (Genspark cloud tools are off or the user is signed out). Do not call or promise it; use image_search for imagery.'
+  '\n\nNote: generate_image is currently unavailable (Hermes cloud tools are off or the user is signed out). Do not call or promise it; use image_search for imagery.'
 
 export function createPdfSkill(deps: PdfAiDeps): AgentSkill {
   return {
