@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { AiComposer, AiTypingIndicator } from '@hermesoffice/ui'
-import { GensparkMark } from '../ribbon-icons'
+import { HermesMark } from '../ribbon-icons'
 import type { ChangePlan } from '../../domain/workbook.types'
 import { ATTACHMENT_IMAGE_EXTS, type AttachmentMeta } from '../../shared/desktop-api'
 import { useI18n, type TFunc } from '../i18n/locale'
@@ -432,7 +432,7 @@ export function AiChatPanel({
           data-tip={t('aiOpenAssistant')}
           aria-label={t('aiOpenAssistant')}
         >
-          <GensparkMark size={22} />
+          <HermesMark size={22} />
         </button>
       </aside>
     )
@@ -500,7 +500,7 @@ export function AiChatPanel({
       />
       <header className="ai-panel-header">
         <span className="ai-panel-title">
-          <GensparkMark size={22} />
+          <HermesMark size={22} />
           Genspark
         </span>
         <div className="ai-panel-header-actions">

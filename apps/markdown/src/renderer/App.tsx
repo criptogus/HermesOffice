@@ -20,7 +20,7 @@ import { ToastHost } from './components/toast'
 import { TableMenu } from './components/TableMenu'
 import { FrontmatterPanel } from './components/FrontmatterPanel'
 import { AiAskPopover } from './components/AiAskPopover'
-import { AiPanel, GensparkMark, type AiPreset, type MarkdownAiDeps } from './ai/AiPanel'
+import { AiPanel, HermesMark, type AiPreset, type MarkdownAiDeps } from './ai/AiPanel'
 import { EDIT_QUEUE_MAX, selectionForAnchor, type EditQueueItem } from './ai/edit-queue'
 import { addQueueAnchor, clearQueueAnchors, removeQueueAnchors } from './editor/aiQueueAnchors'
 import { DOCX_MAX_IMAGE_PX, exportDocxBytes } from './export/docxExport'
@@ -614,7 +614,7 @@ export default function App() {
               aria-label={t('aiOpenAssistant')}
               onClick={() => setAiOpen(true)}
             >
-              <GensparkMark size={22} />
+              <HermesMark size={22} />
             </button>
           )}
           {/* mounted only after the file is loaded so chat history resolves against the real path */}
