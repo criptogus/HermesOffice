@@ -1054,6 +1054,8 @@ export function App(): React.JSX.Element {
     agentLoopRef.current = new AgentLoop({
       transport: createElectronTransport(() => aiSettingsRef.current!),
       systemSuffix: aiLangDirective,
+      // Fork: stable per-workbook session id → X-Hermes-Session-Id keeps ONE gateway session
+      sessionId: () => chatRefIdsRef.current?.chatId,
       skill: composeSkills('sheets+files', '', [
         createWorkbookSkill(sheetsSkillDeps()),
         createFilesSkill(availableAttachments),

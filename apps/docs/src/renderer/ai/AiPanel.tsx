@@ -579,6 +579,11 @@ export function AiPanel({
     loopRef.current = new AgentLoop<PmNode>({
       transport: createElectronTransport(() => settingsRef.current),
       systemSuffix: aiLangDirective,
+      // Fork: stable per-document session id (project-store chatId = sha256 of file path).
+      // Sent as X-Hermes-Session-Id → the Hermes gateway keeps ONE session per document,
+      // so follow-up questions continue the same conversation instead of opening a new thread
+      // and re-reading the document from scratch.
+      sessionId: () => chatRefIds.current?.chatId,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(
           () => editorRef.current,
