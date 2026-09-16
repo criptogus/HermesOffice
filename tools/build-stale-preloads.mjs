@@ -37,10 +37,27 @@ const stale = APPS.filter((app) => {
   return src > built
 })
 
+/**
+ * Run an npm command. On Windows `npm` is `npm.cmd`, which spawn() cannot start
+ * without a shell (ENOENT, status null — `npm run dev` then died here silently),
+ * so prefer the npm CLI that is running this hook (npm exports it as
+ * npm_execpath) through the current node binary; fall back to a shell lookup
+ * when the script is run by hand.
+ */
+function runNpm(args) {
+  const npmCli = process.env.npm_execpath
+  if (npmCli) return spawnSync(process.execPath, [npmCli, ...args], { stdio: 'inherit' })
+  return spawnSync('npm', args, { stdio: 'inherit', shell: process.platform === 'win32' })
+}
+
 if (stale.length) {
   console.log(`Rebuilding stale preloads: ${stale.join(', ')}`)
   for (const app of stale) {
-    const r = spawnSync('npm', ['run', 'build', '-w', `@hermesoffice/${app}`], { stdio: 'inherit' })
+    const r = runNpm(['run', 'build', '-w', `@hermesoffice/${app}`])
+    if (r.error) {
+      console.error(`npm run build -w @hermesoffice/${app} failed to start: ${r.error.message}`)
+      process.exit(1)
+    }
     if (r.status !== 0) process.exit(r.status ?? 1)
   }
 }
