@@ -78,16 +78,15 @@ if (changedFiles.length === 0) {
   process.exit(0)
 }
 
-const prettierExecutable = join(
-  repoRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'prettier.cmd' : 'prettier',
-)
+// Prettier's own JS entry, run through the current node binary: the .bin shims
+// are a shell script on POSIX and a .cmd on Windows, and Node refuses to spawn a
+// .cmd without a shell (EINVAL since the CVE-2024-27980 fix), which broke this
+// check on Windows outright.
+const prettierEntry = join(repoRoot, 'node_modules', 'prettier', 'bin', 'prettier.cjs')
 const prettierMode = mode === '--write' ? '--write' : '--check'
 const result = spawnSync(
-  prettierExecutable,
-  [prettierMode, '--ignore-unknown', '--', ...changedFiles],
+  process.execPath,
+  [prettierEntry, prettierMode, '--ignore-unknown', '--', ...changedFiles],
   {
     cwd: repoRoot,
     stdio: 'inherit',

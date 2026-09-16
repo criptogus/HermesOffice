@@ -35,6 +35,11 @@ directly on this repository as usual.
 Prerequisites: Node 22+, npm 10+, and a Rust toolchain (`cargo` on PATH,
 needed only for the sheets xlsx sidecar).
 
+On Windows the scripts run from PowerShell, cmd or Git Bash alike (`npm run dev`
+sets the shell's renderer URLs through `cross-env`, so no POSIX shell is needed).
+Clone onto an NTFS drive: the npm workspaces are symlinked into `node_modules`,
+which an exFAT/FAT32 volume cannot hold.
+
 ```bash
 npm install
 npm run fixtures     # generate test .docx fixtures (one-time, and after docx-engine changes)
