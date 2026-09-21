@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import type { Node as ProseNode } from '@tiptap/pm/model'
-import type { Run } from '@genoffice/docx-engine'
+import type { Run } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { inlineToRuns, runsToInline, type PmNode } from '../src/renderer/editor/convert'
 import {

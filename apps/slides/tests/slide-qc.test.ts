@@ -4,7 +4,7 @@
  *  - createSlideFixSkill: tool allowlist wraps the full slides skill without losing the executor
  */
 import { describe, it, expect } from 'vitest'
-import type { AgentStreamRequest, AgentTransport } from '@genoffice/agent-core'
+import type { AgentStreamRequest, AgentTransport } from '@hermesoffice/agent-core'
 import {
   generatedPageRange,
   mergeQcPages,
@@ -14,7 +14,7 @@ import {
   qcSlidePage,
   settingsSupportVision,
 } from '../src/renderer/ai/slide-qc'
-import { defaultAiSettings, type AiProviderId } from '@genoffice/ai-provider'
+import { defaultAiSettings, type AiProviderId } from '@hermesoffice/ai-provider'
 import type { DeckAccess } from '../src/renderer/ai/slides-skill'
 
 const access: DeckAccess = {

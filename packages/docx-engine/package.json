@@ -1,5 +1,5 @@
 {
-  "name": "@genoffice/docx-engine",
+  "name": "@hermesoffice/docx-engine",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -19,7 +19,7 @@
     "fixtures": "tsx scripts/generate-fixtures.ts"
   },
   "dependencies": {
-    "@genoffice/pptx-engine": "*",
+    "@hermesoffice/pptx-engine": "*",
     "fast-xml-parser": "^5.3.4",
     "jszip": "^3.10.1",
     "utif2": "^4.1.0"

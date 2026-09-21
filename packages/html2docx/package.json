@@ -1,5 +1,5 @@
 {
-  "name": "@genoffice/html2docx",
+  "name": "@hermesoffice/html2docx",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,

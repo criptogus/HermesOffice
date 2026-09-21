@@ -146,7 +146,7 @@ export const hi = {
   ribbonStylePaneTip: 'शैलियाँ फलक: सभी शैलियाँ देखें, चयन से नई शैली बनाएँ या अद्यतन करें',
   ribbonMoreStyles: 'और शैलियाँ',
   ribbonGroupStyles: 'शैलियाँ',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'AI सहायक खोलें',
   ribbonRemoveTableStyleTip: 'तालिका शैली हटाएँ',
   ribbonNoStyle: 'कोई शैली नहीं',

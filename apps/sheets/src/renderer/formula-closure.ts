@@ -6,7 +6,7 @@
 import {
   FORMULA_REFERENCE_PATTERN,
   qualifierMatches,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-structure'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
 import { swapPosition, toSwapSpans } from './edit-journal'
 
 export interface ClosureSheetInput {

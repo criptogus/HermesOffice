@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { Lang } from '@genoffice/i18n'
+import type { Lang } from '@hermesoffice/i18n'
 import { AI_PANEL_SIDE_LABELS } from './strings-ai-panel-side'
 import type { AiPanelPrefs, AiPanelSide } from './ai-panel-prefs'
 import { applyAiPanelPrefs, useAiPanelPrefs } from './ai-panel-prefs-store'

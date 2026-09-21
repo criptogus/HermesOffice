@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import { mergePPrFormat } from '@genoffice/docx-engine'
+import { mergePPrFormat } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { paraBorderPadding } from '../src/renderer/editor/hf-dom'
 

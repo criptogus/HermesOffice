@@ -1,11 +1,11 @@
 import { useState } from 'react'
 
-import { Dropdown } from '@genoffice/ui'
+import { Dropdown } from '@hermesoffice/ui'
 
 import {
   transposeChartSeries,
   type ChartVisualState,
-} from '@genoffice/xlsx-gateway/domain/chart-visual'
+} from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import { ColorDropdown } from './ColorDropdown'
 import { useI18n, type StringKey, type TFunc } from './i18n/locale'
 import type { ChartEditData, ChartElementRef, ChartVectorRead } from './WorkbookVisuals'

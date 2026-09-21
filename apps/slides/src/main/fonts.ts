@@ -19,14 +19,14 @@ import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import * as opentype from 'opentype.js'
-import type { EmbeddedFontFace } from '@genoffice/pptx-engine'
+import type { EmbeddedFontFace } from '@hermesoffice/pptx-engine'
 import {
   OpentypeMetrics,
   HeuristicMetrics,
   type FontMetricsProvider,
   type OpentypeFontLike,
   type RunStyle,
-} from '@genoffice/pptx-render'
+} from '@hermesoffice/pptx-render'
 import { classifyCjkScript, classifyCjkScriptByNameScript } from '../shared/cjk-script'
 import { scanFontDirs, type ScanTask } from './font-scan'
 import {
@@ -37,10 +37,10 @@ import {
   type ShapedPrefFace,
   gtMeasure,
 } from './shaped-metrics'
-import carlitoRegular from '@genoffice/ui/fonts/Carlito-Regular.ttf?asset'
-import carlitoBold from '@genoffice/ui/fonts/Carlito-Bold.ttf?asset'
-import carlitoItalic from '@genoffice/ui/fonts/Carlito-Italic.ttf?asset'
-import carlitoBoldItalic from '@genoffice/ui/fonts/Carlito-BoldItalic.ttf?asset'
+import carlitoRegular from '@hermesoffice/ui/fonts/Carlito-Regular.ttf?asset'
+import carlitoBold from '@hermesoffice/ui/fonts/Carlito-Bold.ttf?asset'
+import carlitoItalic from '@hermesoffice/ui/fonts/Carlito-Italic.ttf?asset'
+import carlitoBoldItalic from '@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf?asset'
 
 /** Fonts shipped with the app (metric substitutes for fonts most decks assume, e.g. Calibri→Carlito). */
 const BUNDLED_FONTS: Record<string, string> = {

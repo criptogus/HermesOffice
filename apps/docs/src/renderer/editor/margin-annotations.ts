@@ -15,7 +15,7 @@
  * - Change bars: vertical segments in the left page margin covering every line
  *   that carries a tracked revision (Word's changed-line marks).
  */
-import type { CommentInfo } from '@genoffice/docx-engine'
+import type { CommentInfo } from '@hermesoffice/docx-engine'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Mark as PmMark, Node as PmNode } from '@tiptap/pm/model'
 import { t } from '../i18n/locale'

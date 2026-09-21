@@ -14,7 +14,7 @@
 import { CellValueType, numfmt } from '@univerjs/core'
 import { ISheetClipboardService } from '@univerjs/sheets-ui'
 
-import { formatAddress } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { formatAddress } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { FULL_LOAD_MAX_CELLS } from './app-constants'
 import { clipboardField } from './clipboard-tsv'
 import { t } from './i18n/locale'

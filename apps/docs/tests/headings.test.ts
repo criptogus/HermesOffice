@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import type { StyleInfo } from '@genoffice/docx-engine'
+import type { StyleInfo } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { collectHeadings, type HeadingStyles } from '../src/renderer/editor/headings'
 

@@ -333,7 +333,7 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 
 ```jsonc
 // Cursor أو Claude Desktop أو أي عميل MCP آخر
-{ "mcpServers": { "genoffice": { "command": "genoffice", "args": ["mcp"] } } }
+{ "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
 `genoffice` هنا هو سطر الأوامر المرفق داخل التطبيق (على macOS في
@@ -449,7 +449,7 @@ npm run dist:linux   # package Linux AppImage + deb + rpm
 
 يحتاج تطبيق Sheets بالإضافة إلى ذلك إلى سلسلة أدوات Rust لعمليته المساعدة
 الخاصة بـ xlsx (يجب أن يكون `cargo` متاحًا في PATH)؛ ويقوم أمر
-`npm run build -w @genoffice/sheets` بتجميعه تلقائيًا. راجع
+`npm run build -w @hermesoffice/sheets` بتجميعه تلقائيًا. راجع
 [CONTRIBUTING.md](../../CONTRIBUTING.md) لمعرفة الفحوصات التي يجب أن يمر بها
 كل تغيير وكيفية دمج طلبات السحب (pull requests).
 

@@ -3,7 +3,7 @@
  * open password of an ECMA-376 encrypted file (cancel aborts the open) or the
  * password to modify of a write-protected document (cancel opens read-only).
  *
- * Genspark DS form dialog (mockups/protect-dialogs-genspark.html §1/2):
+ * Hermes DS form dialog (mockups/protect-dialogs-genspark.html §1/2):
  * top-left title, description line, labelled password field with the shared
  * reveal toggle, error under the field, footer buttons bottom-right.
  * Value / error / busy state live in App's retry loop.

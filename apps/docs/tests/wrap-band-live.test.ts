@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { TextboxDisplay } from '@genoffice/docx-engine'
+import type { TextboxDisplay } from '@hermesoffice/docx-engine'
 import { textboxBandBottom, textboxBandTop } from '../src/renderer/editor/extensions'
 
 describe('wrapTopAndBottom band vs live box height', () => {

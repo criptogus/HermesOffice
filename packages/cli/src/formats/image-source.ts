@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { extname, isAbsolute, resolve } from 'node:path'
-import { fetchRemoteImage } from '@genoffice/electron-utils/remote-image'
+import { fetchRemoteImage } from '@hermesoffice/electron-utils/remote-image'
 import { assertAllowed, type PathContext } from '../fs'
 import { imageSize } from './image-size'
 

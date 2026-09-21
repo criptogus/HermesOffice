@@ -3,7 +3,7 @@
  * format, fill/stroke, background, theme, table style, and chart edits.
  * Functions read the latest App state through ActionCtx.
  */
-import type { ShapeRenderNode } from '@genoffice/pptx-render'
+import type { ShapeRenderNode } from '@hermesoffice/pptx-render'
 import type {
   EditBackgroundOp,
   EditChartOp,

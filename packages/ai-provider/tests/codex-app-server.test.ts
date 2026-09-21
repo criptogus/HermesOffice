@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { AgentToolDef } from '@genoffice/agent-core'
+import type { AgentToolDef } from '@hermesoffice/agent-core'
 import {
   activePermissionProfileId,
   buildCodexAppServerPrompt,
@@ -108,7 +108,7 @@ describe('Codex app-server bridge', () => {
     expect(params).not.toHaveProperty('sandbox')
     expect(params.approvalPolicy).toBe('never')
     expect(params.config).toEqual({
-      default_permissions: 'genoffice',
+      default_permissions: 'hermesoffice',
       permissions: {
         genoffice: {
           filesystem: { ':minimal': 'read', '/tmp/genoffice-codex-x': 'read' },
@@ -118,8 +118,8 @@ describe('Codex app-server bridge', () => {
     expect(codexThreadStartParams(config, '/tmp/genoffice-codex-x', 'read-only')).toMatchObject({
       sandbox: 'read-only',
     })
-    expect(activePermissionProfileId({ activePermissionProfile: { id: 'genoffice' } })).toBe(
-      'genoffice',
+    expect(activePermissionProfileId({ activePermissionProfile: { id: 'hermesoffice' } })).toBe(
+      'hermesoffice',
     )
     expect(activePermissionProfileId({ activePermissionProfile: null })).toBeUndefined()
   })

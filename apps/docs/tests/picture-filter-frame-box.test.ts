@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { Editor } from '@tiptap/core'
-import { parseDocx } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import {
   buildDocx,

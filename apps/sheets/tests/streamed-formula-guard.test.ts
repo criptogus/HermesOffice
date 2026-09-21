@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { WorkbookOperation } from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+import type { WorkbookOperation } from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 import { cellKey } from '../src/renderer/formula-closure'
 import {
   carryCopyFormulasPlan,

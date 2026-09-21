@@ -261,13 +261,13 @@ export const ko = {
   appTabClear: '지우기',
   // AI settings
   appAiSettings: 'AI 설정',
-  appGensparkAccount: 'Genspark 계정',
+  appHermesAccount: 'Hermes 계정',
   appChecking: '확인 중…',
   appLoggedIn: '로그인됨',
   appLoggedInEmail: '로그인됨: {email}',
-  appNotLoggedIn: '로그인되지 않음(AI 기능을 사용하려면 Genspark 계정 로그인이 필요합니다)',
+  appNotLoggedIn: '로그인되지 않음(AI 기능을 사용하려면 Hermes 계정 로그인이 필요합니다)',
   appWaitingBrowserLogin: '브라우저 로그인 대기 중…',
-  appLoginGenspark: 'Genspark 로그인',
+  appLoginHermes: 'Hermes 로그인',
   appModel: '모델',
   // Context menu
   appCut: '잘라내기',

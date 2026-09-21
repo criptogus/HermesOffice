@@ -1,6 +1,6 @@
 /** w:bdr character borders reach the docTextStyle span; identical adjacent runs share one box */
 import { Editor } from '@tiptap/core'
-import { parseDocx } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { blocksToPmDoc, inlineToRuns, runsToInline } from '../src/renderer/editor/convert'

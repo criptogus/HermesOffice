@@ -8,7 +8,7 @@
  */
 import { BooleanNumber } from '@univerjs/core'
 import { IRenderManagerService, SHEET_VIEWPORT_KEY } from '@univerjs/engine-render'
-import { shapeClipCss } from '@genoffice/ui'
+import { shapeClipCss } from '@hermesoffice/ui'
 import type { UniverRuntime } from './univer-state'
 import { EMU_PER_PIXEL, walkMarker, type AnchorMarker } from './WorkbookVisuals'
 import type { WorkbookVisualObject } from '../shared/desktop-api'

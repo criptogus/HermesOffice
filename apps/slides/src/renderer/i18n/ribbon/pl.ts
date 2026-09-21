@@ -182,7 +182,7 @@ export const pl = {
   ribbonFlipH: 'Odbij w poziomie',
   ribbonFlipV: 'Odbij w pionie',
   ribbonDistributeHint: '{title} (zaznacz co najmniej 3 elementy)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'Pokaż lub ukryj panel Asystenta AI',
   ribbonGroupTable: 'Tabela',
   ribbonInsertTableTip: 'Wstaw tabelę (styl domyślny; wybierz wiersze i kolumny)',

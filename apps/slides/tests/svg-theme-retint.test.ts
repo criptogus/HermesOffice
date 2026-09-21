@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { OpenedPptx } from '@genoffice/pptx-engine'
+import type { OpenedPptx } from '@hermesoffice/pptx-engine'
 import { retintThemedSvg } from '../src/main/session-state'
 
 vi.mock('electron', () => ({

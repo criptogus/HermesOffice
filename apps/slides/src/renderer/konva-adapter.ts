@@ -16,8 +16,8 @@ import type {
   ShapeRenderNode,
   PictureRenderNode,
   GlyphRun,
-} from '@genoffice/pptx-render'
-import { patternGrid } from '@genoffice/pptx-render'
+} from '@hermesoffice/pptx-render'
+import { patternGrid } from '@hermesoffice/pptx-render'
 import { classifyCjkScript } from '../shared/cjk-script'
 
 /**

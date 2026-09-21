@@ -12,7 +12,7 @@ import {
   runHeadlessRendererExport,
   type HeadlessExportReport,
   type HeadlessWaitOptions,
-} from '@genoffice/electron-utils/headless-export'
+} from '@hermesoffice/electron-utils/headless-export'
 
 export interface DeckReadiness {
   /** pages built from a deck that came from disk */

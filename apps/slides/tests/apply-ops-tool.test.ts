@@ -1,6 +1,6 @@
 /** apply_ops — the AI batch surface over the op transaction executor. */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { RenderSlide, ShapeRenderNode } from '@genoffice/pptx-render'
+import type { RenderSlide, ShapeRenderNode } from '@hermesoffice/pptx-render'
 import { createSlidesSkill, type DeckAccess } from '../src/renderer/ai/slides-skill'
 
 const slide = { widthPx: 1280, heightPx: 720, scale: 1, nodes: [] } as unknown as RenderSlide

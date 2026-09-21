@@ -1,5 +1,5 @@
 import { basename, dirname, extname, join } from 'node:path'
-import { PdfLoadError } from '@genoffice/pdf2docx'
+import { PdfLoadError } from '@hermesoffice/pdf2docx'
 import { flagBool, flagString, type ParsedArgs } from '../args'
 import { csvToXlsx } from '../formats/csv'
 import { convertPdf, type PdfTarget } from '../formats/pdf'

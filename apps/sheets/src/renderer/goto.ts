@@ -5,7 +5,7 @@
 /// tolerates `$` markers and `Sheet1!` prefixes but silently yields NaN rows
 /// for garbage, so validity is decided here, not by try/catch alone.
 
-import { columnIndex } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { columnIndex } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 
 export interface GoToNameEntry {
   readonly name: string

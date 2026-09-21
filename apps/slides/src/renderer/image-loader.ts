@@ -4,7 +4,7 @@
  * until the last one settled). Loaded/in-flight urls are tracked across calls
  * so re-collecting urls after an edit never reloads or discards progress.
  */
-import { metafileToDataUrl } from '@genoffice/docx-engine/metafile'
+import { metafileToDataUrl } from '@hermesoffice/docx-engine/metafile'
 
 export type ApplyImages = (entries: ReadonlyArray<readonly [string, HTMLImageElement]>) => void
 

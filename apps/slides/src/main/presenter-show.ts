@@ -6,7 +6,7 @@
  * get-transition…) works naturally, and it sees the in-memory document
  * (including unsaved changes) without re-reading from disk.
  */
-import { rendererUrl } from '@genoffice/electron-utils'
+import { rendererUrl } from '@hermesoffice/electron-utils'
 import { BrowserWindow, ipcMain, screen } from 'electron'
 import type { WebContents } from 'electron'
 import type { AudienceNavAction, ShowInkEvent, ShowSyncState } from '../shared/ipc'

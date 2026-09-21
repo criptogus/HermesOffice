@@ -1,4 +1,4 @@
-import type { TxnResult } from '@genoffice/pptx-ops'
+import type { TxnResult } from '@hermesoffice/pptx-ops'
 import { classifyOpError, opSuggestion } from '../op-errors'
 import { CliError, EXIT } from '../result'
 

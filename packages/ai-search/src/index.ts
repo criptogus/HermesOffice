@@ -17,7 +17,7 @@ import { gskImageSearch, gskWebSearch, hasGskAuth } from './gsk'
 
 export type { ImageSearchResult, WebSearchResult } from './shared'
 export * from './gsk'
-export * from './genoffice-auth'
+export * from './hermesoffice-auth'
 export * from './media-tools'
 export * from './search-tools'
 

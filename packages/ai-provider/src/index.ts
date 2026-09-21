@@ -89,3 +89,11 @@ export {
   createStreamWatchdog,
 } from './watchdog'
 export type { StreamWatchdog } from './watchdog'
+export {
+  HERMES_HEALTH_CACHE_MS,
+  HERMES_HEALTH_TIMEOUT_MS,
+  HermesGatewayOfflineError,
+  ensureHermesGatewayHealthy,
+  hermesHealthUrl,
+  resetHermesHealthCache,
+} from './hermes-health'

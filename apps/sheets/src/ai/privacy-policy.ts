@@ -1,4 +1,4 @@
-import type { CellScalar } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import type { CellScalar } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 
 export type UploadPolicy = 'allow' | 'redact' | 'statistics-only' | 'deny'
 

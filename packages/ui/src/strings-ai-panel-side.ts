@@ -1,4 +1,4 @@
-import type { Lang } from '@genoffice/i18n'
+import type { Lang } from '@hermesoffice/i18n'
 import type { AiPanelSide } from './ai-panel-prefs'
 
 // Shared by every editor's AI header; each label names the destination side.

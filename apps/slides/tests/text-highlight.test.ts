@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { layoutGlyphs } from '../src/renderer/konva-adapter'
-import type { RenderTextLayout } from '@genoffice/pptx-render'
+import type { RenderTextLayout } from '@hermesoffice/pptx-render'
 
 const baseRun = {
   fontFamily: 'Arial',

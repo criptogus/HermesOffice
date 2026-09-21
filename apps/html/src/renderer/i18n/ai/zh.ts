@@ -3,7 +3,7 @@ export const zh = {
   aiCollapsePanel: '收起面板',
   aiComposerPlaceholder: '让 AI 撰写或修改文档…',
   aiCopyReplyTitle: '复制回复',
-  aiCreditsExhausted: '积分不足，请前往 genspark.ai 充值',
+  aiCreditsExhausted: '积分不足，请前往 hermesoffice.local 充值',
   aiEmptyTitle: '用 AI 设计一个页面',
   aiEmptyBody: '落地页、报告、海报都行。说清用途和受众，AI 先出简报确认，再生成整页',
   aiEmptyDocTitle: '让 AI 帮你改这页',

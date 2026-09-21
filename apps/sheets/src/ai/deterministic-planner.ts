@@ -1,4 +1,4 @@
-import type { WorkbookCommandBatch } from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+import type { WorkbookCommandBatch } from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 
 export class UnsupportedPromptError extends Error {
   constructor() {

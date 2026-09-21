@@ -32,7 +32,7 @@ import type {
   ChartRenderNode,
   PictureRenderNode,
   GroupRenderNode,
-} from '@genoffice/pptx-render'
+} from '@hermesoffice/pptx-render'
 import { boxPivotProps, fillToKonva, isEditableText } from './konva-adapter'
 import { tableCellAtPoint, tableCellOverlayBox, tableLocalPointFromStage } from './table-hit'
 import { isPromptPlaceholder, textHitAtPoint } from './text-hit-area'

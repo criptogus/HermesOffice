@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { openPptx } from '@genoffice/pptx-engine'
+import { openPptx } from '@hermesoffice/pptx-engine'
 import { buildRenderSlide } from '../src/index'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -1050,7 +1050,7 @@ describe('durable ids on render nodes', () => {
 describe('durable ids on chart nodes', () => {
   it('charts (and their placeholder chips) carry durable ids too', async () => {
     const opened = await openPptx(enginePptx('01_standard_business.pptx'))
-    const { addChart } = await import('@genoffice/pptx-engine')
+    const { addChart } = await import('@hermesoffice/pptx-engine')
     const r = addChart(opened, 0, {
       kind: 'bar',
       categories: ['Q1', 'Q2'],

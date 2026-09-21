@@ -8,7 +8,7 @@ import {
 } from '../src/metrics'
 import { DEFAULT_INSETS_EMU, layoutText } from '../src/text-layout'
 import { makeViewport } from '../src/coords'
-import { DEFAULT_BODY_INSETS, type Paragraph, type TextBody } from '@genoffice/pptx-engine'
+import { DEFAULT_BODY_INSETS, type Paragraph, type TextBody } from '@hermesoffice/pptx-engine'
 
 const vp = makeViewport({ cx: 9525 * 1000, cy: 9525 * 1000 }, 1000) // scale 1
 

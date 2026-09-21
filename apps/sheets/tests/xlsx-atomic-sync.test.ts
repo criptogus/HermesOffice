@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   syncFileBestEffort,
   writeXlsxAtomically,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
 
 describe('syncFileBestEffort', () => {
   let directory: string

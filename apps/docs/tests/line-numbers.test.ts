@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import type { LineNumbering, SectionInfo } from '@genoffice/docx-engine'
+import type { LineNumbering, SectionInfo } from '@hermesoffice/docx-engine'
 import {
   columnAt,
   columnLefts,

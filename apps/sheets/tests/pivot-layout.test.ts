@@ -4,7 +4,7 @@ import {
   buildPivotLayout,
   PivotLayoutError,
   pivotOutputArea,
-} from '@genoffice/xlsx-gateway/domain/pivot-layout'
+} from '@hermesoffice/xlsx-gateway/domain/pivot-layout'
 
 const GRID = [
   ['region', 'product', 'amount'],

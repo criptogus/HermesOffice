@@ -15,7 +15,7 @@ import {
   type Paragraph,
   type Slide,
   type SlideElement,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import {
   elementDurableId,
   listSlideAnimations,
@@ -24,7 +24,7 @@ import {
   type AnimationEntry,
   type Op,
   type TxnResult,
-} from '@genoffice/pptx-ops'
+} from '@hermesoffice/pptx-ops'
 import { CliError, EXIT } from '../result'
 import { clipText } from '../preview'
 

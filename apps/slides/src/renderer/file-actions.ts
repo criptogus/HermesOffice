@@ -3,7 +3,7 @@
  * export. Each function takes the ActionCtx built fresh per call.
  * (Printing lives in components/PrintDialog.tsx — preview + options dialog.)
  */
-import type { RenderSlide } from '@genoffice/pptx-render'
+import type { RenderSlide } from '@hermesoffice/pptx-render'
 import type { ExportPdfLink } from '../shared/ipc'
 import type { ActionCtx } from './action-context'
 import { collectExportPdfLinks } from './export-links'

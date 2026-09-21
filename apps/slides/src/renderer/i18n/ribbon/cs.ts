@@ -178,7 +178,7 @@ export const cs = {
   ribbonFlipH: 'Překlopit vodorovně',
   ribbonFlipV: 'Překlopit svisle',
   ribbonDistributeHint: '{title} (vyberte 3 nebo více prvků)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'Zobrazit nebo skrýt panel asistenta AI',
   ribbonGroupTable: 'Tabulka',
   ribbonInsertTableTip: 'Vložit tabulku (výchozí styl; zvolte počet řádků a sloupců)',

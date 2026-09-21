@@ -8,7 +8,7 @@ import {
   mathParagraphXml,
   parseDocx,
   saveDocx,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import type {
   GeneratedBlock,
   NewImage,
@@ -19,7 +19,7 @@ import type {
   TableCell,
   TableModel,
   TableParagraph,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import { diagramLanguage } from '../editor/diagrams'
 import type { DiagramLanguage } from '../editor/diagrams'
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyChartEdit } from '@genoffice/xlsx-gateway/gateway/xlsx-chart'
-import { buildChartXml, type ChartAdd } from '@genoffice/xlsx-gateway/gateway/xlsx-drawing-add'
+import { applyChartEdit } from '@hermesoffice/xlsx-gateway/gateway/xlsx-chart'
+import { buildChartXml, type ChartAdd } from '@hermesoffice/xlsx-gateway/gateway/xlsx-drawing-add'
 
 const chart = (overrides: Partial<ChartAdd> = {}): ChartAdd => ({
   chartType: 'column',

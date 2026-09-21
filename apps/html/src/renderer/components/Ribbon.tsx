@@ -4,10 +4,10 @@ import {
   RibbonExpandButton,
   useDismissablePopover,
   useRibbonCollapse,
-} from '@genoffice/ui'
+} from '@hermesoffice/ui'
 import { useI18n } from '../i18n/locale'
 import type { StringKey } from '../i18n/locale'
-import { GensparkMark } from '../ai/AiPanel'
+import { HermesMark } from '../ai/AiPanel'
 import type { InsertKind, InsertOptions } from '../document/insert-presets'
 import {
   IconBullets,
@@ -279,9 +279,9 @@ export function Ribbon(p: Props) {
               onClick={p.onToggleAi}
             >
               <span className="rb-big-icon">
-                <GensparkMark size={26} />
+                <HermesMark size={26} />
               </span>
-              <span>Genspark AI</span>
+              <span>Hermes AI</span>
             </button>
             <button
               type="button"

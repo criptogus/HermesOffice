@@ -4,8 +4,8 @@
 /// headings, header/footer). The main process turns the HTML into a PDF.
 
 import { BorderStyleTypes } from '@univerjs/core'
-import { htmlLang, type Lang } from '@genoffice/i18n'
-import { columnIndex, columnLabel } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { columnIndex, columnLabel } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 
 import type { WorkbookExportPdfRequest } from '../shared/desktop-api'
 import type { HeaderFooterParts } from './edit-journal'

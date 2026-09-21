@@ -1,4 +1,4 @@
-import type { TextOutline } from '@genoffice/docx-engine'
+import type { TextOutline } from '@hermesoffice/docx-engine'
 
 /** CSS value for a w14:textOutline stroke (`-webkit-text-stroke`) */
 export function textOutlineCssValue(o: TextOutline): string {

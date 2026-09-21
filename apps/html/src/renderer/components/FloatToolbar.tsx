@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Ref } from 'react'
-import { useDismissablePopover } from '@genoffice/ui'
+import { useDismissablePopover } from '@hermesoffice/ui'
 import { useI18n } from '../i18n/locale'
 import type { ComputedSnapshot } from '../preview/inspector-protocol'
 import { ColorPop } from './ColorField'

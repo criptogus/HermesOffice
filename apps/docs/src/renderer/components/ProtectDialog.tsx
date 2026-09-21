@@ -17,7 +17,7 @@ import {
   verifyProtectionPassword,
   type DocProtection,
   type WriteProtection,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import { useI18n } from '../i18n/locale'
 import { FieldError, PasswordInput } from './PasswordInput'
 

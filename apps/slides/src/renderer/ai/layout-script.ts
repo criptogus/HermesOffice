@@ -13,7 +13,7 @@
  */
 
 import type { EditParagraph } from '../../shared/ipc'
-import { FONT_SIZE_PT_MIN, FONT_SIZE_PT_MAX } from '@genoffice/pptx-ops/font-size'
+import { FONT_SIZE_PT_MIN, FONT_SIZE_PT_MAX } from '@hermesoffice/pptx-ops/font-size'
 import { interpretLayoutScript } from './layout-script-interpreter'
 
 export interface LayoutScriptElement {

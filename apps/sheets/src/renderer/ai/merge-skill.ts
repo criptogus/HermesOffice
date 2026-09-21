@@ -6,7 +6,7 @@
  * as Data ▸ Merge Workbooks, and the model then works on the merged data with
  * the normal workbook tools (and create_document for new output files).
  */
-import type { AgentSkill } from '@genoffice/agent-core'
+import type { AgentSkill } from '@hermesoffice/agent-core'
 import type { AttachmentMeta } from '../../shared/desktop-api'
 import type { MergeSourcesResult } from '../merge-workbooks'
 

@@ -3,7 +3,7 @@ import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ControlReply, ControlRequest } from '@genoffice/cli/control-protocol'
+import type { ControlReply, ControlRequest } from '@hermesoffice/cli/control-protocol'
 import { controlHandler, type ControlHost } from '../src/main/control-handlers'
 import { parseEnvelope, startControlServer, type ControlServer } from '../src/main/control-server'
 

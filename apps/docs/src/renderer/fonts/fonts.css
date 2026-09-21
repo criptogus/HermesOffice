@@ -13,28 +13,28 @@
    (tools/patch-carlito-vi.py); renamed per OFL Reserved Font Name clause */
 @font-face {
   font-family: 'Carlito GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   font-weight: normal;
   font-style: normal;
   font-display: block;
 }
 @font-face {
   font-family: 'Carlito GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   font-weight: bold;
   font-style: normal;
   font-display: block;
 }
 @font-face {
   font-family: 'Carlito GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   font-weight: normal;
   font-style: italic;
   font-display: block;
 }
 @font-face {
   font-family: 'Carlito GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   font-weight: bold;
   font-style: italic;
   font-display: block;
@@ -184,8 +184,8 @@
  * generated font (tools/build-pua-blank-font.py) maps all of U+E000-F8FF to a
  * blank 1em glyph so PUA stays invisible in the chains that carry it. */
 @font-face {
-  font-family: 'GenOffice PUA Blank';
-  src: url('./GenOfficePUABlank.woff2') format('woff2');
+  font-family: 'HermesOffice PUA Blank';
+  src: url('./HermesOfficePUABlank.woff2') format('woff2');
   unicode-range: U+E000-F8FF;
   font-weight: normal;
   font-style: normal;
@@ -197,7 +197,7 @@
  * at a 1em advance and would swallow Latin punctuation ahead of the generic
  * face, shifting every wrap. CJK-named unknown fonts keep the full subsets
  * (fullwidth quotes are correct inside CJK body text). Same ranges as the
- * 'GenOffice Hiragino/Batang…' local() aliases below. */
+ * 'HermesOffice Hiragino/Batang…' local() aliases below. */
 @font-face {
   font-family: 'Noto Sans CJK GO';
   src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
@@ -226,15 +226,15 @@
  * sans Basic Latin matches Malgun (tools/normalize-kr-sans-hmtx.py).
  */
 @font-face {
-  font-family: 'GenOffice Sans KR';
-  src: url('./GenOfficeSansKR-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Sans KR';
+  src: url('./HermesOfficeSansKR-Regular-subset.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: block;
 }
 @font-face {
-  font-family: 'GenOffice Serif KR';
-  src: url('./GenOfficeSerifKR-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Serif KR';
+  src: url('./HermesOfficeSerifKR-Regular-subset.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -262,8 +262,8 @@
  * (tools/build-gothic-kr-font.py), advances unmodified; renamed per OFL
  * ("Nanum" is a Reserved Font Name and subsetting is a modification). */
 @font-face {
-  font-family: 'GenOffice Gothic KR';
-  src: url('./GenOfficeGothicKR-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Gothic KR';
+  src: url('./HermesOfficeGothicKR-Regular-subset.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -275,8 +275,8 @@
  * Sans KR outlines reshaped to DotumChe ink boxes); hangul falls through to
  * the KR chains. */
 @font-face {
-  font-family: 'GenOffice Che Latin KR';
-  src: url('./GenOfficeCheLatinKR.woff2') format('woff2');
+  font-family: 'HermesOffice Che Latin KR';
+  src: url('./HermesOfficeCheLatinKR.woff2') format('woff2');
   unicode-range: U+0020-007E;
   font-weight: normal;
   font-style: normal;
@@ -636,7 +636,7 @@
  * ~Carlito, bold +3%, digits +3.2%/+6.5%, space -14.7%. */
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 106.5%;
   font-weight: normal;
   font-style: normal;
@@ -644,7 +644,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 110%;
   font-weight: bold;
   font-style: normal;
@@ -652,7 +652,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 106.9%;
   font-weight: normal;
   font-style: italic;
@@ -660,7 +660,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 110.2%;
   font-weight: bold;
   font-style: italic;
@@ -668,7 +668,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 105.4%;
   unicode-range: U+0030-0039;
   font-weight: normal;
@@ -677,7 +677,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 105.4%;
   unicode-range: U+0030-0039;
   font-weight: bold;
@@ -686,7 +686,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 105.4%;
   unicode-range: U+0030-0039;
   font-weight: normal;
@@ -695,7 +695,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 105.4%;
   unicode-range: U+0030-0039;
   font-weight: bold;
@@ -704,7 +704,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 89.8%;
   unicode-range: U+0020, U+00A0;
   font-weight: normal;
@@ -713,7 +713,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 89.8%;
   unicode-range: U+0020, U+00A0;
   font-weight: bold;
@@ -722,7 +722,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 89.8%;
   unicode-range: U+0020, U+00A0;
   font-weight: normal;
@@ -731,7 +731,7 @@
 }
 @font-face {
   font-family: 'Aptos GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 89.8%;
   unicode-range: U+0020, U+00A0;
   font-weight: bold;
@@ -740,7 +740,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 99.9%;
   font-weight: normal;
   font-style: normal;
@@ -748,7 +748,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 103%;
   font-weight: bold;
   font-style: normal;
@@ -756,7 +756,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 100.5%;
   font-weight: normal;
   font-style: italic;
@@ -764,7 +764,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 103.5%;
   font-weight: bold;
   font-style: italic;
@@ -772,7 +772,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 103.2%;
   unicode-range: U+0030-0039;
   font-weight: normal;
@@ -781,7 +781,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 106.5%;
   unicode-range: U+0030-0039;
   font-weight: bold;
@@ -790,7 +790,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 103.2%;
   unicode-range: U+0030-0039;
   font-weight: normal;
@@ -799,7 +799,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 106.5%;
   unicode-range: U+0030-0039;
   font-weight: bold;
@@ -808,7 +808,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   size-adjust: 85.3%;
   unicode-range: U+0020, U+00A0;
   font-weight: normal;
@@ -817,7 +817,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   size-adjust: 85.3%;
   unicode-range: U+0020, U+00A0;
   font-weight: bold;
@@ -826,7 +826,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   size-adjust: 85.3%;
   unicode-range: U+0020, U+00A0;
   font-weight: normal;
@@ -835,7 +835,7 @@
 }
 @font-face {
   font-family: 'Aptos Display GO';
-  src: url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   size-adjust: 85.3%;
   unicode-range: U+0020, U+00A0;
   font-weight: bold;
@@ -859,15 +859,15 @@
  * bundled (tools/build-poppins-font.py). A locally installed Poppins still
  * precedes this face in the chain. */
 @font-face {
-  font-family: 'GenOffice Poppins';
-  src: url('./GenOfficePoppins-Regular-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Poppins';
+  src: url('./HermesOfficePoppins-Regular-subset.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: block;
 }
 @font-face {
-  font-family: 'GenOffice Poppins';
-  src: url('./GenOfficePoppins-Bold-subset.woff2') format('woff2');
+  font-family: 'HermesOffice Poppins';
+  src: url('./HermesOfficePoppins-Bold-subset.woff2') format('woff2');
   font-weight: bold;
   font-style: normal;
   font-display: block;
@@ -958,7 +958,7 @@
  * half-width slash. Serve them from the bundled Noto subset (ink matches
  * PMingLiU); real PMingLiU still precedes this face in the TC serif chain. */
 @font-face {
-  font-family: 'GenOffice Fullwidth TC';
+  font-family: 'HermesOffice Fullwidth TC';
   src: url('./NotoSerifCJKsc-Regular-subset.woff2') format('woff2');
   unicode-range: U+FF0D, U+FF0F, U+FF3C, U+FF3F, U+FF5E;
   font-weight: normal;
@@ -971,7 +971,7 @@
  * at weight normal only, forces Blink to synthesize bold at >=600. On Windows the
  * local() sources don't resolve and the chain falls through to SimSun. */
 @font-face {
-  font-family: 'GenOffice Songti SC';
+  font-family: 'HermesOffice Songti SC';
   src: local('STSongti-SC-Regular'), local('Songti SC Regular');
   font-weight: normal;
   font-style: normal;
@@ -984,13 +984,13 @@
  * expose only the CJK ranges; other scripts continue down the chain to
  * proportional faces. Roman numerals (U+2160-217F) are included: East Asian
  * faces draw them fullwidth like Word (prod_020 JP reference list). Registered weight-normal (bold synthesized, like
- * 'GenOffice Songti SC') except Hiragino Sans, which has a real W6 face.
+ * 'HermesOffice Songti SC') except Hiragino Sans, which has a real W6 face.
  * Hiragino Mincho stays weight-normal on purpose: Word's JP serif faces
  * (Yu Mincho, MS Mincho) ship no bold and Word synthesizes uniform thick
  * strokes, while real Mincho W6 keeps hairline horizontals — a bold U+4E00
  * reads as an arrow at body sizes (prod_070 table caption). */
 @font-face {
-  font-family: 'GenOffice Hiragino Sans';
+  font-family: 'HermesOffice Hiragino Sans';
   src: local('Hiragino Sans'), local('HiraginoSans-W3'), local('MS Gothic');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -999,7 +999,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Hiragino Sans';
+  font-family: 'HermesOffice Hiragino Sans';
   src: local('HiraginoSans-W6'), local('Hiragino Sans W6');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1012,7 +1012,7 @@
  * (text-weighted mean 0.769em, bold 0.820em), U+30FC 0.816/0.882em,
  * ideographic space and 、。 0.664em, corner/angle brackets and ・ 0.5em, at
  * full glyph height; kanji and （）：；！？ stay 1em and fall through to the
- * chain. The bundled GenOffice UI Kana JP faces (tools/build-meiryo-ui-kana-
+ * chain. The bundled HermesOffice UI Kana JP faces (tools/build-meiryo-ui-kana-
  * font.py: Noto Sans JP outlines condensed horizontally to Meiryo UI's exact
  * per-glyph advances) carry those ranges — a size-adjust alias would shrink
  * the height too and leave kana at ~77% next to full-size kanji. Latin in
@@ -1021,7 +1021,7 @@
  * these aliases in the chain. */
 @font-face {
   font-family: 'Meiryo UI GO';
-  src: url('./GenOfficeUIKanaJP-Regular.woff2') format('woff2');
+  src: url('./HermesOfficeUIKanaJP-Regular.woff2') format('woff2');
   unicode-range: U+3000-3002, U+3008-3011, U+3014-3015, U+3041-3096, U+3099-30FF;
   font-weight: normal;
   font-style: normal;
@@ -1029,7 +1029,7 @@
 }
 @font-face {
   font-family: 'Meiryo UI GO';
-  src: url('./GenOfficeUIKanaJP-Bold.woff2') format('woff2');
+  src: url('./HermesOfficeUIKanaJP-Bold.woff2') format('woff2');
   unicode-range: U+3000-3002, U+3008-3011, U+3014-3015, U+3041-3096, U+3099-30FF;
   font-weight: bold;
   font-style: normal;
@@ -1319,7 +1319,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Hiragino Mincho';
+  font-family: 'HermesOffice Hiragino Mincho';
   src: local('Hiragino Mincho ProN'), local('HiraMinProN-W3');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1328,7 +1328,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice MS Mincho';
+  font-family: 'HermesOffice MS Mincho';
   src: local('MS Mincho'), local('MS PMincho');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1337,7 +1337,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Batang';
+  font-family: 'HermesOffice Batang';
   src: local('Batang'), local('BatangChe');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1346,7 +1346,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Myungjo';
+  font-family: 'HermesOffice Myungjo';
   src: local('AppleMyungjo');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1355,7 +1355,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice Heiti TC';
+  font-family: 'HermesOffice Heiti TC';
   src: local('Heiti TC'), local('Heiti TC Light'), local('STHeitiTC-Light');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1364,7 +1364,7 @@
   font-style: normal;
 }
 @font-face {
-  font-family: 'GenOffice MingLiU';
+  font-family: 'HermesOffice MingLiU';
   src: local('PMingLiU'), local('MingLiU');
   unicode-range:
     U+2160-217F, U+2E80-303F, U+3041-33FF, U+3400-4DBF, U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF,
@@ -1378,7 +1378,7 @@
  * face is declared, so no unicode-range needed; on Windows the declared name
  * itself resolves ahead of this alias. */
 @font-face {
-  font-family: 'GenOffice Ethiopic';
+  font-family: 'HermesOffice Ethiopic';
   /* Chromium local() matches PostScript/full names, not family names */
   src: local('Kefa-Regular'), local('Kefa Regular'), local('Kefa');
   /* verified on regression sample 39: line breaks match Word at 72%; the
@@ -1394,8 +1394,8 @@
  * Sans Tamil with advances rewritten to Latha's (tools/build-tamil-font.py;
  * shaped sentence R 0.994, all probe sentences within ±2.3%). */
 @font-face {
-  font-family: 'GenOffice Tamil';
-  src: url('./GenOfficeTamil-Regular.woff2') format('woff2');
+  font-family: 'HermesOffice Tamil';
+  src: url('./HermesOfficeTamil-Regular.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -1405,7 +1405,7 @@
  * subset at 1em fullwidth and an 80-char rule overflows the column (Word draws
  * it ~0.65em on a single line). Menlo/Consolas keep them ~0.6em. */
 @font-face {
-  font-family: 'GenOffice Box Drawing';
+  font-family: 'HermesOffice Box Drawing';
   /* Chromium local() matches PostScript/full names, not family names */
   src: local('Menlo-Regular'), local('Menlo Regular'), local('Menlo'), local('Consolas');
   unicode-range: U+2500-257F;
@@ -1417,17 +1417,17 @@
  * through to AppleMyungjo, whose U+2082 is a full-width (1.0em) glyph —
  * "Cu₂O" rendered as "Cu₂ O". Serve them from bundled latin faces instead. */
 @font-face {
-  font-family: 'GenOffice Sans KR';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
+  font-family: 'HermesOffice Sans KR';
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
   unicode-range: U+2070-209F, U+00B2-00B3, U+00B9;
   font-weight: normal;
   font-style: normal;
   font-display: block;
 }
 @font-face {
-  font-family: 'GenOffice Serif KR';
+  font-family: 'HermesOffice Serif KR';
   /* Carlito, not Caladea/LiberationSerif: only Carlito covers the whole block */
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
   unicode-range: U+2070-209F, U+00B2-00B3, U+00B9;
   font-weight: normal;
   font-style: normal;
@@ -1458,7 +1458,7 @@
 }
 @font-face {
   font-family: 'Noto Sans CJK SC';
-  src: url('@genoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
+  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf') format('truetype');
   unicode-range: U+2070-2071, U+2074-2094;
   font-weight: normal;
   font-style: normal;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentToolDef } from '@genoffice/agent-core'
+import type { AgentToolDef } from '@hermesoffice/agent-core'
 import { toGeminiSchema } from '../src/protocols/gemini-schema'
 import { streamForProvider } from '../src/stream'
 import { okResponse, sseStream } from './test-utils'

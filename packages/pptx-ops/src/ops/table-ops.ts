@@ -21,12 +21,12 @@ import {
   type TableMergeOp,
   type TableStructureOp,
   type TableStyleEdit,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import {
   BUILTIN_TABLE_STYLES,
   editTableStyle,
   resolveBuiltinTableStyleId,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import type { EditParagraph } from '../types'
 import { applyEditParagraphs, collectParagraphFormatPatches } from '../edit-text'
 import { GuidedError, register, resolveElement, type Op, type OpRecord } from './registry'

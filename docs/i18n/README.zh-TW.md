@@ -361,7 +361,7 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 
 ```jsonc
 // Cursor、Claude Desktop 或任何其他 MCP 用戶端
-{ "mcpServers": { "genoffice": { "command": "genoffice", "args": ["mcp"] } } }
+{ "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
 這裡的 `genoffice` 就是應用程式內建的那個命令列（在 macOS 上位於
@@ -472,7 +472,7 @@ npm run dist:linux   # 打包 Linux AppImage + deb + rpm
 ```
 
 sheets 應用程式還需要 Rust 工具鏈來編譯其 xlsx sidecar
-（`cargo` 需在 PATH 中）；執行 `npm run build -w @genoffice/sheets`
+（`cargo` 需在 PATH 中）；執行 `npm run build -w @hermesoffice/sheets`
 會自動完成編譯。每次變更需要通過哪些檢查、PR 如何合併，詳見
 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 

@@ -1,4 +1,4 @@
-import type { Block, FieldDisplay } from '@genoffice/docx-engine'
+import type { Block, FieldDisplay } from '@hermesoffice/docx-engine'
 import { excerpt, PLACEHOLDER, type IssueDraft } from '../check'
 import { headerFooterState, listComments, listRevisions, type OpenDocument } from './docx'
 

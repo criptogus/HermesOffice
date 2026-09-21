@@ -83,7 +83,7 @@ export function createMcpServer(ctx: McpContext, opts: ServerOptions = {}): McpS
   const registry = opts.registry ?? defaultRegistry()
   const remote = ctx.mode === 'http'
   const server = new McpServer(
-    { name: 'genoffice', version: VERSION },
+    { name: 'hermesoffice', version: VERSION },
     { instructions: remote ? remoteInstructions(ctx.baseUrl ?? '') : INSTRUCTIONS },
   )
 

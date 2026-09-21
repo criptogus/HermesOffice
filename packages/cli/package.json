@@ -1,10 +1,10 @@
 {
-  "name": "@genoffice/cli",
+  "name": "@hermesoffice/cli",
   "version": "0.10.0",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "description": "genoffice: the GenOffice command line (create, convert, read, edit and render documents) built on the same engines as the app; runs headless on the app's bundled Node runtime",
+  "description": "hermesoffice: the HermesOffice command line (create, convert, read, edit and render documents) built on the same engines as the app; runs headless on the app's bundled Node runtime",
   "exports": {
     ".": "./src/index.ts",
     "./install": "./src/install.ts",
@@ -12,7 +12,7 @@
     "./control-protocol": "./src/control-protocol.ts"
   },
   "bin": {
-    "genoffice": "./bin/genoffice"
+    "hermesoffice": "./bin/hermesoffice"
   },
   "scripts": {
     "build": "node build.mjs && node collect-deps.mjs",
@@ -21,15 +21,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@genoffice/ai-provider": "*",
-    "@genoffice/ai-search": "*",
-    "@genoffice/docx-engine": "*",
-    "@genoffice/pdf2docx": "*",
-    "@genoffice/pipelines": "*",
-    "@genoffice/pptx-engine": "*",
-    "@genoffice/pptx-ops": "*",
-    "@genoffice/pptx-render": "*",
-    "@genoffice/xlsx-gateway": "*",
+    "@hermesoffice/ai-provider": "*",
+    "@hermesoffice/ai-search": "*",
+    "@hermesoffice/docx-engine": "*",
+    "@hermesoffice/pdf2docx": "*",
+    "@hermesoffice/pipelines": "*",
+    "@hermesoffice/pptx-engine": "*",
+    "@hermesoffice/pptx-ops": "*",
+    "@hermesoffice/pptx-render": "*",
+    "@hermesoffice/xlsx-gateway": "*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@tiptap/core": "3.31.0",
     "jsdom": "^28.0.0",

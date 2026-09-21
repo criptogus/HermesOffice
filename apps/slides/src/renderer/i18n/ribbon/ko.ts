@@ -183,7 +183,7 @@ export const ko = {
   ribbonFlipH: '좌우 대칭',
   ribbonFlipV: '상하 대칭',
   ribbonDistributeHint: '{title}(요소를 3개 이상 선택해야 함)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'AI 도우미 패널 표시/숨기기',
   // Insert
   ribbonGroupTable: '표',

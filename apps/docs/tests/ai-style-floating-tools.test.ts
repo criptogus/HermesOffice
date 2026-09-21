@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import type { PictureWatermarkSpec, StyleUpsert, WatermarkSpec } from '@genoffice/docx-engine'
+import type { PictureWatermarkSpec, StyleUpsert, WatermarkSpec } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { executeTool, type AiDocExtras } from '../src/renderer/ai/tools'

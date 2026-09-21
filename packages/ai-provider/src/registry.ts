@@ -1,6 +1,6 @@
 import { ANTHROPIC_BASE_URL } from './protocols/anthropic'
 import { GEMINI_BASE_URL } from './protocols/gemini'
-import { AI_PROVIDERS, GENSPARK_LLM_BASE_URLS } from './providers'
+import { AI_PROVIDERS, GENSPARK_LLM_BASE_URLS, HERMES_LLM_BASE_URL } from './providers'
 import type { AiProviderConfig, AiProviderId, AiProviderMeta } from './types'
 
 /** Wire protocols every provider maps onto, including the official Codex app-server bridge. */
@@ -137,6 +137,16 @@ function fixedEndpoint(
 }
 
 export const AI_PROVIDER_ADAPTERS: Record<AiProviderId, ProviderAdapter> = {
+  hermes: {
+    meta: metaOf('hermes'),
+    capabilities: { auth: 'api-key', vision: true },
+    resolveEndpoint(config) {
+      return {
+        protocol: 'openai-compatible',
+        baseUrl: config.baseUrl || HERMES_LLM_BASE_URL,
+      }
+    },
+  },
   genspark: {
     meta: metaOf('genspark'),
     capabilities: { auth: 'gsk-login', vision: true },

@@ -1,6 +1,6 @@
-import type { AiPanelPrefs } from '@genoffice/ui'
-import type { Lang } from '@genoffice/i18n'
-import type { AiSettings, AiStreamChunk, AiStreamRequest } from '@genoffice/ai-provider'
+import type { AiPanelPrefs } from '@hermesoffice/ui'
+import type { Lang } from '@hermesoffice/i18n'
+import type { AiSettings, AiStreamChunk, AiStreamRequest } from '@hermesoffice/ai-provider'
 
 export const PDF_CHANNELS = {
   consumePending: 'pdf:consume-pending',

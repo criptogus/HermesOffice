@@ -10,7 +10,7 @@
  * All geometry units = px (absolute target-canvas coordinates), with viewport
  * scale and nested group offsets already applied.
  */
-import type { Fill, Stroke } from '@genoffice/pptx-engine'
+import type { Fill, Stroke } from '@hermesoffice/pptx-engine'
 import type { PlacedBox } from './coords'
 import type { ExtrusionFaceRender } from './scene3d'
 

@@ -1,5 +1,5 @@
 {
-  "name": "@genoffice/pdf2docx",
+  "name": "@hermesoffice/pdf2docx",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@embedpdf/pdfium": "^2.15.0",
-    "@genoffice/docx-engine": "*",
-    "@genoffice/font-metrics": "*",
-    "@genoffice/pptx-engine": "*",
+    "@hermesoffice/docx-engine": "*",
+    "@hermesoffice/font-metrics": "*",
+    "@hermesoffice/pptx-engine": "*",
     "bidi-js": "^1.0.3",
     "jszip": "^3.10.1"
   },

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { DOMSerializer } from '@tiptap/pm/model'
-import type { TextboxDisplay } from '@genoffice/docx-engine'
+import type { TextboxDisplay } from '@hermesoffice/docx-engine'
 import { renderTextboxSpec } from '../src/renderer/editor/protected-render'
 import { runLetterSpacingCss } from '../src/renderer/line-metrics'
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { computeSortChanges } from '@genoffice/xlsx-gateway/domain/sort-range'
-import type { CellState } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import { computeSortChanges } from '@hermesoffice/xlsx-gateway/domain/sort-range'
+import type { CellState } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 
 function reader(cells: Record<string, CellState>) {
   return (address: string): CellState => cells[address] ?? { value: null }

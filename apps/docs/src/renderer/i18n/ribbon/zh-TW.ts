@@ -142,7 +142,7 @@ export const zhTW = {
   ribbonStylePaneTip: '樣式窗格：檢視全部樣式，從選取範圍新增/更新樣式',
   ribbonMoreStyles: '更多樣式',
   ribbonGroupStyles: '樣式',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: '開啟 AI 助理',
   ribbonRemoveTableStyleTip: '移除表格樣式',
   ribbonNoStyle: '無樣式',

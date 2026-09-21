@@ -5,7 +5,7 @@
     // resolve the sibling source package by path (worktree-safe: a linked
     // node_modules would otherwise typecheck against another checkout)
     "paths": {
-      "@genoffice/docx-engine": ["../docx-engine/src/index.ts"]
+      "@hermesoffice/docx-engine": ["../docx-engine/src/index.ts"]
     }
   },
   "include": ["src", "tests"]

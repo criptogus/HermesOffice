@@ -9,7 +9,7 @@
  * gives the external `genoffice` CLI one place to read the contract from.
  *
  * The renderer-side waiting helpers at the bottom live here too (imported as
- * `@genoffice/electron-utils/headless-export`, never through the package root,
+ * `@hermesoffice/electron-utils/headless-export`, never through the package root,
  * which pulls in node: builtins) so every editor module reports the same way.
  */
 

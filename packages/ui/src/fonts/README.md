@@ -18,9 +18,9 @@ Reference the files through the package export, from CSS or from a main-process
 asset import:
 
 ```css
-src: url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
 ```
 
 ```ts
-import carlitoRegular from '@genoffice/ui/fonts/Carlito-Regular.ttf?asset'
+import carlitoRegular from '@hermesoffice/ui/fonts/Carlito-Regular.ttf?asset'
 ```

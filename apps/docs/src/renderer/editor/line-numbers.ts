@@ -1,4 +1,4 @@
-import type { LineNumbering, SectionInfo } from '@genoffice/docx-engine'
+import type { LineNumbering, SectionInfo } from '@hermesoffice/docx-engine'
 import { sectionBidi, sectionColGeom } from '../pagination-sections'
 import type { BlockBox, BlockMetaOf } from '../pagination-types'
 import { pageFramesFromGaps } from './pagination-gaps'

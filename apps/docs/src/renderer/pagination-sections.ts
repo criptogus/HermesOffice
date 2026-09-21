@@ -1,6 +1,6 @@
 // Section geometry: page box, margins, columns, doc-grid pitch and the
 // per-block column / width / vertical-alignment specs derived from sections.
-import type { SectionInfo, SectionSettings, TextFlowDirection } from '@genoffice/docx-engine'
+import type { SectionInfo, SectionSettings, TextFlowDirection } from '@hermesoffice/docx-engine'
 
 import { columnLineSplits } from './pagination-slices'
 import type {

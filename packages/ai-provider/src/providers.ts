@@ -12,12 +12,15 @@ export const GENSPARK_LLM_BASE_URLS = {
   openai: 'https://www.genspark.ai/api/llm_proxy/v1',
 } as const
 
+/** Local Hermes gateway (OpenAI-compatible API server) — fork default provider. */
+export const HERMES_LLM_BASE_URL = 'http://127.0.0.1:8642/v1'
+
 /**
  * Splits GenOffice usage out of the proxy's default "Claw" billing bucket
  * (the backend attributes gsk-key traffic by X-Agent-Type). Only sent to the
  * Genspark proxy — never to direct vendor APIs.
  */
-export const GENSPARK_AGENT_TYPE = 'genoffice'
+export const GENSPARK_AGENT_TYPE = 'hermesoffice'
 
 export function gensparkAttributionHeaders(baseUrl?: string): Record<string, string> {
   return baseUrl?.startsWith('https://www.genspark.ai')
@@ -40,6 +43,15 @@ export function opencodeSessionHeaders(
 }
 
 export const AI_PROVIDERS: AiProviderMeta[] = [
+  {
+    id: 'hermes',
+    label: 'Hermes',
+    models: ['hermes-agent'],
+    defaultModel: 'hermes-agent',
+    keyPlaceholder: 'API key (Hermes gateway API_SERVER_KEY)',
+    needsBaseUrl: true,
+    defaultBaseUrl: HERMES_LLM_BASE_URL,
+  },
   {
     id: 'genspark',
     label: 'Genspark',
@@ -309,12 +321,12 @@ export function defaultAiSettings(
     providers[meta.id] = {
       apiKey: defaultApiKeys?.[meta.id] ?? '',
       model: meta.defaultModel,
-      baseUrl: meta.needsBaseUrl ? '' : undefined,
+      baseUrl: meta.needsBaseUrl ? (meta.defaultBaseUrl ?? '') : undefined,
       cliPath: meta.needsCliPath ? '' : undefined,
     }
   }
   return {
-    provider: 'genspark',
+    provider: 'hermes',
     providers,
     gskToolsEnabled: true,
     media: defaultAiMediaSettings(),
@@ -337,21 +349,22 @@ export function cloudToolsEnabled(settings: Pick<AiSettings, 'gskToolsEnabled'>)
  */
 export function activeProvider(settings: AiSettings): AiProviderId {
   const provider = settings.provider
+  if (provider === 'hermes') return 'hermes'
   if (provider === 'genspark') return 'genspark'
   const meta = AI_PROVIDERS.find((m) => m.id === provider)
   const config = settings.providers?.[provider]
-  if (!meta || !config) return 'genspark'
+  if (!meta || !config) return 'hermes'
   if (meta.needsCliPath) return provider
   // Trim-aware: in-memory settings bypass the trimConfigs applied to
   // persisted files, and a whitespace-only key/URL/model is a 401, not a config.
-  if (!config.model?.trim()) return 'genspark'
+  if (!config.model?.trim()) return 'hermes'
   if (meta.needsBaseUrl) {
     // Custom OpenAI-compatible endpoints (Ollama, LM Studio, vLLM) accept
     // anonymous requests: base URL + model suffice, the key stays optional.
-    if (!config.baseUrl?.trim()) return 'genspark'
+    if (!config.baseUrl?.trim()) return 'hermes'
     return provider
   }
-  if (!config.apiKey?.trim()) return 'genspark'
+  if (!config.apiKey?.trim()) return 'hermes'
   return provider
 }
 

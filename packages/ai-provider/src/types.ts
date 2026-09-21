@@ -1,6 +1,7 @@
-import type { AgentMessage, AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
+import type { AgentMessage, AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
 
 export type AiProviderId =
+  | 'hermes'
   | 'genspark'
   | 'codex'
   | 'anthropic'
@@ -50,6 +51,8 @@ export interface AiProviderMeta {
   keyPlaceholder: string
   needsBaseUrl?: boolean
   needsCliPath?: boolean
+  /** Canonical default when needsBaseUrl is set (e.g. local Hermes gateway). */
+  defaultBaseUrl?: string
 }
 
 /** Image generation / media analysis backends (separate from the chat provider) */

@@ -5,7 +5,7 @@
  *  - Tool chain: script -> batchEditTransform + editText/editFill/editStroke dispatched in order -> audit report back
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { RenderSlide, RenderNode, ShapeRenderNode, PlacedBox } from '@genoffice/pptx-render'
+import type { RenderSlide, RenderNode, ShapeRenderNode, PlacedBox } from '@hermesoffice/pptx-render'
 import { runLayoutScript, type LayoutScriptElement } from '../src/renderer/ai/layout-script'
 import { createSlidesSkill, type DeckAccess } from '../src/renderer/ai/slides-skill'
 

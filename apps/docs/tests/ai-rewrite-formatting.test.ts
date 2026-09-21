@@ -7,7 +7,7 @@ import {
   buildBlankDocx,
   parseDocx,
   saveDocx,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { buildDocContext, getSelectionScope } from '../src/renderer/ai/protocol'
 import { executeTool } from '../src/renderer/ai/tools'

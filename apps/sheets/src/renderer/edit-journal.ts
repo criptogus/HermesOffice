@@ -15,11 +15,11 @@ import type {
   WorkbookVisualEdit,
   WorkbookVisualObject,
 } from '../shared/desktop-api'
-import { columnLabel, parseRange } from '@genoffice/xlsx-gateway/domain/cell-address'
-import { fillDisplayColor, resolveStyleColor } from '@genoffice/xlsx-gateway/domain/style-color'
-import { splitSheetRef } from '@genoffice/xlsx-gateway/domain/chart-visual'
+import { columnLabel, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import { fillDisplayColor, resolveStyleColor } from '@hermesoffice/xlsx-gateway/domain/style-color'
+import { splitSheetRef } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import { CHART_CATEGORY_WIRE_MAX, CHART_TEXT_WIRE_MAX } from '../shared/desktop-api'
-import { ADDABLE_SHAPE_TYPES } from '@genoffice/xlsx-gateway/shared/shape-types'
+import { ADDABLE_SHAPE_TYPES } from '@hermesoffice/xlsx-gateway/shared/shape-types'
 import { INDENT_STEP_PX } from './selection-format'
 import type { SharedFormulaResolver } from './shared-formula-journal'
 

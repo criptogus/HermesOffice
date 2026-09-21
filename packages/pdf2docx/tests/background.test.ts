@@ -3,7 +3,7 @@
  * is rendered to a bitmap at extraction and rebuilt as a full-page behindDoc
  * float pinned to the page box — white text on gradient covers stays visible.
  */
-import { parseDocx } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { convertPdfToDocx } from '../src'
 import { encodeRgbaPng, extractPage, withPdfDocument } from '../src/extract'

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { ProjectApi } from '@genoffice/project-store'
+import type { ProjectApi } from '@hermesoffice/project-store'
 import type { HtmlApi } from '../shared/ipc'
 
 declare global {

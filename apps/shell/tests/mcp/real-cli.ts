@@ -1,4 +1,4 @@
-import { runCli } from '@genoffice/cli'
+import { runCli } from '@hermesoffice/cli'
 import type {
   CliRunner,
   CliRunOutcome,
@@ -7,7 +7,7 @@ import type {
 } from '../../src/main/mcp/cli-runner'
 
 /**
- * A CliRunner backed by the real `@genoffice/cli` running in-process.
+ * A CliRunner backed by the real `@hermesoffice/cli` running in-process.
  *
  * This is the counterpart to `fakeCli`: it exercises the actual argv contract
  * (the flags the MCP tools build against the real commands) without spawning a

@@ -4,7 +4,7 @@ import { app, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateInfo } from 'electron-updater'
-import { createI18n, getUiLang, htmlLang } from '@genoffice/i18n'
+import { createI18n, getUiLang, htmlLang } from '@hermesoffice/i18n'
 import type {
   UpdateChannel,
   UpdatePhase,
@@ -480,7 +480,7 @@ function uiStrings(): UpdateUiStrings {
   }
 }
 
-function initialState(version: string): UpdateUiState {
+export function initialState(version: string): UpdateUiState {
   return {
     phase: 'available',
     version,

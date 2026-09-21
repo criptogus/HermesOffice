@@ -8,7 +8,7 @@ import {
   applyCellEditsToXlsx,
   inventoryXlsx,
   readBasicWorkbook,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
 
 const PARTS: Record<string, string> = {
   '[Content_Types].xml':

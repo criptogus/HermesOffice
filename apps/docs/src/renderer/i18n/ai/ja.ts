@@ -8,8 +8,8 @@ export const ja = {
   aiStarterPolishAll: '全文を推敲してよりプロフェッショナルな文体に',
   aiStarterContinue: '今の内容の続きを書いて',
   aiStarterFillTemplate: '文書内のプレースホルダーを見つけて埋めて',
-  aiGskLoginBtn: 'Genspark にサインイン',
-  aiPanelTitle: 'Genspark',
+  aiGskLoginBtn: 'Hermes にサインイン',
+  aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'AI アシスタントを開く',
   aiSummarizeBtn: 'AI 要約',
   aiSummarizePrompt: 'この文書の主な内容と要点を要約してください',
@@ -114,7 +114,7 @@ export const ja = {
   aiNetworkError:
     'ネットワークに問題があり、AI サービスに接続できません。接続を確認して再試行してください',
   aiCreditsExhausted:
-    'Gensparkクレジットを使い切りました。genspark.ai/pricing でチャージしてから再試行してください',
+    'Hermesクレジットを使い切りました。hermesoffice.local/pricing でチャージしてから再試行してください',
   aiSumReadAttachment: '添付ファイルを読み取り',
   aiSumImageAttachment: '画像添付 {name}',
   aiSumRead: '{name} を読み取り',

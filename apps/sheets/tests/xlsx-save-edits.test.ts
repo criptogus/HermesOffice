@@ -7,8 +7,8 @@ import {
   assertOnlyTouchedEntriesChanged,
   toA1Address,
   type CellEdit,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import { blankXlsxBuffer } from '@genoffice/xlsx-gateway/gateway/csv-import'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { blankXlsxBuffer } from '@hermesoffice/xlsx-gateway/gateway/csv-import'
 import { createEditJournal, recordSetRangeValues, toSaveEdits } from '../src/renderer/edit-journal'
 import { buildEditFixture } from './fixture-builder'
 

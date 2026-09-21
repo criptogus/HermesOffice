@@ -1,6 +1,6 @@
 /**
  * Compact color well for the format pane: a swatch trigger opening the shared
- * Word-style palette (@genoffice/ui ColorPicker), fixed + anchored below the
+ * Word-style palette (@hermesoffice/ui ColorPicker), fixed + anchored below the
  * trigger so it escapes the pane's scroll clip and opens leftwards (the pane
  * hugs the window's right edge).
  *
@@ -9,7 +9,7 @@
  * through onPick while that dialog stays open.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ColorPicker } from '@genoffice/ui'
+import { ColorPicker } from '@hermesoffice/ui'
 import { useI18n } from '../i18n/locale'
 import { armColorInput } from '../color-input'
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FieldDisplay } from '@genoffice/docx-engine'
+import type { FieldDisplay } from '@hermesoffice/docx-engine'
 import { renderFieldSpec } from '../src/renderer/editor/protected-render'
 
 describe('EQ field result rendering', () => {

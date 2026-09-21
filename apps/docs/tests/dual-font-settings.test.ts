@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import type { StyleInfo } from '@genoffice/docx-engine'
+import type { StyleInfo } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { computeFormatState } from '../src/renderer/components/ribbon-format-state'
 
@@ -147,7 +147,7 @@ it('routes CJK glyphs to the East Asian slot even when the Latin face also cover
   expect(editor.getJSON().content?.[0].content).toHaveLength(1)
 })
 
-import { parseDocx, saveDocx } from '@genoffice/docx-engine'
+import { parseDocx, saveDocx } from '@hermesoffice/docx-engine'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 it('keeps bilingual fonts and bold through the real editor save plan and reopen', async () => {

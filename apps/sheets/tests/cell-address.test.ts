@@ -4,7 +4,7 @@ import {
   formatAddress,
   parseAddress,
   parseRange,
-} from '@genoffice/xlsx-gateway/domain/cell-address'
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
 
 describe('parseAddress', () => {
   it('parses plain and $-anchored A1 notation alike', () => {

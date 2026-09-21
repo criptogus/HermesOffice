@@ -7,7 +7,7 @@
  */
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import type { CommentInfo } from '@genoffice/docx-engine'
+import type { CommentInfo } from '@hermesoffice/docx-engine'
 import { liveText } from './doc-utils'
 
 export interface CommentAnchorInput {

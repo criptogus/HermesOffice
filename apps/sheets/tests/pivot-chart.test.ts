@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPivotChartData } from '@genoffice/xlsx-gateway/domain/pivot-chart'
+import { buildPivotChartData } from '@hermesoffice/xlsx-gateway/domain/pivot-chart'
 import {
   parsePivotDefinition,
   type PivotDefinition,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-pivot'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-pivot'
 import {
   createBufferEntrySource,
   planCellEditsToXlsx,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { SheetVisualAddition } from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetVisualAddition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
 import { buildEditFixture } from './fixture-builder'
 
 /// Minimal pivot definition: single row field (Region: East/West/South) + Sum of Sales,

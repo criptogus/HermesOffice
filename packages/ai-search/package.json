@@ -14,8 +14,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@genoffice/ai-provider": "*",
-    "@genoffice/electron-utils": "*",
+    "@hermesoffice/ai-provider": "*",
+    "@hermesoffice/electron-utils": "*",
     "@genspark/cli": "^1.4.2"
   },
   "devDependencies": {

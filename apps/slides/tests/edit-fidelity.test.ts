@@ -6,13 +6,13 @@
  * by index (wrong inheritance when splitting paragraphs).
  */
 import { describe, it, expect } from 'vitest'
-import { layoutText, makeViewport, HeuristicMetrics } from '@genoffice/pptx-render'
+import { layoutText, makeViewport, HeuristicMetrics } from '@hermesoffice/pptx-render'
 import {
   generateParagraphXml,
   patchTextElementXml,
   type Paragraph,
   type TextElement,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import {
   populateEditorDom,
   extractParagraphs,
@@ -20,7 +20,7 @@ import {
   releaseFragmentsAtEdit,
   applySelectionParagraphFormat,
 } from '../src/renderer/TextEditOverlay'
-import { applyEditParagraphs, collectParagraphFormatPatches } from '@genoffice/pptx-ops'
+import { applyEditParagraphs, collectParagraphFormatPatches } from '@hermesoffice/pptx-ops'
 
 const vp = makeViewport({ cx: 12192000, cy: 6858000 }, 1280) // scale = 1
 const metrics = new HeuristicMetrics()

@@ -1,4 +1,4 @@
-import type { AiPanelPrefs } from '@genoffice/ui'
+import type { AiPanelPrefs } from '@hermesoffice/ui'
 /**
  * slides main-process <-> renderer IPC contract (Phase 3: open/save/edit, AI not included yet).
  *
@@ -8,14 +8,14 @@ import type { AiPanelPrefs } from '@genoffice/ui'
  * renderer sends edit intents (text/geometry changes) back to the main process, which applies
  * them to the model and rebuilds the RenderSlide.
  */
-import type { RenderSlide } from '@genoffice/pptx-render'
-import type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
+import type { RenderSlide } from '@hermesoffice/pptx-render'
+import type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
 import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@genoffice/ai-provider'
+} from '@hermesoffice/ai-provider'
 
 import type {
   EditRun,
@@ -25,7 +25,7 @@ import type {
   ScriptEditOp,
   ApplyEditScriptOp,
   LinkTargetOp,
-} from '@genoffice/pptx-ops'
+} from '@hermesoffice/pptx-ops'
 
 // edit payload types moved to the op package; re-exported so IPC consumers keep one import site
 export type {
@@ -38,9 +38,9 @@ export type {
   LinkTargetOp,
 }
 
-export type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
+export type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
 
-// Canonical definitions of AI-related types live in @genoffice/ai-provider / @genoffice/agent-core (shared with docs)
+// Canonical definitions of AI-related types live in @hermesoffice/ai-provider / @hermesoffice/agent-core (shared with docs)
 export type {
   AiProviderConfig,
   AiProviderId,
@@ -49,9 +49,9 @@ export type {
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@genoffice/ai-provider'
-export { AI_PROVIDERS } from '@genoffice/ai-provider/browser'
-export type { AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
+} from '@hermesoffice/ai-provider'
+export { AI_PROVIDERS } from '@hermesoffice/ai-provider/browser'
+export type { AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
 
 export type UiTheme = 'light' | 'dark' | 'system'
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RenderNode, RenderSlide } from '@genoffice/pptx-render'
+import type { RenderNode, RenderSlide } from '@hermesoffice/pptx-render'
 import { handleSlidesControl, type SlidesControlState } from '../src/renderer/control'
 
 const node = (id: string, extra: Partial<RenderNode> = {}): RenderNode =>

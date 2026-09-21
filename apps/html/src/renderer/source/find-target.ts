@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view'
-import type { FindTarget } from '@genoffice/ui'
+import type { FindTarget } from '@hermesoffice/ui'
 import { collectMatches, setFindHits, type FindRange } from './cm-find'
 import { External } from './cm-setup'
 

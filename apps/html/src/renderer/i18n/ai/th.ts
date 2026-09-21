@@ -4,7 +4,7 @@ export const th = {
   aiCollapsePanel: 'ยุบแผง',
   aiComposerPlaceholder: 'ให้ AI เขียนหรือแก้ไขเอกสาร…',
   aiCopyReplyTitle: 'คัดลอกคำตอบ',
-  aiCreditsExhausted: 'เครดิตหมด — เติมได้ที่ genspark.ai',
+  aiCreditsExhausted: 'เครดิตหมด — เติมได้ที่ hermesoffice.local',
   aiEmptyTitle: 'ออกแบบหน้าเว็บด้วย AI',
   aiEmptyBody:
     'หน้า Landing รายงาน หรือโปสเตอร์ก็ได้ บอกจุดประสงค์และกลุ่มเป้าหมาย AI จะเสนอบรีฟก่อน แล้วจึงสร้างหน้าให้',

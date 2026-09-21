@@ -5,7 +5,7 @@
  * to fix it, with the op usage appended for known ops.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
-import { addElement, createBlankPptx, openPptx, type OpenedPptx } from '@genoffice/pptx-engine'
+import { addElement, createBlankPptx, openPptx, type OpenedPptx } from '@hermesoffice/pptx-engine'
 import { runTxn } from '../src/ops/executor'
 import '../src/ops/index'
 

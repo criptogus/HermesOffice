@@ -22,7 +22,7 @@ import JSZip from 'jszip'
  * unit-testable without touching the real dotfolders.
  */
 
-export const SKILL_NAME = 'genoffice'
+export const SKILL_NAME = 'hermesoffice'
 
 /** app-settings.json key under which every install this machine's GenOffice wrote is remembered */
 export const LEDGER_KEY = 'agentSkillInstalls'

@@ -3,7 +3,7 @@
  * inheritance) into RenderFill/RenderStroke the render layer can consume directly
  * (px line width, angle in degrees, image dataUrl).
  */
-import type { Fill, Stroke, ShadowEffect } from '@genoffice/pptx-engine'
+import type { Fill, Stroke, ShadowEffect } from '@hermesoffice/pptx-engine'
 import type { RenderFill, RenderStroke, RenderShadow } from './render-tree'
 import { emuToPx, EMU_PER_PT, type Viewport } from './coords'
 import { imageDpiFromDataUrl } from './image-dpi'
@@ -122,7 +122,7 @@ export function resolveStroke(stroke: Stroke | undefined, vp: Viewport): RenderS
 
 /** Outer shadow EMU/angle → px offsets (OOXML dir is clockwise, y-down, matching canvas). */
 export function resolveGlow(
-  glow: import('@genoffice/pptx-engine').GlowEffect | undefined,
+  glow: import('@hermesoffice/pptx-engine').GlowEffect | undefined,
   vp: Viewport,
 ): import('./render-tree').RenderGlow | undefined {
   if (!glow) return undefined
@@ -130,7 +130,7 @@ export function resolveGlow(
 }
 
 export function resolveReflection(
-  reflection: import('@genoffice/pptx-engine').ReflectionEffect | undefined,
+  reflection: import('@hermesoffice/pptx-engine').ReflectionEffect | undefined,
   vp: Viewport,
 ): import('./render-tree').RenderReflection | undefined {
   if (!reflection) return undefined

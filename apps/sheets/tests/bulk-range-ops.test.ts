@@ -5,8 +5,8 @@ import {
   MAX_EXPANDED_CELL_OPS,
   replaceOccurrences,
   type WorkbookCommandBatch,
-} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
-import { InMemoryWorkbookAdapter } from '@genoffice/xlsx-gateway/domain/in-memory-workbook'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import { buildLazyChangePlan } from '../src/renderer/lazy-plan'
 
 const readCell = (): { value: null } => ({ value: null })

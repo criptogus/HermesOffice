@@ -1,5 +1,5 @@
 {
-  "name": "@genoffice/pipelines",
+  "name": "@hermesoffice/pipelines",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -16,8 +16,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@genoffice/pptx-engine": "*",
-    "@genoffice/pptx-render": "*"
+    "@hermesoffice/pptx-engine": "*",
+    "@hermesoffice/pptx-render": "*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

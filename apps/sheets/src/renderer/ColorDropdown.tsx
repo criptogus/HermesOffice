@@ -1,5 +1,5 @@
 /**
- * Color tool trigger + the shared Word-style palette (@genoffice/ui ColorPicker),
+ * Color tool trigger + the shared Word-style palette (@hermesoffice/ui ColorPicker),
  * anchored below its trigger via the `.menu-select` / `.sheets-color-pop` CSS
  * anchor pair. Used by the ribbon (swatch-letter trigger via `display`) and by
  * dialogs/panes (plain color-well trigger when `display` is omitted).
@@ -10,7 +10,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ColorPicker } from '@genoffice/ui'
+import { ColorPicker } from '@hermesoffice/ui'
 // module-level t (not useI18n): this dropdown also renders inside Univer's
 // float-DOM React root, which lives outside our LocaleProvider; the module
 // translator is kept in sync on every language switch and re-renders arrive

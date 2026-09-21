@@ -6,7 +6,7 @@
  *   direct w:contextualSpacing w:val="0" re-enables the paragraph's own spacing.
  */
 import { describe, expect, it } from 'vitest'
-import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@genoffice/docx-engine'
+import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@hermesoffice/docx-engine'
 import { docStyleCss } from '../src/renderer/doc-style-css'
 
 ;(globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s }

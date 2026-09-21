@@ -3258,7 +3258,7 @@ export function buildShapeParagraphXml(opts: {
  * The shape has no background fill; the text runs carry large size (36pt)
  * and the specified solid color. Style is approximated (no stroke/effects in
  * the saved run — the caller picks a readable solid color) — Word can open
- * the result. Presets live in the UI layer (@genoffice/ui wordart-presets).
+ * the result. Presets live in the UI layer (@hermesoffice/ui wordart-presets).
  */
 export function buildWordArtParagraphXml(opts: {
   text?: string

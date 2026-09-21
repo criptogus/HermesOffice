@@ -1,6 +1,6 @@
 // Records shared by the pagination modules: measured blocks, page slices,
 // section geometry and the patch outputs of a slicing pass.
-import type { SectionInfo, TextFlowDirection, TextOutline } from '@genoffice/docx-engine'
+import type { SectionInfo, TextFlowDirection, TextOutline } from '@hermesoffice/docx-engine'
 
 export interface BlockBox {
   top: number

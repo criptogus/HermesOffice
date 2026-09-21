@@ -2,7 +2,7 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import { installPopoverDismiss } from '@genoffice/ui'
+import { installPopoverDismiss } from '@hermesoffice/ui'
 import { t } from '../i18n/locale'
 import { moveSelectedBlocks, uiOp } from './ops'
 

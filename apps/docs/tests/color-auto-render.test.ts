@@ -1,7 +1,7 @@
 /** Explicit w:color auto renders as the default ink, never as a `#auto` colour. */
 import { Editor } from '@tiptap/core'
-import { parseDocx } from '@genoffice/docx-engine'
-import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
+import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { docStyleCss } from '../src/renderer/doc-style-css'

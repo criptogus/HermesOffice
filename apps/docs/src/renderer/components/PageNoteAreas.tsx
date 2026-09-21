@@ -1,4 +1,4 @@
-import type { NoteInfo } from '@genoffice/docx-engine'
+import type { NoteInfo } from '@hermesoffice/docx-engine'
 import { noteMarkText } from '../note-format'
 import { useI18n } from '../i18n/locale'
 

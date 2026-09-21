@@ -1,15 +1,15 @@
-import { aiPanelWidthAtPointer, AiPanelSideButton } from '@genoffice/ui'
+import { aiPanelWidthAtPointer, AiPanelSideButton } from '@hermesoffice/ui'
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from 'react'
-import { AgentLoop, composeSkills, streamText } from '@genoffice/agent-core'
-import { imageGenerationAvailable, type AiSettings } from '@genoffice/ai-provider/browser'
+import { AgentLoop, composeSkills, streamText } from '@hermesoffice/agent-core'
+import { imageGenerationAvailable, type AiSettings } from '@hermesoffice/ai-provider/browser'
 import {
   AiComposer,
   AiScopeQuote,
   AiTypingIndicator,
   Markdown,
   type AiScopeQuoteData,
-} from '@genoffice/ui'
+} from '@hermesoffice/ui'
 import type { Editor } from '@tiptap/core'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
 import sendEnterOn from '../assets/send-enter-on.png'
@@ -766,8 +766,8 @@ export function AiPanel({
       />
       <header className="ai-panel-header">
         <span className="ai-panel-title">
-          <GensparkMark size={22} />
-          Genspark
+          <HermesMark size={22} />
+          Hermes
         </span>
         <div className="ai-panel-header-actions">
           <AiPanelSideButton
@@ -1248,8 +1248,8 @@ function IconClock(): ReactElement {
   )
 }
 
-/** Genspark brand mark, inline for crisp device-resolution rendering */
-export function GensparkMark({ size = 18 }: { size?: number }): React.JSX.Element {
+/** Hermes brand mark, inline for crisp device-resolution rendering */
+export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element {
   return (
     <svg
       width={size}

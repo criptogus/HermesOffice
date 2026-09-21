@@ -1,4 +1,4 @@
-import type { AgentSkill, AgentToolCall, AgentToolDef, ToolExecution } from '@genoffice/agent-core'
+import type { AgentSkill, AgentToolCall, AgentToolDef, ToolExecution } from '@hermesoffice/agent-core'
 import { t } from '../i18n/locale'
 import type { ElementEntry, ParseMap } from '../document/parse-map'
 import type { HtmlOp, OpError } from '../document/ops'

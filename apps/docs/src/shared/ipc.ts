@@ -33,7 +33,7 @@ export interface PickImageResult {
   name: string
 }
 
-// ---- AI provider settings/config/streaming: canonical types live in @genoffice/ai-provider ----
+// ---- AI provider settings/config/streaming: canonical types live in @hermesoffice/ai-provider ----
 
 import type {
   AiChatRequest,
@@ -42,10 +42,10 @@ import type {
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@genoffice/ai-provider'
-import type { HeadlessExportTarget } from '@genoffice/electron-utils/headless-export'
-import type { FaceVerticalMetrics } from '@genoffice/font-metrics'
-import type { AiPanelPrefs } from '@genoffice/ui'
+} from '@hermesoffice/ai-provider'
+import type { HeadlessExportTarget } from '@hermesoffice/electron-utils/headless-export'
+import type { FaceVerticalMetrics } from '@hermesoffice/font-metrics'
+import type { AiPanelPrefs } from '@hermesoffice/ui'
 
 export type { FaceVerticalMetrics }
 
@@ -59,17 +59,17 @@ export type {
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@genoffice/ai-provider'
-export { AI_PROVIDERS } from '@genoffice/ai-provider/browser'
+} from '@hermesoffice/ai-provider'
+export { AI_PROVIDERS } from '@hermesoffice/ai-provider/browser'
 
-// ---- agent protocol: canonical types live in @genoffice/agent-core ----
+// ---- agent protocol: canonical types live in @hermesoffice/agent-core ----
 
 export type {
   AgentMessage,
   AgentToolCall,
   AgentToolDef,
   AgentToolResult,
-} from '@genoffice/agent-core'
+} from '@hermesoffice/agent-core'
 
 // ---- chat attachments (local files fed to the agent via tools) ----
 
@@ -496,5 +496,5 @@ export interface DesktopApi {
   reportViewMenuState(state: { aiSidebar: boolean; darkCanvas: boolean }): void
 }
 
-/** mirrors VIEW_IMAGE_CHANNEL in @genoffice/electron-utils (kept literal so the preload stays free of main-only deps) */
+/** mirrors VIEW_IMAGE_CHANNEL in @hermesoffice/electron-utils (kept literal so the preload stays free of main-only deps) */
 export const VIEW_IMAGE_CHANNEL = 'genoffice:view-image'

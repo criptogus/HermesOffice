@@ -5,7 +5,7 @@ import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import { External, buildExtensions } from './cm-setup'
 import { addAiRanges, clearAiRanges } from './cm-highlight'
 import { cmFindTarget } from './find-target'
-import type { FindTarget } from '@genoffice/ui'
+import type { FindTarget } from '@hermesoffice/ui'
 import type { Patch } from '../document/patch'
 
 export interface SourceEditorHandle {

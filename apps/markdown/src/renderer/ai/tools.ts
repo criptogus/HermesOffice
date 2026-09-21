@@ -1,6 +1,6 @@
 import type { Editor, JSONContent } from '@tiptap/core'
 import type { Node as PmNode } from '@tiptap/pm/model'
-import type { AgentToolCall, AgentToolDef, ToolExecution } from '@genoffice/agent-core'
+import type { AgentToolCall, AgentToolDef, ToolExecution } from '@hermesoffice/agent-core'
 import {
   OP_SPECS,
   blockIndexRange,

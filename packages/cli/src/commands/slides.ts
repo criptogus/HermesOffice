@@ -21,9 +21,9 @@ import {
   replaceSlideFromSpec,
   stageContext,
 } from '../formats/slide-spec'
-import { parseOutline } from '@genoffice/pipelines/slides'
+import { parseOutline } from '@hermesoffice/pipelines/slides'
 import { readOpsInput } from '../ops-input'
-import type { TxnResult } from '@genoffice/pptx-ops'
+import type { TxnResult } from '@hermesoffice/pptx-ops'
 import type { CommandContext, CommandDef } from '../registry'
 import { CliError, EXIT, type CommandResult } from '../result'
 import { txnDetail, txnFailure } from './txn'

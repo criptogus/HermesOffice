@@ -1,5 +1,5 @@
 import type { Node as PmDocNode } from '@tiptap/pm/model'
-import type { StyleParaProps, StyleRunProps, StyleUpsert } from '@genoffice/docx-engine'
+import type { StyleParaProps, StyleRunProps, StyleUpsert } from '@hermesoffice/docx-engine'
 import type { AgentToolDef } from '../../shared/ipc'
 import { parsePoints } from './lengths'
 import type { Op, OpContext, OpDef, OpResult, RunEnv, SelRange, Target, TopBlock } from './ops'

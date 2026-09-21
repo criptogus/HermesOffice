@@ -4,7 +4,7 @@
  * immediately.
  */
 import { describe, expect, it } from 'vitest'
-import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@genoffice/docx-engine'
+import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@hermesoffice/docx-engine'
 import { docLineFactor, docStyleCss, docThemeCss } from '../src/renderer/doc-style-css'
 
 describe('docThemeCss', () => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyDefinedNamesState,
   DefinedNameError,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-defined-names'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-defined-names'
 
 const WORKBOOK =
   '<workbook><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>' +

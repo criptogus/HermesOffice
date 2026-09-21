@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolveFill, resolveStroke } from '../src/fill'
 import { makeViewport } from '../src/coords'
-import type { Fill, Stroke } from '@genoffice/pptx-engine'
+import type { Fill, Stroke } from '@hermesoffice/pptx-engine'
 
 const vp = makeViewport({ cx: 9525 * 1000, cy: 9525 * 1000 }, 1000) // scale 1
 

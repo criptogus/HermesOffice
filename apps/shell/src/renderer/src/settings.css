@@ -372,7 +372,7 @@
   background: var(--surface);
 }
 
-/* Shared dropdown (@genoffice/ui gs-dd) in settings rows: borderless text
+/* Shared dropdown (@hermesoffice/ui gs-dd) in settings rows: borderless text
  * trigger matching the old .set-select-wrap look */
 .set-dd {
   flex-shrink: 0;

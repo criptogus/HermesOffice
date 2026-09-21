@@ -14,7 +14,7 @@
  * a batch of plain values triggers no recalculation at all, and must not hold
  * the response for a timeout that will never be met.
  */
-import type { CellState } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import type { CellState } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import { EXCEL_ERROR_LITERALS, modelCellValue } from './univer-sync'
 
 /** one `set_formula` target extracted from a batch */

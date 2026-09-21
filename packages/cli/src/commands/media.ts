@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { analyzeMediaTool } from '@genoffice/ai-search'
+import { analyzeMediaTool } from '@hermesoffice/ai-search'
 import { flagString } from '../args'
 import { aiSettingsPath, prepareCloud } from '../cloud'
 import { resolveInput } from '../fs'

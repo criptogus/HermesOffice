@@ -147,7 +147,7 @@ export const fr = {
     'Volet Styles : parcourir tous les styles, créer ou mettre à jour un style à partir de la sélection',
   ribbonMoreStyles: 'Autres styles',
   ribbonGroupStyles: 'Styles',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: "Ouvrir l'assistant IA",
   ribbonRemoveTableStyleTip: 'Supprimer le style de tableau',
   ribbonNoStyle: 'Aucun style',

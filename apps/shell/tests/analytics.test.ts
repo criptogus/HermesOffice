@@ -43,7 +43,7 @@ describe('extractAnalyticsKeys', () => {
   })
 
   it('returns null when the block is missing (source/fork builds)', () => {
-    expect(extractAnalyticsKeys({ name: '@genoffice/shell' })).toBeNull()
+    expect(extractAnalyticsKeys({ name: '@hermesoffice/shell' })).toBeNull()
     expect(extractAnalyticsKeys(null)).toBeNull()
     expect(extractAnalyticsKeys('nope')).toBeNull()
   })

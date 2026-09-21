@@ -178,7 +178,7 @@ export const hi = {
   ribbonFlipH: 'क्षैतिज पलटें',
   ribbonFlipV: 'लंबवत पलटें',
   ribbonDistributeHint: '{title} (3 या अधिक तत्व चुनें)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'AI सहायक पैनल दिखाएँ या छिपाएँ',
   ribbonGroupTable: 'तालिका',
   ribbonInsertTableTip: 'तालिका सम्मिलित करें (डिफ़ॉल्ट शैली; पंक्तियाँ और स्तंभ चुनें)',

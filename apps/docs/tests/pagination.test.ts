@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SectionInfo } from '@genoffice/docx-engine'
+import type { SectionInfo } from '@hermesoffice/docx-engine'
 import {
   type SliceOutputs,
   appendEndnotesBlock,

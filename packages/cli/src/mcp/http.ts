@@ -226,7 +226,7 @@ export async function startHttp(opts: HttpServeOptions): Promise<HttpHandle> {
   const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://placeholder')
     if (url.pathname === '/health' && req.method === 'GET') {
-      json(res, 200, { status: 'ok', server: 'genoffice', sessions: sessions.size })
+      json(res, 200, { status: 'ok', server: 'hermesoffice', sessions: sessions.size })
       return
     }
     // no token and a loopback bind: refuse Host headers a rebound DNS name would carry

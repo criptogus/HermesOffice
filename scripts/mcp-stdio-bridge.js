@@ -16,7 +16,7 @@
  * Example mcp.json entry:
  *   {
  *     "mcpServers": {
- *       "genoffice": {
+ *       "hermesoffice": {
  *         "command": "node",
  *         "args": ["/path/to/genoffice/scripts/mcp-stdio-bridge.js"]
  *       }

@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/core'
-import { findInText, type FindOptions, type FindTarget } from '@genoffice/ui'
+import { findInText, type FindOptions, type FindTarget } from '@hermesoffice/ui'
 import { searchPluginKey, type SearchRange } from './searchHighlight'
 
 /** collect matches inside textblocks; inline content is flattened so matches spanning marks are found */

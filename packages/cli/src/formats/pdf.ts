@@ -7,7 +7,7 @@ import {
   PdfLoadError,
   type OcrEngine,
   type PdfiumModule,
-} from '@genoffice/pdf2docx'
+} from '@hermesoffice/pdf2docx'
 import { createVisionOcrEngine, createWindowsOcrEngine } from '../../../pdf2docx/src/ocr-vision'
 import { ocrHelperPath, pdfiumWasmPath } from '../resources'
 
@@ -21,7 +21,7 @@ export function loadPdfium(): Promise<PdfiumModule> {
     }
     const raw = readFileSync(pdfiumWasmPath())
     const wasmBinary = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength)
-    const wrapped = (await init({ wasmBinary, thisProgram: 'genoffice' })) as { pdfium?: unknown }
+    const wrapped = (await init({ wasmBinary, thisProgram: 'hermesoffice' })) as { pdfium?: unknown }
     const m = (wrapped.pdfium ?? wrapped) as PdfiumModule & { _PDFiumExt_Init(): void }
     m._PDFiumExt_Init()
     return m

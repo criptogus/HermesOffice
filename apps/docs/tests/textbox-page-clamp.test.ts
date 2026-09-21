@@ -6,7 +6,7 @@
  * offset is never rewritten.
  */
 import { describe, expect, it } from 'vitest'
-import type { TextboxDisplay } from '@genoffice/docx-engine'
+import type { TextboxDisplay } from '@hermesoffice/docx-engine'
 import { textboxBoxStyle } from '../src/renderer/editor/protected-render'
 
 const box = (extra: Partial<TextboxDisplay>): TextboxDisplay => ({

@@ -6,7 +6,7 @@ import {
   useDismissablePopover,
   wordArtSolidColor,
   type WordArtPreset,
-} from '@genoffice/ui'
+} from '@hermesoffice/ui'
 import {
   buildLineParagraphXml,
   buildShapeParagraphXml,
@@ -15,7 +15,7 @@ import {
   LINE_KINDS,
   type HeaderFooter,
   type TextboxDisplay,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import type { DocsTabInfo } from '../../shared/ipc'
 import { runUiOps } from '../ai/ops'
 import { tableModelToPmNode } from '../editor/convert'
@@ -1373,7 +1373,7 @@ export function ViewTab({
                     }}
                   >
                     {w.focused ? '✓ ' : ''}
-                    {w.title || 'GenOffice Docs'}
+                    {w.title || 'HermesOffice Docs'}
                   </button>
                 ))}
               </div>

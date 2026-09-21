@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/react'
-import { BLANK_BULLET_NUM_ID, BLANK_ORDERED_NUM_ID } from '@genoffice/docx-engine'
+import { BLANK_BULLET_NUM_ID, BLANK_ORDERED_NUM_ID } from '@hermesoffice/docx-engine'
 import type { McpCommandMessage, McpEditorCommand } from '../shared/ipc'
 import { executeTool, markDocSeen } from './ai/tools'
 import { findNumId, type NumIds } from './ai/protocol'

@@ -178,7 +178,7 @@ export const en = {
   ribbonFlipH: 'Flip Horizontal',
   ribbonFlipV: 'Flip Vertical',
   ribbonDistributeHint: '{title} (select 3 or more elements)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'Show or hide the AI Assistant panel',
   ribbonGroupTable: 'Table',
   ribbonInsertTableTip: 'Insert a table (default style; choose rows and columns)',

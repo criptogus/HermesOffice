@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { type SectionSettings } from '@genoffice/docx-engine'
+import { type SectionSettings } from '@hermesoffice/docx-engine'
 import { WRAP_OPTIONS } from './ContextMenu'
 import { MarginDialog, cmFromTwips, marginsFitPage, type PageMargins } from './MarginDialog'
 import { useI18n, type StringKey } from '../i18n/locale'

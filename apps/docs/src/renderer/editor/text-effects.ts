@@ -1,4 +1,4 @@
-import type { TextEffect, TextGlow } from '@genoffice/docx-engine'
+import type { TextEffect, TextGlow } from '@hermesoffice/docx-engine'
 
 const TEXT_EFFECTS: ReadonlySet<string> = new Set(['outline', 'emboss', 'imprint', 'shadow'])
 

@@ -144,7 +144,7 @@ export const th = {
   ribbonStylePaneTip: 'บานหน้าต่างสไตล์: ดูสไตล์ทั้งหมด สร้างหรืออัปเดตสไตล์จากส่วนที่เลือก',
   ribbonMoreStyles: 'สไตล์เพิ่มเติม',
   ribbonGroupStyles: 'สไตล์',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'เปิดผู้ช่วย AI',
   ribbonRemoveTableStyleTip: 'เอาสไตล์ตารางออก',
   ribbonNoStyle: 'ไม่มีสไตล์',

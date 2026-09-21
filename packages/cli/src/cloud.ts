@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { setGskProxyUrl } from '@genoffice/ai-search'
+import { setGskProxyUrl } from '@hermesoffice/ai-search'
 import { genofficeUserDataDir } from './gui'
 import { packagedResourcesDir } from './resources'
 

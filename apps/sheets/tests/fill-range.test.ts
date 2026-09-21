@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { offsetFormulaRefs } from '@genoffice/xlsx-gateway/domain/formula-shift'
+import { offsetFormulaRefs } from '@hermesoffice/xlsx-gateway/domain/formula-shift'
 import {
   expandToPrimitiveOps,
   MAX_EXPANDED_CELL_OPS,
   type WorkbookCommandBatch,
-} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
-import { InMemoryWorkbookAdapter } from '@genoffice/xlsx-gateway/domain/in-memory-workbook'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import { buildLazyChangePlan } from '../src/renderer/lazy-plan'
 import { fillFormulaCostError } from '../src/renderer/formula-cost'
 

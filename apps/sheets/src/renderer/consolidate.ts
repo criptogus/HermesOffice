@@ -2,7 +2,7 @@
 /// either by position or by left-column labels. Output cells are live
 /// formulas referencing the sources, so they journal and save like any edit.
 
-import { columnLabel, parseRange } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { columnLabel, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { t } from './i18n/locale'
 
 export type ConsolidateFn = 'sum' | 'count' | 'average' | 'max' | 'min'

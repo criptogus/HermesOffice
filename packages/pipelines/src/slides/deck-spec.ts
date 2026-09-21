@@ -7,7 +7,7 @@ import {
   openPptx,
   promoteSlideBackground,
   savePptx,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import {
   buildPagePptx,
   parsePageSpecObject,

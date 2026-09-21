@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Markdown } from '@genoffice/ui'
+import { Markdown } from '@hermesoffice/ui'
 
 import { SHEET_NAV_SCHEME, parseSheetNavHref } from '../src/renderer/ai/sheet-nav'
 import basePrompt from '../src/renderer/ai/prompts/base.md?raw'

@@ -27,7 +27,7 @@ import { userInfo } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cleanupExpiredGeneratedPages } from './generated-page-temp'
 import { exportSlidesPdf } from './pdf-export'
-import { gskApiKey, gskSlideGenerate, setGskProxyUrl } from '@genoffice/ai-search'
+import { gskApiKey, gskSlideGenerate, setGskProxyUrl } from '@hermesoffice/ai-search'
 import {
   appMenuLabels,
   configuredDefaultSaveDir,
@@ -45,7 +45,7 @@ import {
   installRendererProtocol,
   registerRendererScheme,
   rendererUrl,
-} from '@genoffice/electron-utils'
+} from '@hermesoffice/electron-utils'
 import {
   resolveGroupChildId,
   runTxn,
@@ -54,9 +54,9 @@ import {
   type TxnRequest,
   type TxnResult,
   mapScriptOps,
-} from '@genoffice/pptx-ops'
-import { matchesElementRef } from '@genoffice/pptx-engine/identity'
-import { buildPagePptx, parsePageSpec } from '@genoffice/pipelines/slides'
+} from '@hermesoffice/pptx-ops'
+import { matchesElementRef } from '@hermesoffice/pptx-engine/identity'
+import { buildPagePptx, parsePageSpec } from '@hermesoffice/pipelines/slides'
 import { sniffImageMime } from './media-mime'
 import {
   newPasteCascade,
@@ -72,8 +72,8 @@ import {
   isElementClipboardToken,
   writeElementClipboardImage,
 } from './element-clipboard'
-import { getUiLang, normalizeLang, setUiLang } from '@genoffice/i18n'
-import { ProjectStore } from '@genoffice/project-store'
+import { getUiLang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
+import { ProjectStore } from '@hermesoffice/project-store'
 import {
   copyElementData,
   findGroupChild,
@@ -120,14 +120,14 @@ import {
   type Paragraph,
   type Slide,
   type TextElement,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import {
   buildRenderSlide,
   layoutText,
   makeViewport,
   EMU_PER_PX_96,
   type RenderSlide,
-} from '@genoffice/pptx-render'
+} from '@hermesoffice/pptx-render'
 import { refineComplexWidths, shapedMetricsReady } from './shaped-metrics'
 import { cfbKind, isCfbHeader } from './cfb-sniff'
 import { unplayableAudioCodec } from './mp4-audio-sniff'
@@ -2038,7 +2038,7 @@ export function registerSlidesIpc(): void {
     return rebuilt ? { slide: rebuilt, sourceId: r.records![0]!.created![0]! } : null
   })
 
-  // Shim over the canonical op (see @genoffice/pptx-ops): the op owns validation/mutation/journal;
+  // Shim over the canonical op (see @hermesoffice/pptx-ops): the op owns validation/mutation/journal;
   // the shim keeps session lookup, undo bookkeeping, and RenderSlide rebuilding.
   ipcMain.handle('slides:delete-element', (e, op: DeleteElementOp) => {
     const session = sessions.get(e.sender.id)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ShapeRenderNode } from '@genoffice/pptx-render'
+import type { ShapeRenderNode } from '@hermesoffice/pptx-render'
 import { isPromptPlaceholder, textHitAtPoint } from '../src/renderer/text-hit-area'
 
 const run = (text: string, x: number, widthPx: number) => ({

@@ -7,7 +7,7 @@ export default defineConfig({
       // resolve the sibling source package by path (not via node_modules), so a
       // git worktree whose node_modules is linked to another checkout still
       // tests against the local docx-engine edits
-      '@genoffice/docx-engine': fileURLToPath(
+      '@hermesoffice/docx-engine': fileURLToPath(
         new URL('../docx-engine/src/index.ts', import.meta.url),
       ),
     },

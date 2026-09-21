@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import { AgentLoop, type AgentStreamCallbacks, type AgentTransport } from '@genoffice/agent-core'
+import { AgentLoop, type AgentStreamCallbacks, type AgentTransport } from '@hermesoffice/agent-core'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { createDocsSkill } from '../src/renderer/ai/docs-skill'
 import { buildDocContext, countWords } from '../src/renderer/ai/protocol'

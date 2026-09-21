@@ -12,7 +12,7 @@ import {
   resolveImportDelimiter,
   sniffDelimiter,
   splitSepDeclaration,
-} from '@genoffice/xlsx-gateway/gateway/csv-import'
+} from '@hermesoffice/xlsx-gateway/gateway/csv-import'
 
 describe('decodeCsvBuffer', () => {
   const rows = '城市,人口\n东京,37\n'

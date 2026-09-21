@@ -4,7 +4,7 @@ export const nl = {
   aiCollapsePanel: 'Paneel inklappen',
   aiComposerPlaceholder: 'Vraag AI te schrijven of bewerken…',
   aiCopyReplyTitle: 'Antwoord kopiëren',
-  aiCreditsExhausted: 'Credits op — waardeer op via genspark.ai',
+  aiCreditsExhausted: 'Credits op — waardeer op via hermesoffice.local',
   aiEmptyTitle: 'Ontwerp een pagina met AI',
   aiEmptyBody:
     'Landingspagina, rapport, poster: zeg waarvoor en voor wie; de AI stelt eerst een briefing voor en bouwt daarna de pagina',

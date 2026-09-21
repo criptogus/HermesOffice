@@ -13,8 +13,8 @@ import {
   uninstallSkill,
   type BundledSkill,
   type SkillLedger,
-} from '@genoffice/cli/agent-skills'
-import { inspectCliLink } from '@genoffice/cli/install'
+} from '@hermesoffice/cli/agent-skills'
+import { inspectCliLink } from '@hermesoffice/cli/install'
 import { readAppSettings, writeAppSetting } from './app-settings'
 import { isEphemeralInstall } from './cli-link'
 import {
@@ -47,7 +47,7 @@ export function registerIntegrationsIpc(deps: IntegrationsDeps): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.status, (): IntegrationsStatus => {
     const skill = bundled()
     const l = ledger()
-    const launcher = join(deps.cliDir, process.platform === 'win32' ? 'genoffice.cmd' : 'genoffice')
+    const launcher = join(deps.cliDir, process.platform === 'win32' ? 'genoffice.cmd' : 'hermesoffice')
     return {
       cli: {
         ...inspectCliLink({ launcher }),

@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { applyPlanToXlsx } from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { CellState, ChangePlan } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import { applyPlanToXlsx } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { CellState, ChangePlan } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 
 interface CorpusCase {
   fixture: string

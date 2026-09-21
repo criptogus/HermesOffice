@@ -3,8 +3,8 @@ import { resolve } from 'node:path'
 
 import JSZip from 'jszip'
 
-import { applyPlanToXlsx } from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { ChangePlan } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import { applyPlanToXlsx } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { ChangePlan } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import { buildCompatibilityFixture } from '../tests/fixture-builder'
 
 const ROW_COUNT = 10_000

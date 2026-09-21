@@ -150,7 +150,7 @@ export const zh = {
   ribbonMoreStyles: '更多样式',
   ribbonGroupStyles: '样式',
   // Home · AI
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: '打开 AI 助手',
   // Table Design
   ribbonRemoveTableStyleTip: '移除表格样式',

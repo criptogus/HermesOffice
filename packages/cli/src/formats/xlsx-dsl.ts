@@ -4,33 +4,33 @@ import {
   parseRange,
   rangeAddresses,
   type RangeBounds,
-} from '@genoffice/xlsx-gateway/domain/cell-address'
-import { InMemoryWorkbookAdapter } from '@genoffice/xlsx-gateway/domain/in-memory-workbook'
-import type { ChangePlan, WorkbookSnapshot } from '@genoffice/xlsx-gateway/domain/workbook.types'
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
+import type { ChangePlan, WorkbookSnapshot } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import type {
   CellFormatPatch,
   FillPatch,
   StyleColorInput,
-} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 import {
   normalizeStyleColor,
   type FillSpec,
   type StyleColor,
-} from '@genoffice/xlsx-gateway/domain/style-color'
+} from '@hermesoffice/xlsx-gateway/domain/style-color'
 import {
   readBasicWorkbook,
   type CellEdit,
   type SheetStructuralOps,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
 import {
   parseRelationships,
   parseSheetElements,
   type SheetEditPlan,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-sheets'
-import type { StructuralOp } from '@genoffice/xlsx-gateway/gateway/xlsx-structure'
-import type { DefinedNameEntry } from '@genoffice/xlsx-gateway/gateway/xlsx-defined-names'
-import type { SheetNote } from '@genoffice/xlsx-gateway/gateway/xlsx-notes'
-import type { WorkbookStyleEdit } from '@genoffice/xlsx-gateway/shared/edit-schemas'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
+import type { StructuralOp } from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
+import type { DefinedNameEntry } from '@hermesoffice/xlsx-gateway/gateway/xlsx-defined-names'
+import type { SheetNote } from '@hermesoffice/xlsx-gateway/gateway/xlsx-notes'
+import type { WorkbookStyleEdit } from '@hermesoffice/xlsx-gateway/shared/edit-schemas'
 import {
   expandToPrimitiveOps,
   isLayoutOp,
@@ -38,7 +38,7 @@ import {
   structuralOpLabel,
   workbookOperationSchema,
   type WorkbookOperation,
-} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 import JSZip from 'jszip'
 import type { PathContext } from '../fs'
 import { classifyOpError } from '../op-errors'

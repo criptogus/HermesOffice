@@ -4,7 +4,7 @@
  * the App component passes a VisualSyncContext built fresh per call so refs
  * and state never go stale.
  */
-import { parseRange } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { chartCategoryVector, seriesOrientation } from './chart-category-vector'
 import {
   applyChartStateEdit,
@@ -13,8 +13,8 @@ import {
   type CellBounds,
   type ChartVisualState,
   type SheetVisual,
-} from '@genoffice/xlsx-gateway/domain/chart-visual'
-import type { InMemoryWorkbookAdapter } from '@genoffice/xlsx-gateway/domain/in-memory-workbook'
+} from '@hermesoffice/xlsx-gateway/domain/chart-visual'
+import type { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import type { WorkbookVisualObject } from '../shared/desktop-api'
 import {
   cacheLessRefs,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyPageSetupState } from '@genoffice/xlsx-gateway/gateway/xlsx-page-setup'
+import { applyPageSetupState } from '@hermesoffice/xlsx-gateway/gateway/xlsx-page-setup'
 
 const SHEET_WITH_VIEW =
   '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { Node as PmNode } from '@tiptap/pm/model'
-import type { CommentInfo } from '@genoffice/docx-engine'
+import type { CommentInfo } from '@hermesoffice/docx-engine'
 import { useI18n } from '../i18n/locale'
 import { IconComment, IconPencil, IconTrash } from './icons'
 

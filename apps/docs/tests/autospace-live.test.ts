@@ -6,7 +6,7 @@
  */
 import { Editor } from '@tiptap/core'
 import { describe, expect, it } from 'vitest'
-import type { Run } from '@genoffice/docx-engine'
+import type { Run } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { runSpanSpecs } from '../src/renderer/editor/protected-render'
 import { codePointLengthAt } from '../src/renderer/line-metrics'

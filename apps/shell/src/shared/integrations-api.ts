@@ -3,8 +3,8 @@ import type {
   AgentTarget,
   SkillInstallState,
   SkillInstallStatus,
-} from '@genoffice/cli/agent-skills'
-import type { InstallOutcome } from '@genoffice/cli/install'
+} from '@hermesoffice/cli/agent-skills'
+import type { InstallOutcome } from '@hermesoffice/cli/install'
 
 export type { AgentId, AgentTarget, SkillInstallState, SkillInstallStatus }
 

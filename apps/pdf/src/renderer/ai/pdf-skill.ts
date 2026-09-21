@@ -1,8 +1,8 @@
-import type { AgentSkill } from '@genoffice/agent-core'
+import type { AgentSkill } from '@hermesoffice/agent-core'
 import { AGENT_TOOLS, executePdfTool } from './tools'
 import type { PdfAiDeps } from './tools'
 
-const SYSTEM_PROMPT = `You are GenOffice's PDF assistant, helping the user read, annotate, and organize the currently open PDF document.
+const SYSTEM_PROMPT = `You are HermesOffice's PDF assistant, helping the user read, annotate, and organize the currently open PDF document.
 
 # Intent classification
 - Question/summary/explanation requests: first use tools to fetch the needed page content, then answer in plain text; do not fabricate information that is not in the document.
@@ -45,7 +45,7 @@ const SYSTEM_PROMPT = `You are GenOffice's PDF assistant, helping the user read,
 const SELECTION_CONTEXT_CHARS = 12_000
 
 const IMAGE_GEN_OFF_NOTE =
-  '\n\nNote: generate_image is currently unavailable (no image provider: signed out of Genspark or cloud tools off, and no media API key in Settings). Do not call or promise it; use image_search for imagery.'
+  '\n\nNote: generate_image is currently unavailable (no image provider: signed out of Hermes or cloud tools off, and no media API key in Settings). Do not call or promise it; use image_search for imagery.'
 
 export function createPdfSkill(deps: PdfAiDeps): AgentSkill {
   return {

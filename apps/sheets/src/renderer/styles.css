@@ -1,6 +1,6 @@
 /* Per-app accent (excel-green family) + sheets-only tokens.
  * Chrome tokens (surface/text/border/…, AI panel --color-*) come from
- * @genoffice/ui/tokens.css; nothing here may shadow those names. */
+ * @hermesoffice/ui/tokens.css; nothing here may shadow those names. */
 :root {
   --excel-green: #217346;
   --excel-green-dark: #185c37;
@@ -189,14 +189,14 @@
  * Office sans families the OS lacks silently fall back to Chromium's serif
  * default on the grid canvas. local() keeps a real installed font first; the
  * bundled Carlito (metric-compatible with Calibri, shared via
- * @genoffice/ui/fonts) guarantees Excel-matching widths before the
+ * @hermesoffice/ui/fonts) guarantees Excel-matching widths before the
  * Helvetica/Arial approximations. Canvas fillText never triggers @font-face
  * downloads, so main.tsx loads these explicitly. */
 @font-face {
   font-family: Aptos;
   src:
     local('Aptos'), local('Calibri'), local('Carlito'),
-    url('@genoffice/ui/fonts/Carlito-Regular.ttf'), local('Helvetica Neue'), local('Arial');
+    url('@hermesoffice/ui/fonts/Carlito-Regular.ttf'), local('Helvetica Neue'), local('Arial');
   font-display: block;
 }
 
@@ -205,7 +205,7 @@
   font-weight: bold;
   src:
     local('Aptos Bold'), local('Calibri Bold'), local('Carlito Bold'),
-    url('@genoffice/ui/fonts/Carlito-Bold.ttf'), local('Helvetica Neue Bold'), local('Arial Bold');
+    url('@hermesoffice/ui/fonts/Carlito-Bold.ttf'), local('Helvetica Neue Bold'), local('Arial Bold');
   font-display: block;
 }
 
@@ -214,7 +214,7 @@
   font-style: italic;
   src:
     local('Aptos Italic'), local('Calibri Italic'), local('Carlito Italic'),
-    url('@genoffice/ui/fonts/Carlito-Italic.ttf'), local('Helvetica Neue Italic'),
+    url('@hermesoffice/ui/fonts/Carlito-Italic.ttf'), local('Helvetica Neue Italic'),
     local('Arial Italic');
   font-display: block;
 }
@@ -225,7 +225,7 @@
   font-style: italic;
   src:
     local('Aptos Bold Italic'), local('Calibri Bold Italic'), local('Carlito Bold Italic'),
-    url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
+    url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
     local('Arial Bold Italic');
   font-display: block;
 }
@@ -236,21 +236,21 @@
 
 @font-face {
   font-family: Carlito;
-  src: local('Carlito'), url('@genoffice/ui/fonts/Carlito-Regular.ttf');
+  src: local('Carlito'), url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
   font-display: block;
 }
 
 @font-face {
   font-family: Carlito;
   font-weight: bold;
-  src: local('Carlito Bold'), url('@genoffice/ui/fonts/Carlito-Bold.ttf');
+  src: local('Carlito Bold'), url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
   font-display: block;
 }
 
 @font-face {
   font-family: Carlito;
   font-style: italic;
-  src: local('Carlito Italic'), url('@genoffice/ui/fonts/Carlito-Italic.ttf');
+  src: local('Carlito Italic'), url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
   font-display: block;
 }
 
@@ -258,14 +258,14 @@
   font-family: Carlito;
   font-weight: bold;
   font-style: italic;
-  src: local('Carlito Bold Italic'), url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf');
+  src: local('Carlito Bold Italic'), url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
   font-display: block;
 }
 
 @font-face {
   font-family: Calibri;
   src:
-    local('Calibri'), local('Carlito'), url('@genoffice/ui/fonts/Carlito-Regular.ttf'),
+    local('Calibri'), local('Carlito'), url('@hermesoffice/ui/fonts/Carlito-Regular.ttf'),
     local('Helvetica Neue'), local('Arial');
   font-display: block;
 }
@@ -274,7 +274,7 @@
   font-family: Calibri;
   font-weight: bold;
   src:
-    local('Calibri Bold'), local('Carlito Bold'), url('@genoffice/ui/fonts/Carlito-Bold.ttf'),
+    local('Calibri Bold'), local('Carlito Bold'), url('@hermesoffice/ui/fonts/Carlito-Bold.ttf'),
     local('Helvetica Neue Bold'), local('Arial Bold');
   font-display: block;
 }
@@ -283,7 +283,7 @@
   font-family: Calibri;
   font-style: italic;
   src:
-    local('Calibri Italic'), local('Carlito Italic'), url('@genoffice/ui/fonts/Carlito-Italic.ttf'),
+    local('Calibri Italic'), local('Carlito Italic'), url('@hermesoffice/ui/fonts/Carlito-Italic.ttf'),
     local('Helvetica Neue Italic'), local('Arial Italic');
   font-display: block;
 }
@@ -294,7 +294,7 @@
   font-style: italic;
   src:
     local('Calibri Bold Italic'), local('Carlito Bold Italic'),
-    url('@genoffice/ui/fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
+    url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf'), local('Helvetica Neue Bold Italic'),
     local('Arial Bold Italic');
   font-display: block;
 }
@@ -667,7 +667,7 @@ html.genoffice-popover-open .ribbon-tabs {
 }
 
 /* The AI group leads the band in every app: 4px side padding like the
-   docs/slides .ribbon-group, so the Genspark mark sits at the same x. */
+   docs/slides .ribbon-group, so the Hermes mark sits at the same x. */
 .ribbon-group:has(.ai-entry) {
   padding: 2px 4px;
 }
@@ -820,7 +820,7 @@ html.genoffice-popover-open .ribbon-tabs {
 }
 
 .ribbon-tool.large.as-button.ai-entry.active {
-  /* neutral gray, shared with the docs/slides Genspark entries */
+  /* neutral gray, shared with the docs/slides Hermes entries */
   background: var(--ribbon-active);
 }
 
@@ -922,7 +922,7 @@ html.genoffice-popover-open .ribbon-tabs {
   .ribbon {
     gap: 1px;
     /* keep the 6px 12px band padding: docs/slides never compact it, and a
-       narrower inset shifts the shared Genspark entry 2px when switching apps */
+       narrower inset shifts the shared Hermes entry 2px when switching apps */
   }
 
   .ribbon-group {
@@ -1241,7 +1241,7 @@ html.genoffice-popover-open .ribbon-tabs {
   anchor-scope: --menu-select;
 }
 
-/* Anchor positioning for the shared Word-style color panel (@genoffice/ui
+/* Anchor positioning for the shared Word-style color panel (@hermesoffice/ui
    .gcp-palette draws the chrome; this only places it under its trigger). */
 .sheets-color-pop {
   position: fixed;
@@ -1847,7 +1847,7 @@ button.check-item:hover {
   box-shadow: var(--sheets-shadow-badge);
 }
 
-/* Genspark brand logo (shared by the collapse button and the AI panel title) */
+/* Hermes brand logo (shared by the collapse button and the AI panel title) */
 .genspark-badge {
   display: block;
   width: 22px;
@@ -3380,7 +3380,7 @@ textarea:focus {
   gap: 8px;
 }
 
-/* Genspark DS modal footer buttons: secondary = bg-subtle, primary = black (#232425) */
+/* Hermes DS modal footer buttons: secondary = bg-subtle, primary = black (#232425) */
 .dialog-actions button,
 .select-data-actions button {
   display: inline-flex;
@@ -4653,7 +4653,7 @@ textarea:focus {
 }
 
 /* textarea: 16px / 24px fixed line-height (chat body size), auto-grow band
- * (resting height 25% taller than default, matching the Genspark for PowerPoint prompt box) */
+ * (resting height 25% taller than default, matching the Hermes for PowerPoint prompt box) */
 .ai-input-box textarea {
   display: block;
   width: 100%;
@@ -4826,7 +4826,7 @@ textarea:focus {
 .ai-attachments {
   display: flex;
   gap: 8px;
-  /* single row inside the prompt box, above the textarea (Genspark composer style):
+  /* single row inside the prompt box, above the textarea (Hermes composer style):
      extra images run past the box edge and scroll horizontally.
      scroll (not auto) + zero bottom padding: the always-present 4px scrollbar lane
      doubles as the bottom padding, so overflowing never grows the strip and
@@ -4934,7 +4934,7 @@ textarea:focus {
   background: var(--bg-content);
 }
 
-/* the type icon sits in its own bordered white tile, like the Genspark card */
+/* the type icon sits in its own bordered white tile, like the Hermes card */
 .ai-attachment-card-icon {
   display: flex;
   flex-shrink: 0;
@@ -5477,7 +5477,7 @@ textarea:focus {
   display: none;
 }
 
-/* ── Shared dropdown (@genoffice/ui gs-dd) app sizing ──────────────────────
+/* ── Shared dropdown (@hermesoffice/ui gs-dd) app sizing ──────────────────────
    Ports the old native-select metrics per container so replacing <select>
    with the themed Dropdown doesn't shift layout (reference: the matching
    block in apps/slides styles.css). */

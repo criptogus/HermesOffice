@@ -6,12 +6,12 @@
  */
 import { ILayoutService } from '@univerjs/preset-sheets-core'
 
-import { columnLabel } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { columnLabel } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import {
   decodeCsvBuffer,
   isNumericCell,
   parseCsv,
-} from '@genoffice/xlsx-gateway/gateway/csv-import'
+} from '@hermesoffice/xlsx-gateway/gateway/csv-import'
 import type { AdvancedFilterColumn, AdvancedFilterCriteria } from './AdvancedFilterDialog'
 import {
   buildLabelMatrix,

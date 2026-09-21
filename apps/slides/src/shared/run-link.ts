@@ -3,7 +3,7 @@
  * (0-based) for in-doc jumps, "action:<name>" for named show actions — same encoding as
  * the engine's TextRun.hyperlink.
  */
-import { NAMED_ACTIONS, type NamedAction } from '@genoffice/pptx-engine/named-action'
+import { NAMED_ACTIONS, type NamedAction } from '@hermesoffice/pptx-engine/named-action'
 import type { LinkTargetOp } from './ipc'
 
 export function encodeLinkTarget(target: LinkTargetOp): string {

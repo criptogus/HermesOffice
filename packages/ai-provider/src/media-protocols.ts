@@ -6,7 +6,7 @@
  * (Qwen-Image) and MiniMax image_generation. Understanding speaks two: OpenAI
  * chat completions (video via a video_url part where the vendor accepts one)
  * and Gemini generateContent (inline or Files API). Genspark is not here — its
- * tools go through the gsk CLI in @genoffice/ai-search.
+ * tools go through the gsk CLI in @hermesoffice/ai-search.
  */
 
 import { aiFetch } from './fetch'

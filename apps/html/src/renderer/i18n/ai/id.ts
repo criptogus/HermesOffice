@@ -4,7 +4,7 @@ export const id = {
   aiCollapsePanel: 'Ciutkan panel',
   aiComposerPlaceholder: 'Minta AI menulis atau mengedit…',
   aiCopyReplyTitle: 'Salin balasan',
-  aiCreditsExhausted: 'Kredit habis — isi ulang di genspark.ai',
+  aiCreditsExhausted: 'Kredit habis — isi ulang di hermesoffice.local',
   aiEmptyTitle: 'Rancang halaman dengan AI',
   aiEmptyBody:
     'Landing page, laporan, poster: sebutkan tujuan dan audiensnya; AI mengusulkan brief dulu, lalu membangun halamannya',

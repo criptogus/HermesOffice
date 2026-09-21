@@ -6,7 +6,7 @@
  * margin while the snapped strip height would have pushed it down a line+).
  */
 import { describe, expect, it } from 'vitest'
-import type { ParsedDocFull } from '@genoffice/docx-engine'
+import type { ParsedDocFull } from '@hermesoffice/docx-engine'
 import { docStyleCss } from '../src/renderer/doc-style-css'
 
 ;(globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s }

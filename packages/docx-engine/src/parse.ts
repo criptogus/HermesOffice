@@ -1,7 +1,7 @@
 import JSZip from 'jszip'
 import type { JSZipObject } from 'jszip'
 import { LAZY_MEDIA_PLACEHOLDER_BYTES, lazyMediaHashOf, lazyMediaUrl } from './lazy-media'
-import { parseCustGeom } from '@genoffice/pptx-engine/custgeom'
+import { parseCustGeom } from '@hermesoffice/pptx-engine/custgeom'
 import { parseChartPartXml } from './chart'
 import { findInkRuns, stripInkRuns } from './ink'
 import { isMetafileMime, metafileToDataUrl } from './metafile'

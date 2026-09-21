@@ -1,4 +1,4 @@
-import type { NewImage } from '@genoffice/docx-engine'
+import type { NewImage } from '@hermesoffice/docx-engine'
 import { MERMAID_LANGUAGE, renderMermaid } from './mermaid'
 import { WAVEDROM_LANGUAGE, renderWavedrom } from './wavedrom'
 

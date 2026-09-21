@@ -7,8 +7,8 @@ import {
   savePptx,
   type OpenedPptx,
   type TextElement,
-} from '@genoffice/pptx-engine'
-import { listSlideAnimations, runTxn } from '@genoffice/pptx-ops'
+} from '@hermesoffice/pptx-engine'
+import { listSlideAnimations, runTxn } from '@hermesoffice/pptx-ops'
 
 let opened: OpenedPptx
 let titleId: string

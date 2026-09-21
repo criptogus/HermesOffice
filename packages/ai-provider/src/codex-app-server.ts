@@ -4,7 +4,7 @@ import { access, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { AgentImage, AgentMessage, AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
+import type { AgentImage, AgentMessage, AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
 import type { AiChatResponse, AiProviderConfig, CodexModelCatalog } from './types'
 import { parseToolInput, type StreamCallbacks } from './protocols/shared'
 import { createStreamWatchdog } from './watchdog'
@@ -373,7 +373,7 @@ class CodexAppServerClient {
 
   private async initialize(): Promise<void> {
     await this.requestWire('initialize', {
-      clientInfo: { name: 'genoffice', title: 'GenOffice', version: '0.1.0' },
+      clientInfo: { name: 'hermesoffice', title: 'HermesOffice', version: '0.1.0' },
       capabilities: { experimentalApi: false, requestAttestation: false },
     })
     this.notify('initialized')
@@ -695,7 +695,7 @@ function finalMessageFromTurn(params: unknown): string {
   return ''
 }
 
-const CODEX_PERMISSION_PROFILE = 'genoffice'
+const CODEX_PERMISSION_PROFILE = 'hermesoffice'
 
 /**
  * Codex keeps its own shell tool even when told not to use it, and the plain
@@ -712,7 +712,7 @@ export function codexThreadStartParams(
     ...(config.model.trim() ? { model: config.model.trim() } : {}),
     cwd: tempDir,
     approvalPolicy: 'never',
-    serviceName: 'genoffice',
+    serviceName: 'hermesoffice',
     baseInstructions: CODEX_BASE_INSTRUCTIONS,
     ephemeral: true,
   }

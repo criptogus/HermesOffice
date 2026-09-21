@@ -1,4 +1,4 @@
-import { defineStrings } from '@genoffice/i18n'
+import { defineStrings } from '@hermesoffice/i18n'
 import { zh } from './ribbon/zh'
 import { en } from './ribbon/en'
 import { ja } from './ribbon/ja'

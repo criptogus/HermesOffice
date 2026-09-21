@@ -21,8 +21,8 @@ import {
   type Paragraph,
   type TextElement,
   type TextRun,
-} from '@genoffice/pptx-engine'
-import { buildRenderSlide, EMU_PER_PX_96, type FontMetricsProvider } from '@genoffice/pptx-render'
+} from '@hermesoffice/pptx-engine'
+import { buildRenderSlide, EMU_PER_PX_96, type FontMetricsProvider } from '@hermesoffice/pptx-render'
 import { coverCropFractions } from './cover-crop'
 
 export const SPEC_CANVAS_W = 1280

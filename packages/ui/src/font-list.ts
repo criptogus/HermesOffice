@@ -1,4 +1,4 @@
-import type { Lang } from '@genoffice/i18n'
+import type { Lang } from '@hermesoffice/i18n'
 
 /**
  * Font dropdown candidates grouped by script, ordered per UI language so the

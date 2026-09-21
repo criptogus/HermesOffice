@@ -179,7 +179,7 @@ export const zh = {
   ribbonFlipH: '水平翻转',
   ribbonFlipV: '垂直翻转',
   ribbonDistributeHint: '{title}（需选中 ≥3 个元素）',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: '打开/收起 AI 助手面板',
   // Insert
   ribbonGroupTable: '表格',

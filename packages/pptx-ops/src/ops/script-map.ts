@@ -4,7 +4,7 @@
  * scale, pt→EMU stroke widths, style patch → font/paragraph ops) — pure and
  * Node-testable; the executor owns validation/rollback/journal.
  */
-import type { OpenedPptx } from '@genoffice/pptx-engine'
+import type { OpenedPptx } from '@hermesoffice/pptx-engine'
 import type { ApplyEditScriptOp, ScriptStylePatch } from '../types'
 import type { Op } from './registry'
 

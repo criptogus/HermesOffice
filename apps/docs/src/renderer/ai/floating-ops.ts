@@ -8,7 +8,7 @@ import {
   type TextboxDisplay,
   type Watermark,
   type WatermarkSpec,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import type { AgentToolDef } from '../../shared/ipc'
 import { blockRangePositions } from './doc-utils'
 import { emuToPx, parseEmu, parsePoints } from './lengths'

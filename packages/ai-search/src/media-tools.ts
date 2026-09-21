@@ -19,11 +19,11 @@ import {
   type AiSettings,
   type LegacyAiSettings,
   type MediaBlob,
-} from '@genoffice/ai-provider'
+} from '@hermesoffice/ai-provider'
 // deep imports: the package root re-exports Electron-bound modules, and this file also runs in the genoffice CLI
-import { readGeneratedImage, storeGeneratedImage } from '@genoffice/electron-utils/generated-images'
-import { fetchRemoteImage } from '@genoffice/electron-utils/remote-image'
-import { fetchWithSsrfGuard } from '@genoffice/electron-utils/safe-remote-url'
+import { readGeneratedImage, storeGeneratedImage } from '@hermesoffice/electron-utils/generated-images'
+import { fetchRemoteImage } from '@hermesoffice/electron-utils/remote-image'
+import { fetchWithSsrfGuard } from '@hermesoffice/electron-utils/safe-remote-url'
 import { gskAnalyzeMedia, gskGenerateImage, hasGskAuth, type GskGenerateImageOptions } from './gsk'
 
 export const GSK_NOT_LOGGED_IN_ERROR =

@@ -7,7 +7,7 @@ import {
   readSections,
   saveDocx,
   type SectionSettings,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { executeTool } from '../src/renderer/ai/tools'

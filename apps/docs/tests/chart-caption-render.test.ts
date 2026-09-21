@@ -1,6 +1,6 @@
 /** chart + caption in one paragraph: plot on top, caption text under it, caption not field-editable */
 import { Editor } from '@tiptap/core'
-import { parseDocx } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import {
   buildDocx,

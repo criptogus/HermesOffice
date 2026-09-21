@@ -8,11 +8,11 @@ import type {
   AiSearchProviderMeta,
   AiSettings,
   CodexModelCatalog,
-} from '@genoffice/ai-provider'
+} from '@hermesoffice/ai-provider'
 import type { UpdateChannel } from './update-api'
-import type { AiPanelPrefs } from '@genoffice/ui/ai-panel-prefs'
+import type { AiPanelPrefs } from '@hermesoffice/ui/ai-panel-prefs'
 
-/** UI language; kept self-contained here (mirrors Lang in @genoffice/i18n) */
+/** UI language; kept self-contained here (mirrors Lang in @hermesoffice/i18n) */
 export type UiLanguage =
   | 'zh'
   | 'en'

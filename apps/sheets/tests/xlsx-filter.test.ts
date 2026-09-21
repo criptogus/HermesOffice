@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyCellEditsToXlsx,
   assertOnlyTouchedEntriesChanged,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import { applyFilterState, FilterEditError } from '@genoffice/xlsx-gateway/gateway/xlsx-filter'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { applyFilterState, FilterEditError } from '@hermesoffice/xlsx-gateway/gateway/xlsx-filter'
 import { buildStructureFixture } from './fixture-builder'
 
 const AREA = { startRow: 0, endRow: 9, startColumn: 0, endColumn: 3 }

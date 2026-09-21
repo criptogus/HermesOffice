@@ -1,4 +1,4 @@
-# @genoffice/html2docx
+# @hermesoffice/html2docx
 
 HTML → DOCX conversion for the HTML app's "Export as Word": the page is rendered
 in a real browser, reduced to a document intent tree (headings, paragraphs,
@@ -12,7 +12,7 @@ mapping.
 ## Usage
 
 ```ts
-import { convertHtmlToDocx } from '@genoffice/html2docx'
+import { convertHtmlToDocx } from '@hermesoffice/html2docx'
 
 const { docx, stats } = await convertHtmlToDocx({ url }, driver, {
   onProgress: ({ stage, pct }) => …,   // load | extract | screenshot | generate

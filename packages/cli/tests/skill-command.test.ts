@@ -47,7 +47,7 @@ describe('genoffice skill', () => {
     const m = fakeMachine(['.claude'])
     const first = await run(['skill', 'install', 'claude-code', '--json'], { env: m.env })
     expect(first.code).toBe(0)
-    const path = join(m.home, '.claude', 'skills', 'genoffice', 'SKILL.md')
+    const path = join(m.home, '.claude', 'skills', 'hermesoffice', 'SKILL.md')
     expect(readFileSync(path, 'utf-8')).toBe(
       readFileSync(join(REPO, 'skills/genoffice/SKILL.md'), 'utf-8'),
     )
@@ -100,12 +100,12 @@ describe('genoffice skill', () => {
 
     const forced = await run(['skill', 'install', 'cursor', '--force', '--json'], { env: m.env })
     expect(forced.code).toBe(0)
-    expect(existsSync(join(m.home, '.cursor', 'skills', 'genoffice', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(m.home, '.cursor', 'skills', 'hermesoffice', 'SKILL.md'))).toBe(true)
   })
 
   it('refuses to downgrade a newer skill or overwrite a hand-edited one without --force', async () => {
     const m = fakeMachine(['.claude'])
-    const dir = join(m.home, '.claude', 'skills', 'genoffice')
+    const dir = join(m.home, '.claude', 'skills', 'hermesoffice')
     mkdirSync(dir, { recursive: true })
     const path = join(dir, 'SKILL.md')
     writeFileSync(path, '---\nname: genoffice\nmetadata:\n  version: 99.0.0\n---\nfuture\n')
@@ -143,12 +143,12 @@ describe('genoffice skill', () => {
       cwd: m.home,
     })
     expect(r.code).toBe(0)
-    expect(existsSync(join(dir, 'genoffice', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(dir, 'hermesoffice', 'SKILL.md'))).toBe(true)
     expect(r.json().detail.agents[0]).toMatchObject({ agent: null, skills_dir: dir })
     const settings = JSON.parse(
       readFileSync(join(m.env.GENOFFICE_USER_DATA, 'app-settings.json'), 'utf-8'),
     )
-    expect(Object.keys(settings.agentSkillInstalls)).toEqual([join(dir, 'genoffice', 'SKILL.md')])
+    expect(Object.keys(settings.agentSkillInstalls)).toEqual([join(dir, 'hermesoffice', 'SKILL.md')])
     const none = await run(['skill', 'install', 'all', '--json'], { env: m.env })
     expect(none.code).toBe(1)
   })
@@ -163,13 +163,13 @@ describe('genoffice skill', () => {
 
   it('install all refuses before writing anything when one target is blocked', async () => {
     const m = fakeMachine(['.claude', '.codex'])
-    const codex = join(m.home, '.codex', 'skills', 'genoffice')
+    const codex = join(m.home, '.codex', 'skills', 'hermesoffice')
     mkdirSync(codex, { recursive: true })
     writeFileSync(join(codex, 'SKILL.md'), '---\nname: other-skill\n---\nx\n')
     const r = await run(['skill', 'install', 'all', '--json'], { env: m.env })
     expect(r.code).toBe(2)
     expect(r.json().detail).toMatchObject({ agent: 'codex', status: 'occupied' })
-    expect(existsSync(join(m.home, '.claude', 'skills', 'genoffice'))).toBe(false)
+    expect(existsSync(join(m.home, '.claude', 'skills', 'hermesoffice'))).toBe(false)
     expect(existsSync(join(m.env.GENOFFICE_USER_DATA, 'app-settings.json'))).toBe(false)
   })
 })

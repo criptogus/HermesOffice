@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import {
   growPivotDefinition,
   recomputePivotData,
-} from '@genoffice/xlsx-gateway/domain/pivot-engine'
+} from '@hermesoffice/xlsx-gateway/domain/pivot-engine'
 import {
   createBufferEntrySource,
   planCellEditsToXlsx,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { SheetPivotAddition } from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import { parsePivotDefinition } from '@genoffice/xlsx-gateway/gateway/xlsx-pivot'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetPivotAddition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { parsePivotDefinition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-pivot'
 import { buildEditFixture } from './fixture-builder'
 
 function pivotAddition(overrides: Partial<SheetPivotAddition> = {}): SheetPivotAddition {

@@ -1,5 +1,5 @@
-import { createIpcTransport, type AgentTransport } from '@genoffice/agent-core'
-import type { AiSettings } from '@genoffice/ai-provider'
+import { createIpcTransport, type AgentTransport } from '@hermesoffice/agent-core'
+import type { AiSettings } from '@hermesoffice/ai-provider'
 import { t } from '../i18n/locale'
 
 /** The shared IPC transport wired to the html preload bridge (window.htmlApi). */

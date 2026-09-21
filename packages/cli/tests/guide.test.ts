@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { OP_DOCS } from '@genoffice/pptx-ops/op-docs'
+import { OP_DOCS } from '@hermesoffice/pptx-ops/op-docs'
 import { fingerprint, signatureFromSchema } from '../src/op-catalog'
 import { SHEET_OP_GROUPS, sheetCatalog } from '../src/formats/xlsx-catalog'
 import { SUPPORTED_DSL_OPS } from '../src/formats/xlsx-dsl'

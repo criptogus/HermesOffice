@@ -1,4 +1,4 @@
-import type { AgentSkill } from '@genoffice/agent-core'
+import type { AgentSkill } from '@hermesoffice/agent-core'
 import { t } from '../i18n/locale'
 
 const SEARCH_SYSTEM_PROMPT = `## Web search

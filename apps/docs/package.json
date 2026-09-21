@@ -1,6 +1,6 @@
 {
-  "name": "@genoffice/docs",
-  "productName": "GenOffice Docs",
+  "name": "@hermesoffice/docs",
+  "productName": "HermesOffice Docs",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -18,14 +18,14 @@
     "dist:dir": "electron-vite build && electron-builder --dir"
   },
   "devDependencies": {
-    "@genoffice/agent-core": "*",
-    "@genoffice/i18n": "*",
-    "@genoffice/ai-provider": "*",
-    "@genoffice/ai-search": "*",
-    "@genoffice/docx-engine": "*",
-    "@genoffice/file-parse": "*",
-    "@genoffice/project-store": "*",
-    "@genoffice/ui": "*",
+    "@hermesoffice/agent-core": "*",
+    "@hermesoffice/i18n": "*",
+    "@hermesoffice/ai-provider": "*",
+    "@hermesoffice/ai-search": "*",
+    "@hermesoffice/docx-engine": "*",
+    "@hermesoffice/file-parse": "*",
+    "@hermesoffice/project-store": "*",
+    "@hermesoffice/ui": "*",
     "@tiptap/core": "3.31.0",
     "@tiptap/extensions": "3.31.0",
     "@tiptap/pm": "3.31.0",
@@ -50,7 +50,7 @@
   "author": "GenOffice",
   "build": {
     "appId": "com.genoffice.docs",
-    "productName": "GenOffice Docs",
+    "productName": "HermesOffice Docs",
     "electronVersion": "43.3.0",
     "artifactName": "AIDocx-${version}-${arch}.${ext}",
     "directories": {
@@ -91,11 +91,11 @@
     }
   },
   "dependencies": {
-    "@genoffice/electron-utils": "*",
-    "@genoffice/font-metrics": "*",
+    "@hermesoffice/electron-utils": "*",
+    "@hermesoffice/font-metrics": "*",
     "electron-updater": "^6.8.9",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",
-    "@genoffice/pptx-render": "*"
+    "@hermesoffice/pptx-render": "*"
   }
 }

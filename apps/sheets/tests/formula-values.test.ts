@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { CellState } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import type { CellState } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import {
   clearVerifiedFormulaValues,
   formulaTargetsFromOps,

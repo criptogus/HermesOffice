@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { imageDpiFromDataUrl } from '../src/image-dpi'
 import { resolveFill } from '../src/fill'
 import { makeViewport } from '../src/coords'
-import type { Fill } from '@genoffice/pptx-engine'
+import type { Fill } from '@hermesoffice/pptx-engine'
 
 function pngWithPhys(ppmX: number, ppmY: number, unit = 1, withPhys = true): string {
   const chunk = (type: string, data: number[]) => {

@@ -4,7 +4,7 @@ import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { isInTable } from '@tiptap/pm/tables'
 import { t } from '../i18n/locale'
-import { type TabStop } from '@genoffice/docx-engine'
+import { type TabStop } from '@hermesoffice/docx-engine'
 
 /**
  * Custom schema mirroring the docx-engine Block model 1:1.

@@ -9,13 +9,13 @@ import {
   type AgentImage,
   type AgentSkill,
   type AgentTransport,
-} from '@genoffice/agent-core'
+} from '@hermesoffice/agent-core'
 import {
   getProviderAdapter,
   modelLacksVision,
   type AiSettings,
-} from '@genoffice/ai-provider/browser'
-import { auditSlideLayout } from '@genoffice/pipelines/slides/layout-audit'
+} from '@hermesoffice/ai-provider/browser'
+import { auditSlideLayout } from '@hermesoffice/pipelines/slides/layout-audit'
 import { createSlidesSkill, formatSlideDump, type DeckAccess } from './slides-skill'
 import qcVisualPrompt from './prompts/qc-visual.md?raw'
 import qcGeometryPrompt from './prompts/qc-geometry.md?raw'

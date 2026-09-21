@@ -1,11 +1,11 @@
 /* First-run onboarding: full-window overlay above the home screen.
  * Layout follows the design spec: 540×420 white
  * card, left-aligned content column, slide-2 credits offer panel, and a
- * dots-left / Skip-Back-Next-right footer. Genspark tokens: black pill primary,
+ * dots-left / Skip-Back-Next-right footer. Hermes tokens: black pill primary,
  * gray ramp, brand blue #0f7fff only on the credits line. */
 
 .onb-overlay {
-  /* Genspark tokens, scoped to the overlay (home.css keeps its own --accent) */
+  /* Hermes tokens, scoped to the overlay (home.css keeps its own --accent) */
   --onb-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;

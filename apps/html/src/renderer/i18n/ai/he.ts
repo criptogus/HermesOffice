@@ -4,7 +4,7 @@ export const he = {
   aiCollapsePanel: 'כווצו את החלונית',
   aiComposerPlaceholder: 'בקשו מה-AI לכתוב או לערוך…',
   aiCopyReplyTitle: 'העתקת התשובה',
-  aiCreditsExhausted: 'נגמרו הקרדיטים — טענו ב-genspark.ai',
+  aiCreditsExhausted: 'נגמרו הקרדיטים — טענו ב-hermesoffice.local',
   aiEmptyTitle: 'עצבו עמוד עם AI',
   aiEmptyBody: 'דף נחיתה, דוח, פוסטר: אמרו למה ולמי, ה-AI יציע קודם בריף ואחר כך יבנה את העמוד',
   aiEmptyDocTitle: 'תנו ל-AI לשפר את העמוד הזה',

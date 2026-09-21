@@ -306,7 +306,7 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 
 ```jsonc
 // Cursor、Claude Desktop、その他任意の MCP クライアント
-{ "mcpServers": { "genoffice": { "command": "genoffice", "args": ["mcp"] } } }
+{ "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
 ここでの `genoffice` は、アプリに同梱されているあの CLI そのものです
@@ -419,7 +419,7 @@ npm run dist:linux   # package Linux AppImage + deb + rpm
 ```
 
 sheets アプリでは、xlsx サイドカー用に Rust ツールチェーン（PATH 上に `cargo`）も別途必要
-です。`npm run build -w @genoffice/sheets` を実行すれば自動的にビルドされます。すべての変更
+です。`npm run build -w @hermesoffice/sheets` を実行すれば自動的にビルドされます。すべての変更
 が満たすべきチェック内容や、プルリクエストの取り込み方については
 [CONTRIBUTING.md](../../CONTRIBUTING.md) を参照してください。
 

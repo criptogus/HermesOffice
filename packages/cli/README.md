@@ -1,4 +1,4 @@
-# @genoffice/cli
+# @hermesoffice/cli
 
 `genoffice` is the GenOffice command line. It exposes the suite's document engines
 to scripts and AI agents without opening a window: the packaged app runs the
@@ -52,11 +52,11 @@ genoffice mcp --http 3000 [--host 127.0.0.1] [--token secret]   # Streamable HTT
 
 Word and Markdown commands run the docs and markdown editors under jsdom (installed once per process, loaded lazily). Those modules are imported from the app renderers by relative path until they move into packages of their own.
 
-Workbook writes go through `@genoffice/xlsx-gateway` (the app's save path). The in-memory workbook validates and applies the cell, format and structure ops; ops the snapshot cannot hold (charts, images, tables, filters, conditional formats, validation, hyperlinks, notes, panes, page setup, protection, defined names, tab order) become the gateway's declarative save payloads, as the app's edit journal does. Pivots, sparklines and edits to editor-session objects stay app-only. After writing formulas genoffice evaluates them with the xlsx sidecar and stores the results as cached values, so `sheet read` and plain readers see numbers, not blanks.
+Workbook writes go through `@hermesoffice/xlsx-gateway` (the app's save path). The in-memory workbook validates and applies the cell, format and structure ops; ops the snapshot cannot hold (charts, images, tables, filters, conditional formats, validation, hyperlinks, notes, panes, page setup, protection, defined names, tab order) become the gateway's declarative save payloads, as the app's edit journal does. Pivots, sparklines and edits to editor-session objects stay app-only. After writing formulas genoffice evaluates them with the xlsx sidecar and stores the results as cached values, so `sheet read` and plain readers see numbers, not blanks.
 
-`create`/`slides apply` take the same ops the in-app AI uses (`@genoffice/pptx-ops`), as a JSON array or `{ "ops": [...] }`; `--ops -` reads stdin. Image ops accept a local file path in their `bytes` field. A rejected op comes back with the guided error and its usage line so the caller can fix and retry; atomic transactions leave the file untouched.
+`create`/`slides apply` take the same ops the in-app AI uses (`@hermesoffice/pptx-ops`), as a JSON array or `{ "ops": [...] }`; `--ops -` reads stdin. Image ops accept a local file path in their `bytes` field. A rejected op comes back with the guided error and its usage line so the caller can fix and retry; atomic transactions leave the file untouched.
 
-`create --type pptx --spec` is the CLI end of the app's deck generation pipeline (`@genoffice/pipelines`): the caller's agent does the design work following `genoffice guide slides design`, writing the style sheet, the outline and one page spec file per slide (`genoffice guide slides spec`), and the same page builder the app uses turns them into a pptx, measuring every text box and growing it to its content. Where the app separates the stages into model calls, the CLI separates them into files: `slides check` validates the outline against the planning rules and builds and audits a single page file, then checks it against its outline entry and the style sheet's palette (both found beside the page files), `create --spec <dir>` runs the same checks on every file and refuses to assemble a deck with pages missing or disagreeing with the outline, and `slides replace` rebuilds one slide from its file. `slides audit` runs the app's deterministic layout audit; `slides render` gives the agent PNGs to look at. No model call happens inside genoffice.
+`create --type pptx --spec` is the CLI end of the app's deck generation pipeline (`@hermesoffice/pipelines`): the caller's agent does the design work following `genoffice guide slides design`, writing the style sheet, the outline and one page spec file per slide (`genoffice guide slides spec`), and the same page builder the app uses turns them into a pptx, measuring every text box and growing it to its content. Where the app separates the stages into model calls, the CLI separates them into files: `slides check` validates the outline against the planning rules and builds and audits a single page file, then checks it against its outline entry and the style sheet's palette (both found beside the page files), `create --spec <dir>` runs the same checks on every file and refuses to assemble a deck with pages missing or disagreeing with the outline, and `slides replace` rebuilds one slide from its file. `slides audit` runs the app's deterministic layout audit; `slides render` gives the agent PNGs to look at. No model call happens inside genoffice.
 
 Every command prints a one-line human summary by default or a single JSON
 object with `--json` (`{ status, command, summary, output_path?, warnings?, detail? }`);
@@ -84,7 +84,7 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 ```
 
 ```json
-{ "mcpServers": { "genoffice": { "command": "genoffice", "args": ["mcp"] } } }
+{ "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
 The tool table is `src/mcp/tools.ts`: one tool per command verb
@@ -133,7 +133,7 @@ Independently of the PATH, every launch of the packaged app writes the launcher 
 - `src/commands/` — `info`, `convert`, `create`, `render`, `slides`, `sheet`, `docs`,
   `guide`, `open`, `capabilities`, `search`, `image`, `media`, `install-cli`.
 - `src/dom.ts` — the jsdom bootstrap the Word/Markdown paths need.
-- `src/formats/` — thin adapters over `@genoffice/pdf2docx`, the xlsx sidecar
+- `src/formats/` — thin adapters over `@hermesoffice/pdf2docx`, the xlsx sidecar
   and the sheets CSV importer.
 - `src/resources.ts` — locates pdfium wasm, the xlsx sidecar and the OCR
   helper in both the packaged `Resources/` layout and the dev checkout.
@@ -172,7 +172,7 @@ the machine.
 ## Build and run in a checkout
 
 ```
-npm run build -w @genoffice/cli       # esbuild → dist/genoffice.cjs
+npm run build -w @hermesoffice/cli       # esbuild → dist/genoffice.cjs
 packages/cli/bin/genoffice info file.docx  # falls back to the system node
 ```
 

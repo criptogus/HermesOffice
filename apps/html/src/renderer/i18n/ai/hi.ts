@@ -4,7 +4,7 @@ export const hi = {
   aiCollapsePanel: 'पैनल संक्षिप्त करें',
   aiComposerPlaceholder: 'AI से लिखने या संपादित करने को कहें…',
   aiCopyReplyTitle: 'जवाब कॉपी करें',
-  aiCreditsExhausted: 'क्रेडिट समाप्त — genspark.ai पर रिचार्ज करें',
+  aiCreditsExhausted: 'क्रेडिट समाप्त — hermesoffice.local पर रिचार्ज करें',
   aiEmptyTitle: 'AI से पेज डिज़ाइन करें',
   aiEmptyBody:
     'लैंडिंग पेज, रिपोर्ट, पोस्टर: बताएँ किसके लिए और किस उद्देश्य से; AI पहले ब्रीफ़ सुझाएगा, फिर पेज बनाएगा',

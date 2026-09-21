@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core'
 import type { Mark as PmMark } from '@tiptap/pm/model'
 import { Plugin, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state'
-import { sdtCheckboxGlyphs } from '@genoffice/docx-engine'
+import { sdtCheckboxGlyphs } from '@hermesoffice/docx-engine'
 import { TRACK_IGNORE } from './revisions'
 
 /**

@@ -1,4 +1,4 @@
-import { defineStrings } from '@genoffice/i18n'
+import { defineStrings } from '@hermesoffice/i18n'
 import { zh } from './ai/zh'
 import { en } from './ai/en'
 import { ja } from './ai/ja'

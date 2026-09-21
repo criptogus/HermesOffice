@@ -14,16 +14,16 @@ import {
   type DeckPageIssue,
   type OutlineIssue,
   type PageSpec,
-} from '@genoffice/pipelines/slides'
+} from '@hermesoffice/pipelines/slides'
 import {
   deleteSlide,
   mergeSlideFromPptx,
   moveSlide,
   promoteSlideBackground,
   type OpenedPptx,
-} from '@genoffice/pptx-engine'
-import { HeuristicMetrics } from '@genoffice/pptx-render'
-import { extract } from '@genoffice/pdf2docx'
+} from '@hermesoffice/pptx-engine'
+import { HeuristicMetrics } from '@hermesoffice/pptx-render'
+import { extract } from '@hermesoffice/pdf2docx'
 import { assertAllowed, type PathContext } from '../fs'
 import { CliError, EXIT, type ErrorHints } from '../result'
 

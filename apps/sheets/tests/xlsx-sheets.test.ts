@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyCellEditsToXlsx,
   assertOnlyTouchedEntriesChanged,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import { relsPathFor, resolveRelTarget } from '@genoffice/xlsx-gateway/gateway/xlsx-drawing-add'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { relsPathFor, resolveRelTarget } from '@hermesoffice/xlsx-gateway/gateway/xlsx-drawing-add'
 import {
   classifyRemovedSheetRels,
   definedNamesUseToken,
@@ -20,7 +20,7 @@ import {
   stripPageSetupRelIds,
   tableDisplayName,
   validateSheetName,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-sheets'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
 import {
   buildCompatibilityFixture,
   buildSatelliteSheetFixture,

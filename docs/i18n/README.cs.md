@@ -341,7 +341,7 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 
 ```jsonc
 // Cursor, Claude Desktop nebo jakýkoli jiný MCP klient
-{ "mcpServers": { "genoffice": { "command": "genoffice", "args": ["mcp"] } } }
+{ "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
 `genoffice` je tady CLI dodávané uvnitř aplikace (na macOS
@@ -458,7 +458,7 @@ npm run dist:linux   # package Linux AppImage + deb + rpm
 ```
 
 Aplikace sheets navíc potřebuje pro svůj xlsx sidecar Rust toolchain
-(`cargo` na PATH); `npm run build -w @genoffice/sheets` jej zkompiluje
+(`cargo` na PATH); `npm run build -w @hermesoffice/sheets` jej zkompiluje
 automaticky. Kontroly, které musí projít každá změna, a postup přijímání
 pull requestů najdete v [CONTRIBUTING.md](../../CONTRIBUTING.md).
 

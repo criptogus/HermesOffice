@@ -5,7 +5,7 @@ import {
   aiPanelZoom,
   normalizeAiPanelPrefs,
   sameAiPanelPrefs,
-} from '@genoffice/ui/ai-panel-prefs'
+} from '@hermesoffice/ui/ai-panel-prefs'
 
 describe('normalizeAiPanelPrefs', () => {
   it('falls back to defaults for missing or malformed input', () => {

@@ -10,7 +10,7 @@ import {
   type HfTextBox,
   type Run,
   type SectionSettings,
-} from '@genoffice/docx-engine'
+} from '@hermesoffice/docx-engine'
 import {
   cssLineHeight,
   cssRunFontFamily,

@@ -182,7 +182,7 @@ export const ru = {
   ribbonFlipH: 'Отразить по горизонтали',
   ribbonFlipV: 'Отразить по вертикали',
   ribbonDistributeHint: '{title} (выделите не менее 3 элементов)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'Показать или скрыть панель ИИ-помощника',
   ribbonGroupTable: 'Таблица',
   ribbonInsertTableTip: 'Вставить таблицу (стиль по умолчанию; число строк и столбцов на выбор)',

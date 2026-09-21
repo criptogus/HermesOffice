@@ -13,7 +13,7 @@ import {
   type Rect,
   type TableRect,
 } from '@tiptap/pm/tables'
-import type { CellBorder, CellBorders, StyleInfo, TableLook } from '@genoffice/docx-engine'
+import type { CellBorder, CellBorders, StyleInfo, TableLook } from '@hermesoffice/docx-engine'
 import type { Op, OpDef, OpResult, RunEnv, Target, TopBlock } from './ops'
 
 /**

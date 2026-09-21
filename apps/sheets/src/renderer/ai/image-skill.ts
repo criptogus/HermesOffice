@@ -1,4 +1,4 @@
-import type { AgentSkill } from '@genoffice/agent-core'
+import type { AgentSkill } from '@hermesoffice/agent-core'
 import { t } from '../i18n/locale'
 
 /**
@@ -20,7 +20,7 @@ const IMAGES_SYSTEM_PROMPT_NO_GEN = `## Images
 ${PLACEMENT_PROMPT}`
 
 /**
- * `imageGen` is a live predicate (Genspark login + cloud-tools toggle, or a
+ * `imageGen` is a live predicate (Hermes login + cloud-tools toggle, or a
  * BYOK media key); the loop re-reads tools and systemPrompt before every
  * request, so generate_image appears and disappears without rebuilding the loop.
  */

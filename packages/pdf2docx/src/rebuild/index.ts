@@ -4,7 +4,7 @@
  * → saveDocx). Unit conventions per docx-engine: lengths in twips (pt × 20),
  * font sizes in half-points, image display sizes in CSS px (pt × 96/72).
  */
-// relative import (not the @genoffice/docx-engine package name): in a git
+// relative import (not the @hermesoffice/docx-engine package name): in a git
 // worktree node_modules is a symlink into the main checkout, and a bare
 // specifier would silently run ANOTHER checkout's docx-engine at runtime
 // (tsx/node); tsconfig paths + the vitest alias only cover types and tests

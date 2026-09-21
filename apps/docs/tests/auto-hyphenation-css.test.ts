@@ -4,7 +4,7 @@
  * w:suppressAutoHyphens even though settings.xml enables autoHyphenation).
  */
 import { describe, expect, it } from 'vitest'
-import type { DocDefaults, ParsedDocFull, StyleInfo } from '@genoffice/docx-engine'
+import type { DocDefaults, ParsedDocFull, StyleInfo } from '@hermesoffice/docx-engine'
 import { docStyleCss } from '../src/renderer/doc-style-css'
 
 ;(globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s }

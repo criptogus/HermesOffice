@@ -20,7 +20,7 @@ import {
   patchSlideXml,
   type OpenedPptx,
   type Slide,
-} from '@genoffice/pptx-engine'
+} from '@hermesoffice/pptx-engine'
 import { opUsage } from '../op-docs'
 import {
   assertXmlSafeStrings,

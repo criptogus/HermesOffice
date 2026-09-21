@@ -4,7 +4,7 @@ export const pt = {
   aiCollapsePanel: 'Recolher painel',
   aiComposerPlaceholder: 'Peça à IA para escrever ou editar…',
   aiCopyReplyTitle: 'Copiar resposta',
-  aiCreditsExhausted: 'Créditos esgotados — recarregue em genspark.ai',
+  aiCreditsExhausted: 'Créditos esgotados — recarregue em hermesoffice.local',
   aiEmptyTitle: 'Crie uma página com IA',
   aiEmptyBody:
     'Landing page, relatório, cartaz: diga para que serve e para quem; a IA propõe primeiro um briefing e depois monta a página',

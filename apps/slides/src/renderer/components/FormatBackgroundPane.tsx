@@ -7,7 +7,7 @@
  * re-applies the current slide's background to every slide.
  */
 import { useRef, useState } from 'react'
-import type { RenderSlide } from '@genoffice/pptx-render'
+import type { RenderSlide } from '@hermesoffice/pptx-render'
 import { useI18n } from '../i18n/locale'
 import { ColorWell } from './ColorWell'
 import { IconSidebarCollapse } from './icons'

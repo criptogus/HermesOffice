@@ -1,4 +1,4 @@
-import type { ChartDisplay } from '@genoffice/docx-engine'
+import type { ChartDisplay } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import {
   CHART_TITLE_ROW_PX,

@@ -1,6 +1,6 @@
 /**
  * Core image cutout (background removal) algorithm — pure functions, no DOM dependency, easy to unit test.
- * Shared by the html app through @genoffice/ui; apps/docs, apps/slides and apps/pdf still carry
+ * Shared by the html app through @hermesoffice/ui; apps/docs, apps/slides and apps/pdf still carry
  * their own identical copies (keep the algorithms in sync until they migrate here).
  *
  * Approach A: edge flood fill with color tolerance (magic-wand style removal, a simplified take on PowerPoint's "Remove Background"):

@@ -4,8 +4,8 @@ import {
   cloudToolsEnabled,
   imageGenerationAvailable,
   mediaAnalysisAvailable,
-} from '@genoffice/ai-provider'
-import { hasGskAuth, readAiSettingsFile } from '@genoffice/ai-search'
+} from '@hermesoffice/ai-provider'
+import { hasGskAuth, readAiSettingsFile } from '@hermesoffice/ai-search'
 import { aiSettingsPath, prepareCloud } from '../cloud'
 import type { CommandDef } from '../registry'
 import { appLaunch } from '../resources'

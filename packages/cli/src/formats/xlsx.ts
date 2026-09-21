@@ -5,8 +5,8 @@ import {
   decodeCsvBuffer,
   isNumericCell,
   parseCsv,
-} from '@genoffice/xlsx-gateway/gateway/csv-import'
-import { columnLabel, parseAddress } from '@genoffice/xlsx-gateway/domain/cell-address'
+} from '@hermesoffice/xlsx-gateway/gateway/csv-import'
+import { columnLabel, parseAddress } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import {
   assembleWithJsZip,
   createBufferEntrySource,
@@ -16,10 +16,10 @@ import {
   type SheetFormulaValues,
   type SheetStructuralOps,
   type XlsxMutation,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { SheetEditPlan } from '@genoffice/xlsx-gateway/gateway/xlsx-sheets'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetEditPlan } from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
 import { EMPTY_PAYLOADS, type GatewayPayloads } from './xlsx-gateway-ops'
-import type { WorkbookStyleEdit } from '@genoffice/xlsx-gateway/shared/edit-schemas'
+import type { WorkbookStyleEdit } from '@hermesoffice/xlsx-gateway/shared/edit-schemas'
 import {
   echoStyleColor,
   fillDisplayColor,
@@ -28,11 +28,11 @@ import {
   resolveStyleColor,
   type StyleColor,
   type StyleColorEcho,
-} from '@genoffice/xlsx-gateway/domain/style-color'
+} from '@hermesoffice/xlsx-gateway/domain/style-color'
 import {
   parseStylesheetFormats,
   type StylesheetFormats,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-style-read'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-style-read'
 import { readFile } from 'node:fs/promises'
 import { atomicWriteFile } from '../../../../apps/sheets/src/main/atomic-write'
 import { XlsxSidecarClient } from '../../../../apps/sheets/src/main/xlsx-sidecar-client'

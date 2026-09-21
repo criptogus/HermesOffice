@@ -1,4 +1,4 @@
-/* Shared chrome/AI-panel tokens come from @genoffice/ui/tokens.css (imported
+/* Shared chrome/AI-panel tokens come from @hermesoffice/ui/tokens.css (imported
  * before this file in main.tsx); only pdf-specific values live here. */
 :root {
   --accent: #c43e1c;
@@ -906,7 +906,7 @@ button {
   color: transparent;
 }
 
-/* Choice widget: shared dropdown (@genoffice/ui gs-dd) sized to the AcroForm
+/* Choice widget: shared dropdown (@hermesoffice/ui gs-dd) sized to the AcroForm
  * rect — the wrapper carries the absolute position, the trigger the field look */
 .pdf-form-select {
   position: absolute;
@@ -1178,7 +1178,7 @@ button {
 
 /* ── Encrypted document password ── */
 
-/* ---- encrypted-PDF password dialog (Genspark DS form dialog, matching the
+/* ---- encrypted-PDF password dialog (Hermes DS form dialog, matching the
    docs PasswordDialog and mockups/protect-dialogs-genspark.html §1/2) ---- */
 
 /* base .pdf-modal-mask (defined below) top-aligns dialogs; this one centers */
@@ -1449,7 +1449,7 @@ button {
   gap: 8px;
 }
 
-/* Genspark DS modal footer buttons: secondary = bg-subtle, primary = black (#232425) */
+/* Hermes DS modal footer buttons: secondary = bg-subtle, primary = black (#232425) */
 .pdf-modal-btn {
   display: inline-flex;
   align-items: center;
@@ -2113,7 +2113,7 @@ button {
   font-size: 12px;
 }
 
-/* Font picker: shared dropdown (@genoffice/ui gs-dd) sized to the 22px bar row */
+/* Font picker: shared dropdown (@hermesoffice/ui gs-dd) sized to the 22px bar row */
 .pdf-textedit-fontsel {
   max-width: 130px;
 }
@@ -2365,7 +2365,7 @@ button {
   min-width: 0;
 }
 
-/* Shared dropdown (@genoffice/ui gs-dd) in modal field rows: matches the
+/* Shared dropdown (@hermesoffice/ui gs-dd) in modal field rows: matches the
  * .pdf-modal-input frame (28px, radius 4, 13px) */
 .pdf-field .pdf-modal-dd {
   flex: 1;
@@ -2447,7 +2447,7 @@ button {
   z-index: 8;
 }
 
-/* Positioning-only wrapper: the shared @genoffice/ui .gcp-palette inside
+/* Positioning-only wrapper: the shared @hermesoffice/ui .gcp-palette inside
    draws the panel chrome (background, border, radius, shadow). */
 .pdf-color-popover {
   position: absolute;
@@ -3361,7 +3361,7 @@ button {
   white-space: nowrap;
 }
 
-/* Genspark brand logo (shared by the collapsed entry and the AI panel title) */
+/* Hermes brand logo (shared by the collapsed entry and the AI panel title) */
 .genspark-badge {
   display: block;
   width: 22px;

@@ -1,6 +1,6 @@
 /* Per-app accent (word-blue family) + markdown-only tokens.
  * Chrome tokens (surface/text/border/…, AI panel --color-*) come from
- * @genoffice/ui/tokens.css; nothing here may shadow those names. */
+ * @hermesoffice/ui/tokens.css; nothing here may shadow those names. */
 :root {
   --accent: #185abd;
   --accent-dark: #124a9e;
@@ -631,7 +631,7 @@ html.genoffice-popover-open .ribbon-tabs {
   font-size: 11.5px;
 }
 
-/* block-style picker (shared @genoffice/ui gs-dd dropdown): same box as the
+/* block-style picker (shared @hermesoffice/ui gs-dd dropdown): same box as the
  * docs/slides font pickers (28px tall, 3px radius, 13px label, 7px inline
  * padding, strong border) */
 .rb-style.gs-dd {
@@ -968,7 +968,7 @@ html.genoffice-popover-open .ribbon-tabs {
   white-space: nowrap;
 }
 
-/* Genspark brand logo (shared by the collapsed entry and the AI panel title) */
+/* Hermes brand logo (shared by the collapsed entry and the AI panel title) */
 .genspark-badge {
   display: block;
   width: 22px;
@@ -2112,7 +2112,7 @@ html.genoffice-popover-open .ribbon-tabs {
   opacity: 1;
 }
 
-/* language picker (shared @genoffice/ui gs-dd dropdown), sized like the copy
+/* language picker (shared @hermesoffice/ui gs-dd dropdown), sized like the copy
    button beside it */
 .md-codeblock-lang .gs-dd-btn {
   height: 22px;

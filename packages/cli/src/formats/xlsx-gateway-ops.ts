@@ -1,38 +1,38 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
-import { fetchRemoteImage } from '@genoffice/electron-utils/remote-image'
+import { fetchRemoteImage } from '@hermesoffice/electron-utils/remote-image'
 import {
   columnIndex,
   columnLabel,
   parseAddress,
   parseRange,
   type RangeBounds,
-} from '@genoffice/xlsx-gateway/domain/cell-address'
-import type { ChartVisualState } from '@genoffice/xlsx-gateway/domain/chart-visual'
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import type { ChartVisualState } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import {
   matchableCellText,
   type WorkbookOperation,
-} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 import type {
   WorkbookSnapshot,
   WorksheetState,
-} from '@genoffice/xlsx-gateway/domain/workbook.types'
-import type { CfWireRule } from '@genoffice/xlsx-gateway/gateway/xlsx-cf'
+} from '@hermesoffice/xlsx-gateway/domain/workbook.types'
+import type { CfWireRule } from '@hermesoffice/xlsx-gateway/gateway/xlsx-cf'
 import type {
   DefinedNameEntry,
   DefinedNamesState,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-defined-names'
-import type { ChartAdd, DrawingAnchor } from '@genoffice/xlsx-gateway/gateway/xlsx-drawing-add'
-import type { DvWireRule } from '@genoffice/xlsx-gateway/gateway/xlsx-dv'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-defined-names'
+import type { ChartAdd, DrawingAnchor } from '@hermesoffice/xlsx-gateway/gateway/xlsx-drawing-add'
+import type { DvWireRule } from '@hermesoffice/xlsx-gateway/gateway/xlsx-dv'
 import {
   areasOverlap,
   buildPivotLayout,
   PivotLayoutError,
   pivotOutputArea,
   type PivotScalar,
-} from '@genoffice/xlsx-gateway/domain/pivot-layout'
-import type { SheetFilterState } from '@genoffice/xlsx-gateway/gateway/xlsx-filter'
+} from '@hermesoffice/xlsx-gateway/domain/pivot-layout'
+import type { SheetFilterState } from '@hermesoffice/xlsx-gateway/gateway/xlsx-filter'
 import type {
   SheetCfState,
   SheetDvState,
@@ -44,10 +44,10 @@ import type {
   SheetStructuralOps,
   SheetTableAddition,
   SheetVisualAddition,
-} from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
-import type { SheetNote } from '@genoffice/xlsx-gateway/gateway/xlsx-notes'
-import type { SheetPageSetupState } from '@genoffice/xlsx-gateway/gateway/xlsx-page-setup'
-import type { WorkbookChartEdit } from '@genoffice/xlsx-gateway/shared/edit-schemas'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetNote } from '@hermesoffice/xlsx-gateway/gateway/xlsx-notes'
+import type { SheetPageSetupState } from '@hermesoffice/xlsx-gateway/gateway/xlsx-page-setup'
+import type { WorkbookChartEdit } from '@hermesoffice/xlsx-gateway/shared/edit-schemas'
 import { assertAllowed, type PathContext } from '../fs'
 import { classifyOpError } from '../op-errors'
 import { CliError, EXIT } from '../result'

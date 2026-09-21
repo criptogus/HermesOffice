@@ -1,4 +1,4 @@
-import { imageSearchTool, webSearchTool } from '@genoffice/ai-search'
+import { imageSearchTool, webSearchTool } from '@hermesoffice/ai-search'
 import { flagBool, flagString } from '../args'
 import { aiSettingsPath, prepareCloud } from '../cloud'
 import type { CommandDef } from '../registry'

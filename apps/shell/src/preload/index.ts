@@ -5,10 +5,10 @@ import {
   AI_PROVIDERS,
   AI_SEARCH_PROVIDERS,
   getProviderAdapter,
-} from '@genoffice/ai-provider/browser'
-import type { AiSettings, CodexModelCatalog } from '@genoffice/ai-provider/browser'
-import { installDropOpenBridge } from '@genoffice/electron-utils/drop-open'
-import { normalizeAiPanelPrefs } from '@genoffice/ui/ai-panel-prefs'
+} from '@hermesoffice/ai-provider/browser'
+import type { AiSettings, CodexModelCatalog } from '@hermesoffice/ai-provider/browser'
+import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
+import { normalizeAiPanelPrefs } from '@hermesoffice/ui/ai-panel-prefs'
 import type {
   AccountLoginEvent,
   AccountStatus,

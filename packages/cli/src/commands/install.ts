@@ -8,9 +8,9 @@ import { CliError, EXIT } from '../result'
 export function launcherPath(): string | null {
   const packaged = packagedResourcesDir()
   if (packaged)
-    return join(packaged, 'cli', process.platform === 'win32' ? 'genoffice.cmd' : 'genoffice')
+    return join(packaged, 'cli', process.platform === 'win32' ? 'genoffice.cmd' : 'hermesoffice')
   const root = repoRoot()
-  return root ? join(root, 'packages', 'cli', 'bin', 'genoffice') : null
+  return root ? join(root, 'packages', 'cli', 'bin', 'hermesoffice') : null
 }
 
 export const installCommand: CommandDef = {

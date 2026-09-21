@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { Stage, Layer } from 'react-konva'
 import type Konva from 'konva'
-import type { RenderFill, RenderNode, RenderSlide } from '@genoffice/pptx-render'
+import type { RenderFill, RenderNode, RenderSlide } from '@hermesoffice/pptx-render'
 import { StaticNode } from './NodeBody'
 import { createImageLoader } from './image-loader'
 

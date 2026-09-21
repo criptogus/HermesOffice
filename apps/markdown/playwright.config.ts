@@ -10,7 +10,7 @@ export default defineConfig({
   timeout: 30_000,
   workers: 1,
   webServer: {
-    command: 'npm run dev:renderer -w @genoffice/markdown',
+    command: 'npm run dev:renderer -w @hermesoffice/markdown',
     url: `http://localhost:${port}`,
     reuseExistingServer: true,
     timeout: 60_000,

@@ -1,7 +1,7 @@
 /**
  * Local PDF → Word conversion for the shell's pdf tabs (pdf2docx P4).
  * Loads the shared PDFium wasm with the same lazy-singleton pattern as
- * apps/pdf/src/main/text-edit.ts and runs the pure @genoffice/pdf2docx
+ * apps/pdf/src/main/text-edit.ts and runs the pure @hermesoffice/pdf2docx
  * pipeline in the main process. Imported by relative path (like the other
  * sibling app modules) so the bundled shell main carries the package inline.
  */

@@ -46,7 +46,7 @@ describe('detectAgents', () => {
 describe('parseSkillFrontmatter / compareVersions', () => {
   it('reads name and metadata.version', () => {
     expect(parseSkillFrontmatter(skillText('2.1.0'))).toEqual({
-      name: 'genoffice',
+      name: 'hermesoffice',
       version: '2.1.0',
     })
     expect(parseSkillFrontmatter('---\nname: other\n---\nx')).toEqual({
@@ -73,7 +73,7 @@ describe('readInstallState', () => {
 
     // our install, current
     const path = installSkill(dir, b, ledger)
-    expect(path).toBe(join(dir, 'genoffice', 'SKILL.md'))
+    expect(path).toBe(join(dir, 'hermesoffice', 'SKILL.md'))
     expect(readFileSync(path, 'utf-8')).toBe(b.text)
     expect(ledger[path]).toMatchObject({ version: '1.2.0', sha256: b.sha256, channel: 'app' })
     expect(readInstallState(dir, b, ledger)).toMatchObject({
@@ -112,7 +112,7 @@ describe('readInstallState', () => {
     // the folder holds something else
     writeFileSync(path, '---\nname: other-skill\n---\n')
     expect(readInstallState(dir, b, ledger).status).toBe('occupied')
-    mkdirSync(join(dir, 'genoffice', 'nested'))
+    mkdirSync(join(dir, 'hermesoffice', 'nested'))
     writeFileSync(path, 'not a skill at all')
     expect(readInstallState(dir, b, ledger).status).toBe('occupied')
   })
@@ -124,16 +124,16 @@ describe('uninstallSkill', () => {
     const b = bundled()
     const ledger: SkillLedger = {}
     // foreign file: never touched
-    mkdirSync(join(dir, 'genoffice'), { recursive: true })
-    writeFileSync(join(dir, 'genoffice', 'SKILL.md'), skillText('1.0.0'))
+    mkdirSync(join(dir, 'hermesoffice'), { recursive: true })
+    writeFileSync(join(dir, 'hermesoffice', 'SKILL.md'), skillText('1.0.0'))
     expect(uninstallSkill(dir, ledger)).toBe(false)
-    expect(existsSync(join(dir, 'genoffice', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(dir, 'hermesoffice', 'SKILL.md'))).toBe(true)
 
     const path = installSkill(dir, b, ledger)
-    writeFileSync(join(dir, 'genoffice', 'notes.txt'), 'mine')
+    writeFileSync(join(dir, 'hermesoffice', 'notes.txt'), 'mine')
     expect(uninstallSkill(dir, ledger)).toBe(true)
     expect(existsSync(path)).toBe(false)
-    expect(existsSync(join(dir, 'genoffice', 'notes.txt'))).toBe(true)
+    expect(existsSync(join(dir, 'hermesoffice', 'notes.txt'))).toBe(true)
     expect(ledger[path]).toBeUndefined()
 
     installSkill(dir, b, ledger)
@@ -141,7 +141,7 @@ describe('uninstallSkill', () => {
     const dir2 = join(home(), 'skills')
     const p2 = installSkill(dir2, b, ledger)
     expect(uninstallSkill(dir2, ledger)).toBe(true)
-    expect(existsSync(join(dir2, 'genoffice'))).toBe(false)
+    expect(existsSync(join(dir2, 'hermesoffice'))).toBe(false)
     expect(existsSync(p2)).toBe(false)
   })
 })

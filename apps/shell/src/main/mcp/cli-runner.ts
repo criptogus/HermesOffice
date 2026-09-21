@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 /**
  * Shell-main half of the MCP → `genoffice` CLI delegation.
  *
- * The app already ships the CLI (`@genoffice/cli`) and runs it on its own Node
+ * The app already ships the CLI (`@hermesoffice/cli`) and runs it on its own Node
  * runtime, so the headless MCP tools do not reimplement document engines: they
  * spawn the same CLI a shell user or another agent would, with `--json`, and
  * map its result contract (`{ status, command, summary, output_path, detail }`,

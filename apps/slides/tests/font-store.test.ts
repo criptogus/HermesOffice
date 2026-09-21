@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createBlankPptx, openPptx } from '@genoffice/pptx-engine'
+import { createBlankPptx, openPptx } from '@hermesoffice/pptx-engine'
 
 const storeDir = mkdtempSync(join(tmpdir(), 'font-store-'))
 const fontCdnBaseUrl = 'https://fonts.example.test/v1'

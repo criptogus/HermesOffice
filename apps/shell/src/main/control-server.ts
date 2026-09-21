@@ -10,7 +10,7 @@ import {
   type ControlEnvelope,
   type ControlReply,
   type ControlRequest,
-} from '@genoffice/cli/control-protocol'
+} from '@hermesoffice/cli/control-protocol'
 
 /**
  * Local request/reply channel for the genoffice CLI (`open --slide`,

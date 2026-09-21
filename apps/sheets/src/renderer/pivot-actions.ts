@@ -3,17 +3,17 @@
  * Extracted from App.tsx; the App component passes a PivotActionContext built
  * fresh per call so refs and state never go stale.
  */
-import { columnLabel, parseRange } from '@genoffice/xlsx-gateway/domain/cell-address'
+import { columnLabel, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import {
   applyPivotSlicer,
   growPivotDefinition,
   recomputePivotData,
-} from '@genoffice/xlsx-gateway/domain/pivot-engine'
+} from '@hermesoffice/xlsx-gateway/domain/pivot-engine'
 import {
   timelineDomainOf,
   timelineSelection,
   type MonthKey,
-} from '@genoffice/xlsx-gateway/domain/pivot-timeline'
+} from '@hermesoffice/xlsx-gateway/domain/pivot-timeline'
 import type { WorkbookFile, WorkbookPivotDefinition } from '../shared/desktop-api'
 import { journalSize, recordPivotCacheRefresh, recordPivotRefreshUpdate } from './edit-journal'
 import { t } from './i18n/locale'

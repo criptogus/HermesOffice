@@ -185,7 +185,7 @@ export const fr = {
   ribbonFlipH: 'Miroir horizontal',
   ribbonFlipV: 'Miroir vertical',
   ribbonDistributeHint: '{title} (sélectionnez au moins 3 éléments)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: "Afficher ou masquer le panneau de l'assistant IA",
   ribbonGroupTable: 'Tableau',
   ribbonInsertTableTip: 'Insérer un tableau (style par défaut ; lignes et colonnes au choix)',

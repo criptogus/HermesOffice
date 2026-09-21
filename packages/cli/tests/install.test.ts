@@ -9,20 +9,20 @@ describe('installCliLink', () => {
     const dir = tempDir()
     const bin = join(dir, 'bin')
     mkdirSync(bin)
-    const launcher = join(dir, 'app', 'genoffice')
+    const launcher = join(dir, 'app', 'hermesoffice')
     mkdirSync(join(dir, 'app'))
     writeFileSync(launcher, '#!/bin/sh\n')
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [bin] }).status).toBe(
       'missing',
     )
     const first = installCliLink({ launcher, platform: 'linux', candidateDirs: [bin] })
-    expect(first).toEqual({ status: 'linked', location: join(bin, 'genoffice') })
-    expect(readlinkSync(join(bin, 'genoffice'))).toBe(launcher)
+    expect(first).toEqual({ status: 'linked', location: join(bin, 'hermesoffice') })
+    expect(readlinkSync(join(bin, 'hermesoffice'))).toBe(launcher)
     const again = installCliLink({ launcher, platform: 'linux', candidateDirs: [bin] })
     expect(again.status).toBe('present')
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [bin] })).toEqual({
       status: 'present',
-      location: join(bin, 'genoffice'),
+      location: join(bin, 'hermesoffice'),
     })
   })
 
@@ -30,26 +30,26 @@ describe('installCliLink', () => {
     const dir = tempDir()
     const bin = join(dir, 'bin')
     mkdirSync(bin)
-    const launcher = join(dir, 'new-app', 'cli', 'genoffice')
+    const launcher = join(dir, 'new-app', 'cli', 'hermesoffice')
     mkdirSync(join(dir, 'new-app', 'cli'), { recursive: true })
     writeFileSync(launcher, '')
-    symlinkSync(join(dir, 'old-app', 'cli', 'genoffice'), join(bin, 'genoffice'))
+    symlinkSync(join(dir, 'old-app', 'cli', 'hermesoffice'), join(bin, 'hermesoffice'))
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [bin] }).status).toBe(
       'missing',
     )
     expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [bin] }).status).toBe(
       'linked',
     )
-    expect(readlinkSync(join(bin, 'genoffice'))).toBe(launcher)
+    expect(readlinkSync(join(bin, 'hermesoffice'))).toBe(launcher)
 
     const npm = join(dir, 'npm-bin')
     mkdirSync(npm)
-    const npmTarget = join(dir, 'lib', 'node_modules', 'genoffice', 'bin', 'genoffice.js')
-    symlinkSync(npmTarget, join(npm, 'genoffice'))
+    const npmTarget = join(dir, 'lib', 'node_modules', 'hermesoffice', 'bin', 'genoffice.js')
+    symlinkSync(npmTarget, join(npm, 'hermesoffice'))
     expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [npm] }).status).toBe(
       'occupied',
     )
-    expect(readlinkSync(join(npm, 'genoffice'))).toBe(npmTarget)
+    expect(readlinkSync(join(npm, 'hermesoffice'))).toBe(npmTarget)
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [npm] }).status).toBe(
       'occupied',
     )
@@ -57,22 +57,22 @@ describe('installCliLink', () => {
     mkdirSync(spare)
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [npm, spare] })).toEqual({
       status: 'missing',
-      location: join(spare, 'genoffice'),
+      location: join(spare, 'hermesoffice'),
       manual: expect.any(String),
     })
     expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [npm, spare] })).toEqual({
       status: 'linked',
-      location: join(spare, 'genoffice'),
+      location: join(spare, 'hermesoffice'),
     })
 
     const taken = join(dir, 'taken')
     mkdirSync(taken)
-    writeFileSync(join(taken, 'genoffice'), 'someone else')
+    writeFileSync(join(taken, 'hermesoffice'), 'someone else')
     const occupied = installCliLink({ launcher, platform: 'linux', candidateDirs: [taken] })
     expect(occupied.status).toBe('occupied')
     expect(occupied.manual).toContain('sudo')
     expect(occupied.manual).toContain('ln -sf')
-    expect(lstatSync(join(taken, 'genoffice')).isSymbolicLink()).toBe(false)
+    expect(lstatSync(join(taken, 'hermesoffice')).isSymbolicLink()).toBe(false)
     expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [taken] }).status).toBe(
       'occupied',
     )
@@ -92,12 +92,12 @@ describe('installCliLink', () => {
 
   it('reports a missing /usr/local/bin as unwritable instead of skipping it', () => {
     const dir = tempDir()
-    const launcher = join(dir, 'genoffice')
+    const launcher = join(dir, 'hermesoffice')
     writeFileSync(launcher, '')
     const absent = join(dir, 'no-such-bin')
     const r = installCliLink({ launcher, platform: 'linux', candidateDirs: [absent] })
     expect(r.status).toBe('unwritable')
-    expect(r.location).toBe(join(absent, 'genoffice'))
+    expect(r.location).toBe(join(absent, 'hermesoffice'))
     expect(r.manual).toContain('mkdir -p /usr/local/bin')
     expect(defaultCandidateDirs('darwin')[0]).toBe('/usr/local/bin')
 
@@ -107,7 +107,7 @@ describe('installCliLink', () => {
     expect(inspectCliLink({ launcher, platform: 'darwin', candidateDirs: [absent, brew] })).toEqual(
       {
         status: 'missing',
-        location: join(brew, 'genoffice'),
+        location: join(brew, 'hermesoffice'),
         manual: expect.stringContaining('ln -sf'),
       },
     )

@@ -3,7 +3,7 @@
  * Reuses SettingsModal's .modal-backdrop/.modal styles.
  */
 import React, { useEffect, useState } from 'react'
-import { Dropdown } from '@genoffice/ui'
+import { Dropdown } from '@hermesoffice/ui'
 import type { LinkTargetOp } from '../../shared/ipc'
 import { EQUATION_GALLERY } from '../insert-presets'
 import { useI18n } from '../i18n/locale'

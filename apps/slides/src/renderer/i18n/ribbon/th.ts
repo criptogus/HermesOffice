@@ -179,7 +179,7 @@ export const th = {
   ribbonFlipH: 'พลิกแนวนอน',
   ribbonFlipV: 'พลิกแนวตั้ง',
   ribbonDistributeHint: '{title} (ต้องเลือกองค์ประกอบอย่างน้อย 3 รายการ)',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'แสดง/ซ่อนแผงผู้ช่วย AI',
   ribbonGroupTable: 'ตาราง',
   ribbonInsertTableTip: 'แทรกตาราง (สไตล์เริ่มต้น เลือกจำนวนแถวและคอลัมน์ได้)',

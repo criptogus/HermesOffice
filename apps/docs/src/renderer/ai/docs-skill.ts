@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/core'
-import type { AgentSkill } from '@genoffice/agent-core'
+import type { AgentSkill } from '@hermesoffice/agent-core'
 import {
   AGENT_SYSTEM_PROMPT,
   buildDocContext,
@@ -21,10 +21,10 @@ import {
 import type { AiNotesAccess } from './note-ops'
 
 const IMAGE_GEN_OFF_NOTE =
-  '\n\nNote: generate_image is currently unavailable (no image provider: signed out of Genspark or cloud tools off, and no media API key in Settings). Do not call or promise it; use image_search for imagery.'
+  '\n\nNote: generate_image is currently unavailable (no image provider: signed out of Hermes or cloud tools off, and no media API key in Settings). Do not call or promise it; use image_search for imagery.'
 
 const MEDIA_ANALYSIS_OFF_NOTE =
-  '\n\nNote: analyze_media is currently unavailable (no media provider: signed out of Genspark or cloud tools off, and no media API key in Settings). You cannot see what a picture inside the document shows — tell the user that instead of guessing at its content.'
+  '\n\nNote: analyze_media is currently unavailable (no media provider: signed out of Hermes or cloud tools off, and no media API key in Settings). You cannot see what a picture inside the document shows — tell the user that instead of guessing at its content.'
 
 /**
  * The docx capability as an AgentSkill: document skeleton context, the five
@@ -52,7 +52,7 @@ export function createDocsSkill(
   // not on wherever the user's live selection has wandered mid-run. The doc
   // snapshot bounds the freeze's validity (see FrozenSelection).
   let frozen: FrozenSelection | null = null
-  /** tools that need a media provider: Genspark login + cloud tools, or a BYOK media key in Settings */
+  /** tools that need a media provider: Hermes login + cloud tools, or a BYOK media key in Settings */
   const mediaToolsOff = (): Set<string> => {
     const hidden = new Set<string>()
     if (imageGenAvailable?.() === false) hidden.add('generate_image')

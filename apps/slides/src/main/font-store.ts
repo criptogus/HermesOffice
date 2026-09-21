@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, net } from 'electron'
-import type { OpenedPptx } from '@genoffice/pptx-engine'
+import type { OpenedPptx } from '@hermesoffice/pptx-engine'
 import { familyAvailable, fontFileFamilies, setUserFontDir } from './fonts'
 import { FONT_CATALOG, type CatalogFamily } from './font-catalog'
 

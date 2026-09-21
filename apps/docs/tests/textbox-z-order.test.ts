@@ -4,7 +4,7 @@
  * front), so a full-page background shape stays under later-ranked text boxes.
  */
 import { describe, expect, it } from 'vitest'
-import type { TextboxDisplay } from '@genoffice/docx-engine'
+import type { TextboxDisplay } from '@hermesoffice/docx-engine'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { renderTextboxSpec, textboxBoxStyle } from '../src/renderer/editor/protected-render'
 

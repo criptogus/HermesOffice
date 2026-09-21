@@ -5,7 +5,7 @@
 
 import type { createUniver } from './create-univer'
 
-import { qualifierMatches } from '@genoffice/xlsx-gateway/gateway/xlsx-structure'
+import { qualifierMatches } from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
 import { parseFormulaReferences } from './formula-closure'
 
 type UniverRuntime = ReturnType<typeof createUniver>

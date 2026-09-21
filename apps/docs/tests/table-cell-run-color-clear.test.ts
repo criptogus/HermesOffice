@@ -1,7 +1,7 @@
 /** A cell paints only what its table style hands to bare runs. Colour and bold
  * aggregated from the runs stay on the runs, so clearing them really clears. */
 import { Editor } from '@tiptap/core'
-import { parseDocx } from '@genoffice/docx-engine'
+import { parseDocx } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { blocksToPmDoc } from '../src/renderer/editor/convert'

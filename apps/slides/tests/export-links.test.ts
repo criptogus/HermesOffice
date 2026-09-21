@@ -1,4 +1,4 @@
-import type { RenderNode, RenderSlide } from '@genoffice/pptx-render'
+import type { RenderNode, RenderSlide } from '@hermesoffice/pptx-render'
 import { describe, expect, it } from 'vitest'
 import type { LinkTargetOp } from '../src/shared/ipc'
 import {

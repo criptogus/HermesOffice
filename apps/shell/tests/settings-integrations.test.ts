@@ -183,7 +183,7 @@ describe('Settings → Integrations', () => {
         status: 'present',
         launcherDir: '/Applications/GenOffice.app/Contents/Resources/cli',
       }),
-    ).toEqual({ command: 'genoffice', args: ['mcp'] })
+    ).toEqual({ command: 'hermesoffice', args: ['mcp'] })
     const winDir = 'C:\\Users\\Jane Doe\\AppData\\Local\\Programs\\GenOffice\\resources\\cli'
     const win = {
       command: `${winDir}\\..\\..\\GenOffice.exe`,

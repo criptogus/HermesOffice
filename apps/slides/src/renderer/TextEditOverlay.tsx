@@ -6,8 +6,8 @@
  */
 import React, { useEffect, useRef } from 'react'
 import type { EditCaret } from './action-context'
-import { formatAutoNum, DEFAULT_INSETS_EMU, emuToPx, isWideChar } from '@genoffice/pptx-render'
-import type { GlyphRun, ShapeRenderNode, TextLine } from '@genoffice/pptx-render'
+import { formatAutoNum, DEFAULT_INSETS_EMU, emuToPx, isWideChar } from '@hermesoffice/pptx-render'
+import type { GlyphRun, ShapeRenderNode, TextLine } from '@hermesoffice/pptx-render'
 import type { EditParagraph, EditRun, LinkTargetOp } from '../shared/ipc'
 import { decodeLinkTarget, encodeLinkTarget } from '../shared/run-link'
 import { displayFontFamily, konvaBaselineDrop } from './konva-adapter'

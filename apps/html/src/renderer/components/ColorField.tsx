@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { ColorPicker, useDismissablePopover } from '@genoffice/ui'
+import { ColorPicker, useDismissablePopover } from '@hermesoffice/ui'
 import { useI18n } from '../i18n/locale'
 
 const POP_WIDTH = 260

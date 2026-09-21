@@ -1,6 +1,6 @@
 /** anchored shapes inside read-only / nested table cells are drawn, not dropped */
 import { DOMSerializer } from '@tiptap/pm/model'
-import type { TableModel, TextboxDisplay } from '@genoffice/docx-engine'
+import type { TableModel, TextboxDisplay } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { renderTableSpec } from '../src/renderer/editor/protected-render'
 

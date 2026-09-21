@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { extname, isAbsolute } from 'node:path'
 import { webContents } from 'electron'
-import { elementDurableId, slideDurableId, type SlideElement } from '@genoffice/pptx-engine'
+import { elementDurableId, slideDurableId, type SlideElement } from '@hermesoffice/pptx-engine'
 import { applySessionTxn, saveSessionDeckTo } from '../../../../slides/src/main/slides-main'
 import { attachedIds, sessions, type Session } from '../../../../slides/src/main/session-state'
 import type { SlidesControl, SlidesTxnRequest } from './tools/slides-tools'

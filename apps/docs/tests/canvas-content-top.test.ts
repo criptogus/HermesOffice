@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SectionInfo } from '@genoffice/docx-engine'
+import type { SectionInfo } from '@hermesoffice/docx-engine'
 import { canvasContentTopPx, measureBlocks } from '../src/renderer/pagination'
 
 const twipsToPx = (twips: number) => (twips / 1440) * 96

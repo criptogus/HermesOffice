@@ -1,4 +1,4 @@
-/** Request/reply the shell relays from `genoffice open --page` and `genoffice selection`. */
+/** Request/reply the shell relays from `hermesoffice open --page` and `hermesoffice selection`. */
 export type ControlRequest =
   { cmd: 'goto'; target: { kind: string; page?: number } } | { cmd: 'selection' }
 

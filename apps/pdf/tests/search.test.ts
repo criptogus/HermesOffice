@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { foldCase } from '@genoffice/ui'
+import { foldCase } from '@hermesoffice/ui'
 import { buildSearchIndex, searchInIndex, type SearchIndex } from '../src/renderer/search'
 
 interface FakeItem {

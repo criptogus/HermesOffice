@@ -7,7 +7,7 @@
 import { Editor } from '@tiptap/core'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { describe, expect, it } from 'vitest'
-import type { TextboxDisplay } from '@genoffice/docx-engine'
+import type { TextboxDisplay } from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { inlineToRuns, runsToInline } from '../src/renderer/editor/convert'
 import { renderTextboxSpec } from '../src/renderer/editor/protected-render'

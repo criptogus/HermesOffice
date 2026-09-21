@@ -50,7 +50,7 @@ export const guideCommand: CommandDef = {
       )
     }
     if (domain === 'slides' && (topic === 'design' || topic === 'spec')) {
-      const { SLIDES_GUIDES } = await import('@genoffice/pipelines/slides')
+      const { SLIDES_GUIDES } = await import('@hermesoffice/pipelines/slides')
       return { summary: SLIDES_GUIDES[topic].content }
     }
     const { catalog, text } = await load(domain, topic, flagBool(args, 'index'))
@@ -104,7 +104,7 @@ async function load(
     const { catalog, htmlRules } = await docsCatalog()
     return { catalog, text: (group) => docsGuideText(catalog, htmlRules, group) }
   }
-  const docs = await import('@genoffice/pptx-ops/op-docs')
+  const docs = await import('@hermesoffice/pptx-ops/op-docs')
   const catalog = slidesCatalog(docs)
   return {
     catalog,
@@ -126,7 +126,7 @@ async function load(
   }
 }
 
-type SlidesOpDocs = typeof import('@genoffice/pptx-ops/op-docs')
+type SlidesOpDocs = typeof import('@hermesoffice/pptx-ops/op-docs')
 
 function slidesCatalog(docs: SlidesOpDocs): OpCatalog {
   const ops: OpEntry[] = Object.entries(docs.OP_DOCS)

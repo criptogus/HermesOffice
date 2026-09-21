@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { DOMSerializer } from '@tiptap/pm/model'
-import type { TableModel } from '@genoffice/docx-engine'
+import type { TableModel } from '@hermesoffice/docx-engine'
 import { renderTableSpec } from '../src/renderer/editor/protected-render'
 
 const render = (spec: unknown): HTMLElement =>

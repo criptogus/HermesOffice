@@ -20,7 +20,7 @@ import {
   type HeadlessExportModule,
   type HeadlessExportOutcome,
   type HeadlessExportRequest,
-} from '@genoffice/electron-utils'
+} from '@hermesoffice/electron-utils'
 
 type HeadlessFailure = Extract<HeadlessExportOutcome, { ok: false }>
 

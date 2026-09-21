@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as PmNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
-import type { NoteInfo } from '@genoffice/docx-engine'
+import type { NoteInfo } from '@hermesoffice/docx-engine'
 import { posAfterText } from './after-text'
 
 export type NoteKind = 'footnote' | 'endnote'

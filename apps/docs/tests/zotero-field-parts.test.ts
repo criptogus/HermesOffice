@@ -1,7 +1,7 @@
 import { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import JSZip from 'jszip'
-import { buildBlankDocx, parseDocx, saveDocx, type Block } from '@genoffice/docx-engine'
+import { buildBlankDocx, parseDocx, saveDocx, type Block } from '@hermesoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { editorExtensions } from '../src/renderer/editor/extensions'

@@ -3,12 +3,12 @@ import { createReadStream } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { inflateRawSync } from 'node:zlib'
 import { protocol } from 'electron'
-import { DOCX_MEDIA_SCHEME_PRIVILEGE } from '@genoffice/electron-utils'
+import { DOCX_MEDIA_SCHEME_PRIVILEGE } from '@hermesoffice/electron-utils'
 import {
   LAZY_MEDIA_SCHEME,
   isLazyMediaPart,
   parseLazyMediaUrl,
-} from '@genoffice/docx-engine/lazy-media'
+} from '@hermesoffice/docx-engine/lazy-media'
 import {
   bufferSource,
   lazyMediaHashesIn,
@@ -18,7 +18,7 @@ import {
   slimDocx,
   type ZipEntry,
   type ZipFile,
-} from '@genoffice/docx-engine/zip-splice'
+} from '@hermesoffice/docx-engine/zip-splice'
 
 /** documents carrying at least this much browser-decodable media open lazily */
 const LAZY_MEDIA_MIN_BYTES = 16 * 1024 * 1024

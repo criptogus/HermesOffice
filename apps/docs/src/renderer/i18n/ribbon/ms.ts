@@ -146,7 +146,7 @@ export const ms = {
     'Anak tetingkap gaya: lihat semua gaya, cipta atau kemas kini gaya daripada pilihan',
   ribbonMoreStyles: 'Lebih banyak gaya',
   ribbonGroupStyles: 'Gaya',
-  ribbonAiAssistant: 'Genspark',
+  ribbonAiAssistant: 'Hermes',
   ribbonAiAssistantTip: 'Buka pembantu AI',
   ribbonRemoveTableStyleTip: 'Alih keluar gaya jadual',
   ribbonNoStyle: 'Tiada Gaya',

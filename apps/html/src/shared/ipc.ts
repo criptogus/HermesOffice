@@ -1,12 +1,12 @@
-import type { AiPanelPrefs } from '@genoffice/ui'
-import type { HeadlessExportTarget } from '@genoffice/electron-utils/headless-export'
-import type { Lang } from '@genoffice/i18n'
+import type { AiPanelPrefs } from '@hermesoffice/ui'
+import type { HeadlessExportTarget } from '@hermesoffice/electron-utils/headless-export'
+import type { Lang } from '@hermesoffice/i18n'
 import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@genoffice/ai-provider'
+} from '@hermesoffice/ai-provider'
 
 export const HTML_CHANNELS = {
   consumePending: 'html:consume-pending',

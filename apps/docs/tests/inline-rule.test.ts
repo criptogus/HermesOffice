@@ -7,14 +7,14 @@ import { docStyleCss } from '../src/renderer/doc-style-css'
 import { runSpanSpecs } from '../src/renderer/editor/protected-render'
 import { makeGapHfEl } from '../src/renderer/editor/hf-dom'
 import { inlineRuleDecls, inlineRuleStyle } from '../src/renderer/editor/inline-rule'
-import { parseDocx, saveDocx, type HeaderFooter } from '@genoffice/docx-engine'
+import { parseDocx, saveDocx, type HeaderFooter } from '@hermesoffice/docx-engine'
 import JSZip from 'jszip'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import { blocksToPmDoc, pmDocToSavePlan } from '../src/renderer/editor/convert'
 import { executeOps } from '../src/renderer/ai/ops'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ParsedDocFull, StyleInfo } from '@genoffice/docx-engine'
+import type { ParsedDocFull, StyleInfo } from '@hermesoffice/docx-engine'
 
 ;(globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s }
 

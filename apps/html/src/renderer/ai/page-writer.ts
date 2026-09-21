@@ -1,4 +1,4 @@
-import { streamText, type AgentTransport } from '@genoffice/agent-core'
+import { streamText, type AgentTransport } from '@hermesoffice/agent-core'
 import type { Brief } from '../document/brief'
 
 /**
@@ -6,7 +6,7 @@ import type { Brief } from '../document/brief'
  * the HTML. Text deltas stream immediately, so the preview fills in as the model
  * writes and no gateway sees a silent connection. (Tool arguments are buffered
  * server-side until the JSON is complete; a page-sized argument exceeded the
- * Genspark gateway's idle cutoff and arrived as an empty stream.)
+ * Hermes gateway's idle cutoff and arrived as an empty stream.)
  */
 export const PAGE_MAX_CHARS = 200_000
 const CONTEXT_CAP = 8000
@@ -33,7 +33,7 @@ const OUTPUT_CONTRACT = [
 ].join('\n')
 
 const DESIGN_SYSTEM = [
-  'You are the page writer of GenOffice HTML, a design-first editor for single-file HTML pages. You receive a confirmed brief (core hook, style direction, section list) and write the complete page.',
+  'You are the page writer of HermesOffice HTML, a design-first editor for single-file HTML pages. You receive a confirmed brief (core hook, style direction, section list) and write the complete page.',
   '',
   '## Design rules',
   '- Design the page, do not typeset a document: a clear hero, deliberate typographic hierarchy (display heading, generous measure, restrained sizes), one accent system, consistent radius/spacing/shadow tokens, and whitespace that groups content.',
@@ -51,7 +51,7 @@ const DESIGN_SYSTEM = [
 ].join('\n')
 
 const CONTENT_SYSTEM = [
-  'You are the document writer of GenOffice HTML. The user wants written content first, not a designed page.',
+  'You are the document writer of HermesOffice HTML. The user wants written content first, not a designed page.',
   '',
   '## Writing rules',
   '- Write the requested text in full as a clean, readable single-column document: semantic <h1>/<h2>, paragraphs, lists and tables as the content needs.',

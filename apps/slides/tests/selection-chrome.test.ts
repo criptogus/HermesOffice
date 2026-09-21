@@ -21,7 +21,7 @@ vi.mock('react-konva', () => {
 })
 
 import { selectionChromeColor } from '../src/renderer/SlideCanvas'
-import type { RenderSlide, RenderNode, RenderFill } from '@genoffice/pptx-render'
+import type { RenderSlide, RenderNode, RenderFill } from '@hermesoffice/pptx-render'
 
 const DARK = '#ffffff' // chrome color on a dark background
 const LIGHT = '#232425' // chrome color on a light background

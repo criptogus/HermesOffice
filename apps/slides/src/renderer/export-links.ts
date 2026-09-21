@@ -9,7 +9,7 @@
  * boxes, group children clipped to the group box, run rects from the laid-out
  * glyph geometry. What the show would follow on click is what the PDF links.
  */
-import type { RenderNode, RenderSlide, ShapeRenderNode } from '@genoffice/pptx-render'
+import type { RenderNode, RenderSlide, ShapeRenderNode } from '@hermesoffice/pptx-render'
 import type { ExportPdfLink, LinkTargetOp } from '../shared/ipc'
 
 interface TargetRect {

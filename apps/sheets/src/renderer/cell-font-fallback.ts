@@ -11,8 +11,8 @@
  * names always fall to sans, matching Excel's substitution.
  */
 
-import carlitoBoldUrl from '@genoffice/ui/fonts/Carlito-Bold.ttf?url'
-import carlitoRegularUrl from '@genoffice/ui/fonts/Carlito-Regular.ttf?url'
+import carlitoBoldUrl from '@hermesoffice/ui/fonts/Carlito-Bold.ttf?url'
+import carlitoRegularUrl from '@hermesoffice/ui/fonts/Carlito-Regular.ttf?url'
 
 const GENERIC_FAMILY =
   /(?:^|[\s,])(?:serif|sans-serif|monospace|cursive|fantasy|system-ui|math|ui-serif|ui-sans-serif|ui-monospace|ui-rounded)$/i
