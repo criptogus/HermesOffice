@@ -114,6 +114,8 @@ export interface DeckAccess {
   imageGenAvailable?(): boolean
   /** same for analyze_media */
   mediaAnalysisAvailable?(): boolean
+  /** Write or clear speaker notes for a slide (set_speaker_notes tool). */
+  setSpeakerNotes?(slideIndex: number, text: string): boolean | Promise<boolean>
   /**
    * Cloud single-page generation (gsk slide_generate), used by generate_deck's self-driven
    * pipeline: given the unified style + this page's brief/layout/images, the cloud service
@@ -425,6 +427,19 @@ const TOOLS: AgentToolDef[] = [
         keepCrop: { type: 'boolean', description: 'Keep the existing crop window (default false)' },
       },
       required: ['slideIndex', 'sourceId', 'url'],
+    },
+  },
+  {
+    name: 'set_speaker_notes',
+    description:
+      'Write or clear speaker notes for one slide (plain text). Use slideIndex 0-based; empty text clears notes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slideIndex: { type: 'integer' },
+        text: { type: 'string', description: 'Notes body (empty string clears)' },
+      },
+      required: ['slideIndex', 'text'],
     },
   },
   {
@@ -2523,6 +2538,25 @@ async function executeTool(
         output: `Saved the style "${name}" as a template; next time pass style_template:"${name}" to reuse it directly.`,
         mutated: false,
         summary: t('aiSumSaveTemplate', { name }),
+      }
+    }
+
+    case 'set_speaker_notes': {
+      if (!access.setSpeakerNotes) {
+        return fail(call.name, 'Speaker notes are not available in this session')
+      }
+      const slideIndex = Number(call.input.slideIndex)
+      const text = typeof call.input.text === 'string' ? call.input.text : ''
+      const slides = access.getSlides()
+      if (!Number.isInteger(slideIndex) || slideIndex < 0 || slideIndex >= slides.length) {
+        return fail(call.name, `Invalid slideIndex ${String(call.input.slideIndex)}`)
+      }
+      const ok = await access.setSpeakerNotes(slideIndex, text)
+      if (!ok) return fail(call.name, 'Writing speaker notes failed')
+      return {
+        output: text.length === 0 ? 'Cleared speaker notes' : 'Wrote speaker notes',
+        mutated: true,
+        summary: text.length === 0 ? 'Cleared speaker notes' : 'Wrote speaker notes',
       }
     }
 

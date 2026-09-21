@@ -67,6 +67,12 @@ export interface AgentLoopOptions<TSnapshot = unknown> {
   formatUserMessage?(instruction: string, context: string): string
   /** appended to the system prompt each turn (e.g. reply-language directive following the UI language) */
   systemSuffix?(): string
+  /**
+   * Stable per-document session id forwarded with each stream request
+   * (X-Hermes-Session-Id) so the local Hermes gateway keeps one session per doc.
+   * A getter is evaluated at request time so re-opened panels reuse the id.
+   */
+  sessionId?: string | (() => string | undefined)
 }
 
 const COMPACT_MAX_BYTES = 256 * 1024
@@ -202,6 +208,10 @@ export class AgentLoop<TSnapshot = unknown> {
   private readonly options: AgentLoopOptions<TSnapshot>
   private history: AgentMessage[] = []
   private handle: AgentStreamHandle | null = null
+  private get sessionId(): string | undefined {
+    const s = this.options.sessionId
+    return typeof s === 'function' ? s() : s
+  }
   private running = false
   private cancelled = false
   private turns = 0
@@ -531,6 +541,7 @@ export class AgentLoop<TSnapshot = unknown> {
     this.turnStopReason = null
     // Some transports emit an extra onDone after cancel — this turn may finalize only once
     let settled = false
+    const turnSessionId = this.sessionId
     this.handle = this.options.transport.stream(
       {
         system:
@@ -539,6 +550,7 @@ export class AgentLoop<TSnapshot = unknown> {
           (this.options.systemSuffix?.() ?? ''),
         messages: [...this.history],
         tools: this.finalizing ? [] : this.options.skill.tools,
+        ...(turnSessionId !== undefined ? { sessionId: turnSessionId } : {}),
       },
       {
         onDelta: (text) => {
