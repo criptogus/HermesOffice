@@ -110,7 +110,7 @@ describe('Codex app-server bridge', () => {
     expect(params.config).toEqual({
       default_permissions: 'hermesoffice',
       permissions: {
-        genoffice: {
+        hermesoffice: {
           filesystem: { ':minimal': 'read', '/tmp/genoffice-codex-x': 'read' },
         },
       },

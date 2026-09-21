@@ -16,7 +16,7 @@ import type { AiProviderId } from '../src/types'
 describe('defaultAiSettings', () => {
   it('gives every provider its default model and an empty key by default', () => {
     const settings = defaultAiSettings()
-    expect(settings.provider).toBe('genspark')
+    expect(settings.provider).toBe('hermes')
     for (const meta of AI_PROVIDERS) {
       expect(settings.providers[meta.id].apiKey).toBe('')
       expect(settings.providers[meta.id].model).toBe(meta.defaultModel)
@@ -273,12 +273,12 @@ describe('clampMaxOutputTokens', () => {
 })
 
 describe('activeProvider', () => {
-  it('honors a configured BYOK provider and falls back to genspark otherwise', () => {
+  it('honors a configured BYOK provider and falls back to hermes otherwise', () => {
     const settings = defaultAiSettings()
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('hermes')
 
     settings.provider = 'kimi'
-    expect(activeProvider(settings)).toBe('genspark') // no key yet
+    expect(activeProvider(settings)).toBe('hermes') // no key yet
     settings.providers.kimi.apiKey = 'sk-user'
     expect(activeProvider(settings)).toBe('kimi')
   })
@@ -287,9 +287,9 @@ describe('activeProvider', () => {
     const settings = defaultAiSettings()
     settings.provider = 'custom'
     settings.providers.custom.apiKey = 'k'
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('hermes')
     settings.providers.custom.baseUrl = 'http://localhost:1234/v1'
-    expect(activeProvider(settings)).toBe('genspark') // custom's default model is empty
+    expect(activeProvider(settings)).toBe('hermes') // custom's default model is empty
     settings.providers.custom.model = 'my-model'
     expect(activeProvider(settings)).toBe('custom')
   })
@@ -322,10 +322,10 @@ describe('activeProvider', () => {
     const settings = defaultAiSettings()
     settings.provider = 'kimi'
     settings.providers.kimi.apiKey = '   '
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('hermes')
     settings.providers.kimi.apiKey = 'sk-user'
     settings.providers.kimi.model = '  '
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('hermes')
     settings.providers.kimi.model = 'kimi-k2'
     expect(activeProvider(settings)).toBe('kimi')
 
@@ -333,13 +333,13 @@ describe('activeProvider', () => {
     custom.provider = 'custom'
     custom.providers.custom.baseUrl = '   '
     custom.providers.custom.model = 'my-model'
-    expect(activeProvider(custom)).toBe('genspark')
+    expect(activeProvider(custom)).toBe('hermes')
   })
 
-  it('falls back to genspark for unknown ids from a hand-edited settings file', () => {
+  it('falls back to hermes for unknown ids from a hand-edited settings file', () => {
     const settings = defaultAiSettings()
     settings.provider = 'nonsense' as AiProviderId
-    expect(activeProvider(settings)).toBe('genspark')
+    expect(activeProvider(settings)).toBe('hermes')
   })
 
   it('genspark never requires a key (injected from the gsk login at request time)', () => {
