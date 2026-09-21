@@ -1,15 +1,31 @@
+import { aiPanelWidthAtPointer, AiPanelSideButton } from '@hermesoffice/ui'
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from 'react'
-import { AgentLoop, composeSkills } from '@hermesoffice/agent-core'
-import type { AiSettings } from '@hermesoffice/ai-provider'
-import { AiComposer, AiTypingIndicator, Markdown } from '@hermesoffice/ui'
+import { AgentLoop, composeSkills, streamText } from '@hermesoffice/agent-core'
+import { imageGenerationAvailable, type AiSettings } from '@hermesoffice/ai-provider/browser'
+import {
+  AiComposer,
+  AiScopeQuote,
+  AiTypingIndicator,
+  Markdown,
+  type AiScopeQuoteData,
+} from '@hermesoffice/ui'
 import type { Editor } from '@tiptap/core'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
 import { clearAiHighlights } from '../editor/aiHighlight'
-import { createMarkdownSkill } from './markdown-skill'
+import { setInactiveSelectionShown } from '../editor/inactiveSelection'
+import { createMarkdownSkill, MARKDOWN_RULES } from './markdown-skill'
+import {
+  buildDocWriterRequest,
+  countMarkdownBlocks,
+  DOC_MAX_CHARS,
+  extractMarkdown,
+  type DocWriteResult,
+  type DocWriteSpec,
+} from './doc-writer'
 import { createSearchSkill } from './search-skill'
 import { createElectronTransport } from './transport'
 import { EditQueueCard } from './EditQueueCard'
@@ -36,6 +52,8 @@ const PANEL_WIDTH_DEFAULT = 360
 const PANEL_WIDTH_MIN = 280
 const MAX_SNAPSHOTS = 20
 const TOOL_OUTPUT_MAX_CHARS = 2000
+/** progress chip refresh while a write streams */
+const CHIP_UPDATE_MS = 400
 
 function clampPanelWidth(w: number): number {
   // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
@@ -70,7 +88,12 @@ interface ChatEntry {
   /** the run failed and this user message was rolled back out of the model context */
   undelivered?: boolean
   tools?: ToolActivity[]
+  /** the selection this user message targeted, frozen at send */
+  scope?: AiScopeQuoteData
 }
+
+/** longest selection excerpt echoed on a user bubble */
+const SCOPE_TEXT_MAX = 200
 
 /** structured, not the serialized file text: a body starting with `---` must
  *  never be re-parsed as a frontmatter block on rollback */
@@ -133,6 +156,11 @@ export function AiPanel({
 }): ReactElement {
   const { lang, t } = useI18n()
   const [chat, setChat] = useState<ChatEntry[]>([])
+  /** a streamed write stopped early: the draft stays in the document until the user keeps or discards it */
+  const [activePartial, setActivePartial] = useState<{ blocks: number } | null>(null)
+  const partialResolverRef = useRef<((keep: boolean) => void) | null>(null)
+  /** bumped by New chat / unmount: a writer resuming after its abort must not open the keep card */
+  const writerEpochRef = useRef(0)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
@@ -159,6 +187,25 @@ export function AiPanel({
   }, [panelWidth])
 
   const settingsRef = useRef<AiSettings | null>(null)
+  /** gsk login state for the generate_image gate (refreshed on mount and window focus) */
+  const gskLoggedInRef = useRef(false)
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      void window.markdownApi
+        .aiGskStatus?.()
+        .then((s) => {
+          if (alive) gskLoggedInRef.current = !!s?.loggedIn
+        })
+        .catch(() => {})
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const langRef = useRef(lang)
   langRef.current = lang
   const depsRef = useRef(deps)
@@ -168,13 +215,20 @@ export function AiPanel({
   const runInstructionRef = useRef('')
   /** what the user saw for that instruction (queue submissions show a summary) */
   const runDisplayRef = useRef('')
+  /** the scope quote of the last send, so a retry reuses it instead of re-reading the live selection */
+  const lastScopeRef = useRef<AiScopeQuoteData | undefined>(undefined)
   const runMutatedRef = useRef(false)
   /** tool activity of the whole run, for transcript persistence */
   const runToolsRef = useRef<ToolActivity[]>([])
   const chatIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
   /** messages sent before resolveChat returned, flushed once the chat id is known */
   const pendingPersistRef = useRef<
-    Array<{ role: 'user' | 'assistant'; text: string; tools?: ToolActivity[] }>
+    Array<{
+      role: 'user' | 'assistant'
+      text: string
+      tools?: ToolActivity[]
+      scope?: AiScopeQuoteData
+    }>
   >([])
 
   const patchLast = (patch: Partial<ChatEntry> | ((last: ChatEntry) => Partial<ChatEntry>)) => {
@@ -187,11 +241,16 @@ export function AiPanel({
     })
   }
 
-  const persistMessage = (role: 'user' | 'assistant', text: string, tools?: ToolActivity[]) => {
+  const persistMessage = (
+    role: 'user' | 'assistant',
+    text: string,
+    tools?: ToolActivity[],
+    scope?: AiScopeQuoteData,
+  ) => {
     const ids = chatIdsRef.current
     if (!window.projectApi) return
     if (!ids) {
-      pendingPersistRef.current.push({ role, text, tools })
+      pendingPersistRef.current.push({ role, text, tools, scope })
       return
     }
     void window.projectApi
@@ -201,22 +260,117 @@ export function AiPanel({
         role,
         text,
         ...(tools && tools.length > 0 ? { tools } : {}),
+        ...(scope ? { scope } : {}),
       })
       .catch(() => {
         /* persistence failures are silent */
       })
   }
 
+  const transportRef = useRef<ReturnType<typeof createElectronTransport> | null>(null)
+  if (!transportRef.current)
+    transportRef.current = createElectronTransport(() => settingsRef.current!)
+
+  /**
+   * Long-form writing: one tool-less request whose reply is the markdown, streamed
+   * into the document as a draft by the tool. A stream that stops early leaves the
+   * user a keep-or-discard choice; a stream that produced nothing is retried once.
+   */
+  const runDocWriter = async (
+    spec: DocWriteSpec,
+    onProgress: (markdown: string) => void,
+    signal?: AbortSignal,
+  ): Promise<DocWriteResult> => {
+    const { system, user } = buildDocWriterRequest(
+      spec,
+      MARKDOWN_RULES,
+      aiLangDirective(langRef.current),
+    )
+    const epoch = writerEpochRef.current
+    let closed = false
+    let chipTimer: ReturnType<typeof setTimeout> | null = null
+    let latest = ''
+    const updateChip = () => {
+      chipTimer = null
+      if (closed) return
+      const blocks = countMarkdownBlocks(latest)
+      patchLast((last) => ({
+        tools: last.tools?.map((tl) =>
+          tl.running ? { ...tl, summary: tGlobal('aiWritingDocument', { blocks }) } : tl,
+        ),
+      }))
+    }
+    const attempt = () =>
+      streamText({
+        transport: transportRef.current!,
+        system,
+        user,
+        signal,
+        maxChars: DOC_MAX_CHARS,
+        extract: (raw) => ({ text: extractMarkdown(raw) }),
+        onProgress: (markdown) => {
+          if (closed) return
+          latest = markdown
+          onProgress(markdown)
+          if (chipTimer === null) chipTimer = setTimeout(updateChip, CHIP_UPDATE_MS)
+        },
+      })
+    let outcome = await attempt()
+    if (outcome.status === 'empty' && !signal?.aborted) outcome = await attempt()
+    closed = true
+    if (chipTimer !== null) clearTimeout(chipTimer)
+    if (outcome.status === 'complete') return { ok: true, markdown: outcome.text }
+    if (outcome.status === 'empty') return { ok: false, error: outcome.error }
+    if (epoch !== writerEpochRef.current) return { ok: false, error: 'the chat was reset' }
+    // the draft stays in the document while the user decides
+    const keep = await new Promise<boolean>((resolve) => {
+      partialResolverRef.current = resolve
+      setActivePartial({ blocks: countMarkdownBlocks(outcome.text) })
+    })
+    return keep
+      ? { ok: true, markdown: outcome.text, truncated: true }
+      : {
+          ok: false,
+          error: `${outcome.reason}${outcome.error ? `: ${outcome.error}` : ''}; the user discarded the partial content`,
+        }
+  }
+  const runDocWriterRef = useRef(runDocWriter)
+  runDocWriterRef.current = runDocWriter
+
+  const decidePartial = (keep: boolean): void => {
+    partialResolverRef.current?.(keep)
+    partialResolverRef.current = null
+    setActivePartial(null)
+  }
+  /** New chat / unmount: discard an open keep card and keep a still-settling writer from opening one */
+  const abandonWriter = (): void => {
+    writerEpochRef.current++
+    decidePartial(false)
+  }
+  useEffect(
+    () => () => {
+      writerEpochRef.current++
+    },
+    [],
+  )
+
   // The loop is built once; every mutable value goes through a ref getter
   const loopRef = useRef<AgentLoop<DocSnapshot> | null>(null)
   if (!loopRef.current) {
     loopRef.current = new AgentLoop<DocSnapshot>({
-      transport: createElectronTransport(() => settingsRef.current!),
+      transport: transportRef.current,
       skill: composeSkills('markdown+search', '', [
-        createMarkdownSkill(() => depsRef.current.getEditor(), {
-          read: () => depsRef.current.getFrontmatter(),
-          write: (inner) => depsRef.current.setFrontmatter(inner),
-        }),
+        createMarkdownSkill(
+          () => depsRef.current.getEditor(),
+          {
+            read: () => depsRef.current.getFrontmatter(),
+            write: (inner) => depsRef.current.setFrontmatter(inner),
+          },
+          () => imageGenerationAvailable(settingsRef.current, gskLoggedInRef.current),
+          () => ({
+            write: (spec, onProgress, signal) => runDocWriterRef.current(spec, onProgress, signal),
+          }),
+        ),
         createSearchSkill(),
       ]),
       captureSnapshot: () => depsRef.current.getSnapshot(),
@@ -262,10 +416,16 @@ export function AiPanel({
           patchLast({ streaming: false })
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
         },
-        onDone: ({ text, cancelled, turnLimit }) => {
-          const final = turnLimit
+        onDone: ({ text, cancelled, turnLimit, truncated }) => {
+          const base = turnLimit
             ? [text, tGlobal('aiTurnLimit')].filter(Boolean).join('\n\n')
             : text || (cancelled ? tGlobal('aiStopped') : '')
+          // A reasoning model can spend the entire output budget on thinking and close the
+          // turn with finish_reason=length and no prose at all — the bare "(no reply)" read
+          // as the assistant ignoring the user. Name the truncation, as docs already does.
+          const final = truncated
+            ? [base, tGlobal('aiTruncatedNote')].filter(Boolean).join('\n\n')
+            : base
           patchLast((last) => ({
             streaming: false,
             text: final || (last.tools?.length ? last.text : tGlobal('aiNoReply')),
@@ -310,6 +470,7 @@ export function AiPanel({
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      partialResolverRef.current?.(false)
       loopRef.current?.cancel()
       const editor = depsRef.current.getEditor()
       if (editor) clearAiHighlights(editor)
@@ -326,7 +487,7 @@ export function AiPanel({
       .then((ids) => {
         chatIdsRef.current = ids
         for (const msg of pendingPersistRef.current.splice(0)) {
-          persistMessage(msg.role, msg.text, msg.tools)
+          persistMessage(msg.role, msg.text, msg.tools, msg.scope)
         }
         return api.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
       })
@@ -347,6 +508,7 @@ export function AiPanel({
               isError: tool.isError,
               output: tool.output ? tool.output.slice(0, TOOL_OUTPUT_MAX_CHARS) : undefined,
             })),
+            ...(m.scope ? { scope: m.scope } : {}),
           }))
         })
         if (applied && !loopRef.current?.busy) {
@@ -385,7 +547,8 @@ export function AiPanel({
     stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
   }
 
-  const send = (text: string, displayText?: string): void => {
+  /** retryScope: null = a retry that had no scope; undefined = capture the live selection */
+  const send = (text: string, displayText?: string, retryScope?: AiScopeQuoteData | null): void => {
     const instruction = text.trim()
     const loop = loopRef.current
     if (!instruction || !loop || loop.busy) return
@@ -394,16 +557,26 @@ export function AiPanel({
     runDisplayRef.current = displayText ?? instruction
     runMutatedRef.current = false
     runToolsRef.current = []
+    // a queue batch carries its own display text: no selection quote
+    const scope =
+      retryScope !== undefined
+        ? (retryScope ?? undefined)
+        : displayText === undefined
+          ? selectionScopeQuote()
+          : undefined
+    lastScopeRef.current = scope
+    // the popover input / composer own the DOM selection now: keep the targeted range visible until the run ends
+    if (scope) setInactiveSelectionShown(depsRef.current.getEditor(), true)
     setChat((prev) => [
       ...prev,
-      { role: 'user', text: displayText ?? instruction },
+      { role: 'user', text: displayText ?? instruction, ...(scope ? { scope } : {}) },
       { role: 'assistant', text: '', streaming: true },
     ])
     setPrompt('')
     setBusy(true)
     // persist what the user saw — a restored transcript must not surface the
     // internal batch protocol text behind a queue submission
-    persistMessage('user', displayText ?? instruction)
+    persistMessage('user', displayText ?? instruction, undefined, scope)
     void (async () => {
       try {
         settingsRef.current = await window.markdownApi.getAiSettings()
@@ -423,7 +596,8 @@ export function AiPanel({
 
   const stop = (): void => loopRef.current?.cancel()
 
-  const retry = (): void => send(runInstructionRef.current, runDisplayRef.current)
+  const retry = (): void =>
+    send(runInstructionRef.current, runDisplayRef.current, lastScopeRef.current ?? null)
 
   // keep the scope chip & queue rows in sync with the editor selection/content
   useEffect(() => {
@@ -454,6 +628,32 @@ export function AiPanel({
   const clearScopeSelection = (): void => {
     if (editor) editor.commands.setTextSelection(editor.state.selection.to)
   }
+
+  const selectionScopeQuote = (): AiScopeQuoteData | undefined => {
+    const ed = depsRef.current.getEditor()
+    if (!ed || ed.state.selection.empty) return undefined
+    const { from, to } = ed.state.selection
+    const text = ed.state.doc.textBetween(from, to, ' ', ' ').replace(/\s+/g, ' ').trim()
+    if (!text) return undefined
+    return {
+      label: t('aiScopeSelection', { words: countWords(text) }),
+      text: text.length > SCOPE_TEXT_MAX ? `${text.slice(0, SCOPE_TEXT_MAX)}…` : text,
+    }
+  }
+
+  // the frozen-range highlight ends with the run, or as soon as the editor is focused again
+  useEffect(() => {
+    if (!busy) setInactiveSelectionShown(depsRef.current.getEditor(), false)
+  }, [busy])
+  useEffect(() => {
+    const ed = depsRef.current.getEditor()
+    if (!ed) return
+    const off = () => setInactiveSelectionShown(ed, false)
+    ed.on('focus', off)
+    return () => {
+      ed.off('focus', off)
+    }
+  }, [])
 
   /** [label](mdnav://block/N) links in replies select and scroll to that block */
   const docNav = {
@@ -516,7 +716,7 @@ export function AiPanel({
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   useEffect(() => () => resizeCleanupRef.current?.(), [])
 
-  /** Drag the right edge to resize: the panel is flush with the window's left edge, so width = clientX */
+  /** Drag the inner panel edge to resize from the selected window side. */
   const startResize = (e: ReactPointerEvent<HTMLDivElement>): void => {
     e.preventDefault()
     const resizer = e.currentTarget
@@ -524,7 +724,7 @@ export function AiPanel({
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent): void => {
-      const w = clampPanelWidth(ev.clientX)
+      const w = clampPanelWidth(aiPanelWidthAtPointer(ev.clientX))
       preferredWidthRef.current = w
       setPanelWidth(w)
     }
@@ -555,25 +755,31 @@ export function AiPanel({
       ref={asideRef}
       className={`copilot${resizing ? ' ai-panel-resizing' : ''}`}
       style={{ width: '100%' }}
+      dir={lang === 'ar' || lang === 'he' ? 'rtl' : undefined}
     >
       <div
         className="ai-panel-resizer"
         onPointerDown={startResize}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Hermes AI"
+        aria-label={t('aiOpenAssistant')}
       />
       <header className="ai-panel-header">
         <span className="ai-panel-title">
           <HermesMark size={22} />
-          Hermes AI
+          Hermes
         </span>
         <div className="ai-panel-header-actions">
+          <AiPanelSideButton
+            lang={lang}
+            onMove={(side) => window.markdownApi.setAiPanelPrefs({ side })}
+          />
           {chat.length > 0 && (
             <button
               className="ai-header-btn"
               onClick={() => {
                 stop()
+                abandonWriter()
                 loopRef.current?.reset()
                 setBusy(false)
                 setChat([])
@@ -585,7 +791,7 @@ export function AiPanel({
             </button>
           )}
           <button
-            className="ai-header-btn"
+            className="ai-header-btn ai-panel-collapse"
             onClick={onCollapse}
             data-tip={t('aiCollapsePanel')}
             aria-label={t('aiCollapsePanel')}
@@ -626,12 +832,16 @@ export function AiPanel({
           if (entry.role === 'user') {
             return (
               <div key={i} className="ai-msg ai-msg-user">
-                {entry.text}
+                {entry.scope && <AiScopeQuote scope={entry.scope} />}
+                <span dir="auto">{entry.text}</span>
                 {entry.undelivered && (
                   <div className="ai-msg-undelivered">
                     {t('aiUndelivered')}
                     {!busy && (
-                      <button className="ai-retry-btn" onClick={() => send(entry.text)}>
+                      <button
+                        className="ai-retry-btn"
+                        onClick={() => send(entry.text, undefined, entry.scope ?? null)}
+                      >
                         {t('aiRetry')}
                       </button>
                     )}
@@ -658,7 +868,11 @@ export function AiPanel({
                   <AiTypingIndicator label={hasTools ? t('aiWorking') : t('aiThinking')} />
                 </span>
               ) : (
-                entry.text && <Markdown text={entry.text} nav={docNav} />
+                entry.text && (
+                  <div dir="auto">
+                    <Markdown text={entry.text} nav={docNav} />
+                  </div>
+                )
               )}
               {hasTools && <ToolChipList tools={entry.tools!} />}
               {showToolbar && (
@@ -742,6 +956,28 @@ export function AiPanel({
       )}
 
       <div className="ai-composer">
+        {activePartial && (
+          <div className="ai-queue ai-partial-card" role="group" aria-label={t('aiPartialTitle')}>
+            <div className="ai-queue-head">
+              <span className="ai-queue-title">{t('aiPartialTitle')}</span>
+            </div>
+            <div className="ai-queue-hint">
+              {t('aiPartialBody', { blocks: activePartial.blocks })}
+            </div>
+            <div className="ai-queue-foot">
+              <button
+                type="button"
+                className="ai-queue-discard"
+                onClick={() => decidePartial(false)}
+              >
+                {t('aiPartialDiscard')}
+              </button>
+              <button type="button" className="ai-queue-send" onClick={() => decidePartial(true)}>
+                {t('aiPartialAdopt')}
+              </button>
+            </div>
+          </div>
+        )}
         {editor && editQueue.length > 0 && (
           <EditQueueCard
             items={editQueue}
@@ -1012,36 +1248,20 @@ function IconClock(): ReactElement {
   )
 }
 
-/** Genspark brand mark, inline for crisp device-resolution rendering */
-export function HermesMark({ size = 26 }: { size?: number }) {
+/** Hermes brand mark, inline for crisp device-resolution rendering */
+export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 130 130.025"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden
     >
-      <defs>
-        <linearGradient
-          id="hermes-mark-grad"
-          x1="0"
-          y1="0"
-          x2="24"
-          y2="24"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#6E4FF6" />
-          <stop offset="1" stopColor="#2DD4BF" />
-        </linearGradient>
-      </defs>
-      <rect x="0.75" y="0.75" width="22.5" height="22.5" rx="6" fill="url(#hermes-mark-grad)" />
       <path
-        d="M7.25 6.25v11.5M16.75 6.25v11.5M7.25 12h9.5"
-        stroke="#ffffff"
-        strokeWidth="2.4"
-        strokeLinecap="round"
+        d="M105.115 0H24.6428C11.0443 0 0 11.0686 0 24.6915V105.334C0 118.981 11.0199 130.025 24.6428 130.025H105.115C118.714 130.025 129.758 118.957 129.758 105.334V24.6915C129.758 11.0443 118.714 0 105.115 0ZM71.5201 35.2735C85.5078 33.1571 86.7729 31.9164 88.865 17.88C88.938 17.4421 89.3028 17.1259 89.7407 17.1259C90.1786 17.1259 90.5435 17.4421 90.6164 17.88C92.7328 31.8921 93.9735 33.1571 107.961 35.2735C108.399 35.3465 108.715 35.7114 108.715 36.1493C108.715 36.5871 108.399 36.952 107.961 37.025C93.9249 39.1414 92.7085 40.4064 90.5677 54.6131C90.5191 54.9537 90.2516 55.197 89.911 55.197C89.5704 55.197 89.3028 54.9537 89.2542 54.6131C87.1134 40.4064 85.5565 39.1658 71.4958 37.025C71.0579 36.952 70.7417 36.5871 70.7417 36.1493C70.7417 35.7114 71.0579 35.3465 71.4958 35.2735H71.5201ZM101.758 78.5261C101.758 78.8181 101.563 79.037 101.271 79.0856C92.3193 80.4236 91.5652 81.2264 90.2029 90.2759C90.1786 90.4948 89.9839 90.6408 89.7893 90.6408C89.5703 90.6408 89.4001 90.4948 89.3758 90.2759C88.0135 81.2507 87.0161 80.4479 78.0883 79.0856C77.7964 79.037 77.6017 78.7937 77.6017 78.5261C77.6017 78.2342 77.7964 78.0153 78.0883 77.9666C86.9918 76.6287 87.7703 75.8259 89.1326 66.898C89.1812 66.6061 89.4244 66.4115 89.692 66.4115C89.9839 66.4115 90.2028 66.6061 90.2515 66.898C91.5894 75.8259 92.3923 76.6043 101.296 77.9666C101.588 78.0153 101.782 78.2585 101.782 78.5261H101.758ZM16.5178 54.8077C16.5178 54.1023 17.0286 53.4941 17.7341 53.3968C40.1388 50.0154 42.1093 47.9963 45.4907 25.5672C45.588 24.8861 46.1961 24.3509 46.9016 24.3509C47.6071 24.3509 48.191 24.8617 48.3126 25.5672C51.694 47.9963 53.6887 50.0154 76.0691 53.3968C76.7503 53.4941 77.2855 54.1023 77.2855 54.8077C77.2855 55.5132 76.7746 56.1214 76.0691 56.2187C53.5914 59.6244 51.6696 61.6192 48.2639 84.3645C48.1909 84.8754 47.7287 85.2889 47.2179 85.2889C46.707 85.2889 46.2448 84.8997 46.1718 84.3645C42.7418 61.6435 40.2604 59.6244 17.7584 56.2187C17.0772 56.1214 16.542 55.5132 16.542 54.8077H16.5178ZM112.097 109.591C112.097 111.416 110.613 112.9 108.813 112.9H21.2614C19.4369 112.9 17.9774 111.416 17.9774 109.591V102.658C17.9774 100.834 19.4612 99.3497 21.2614 99.3497H108.813C110.637 99.3497 112.097 100.834 112.097 102.658V109.591Z"
+        fill="currentColor"
       />
     </svg>
   )

@@ -5,10 +5,10 @@
  * WorkbookReadContext closing over its refs.
  */
 import type { IRange } from '@univerjs/core'
-import { columnLabel, parseAddress } from '../../domain/cell-address'
+import { columnLabel, parseAddress } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { MAX_PATCH_ENTRY_BYTES } from '../../shared/desktop-api'
-import type { InMemoryWorkbookAdapter } from '../../domain/in-memory-workbook'
-import type { CellFormatState, CellScalar } from '../../domain/workbook.types'
+import type { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
+import type { CellFormatState, CellScalar } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import { toSelectionFormat } from '../selection-format'
 import { lazyCellReader } from '../univer-sync'
 import { lazySheetScreenExtent, type LazyWorkbookState, type UniverRuntime } from '../univer-state'
@@ -206,8 +206,16 @@ export function readSheetFeatures(ctx: WorkbookReadContext, sheetIdInput?: strin
           : visual.id.startsWith('added-')
             ? 'added this session'
             : 'came with the file, not modifiable by the AI'
+        const label =
+          visual.kind === 'image'
+            ? 'image'
+            : visual.kind === 'ole'
+              ? `embedded object ${visual.progId ?? ''}`
+              : visual.kind === 'slicer'
+                ? 'slicer'
+                : `shape ${visual.shapeType ?? ''}`
         lines.push(
-          `- ${visual.kind === 'image' ? 'image' : `shape ${visual.shapeType ?? ''}`} @ ` +
+          `- ${label} @ ` +
             `${columnLabel(visual.anchor.fromColumn)}${visual.anchor.fromRow + 1}` +
             `${visual.text ? ` text "${visual.text}"` : ''} (${origin})`,
         )
@@ -386,8 +394,11 @@ export function readCells(
   ctx: WorkbookReadContext,
   addresses: readonly string[],
   sheetId?: string,
-): Record<string, { value: CellScalar; formula?: string }> {
-  const result: Record<string, { value: CellScalar; formula?: string }> = {}
+): Record<string, { value: CellScalar; formula?: string; rawValue?: CellScalar | undefined }> {
+  const result: Record<
+    string,
+    { value: CellScalar; formula?: string; rawValue?: CellScalar | undefined }
+  > = {}
   const workbook = ctx.univerRef.current?.univerAPI.getActiveWorkbook()
   const state = ctx.lazyWorkbookRef.current
   if (state) {
@@ -397,9 +408,12 @@ export function readCells(
     const reader = lazyCellReader(worksheet)
     for (const address of addresses) {
       const cell = reader(address)
+      // `value` is the rendered text and `rawValue` the model value behind it;
+      // machine-facing callers (the MCP bridge, the save pipeline) need the
+      // latter — see modelCellValue in univer-sync.ts.
       result[address] = cell.formula
-        ? { value: cell.value, formula: cell.formula }
-        : { value: cell.value }
+        ? { value: cell.value, formula: cell.formula, rawValue: cell.rawValue }
+        : { value: cell.value, rawValue: cell.rawValue }
     }
     return result
   }

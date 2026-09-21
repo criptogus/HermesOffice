@@ -1,11 +1,15 @@
 import ReactDOM from 'react-dom/client'
 import { htmlLang, type Lang } from '@hermesoffice/i18n'
-import { installScreenTips } from '@hermesoffice/ui'
+import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
 
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
+import '@hermesoffice/ui/ribbon-collapse.css'
+import '@hermesoffice/ui/markdown.css'
+import '@hermesoffice/ui/ai-panel-prefs.css'
+import '@hermesoffice/ui/ai-scope-quote.css'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import { App } from './App'
@@ -67,6 +71,11 @@ async function bootstrap(): Promise<void> {
   applyTheme(theme)
   await loadCellFonts()
   window.desktopApi?.onThemeChanged(applyTheme)
+  void window.desktopApi
+    ?.getAiPanelPrefs?.()
+    .then(applyAiPanelPrefs)
+    .catch(() => {})
+  window.desktopApi?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   ReactDOM.createRoot(root!).render(
     <LocaleProvider initial={lang}>
       <App />

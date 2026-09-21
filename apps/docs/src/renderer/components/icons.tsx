@@ -458,6 +458,15 @@ export function IconShapes(props: IconProps) {
   )
 }
 
+export function IconSearch(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="6.9" cy="6.9" r="4.2" />
+      <path d="M 10 10 13.4 13.4" />
+    </Svg>
+  )
+}
+
 export function IconLink(props: IconProps) {
   return (
     <Svg {...props}>
@@ -769,6 +778,75 @@ export function IconBorderNone(props: IconProps) {
         strokeDasharray="1.5 1.7"
         opacity="0.55"
       />
+    </Svg>
+  )
+}
+
+function IconBorderDashedFrame() {
+  return (
+    <rect
+      x="3.02"
+      y="3.02"
+      width="9.96"
+      height="9.96"
+      rx="0.42"
+      strokeWidth="1"
+      strokeDasharray="1.5 1.7"
+      opacity="0.55"
+    />
+  )
+}
+
+export function IconBorderTop(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 3.02 3.02 h 9.96" />
+    </Svg>
+  )
+}
+
+export function IconBorderBottom(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 3.02 12.98 h 9.96" />
+    </Svg>
+  )
+}
+
+export function IconBorderLeft(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 3.02 3.02 v 9.96" />
+    </Svg>
+  )
+}
+
+export function IconBorderRight(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 12.98 3.02 v 9.96" />
+    </Svg>
+  )
+}
+
+export function IconBorderInsideH(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 3.02 8 h 9.96" />
+    </Svg>
+  )
+}
+
+export function IconBorderInsideV(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <IconBorderDashedFrame />
+      <path d="M 8 3.02 v 9.96" />
     </Svg>
   )
 }
@@ -1545,6 +1623,15 @@ export function IconWordArt(props: IconProps) {
   )
 }
 
+export function IconPencil(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M10.9 2.9a1.1 1.1 0 0 1 1.56 0l.64.64a1.1 1.1 0 0 1 0 1.56L6.2 12l-3.1.9.9-3.1 6.9-6.9Z" />
+      <path d="M9.6 4.2l2.2 2.2" />
+    </Svg>
+  )
+}
+
 export function IconTrash(props: IconProps) {
   return (
     <Svg {...props}>
@@ -1655,7 +1742,7 @@ export function IconClose(props: IconProps) {
   )
 }
 
-/** Genspark brand mark (rounded-square sparkle badge), inline so it renders
+/** Hermes brand mark (rounded-square sparkle badge), inline so it renders
  * crisply at device resolution instead of going through <img> rasterization */
 export function HermesMark({ size = 26 }: { size?: number }) {
   return (

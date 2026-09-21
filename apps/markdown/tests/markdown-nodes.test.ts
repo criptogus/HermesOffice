@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
+import { escapeBrackets } from '../src/renderer/editor/markdownEscape'
 
 // Undestroyed views leave DOMObserver flush timers that fire after jsdom teardown
 // ("document is not defined" unhandled error). Editors here are shared per describe,
@@ -75,6 +76,14 @@ describe('markdown round-trip for GFM nodes', () => {
     const { out, stable } = roundTrip(editor, '```python\nprint(1)\n```')
     expect(out).toContain('```python')
     expect(stable).toBe(true)
+  })
+
+  it('mermaid blocks stay plain fenced code in the file', () => {
+    const md = '```mermaid\nflowchart LR\n    A --> B\n```'
+    const { out, stable } = roundTrip(editor, md)
+    expect(out).toContain('```mermaid\nflowchart LR\n    A --> B\n```')
+    expect(stable).toBe(true)
+    expect(editor.markdown!.parse(md).content?.[0]?.attrs?.language).toBe('mermaid')
   })
 
   it('nested lists serialize with 4-space indents (strict-CommonMark safe)', () => {
@@ -214,4 +223,83 @@ describe('legacy HTML content degrades to plain markdown, keeping the text', () 
     const out = parseAndSerialize('a <u>underlined</u> and <mark>marked</mark> b')
     expect(out).toBe('a underlined and marked b')
   })
+})
+
+describe('bracket escaping on save', () => {
+  const editor = createEditor()
+
+  it.each([
+    ['wiki-style link', 'See [[Foo]] and [[Bar|alias]].'],
+    ['citation marker', 'As shown in [1] and [2, p. 4].'],
+    ['bracketed tag', '[TODO] finish the intro'],
+  ])('keeps %s verbatim', (_name, md) => {
+    const { out, stable } = roundTrip(editor, md)
+    expect(out).toBe(md)
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes text that would parse as a link', () => {
+    const { out, stable } = roundTrip(editor, 'literal \\[a](b) here')
+    expect(out).toBe('literal \\[a\\](b) here')
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes a task marker typed as text', () => {
+    const md = '- \\[ ] not a task'
+    const { out, stable } = roundTrip(editor, md)
+    expect(out).toContain('\\[ \\] not a task')
+    expect(stable).toBe(true)
+  })
+
+  it('still escapes a reference definition typed as text', () => {
+    const { out, stable } = roundTrip(editor, '\\[ref]: not a definition')
+    expect(out).toBe('\\[ref\\]: not a definition')
+    expect(stable).toBe(true)
+  })
+
+  it('escapes an indented reference definition too', () => {
+    expect(escapeBrackets('   [ref]: /url')).toBe('   \\[ref\\]: /url')
+    expect(escapeBrackets('  [x] not a task')).toBe('  \\[x\\] not a task')
+  })
+
+  it('keeps escaping the other inline delimiters', () => {
+    const { out, stable } = roundTrip(editor, 'a \\* b \\_ c \\~ d')
+    expect(out).toBe('a \\* b \\_ c \\~ d')
+    expect(stable).toBe(true)
+  })
+})
+
+describe('formatted inline code', () => {
+  const editor = createEditor()
+  it.each([
+    ['**`bold code`**', 'bold'],
+    ['*`italic code`*', 'italic'],
+    ['~~`struck code`~~', 'strike'],
+    ['[`linked code`](https://example.com)', 'link'],
+  ])('opens, edits and reopens %s with valid marks', (source, outerMark) => {
+    editor.commands.setContent(source, { contentType: 'markdown' })
+    expect(() => editor.state.doc.check()).not.toThrow()
+    const text = editor.state.doc.firstChild!.firstChild!
+    expect(text.marks.map((mark) => mark.type.name)).toContain(outerMark)
+    expect(text.marks.map((mark) => mark.type.name)).toContain('code')
+    editor.commands.insertContentAt(2, 'X')
+    const saved = editor.getMarkdown()
+    editor.commands.setContent(saved, { contentType: 'markdown' })
+    expect(() => editor.state.doc.check()).not.toThrow()
+    expect(editor.state.doc.textContent).toContain('X')
+    const reopened = editor.state.doc.firstChild!.firstChild!
+    expect(reopened.marks.map((mark) => mark.type.name)).toContain(outerMark)
+    expect(reopened.marks.map((mark) => mark.type.name)).toContain('code')
+  })
+})
+
+it('keeps emphasis and link syntax inside code literal', () => {
+  const editor = createEditor()
+  editor.commands.setContent('`**literal** [text](https://example.com)`', {
+    contentType: 'markdown',
+  })
+  expect(() => editor.state.doc.check()).not.toThrow()
+  const text = editor.state.doc.firstChild!.firstChild!
+  expect(text.text).toBe('**literal** [text](https://example.com)')
+  expect(text.marks.map((mark) => mark.type.name)).toEqual(['code'])
 })

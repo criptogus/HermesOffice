@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 import {
   INK_NAME_PREFIX,
+  anchoredInkRunXml,
   injectInkRunsIntoParagraph,
   parseDocx,
   saveDocx,
@@ -180,6 +181,17 @@ describe('ink XML helpers', () => {
       '<w:p><w:r><w:drawing><wp:anchor behindDoc="1"><wp:docPr id="5" name="图片 5"/>' +
       '</wp:anchor></w:drawing></w:r><w:r><w:t>x</w:t></w:r></w:p>'
     expect(stripInkRuns(foreign)).toBe(foreign)
+  })
+
+  it('anchoredInkRunXml never emits NaN geometry', () => {
+    const xml = anchoredInkRunXml(
+      { widthPx: NaN, heightPx: Infinity, offsetXPx: NaN, offsetYPx: -10 },
+      'rId1',
+      9001,
+    )
+    expect(xml).not.toContain('NaN')
+    expect(xml).not.toContain('Infinity')
+    expect(xml).toContain('cx="1"')
   })
 
   it('injectInkRunsIntoParagraph rejects non-paragraph roots', () => {

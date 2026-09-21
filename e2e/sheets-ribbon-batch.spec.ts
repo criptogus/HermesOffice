@@ -34,7 +34,7 @@ function sheetXml(workbookPath: string): string {
 
 test.describe('sheets: ribbon batch-1 features', () => {
   test('headings toggle, zoom to selection, names, watch window, calc options', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-ribbon-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-ribbon-e2e-'))
     const workbook = join(scratch, 'ribbon-batch.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -44,7 +44,7 @@ test.describe('sheets: ribbon batch-1 features', () => {
       openFile: workbook,
     })
     try {
-      const sheets = await waitForPageWithUrl(launched.app, 'sheets/out')
+      const sheets = await waitForPageWithUrl(launched.app, '://sheets/')
       await waitForWorkbook(sheets)
       const status = sheets.locator('.workbook-status')
 
@@ -52,7 +52,7 @@ test.describe('sheets: ribbon batch-1 features', () => {
       const origin = await gridOrigin(sheets)
       await sheets.mouse.move(origin.x + 43, origin.y + 12)
       await sheets.mouse.down()
-      await sheets.mouse.move(origin.x + 87 + 43, origin.y + 24 * 2 + 12, { steps: 8 })
+      await sheets.mouse.move(origin.x + 87 + 43, origin.y + 20 * 2 + 10, { steps: 8 })
       await sheets.mouse.up()
       await sheets.getByRole('button', { name: 'Formulas' }).click()
       await sheets.locator('span.styles-row', { hasText: 'Create from Selection' }).click()
@@ -91,7 +91,7 @@ test.describe('sheets: ribbon batch-1 features', () => {
       await expect(status).toContainText('Headings hidden.')
       await sheets.screenshot({ path: screenshotPath('sheets-headings-hidden') })
       await launched.app.evaluate(({ webContents }) => {
-        const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('sheets/out'))
+        const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('://sheets/'))
         wc?.send('menu:action', 'save')
       })
       await expect(() => {
@@ -108,7 +108,7 @@ test.describe('sheets: ribbon batch-1 features', () => {
       openFile: workbook,
     })
     try {
-      const sheets = await waitForPageWithUrl(second.app, 'sheets/out')
+      const sheets = await waitForPageWithUrl(second.app, '://sheets/')
       await waitForWorkbook(sheets)
       await sheets.getByRole('button', { name: 'View', exact: true }).click()
       const headingsBox = sheets
@@ -124,7 +124,7 @@ test.describe('sheets: ribbon batch-1 features', () => {
 
 test.describe('sheets: ribbon batch-2 features', () => {
   test('error checking, goal seek, refresh all', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-ribbon2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-ribbon2-e2e-'))
     const workbook = join(scratch, 'ribbon-batch2.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -134,13 +134,13 @@ test.describe('sheets: ribbon batch-2 features', () => {
       openFile: workbook,
     })
     try {
-      const sheets = await waitForPageWithUrl(launched.app, 'sheets/out')
+      const sheets = await waitForPageWithUrl(launched.app, '://sheets/')
       await waitForWorkbook(sheets)
       const status = sheets.locator('.workbook-status')
       const origin = await gridOrigin(sheets)
       const cell = (column: number, row: number): { x: number; y: number } => ({
         x: origin.x + 74 * column + 37,
-        y: origin.y + 24 * row + 12,
+        y: origin.y + 20 * row + 10,
       })
 
       // ── seed: D1 = 1/0 (error), D2 = D3*2 (goal-seek target) ──
@@ -155,7 +155,7 @@ test.describe('sheets: ribbon batch-2 features', () => {
       await sheets.getByRole('button', { name: 'Formulas' }).click()
       await sheets.getByRole('button', { name: 'Error Checking' }).click()
       await expect(status).toContainText('1 errors — at D1: #DIV/0!')
-      await expect(sheets.locator('.name-box')).toHaveValue('D1')
+      await expect(sheets.locator('[data-u-comp="defined-name"] input')).toHaveValue('D1')
 
       // ── Data > What-If > Goal Seek: D2 = 40 by changing D3 ──
       await sheets.getByRole('button', { name: 'Data', exact: true }).click()
@@ -199,7 +199,7 @@ function archiveEntry(workbookPath: string, entry: string): string {
 
 test.describe('sheets: ribbon batch-3 features', () => {
   test('page breaks + preview, workbook protection, allow edit ranges, theme', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-ribbon3-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-ribbon3-e2e-'))
     const workbook = join(scratch, 'ribbon-batch3.xlsx')
     await copyFile(FIXTURE, workbook)
     // The generated fixture ships no theme part; the theme engine needs one.
@@ -214,13 +214,13 @@ test.describe('sheets: ribbon batch-3 features', () => {
       openFile: workbook,
     })
     try {
-      const sheets = await waitForPageWithUrl(launched.app, 'sheets/out')
+      const sheets = await waitForPageWithUrl(launched.app, '://sheets/')
       await waitForWorkbook(sheets)
       const status = sheets.locator('.workbook-status')
       const origin = await gridOrigin(sheets)
 
       // ── Page Layout > Breaks: insert a break at B3 ──
-      await sheets.mouse.click(origin.x + 87 + 43, origin.y + 24 * 2 + 12)
+      await sheets.mouse.click(origin.x + 87 + 43, origin.y + 20 * 2 + 10)
       await sheets.getByRole('button', { name: 'Page Layout' }).click()
       await sheets.locator('.ribbon-tool', { hasText: 'Breaks' }).click()
       await sheets.getByRole('option', { name: 'Insert Page Break' }).click()
@@ -264,7 +264,7 @@ test.describe('sheets: ribbon batch-3 features', () => {
 
       // ── save, then verify every feature landed in the package ──
       await launched.app.evaluate(({ webContents }) => {
-        const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('sheets/out'))
+        const wc = webContents.getAllWebContents().find((w) => w.getURL().includes('://sheets/'))
         wc?.send('menu:action', 'save')
       })
       await expect(() => {

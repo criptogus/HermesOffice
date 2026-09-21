@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { recommendCharts } from '../src/domain/chart-recommend'
+import { recommendCharts } from '@hermesoffice/xlsx-gateway/domain/chart-recommend'
 
 describe('recommendCharts', () => {
   it('puts line first for a time series', () => {

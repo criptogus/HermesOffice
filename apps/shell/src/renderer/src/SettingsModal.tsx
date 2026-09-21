@@ -1,21 +1,44 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Dropdown } from '@hermesoffice/ui'
-import type { AiSettings } from '@hermesoffice/ai-provider'
+import {
+  AI_CUSTOM_FONT_MAX_PX,
+  AI_CUSTOM_FONT_MIN_PX,
+  DEFAULT_AI_PANEL_PREFS,
+  Dropdown,
+  aiPanelFontPx,
+  clampAiCustomFontSize,
+} from '@hermesoffice/ui'
+import type { AiFontSize, AiPanelPrefs, AiPanelSide } from '@hermesoffice/ui'
+import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_MAX_OUTPUT_TOKENS,
+  MIN_MAX_OUTPUT_TOKENS,
+  clampMaxOutputTokens,
+} from '@hermesoffice/ai-provider/browser'
+import type {
+  AiMediaProviderId,
+  AiMediaProviderMeta,
+  AiMediaSettings,
+  AiSearchProviderMeta,
+  AiSearchSettings,
+  AiSettings,
+} from '@hermesoffice/ai-provider'
 import { useI18n } from './locale'
 import type { StringKey, TFunc } from './locale'
 import type { AccountStatus, AiCatalogEntry, UiTheme } from '../../shared/home-api'
 import { ProviderLogo } from './provider-logos'
+import { IntegrationsPane, skillUpdateDue } from './IntegrationsPane'
 import './settings.css'
 
 // ── Settings modal (opened from the account menu) ─────────
-// Genspark-style two-pane dialog: section nav on the left, fields on the right.
+// Hermes-style two-pane dialog: section nav on the left, fields on the right.
 // All values go through the existing home IPC; nothing is stored locally.
 
 // sorted by ISO 639 language code — native-script labels have no natural
 // shared alphabet, so the code is the ordering key
 const LANG_OPTIONS = [
   { value: 'ar', label: 'العربية' },
+  { value: 'cs', label: 'Čeština' },
   { value: 'de', label: 'Deutsch' },
   { value: 'en', label: 'English' },
   { value: 'es', label: 'Español' },
@@ -43,6 +66,13 @@ const THEME_OPTIONS = [
   { value: 'dark', labelKey: 'themeDark' },
 ] as const satisfies readonly { value: UiTheme; labelKey: StringKey }[]
 
+const AI_FONT_SIZE_OPTIONS = [
+  { value: 'default', labelKey: 'aiFontSizeDefault' },
+  { value: 'large', labelKey: 'aiFontSizeLarge' },
+  { value: 'xlarge', labelKey: 'aiFontSizeXLarge' },
+  { value: 'custom', labelKey: 'aiFontSizeCustom' },
+] as const satisfies readonly { value: AiFontSize; labelKey: StringKey }[]
+
 const CHANNEL_OPTIONS = [
   { value: 'stable', labelKey: 'channelStable' },
   { value: 'beta', labelKey: 'channelBeta' },
@@ -56,12 +86,66 @@ function formatStars(n: number): string {
   return `${k >= 100 ? Math.round(k) : (Math.round(k * 10) / 10).toString().replace(/\.0$/, '')}k`
 }
 
-type SectionId = 'account' | 'aiModel' | 'general' | 'about'
+/** px stepper for the custom AI panel text size; in-range values apply live,
+ * out-of-range or partial input is clamped on blur */
+function CustomFontSizeInput({
+  value,
+  label,
+  onCommit,
+}: {
+  value: number
+  label: string
+  onCommit: (px: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+  const [editing, setEditing] = useState(false)
+  const shown = editing ? draft : String(value)
+  const commit = (raw: string) => {
+    const px = clampAiCustomFontSize(raw)
+    if (px !== null && px !== value) onCommit(px)
+  }
+  return (
+    <label className="set-num">
+      <input
+        type="number"
+        className="set-input set-num-input"
+        aria-label={label}
+        min={AI_CUSTOM_FONT_MIN_PX}
+        max={AI_CUSTOM_FONT_MAX_PX}
+        step={1}
+        value={shown}
+        onFocus={() => {
+          setDraft(String(value))
+          setEditing(true)
+        }}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          const n = Number(e.target.value)
+          if (Number.isInteger(n) && n >= AI_CUSTOM_FONT_MIN_PX && n <= AI_CUSTOM_FONT_MAX_PX) {
+            onCommit(n)
+          }
+        }}
+        onBlur={() => {
+          commit(draft)
+          setEditing(false)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+      />
+      <span className="set-num-unit">px</span>
+    </label>
+  )
+}
+
+type SectionId = 'account' | 'aiModel' | 'aiMedia' | 'general' | 'integrations' | 'about'
 
 const SECTIONS: readonly { id: SectionId; labelKey: StringKey }[] = [
   { id: 'account', labelKey: 'setSecAccount' },
   { id: 'aiModel', labelKey: 'setSecAiModel' },
+  { id: 'aiMedia', labelKey: 'setSecAiMedia' },
   { id: 'general', labelKey: 'setSecGeneral' },
+  { id: 'integrations', labelKey: 'setSecIntegrations' },
   { id: 'about', labelKey: 'setSecAbout' },
 ]
 
@@ -84,6 +168,21 @@ function SectionIcon({ id }: { id: SectionId }) {
       </svg>
     )
   }
+  if (id === 'aiMedia') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+        <path
+          d="M2.5 11.5 6 8l2.5 2.5L10.5 9l3 2.8"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="10.5" cy="6" r="1.1" fill="currentColor" />
+      </svg>
+    )
+  }
   if (id === 'account') {
     return (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -93,6 +192,19 @@ function SectionIcon({ id }: { id: SectionId }) {
           stroke="currentColor"
           strokeWidth="1.3"
           strokeLinecap="round"
+        />
+      </svg>
+    )
+  }
+  if (id === 'integrations') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path
+          d="M5.5 2v3M10.5 2v3M4 5h8v2.5a4 4 0 0 1-8 0V5ZM8 11.5V14"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
       </svg>
     )
@@ -147,12 +259,31 @@ function Field({
 
 /** AI model pane: provider / model / key / base URL, saved to userData/ai-settings.json */
 function AiModelPane({ t }: { t: TFunc }) {
-  const [catalog] = useState<AiCatalogEntry[]>(() => window.aiOffice.getAiProviders?.() ?? [])
+  const [catalog, setCatalog] = useState<AiCatalogEntry[]>(
+    () => window.aiOffice.getAiProviders?.() ?? [],
+  )
   const [settings, setSettings] = useState<AiSettings | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
+  /** free-typed value of the output-cap field; committed (and clamped) on blur */
+  const [maxTokensDraft, setMaxTokensDraft] = useState<string | null>(null)
+
+  const refreshCodexModels = useCallback(async (cliPath = '', selectedModel = '') => {
+    if (!window.aiOffice.getCodexModels) return
+    const live = await window.aiOffice.getCodexModels(cliPath)
+    setCatalog((current) =>
+      current.map((entry) => {
+        if (entry.id !== 'codex') return entry
+        const models =
+          selectedModel && !live.models.includes(selectedModel)
+            ? [selectedModel, ...live.models]
+            : live.models
+        return { ...entry, models, defaultModel: live.defaultModel }
+      }),
+    )
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -167,23 +298,27 @@ function AiModelPane({ t }: { t: TFunc }) {
         s = { ...s, gskToolsEnabled: true }
       }
       setSettings(s)
+      const codex = s.providers.codex
+      if (codex) {
+        void refreshCodexModels(codex.cliPath ?? '', codex.model).catch(() => undefined)
+      }
     })
     return () => {
       alive = false
     }
-  }, [])
+  }, [refreshCodexModels])
 
   if (!settings) return null
-  // genspark is invisible in the fork: it stays as backend capability but is
-  // never offered as a selectable provider in the UI (only Hermes + BYOK).
-  const visibleCatalog = catalog.filter((c) => c.id !== 'genspark')
   const provider = settings.provider
   const meta = catalog.find((c) => c.id === provider)
   const config = settings.providers[provider] ?? {
     apiKey: '',
     model: meta?.defaultModel ?? '',
+    baseUrl: undefined,
+    cliPath: undefined,
   }
-  const isGenspark = provider === 'genspark'
+  const isHermes = provider === 'genspark'
+  const isCodex = provider === 'codex'
 
   const touch = () => {
     setDirty(true)
@@ -195,6 +330,15 @@ function AiModelPane({ t }: { t: TFunc }) {
       ...settings,
       providers: { ...settings.providers, [provider]: { ...config, ...patch } },
     })
+    touch()
+  }
+  /** Commit the output-cap input: clamp what was typed and drop a no-op edit */
+  const commitMaxTokens = () => {
+    if (maxTokensDraft === null) return
+    setMaxTokensDraft(null)
+    const next = clampMaxOutputTokens(Number.parseInt(maxTokensDraft, 10))
+    if (next === (settings.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS)) return
+    setSettings({ ...settings, maxOutputTokens: next })
     touch()
   }
   const selectProvider = (id: AiSettings['provider']) => {
@@ -222,7 +366,12 @@ function AiModelPane({ t }: { t: TFunc }) {
     setTestResult(null)
     window.aiOffice
       .testAiSettings?.(settings)
-      .then((r) => setTestResult(r ?? { ok: false }))
+      .then((r) => {
+        setTestResult(r ?? { ok: false })
+        if (r?.ok && isCodex) {
+          void refreshCodexModels(config.cliPath ?? '', config.model).catch(() => undefined)
+        }
+      })
       .catch((error) =>
         setTestResult({ ok: false, error: error instanceof Error ? error.message : String(error) }),
       )
@@ -240,7 +389,7 @@ function AiModelPane({ t }: { t: TFunc }) {
           className="set-dd"
           value={provider}
           ariaLabel={t('setAiProvider')}
-          options={visibleCatalog.map((c) => ({
+          options={catalog.map((c) => ({
             value: c.id,
             label: c.label,
             render: (
@@ -254,7 +403,7 @@ function AiModelPane({ t }: { t: TFunc }) {
         />
       </div>
       <div className="set-field-desc set-ai-note">
-        {isGenspark ? t('setAiGensparkHint') : t('setAiByokNote')}
+        {isHermes ? t('setAiHermesHint') : isCodex ? t('setAiCodexHint') : t('setAiByokNote')}
       </div>
       <div className="set-field">
         <div className="set-field-text">
@@ -280,7 +429,32 @@ function AiModelPane({ t }: { t: TFunc }) {
           />
         )}
       </div>
-      {!isGenspark && (
+      {isCodex ? (
+        <div className="set-field">
+          <div className="set-field-text">
+            <div className="set-field-stack">
+              <label className="set-field-label" htmlFor="set-ai-cli-path">
+                {t('setAiCodexPath')}
+              </label>
+              <div className="set-field-desc">{t('setAiCodexPathHint')}</div>
+            </div>
+          </div>
+          <input
+            id="set-ai-cli-path"
+            className="set-input"
+            type="text"
+            value={config.cliPath ?? ''}
+            placeholder={t('setAiCodexAutoPlaceholder')}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => updateConfig({ cliPath: e.target.value.trim() })}
+            onBlur={(e) => {
+              const cliPath = e.target.value.trim()
+              void refreshCodexModels(cliPath, config.model).catch(() => undefined)
+            }}
+          />
+        </div>
+      ) : !isHermes ? (
         <>
           <div className="set-field">
             <div className="set-field-text">
@@ -324,7 +498,28 @@ function AiModelPane({ t }: { t: TFunc }) {
             />
           </div>
         </>
-      )}
+      ) : null}
+      <div className="set-field">
+        <div className="set-field-text">
+          <div className="set-field-stack">
+            <label className="set-field-label" htmlFor="set-ai-max-tokens">
+              {t('setAiMaxTokens')}
+            </label>
+            <div className="set-field-desc">{t('setAiMaxTokensDesc')}</div>
+          </div>
+        </div>
+        <input
+          id="set-ai-max-tokens"
+          className="set-input"
+          type="number"
+          min={MIN_MAX_OUTPUT_TOKENS}
+          max={MAX_MAX_OUTPUT_TOKENS}
+          step={1024}
+          value={maxTokensDraft ?? String(settings.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS)}
+          onChange={(e) => setMaxTokensDraft(e.target.value)}
+          onBlur={commitMaxTokens}
+        />
+      </div>
       <div className="set-field">
         <div className="set-field-text">
           <div className="set-field-stack">
@@ -338,7 +533,7 @@ function AiModelPane({ t }: { t: TFunc }) {
           role="switch"
           aria-checked={settings.gskToolsEnabled !== false}
           aria-label={t('setAiGskTools')}
-          disabled={isGenspark}
+          disabled={isHermes}
           onClick={() => {
             setSettings({ ...settings, gskToolsEnabled: settings.gskToolsEnabled === false })
             touch()
@@ -360,6 +555,363 @@ function AiModelPane({ t }: { t: TFunc }) {
           }
         />
         <button className="set-btn" disabled={testing} onClick={test}>
+          {t('setAiTest')}
+        </button>
+        <button className="set-btn primary" disabled={!dirty} onClick={save}>
+          {t('setAiSave')}
+        </button>
+      </div>
+    </>
+  )
+}
+
+type Capability = 'image' | 'analysis' | 'video' | 'search'
+
+/**
+ * AI media & search pane, one block per capability — web search, image
+ * generation, image analysis, video analysis — each with the same
+ * provider / model / key / base URL rows as the AI Model pane. A vendor's key
+ * and base URL are stored once and shared by every block that picks it.
+ * Saved into the same ai-settings.json as the chat provider.
+ */
+function AiMediaPane({ t }: { t: TFunc }) {
+  const [mediaCatalog] = useState<AiMediaProviderMeta[]>(
+    () => window.aiOffice.getAiMediaProviders?.() ?? [],
+  )
+  const [searchCatalog] = useState<AiSearchProviderMeta[]>(
+    () => window.aiOffice.getAiSearchProviders?.() ?? [],
+  )
+  const [settings, setSettings] = useState<AiSettings | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void window.aiOffice.getAiSettings?.().then((s) => {
+      if (alive && s) setSettings(s)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (!settings?.media || !settings.search) return null
+  const media: AiMediaSettings = settings.media
+  const search: AiSearchSettings = settings.search
+
+  const touch = () => {
+    setDirty(true)
+    setSaved(false)
+    setTestResult(null)
+  }
+  const setMedia = (next: AiMediaSettings) => {
+    setSettings({ ...settings, media: next })
+    touch()
+  }
+  const setSearch = (next: AiSearchSettings) => {
+    setSettings({ ...settings, search: next })
+    touch()
+  }
+  const mediaConfigOf = (id: AiMediaProviderId) => {
+    const meta = mediaCatalog.find((m) => m.id === id)
+    return (
+      media.providers[id] ?? {
+        apiKey: '',
+        imageModel: meta?.defaultImageModel ?? '',
+        analysisModel: meta?.defaultAnalysisModel ?? '',
+      }
+    )
+  }
+  const updateMediaConfig = (
+    id: AiMediaProviderId,
+    patch: Partial<AiMediaSettings['providers'][AiMediaProviderId]>,
+  ) =>
+    setMedia({
+      ...media,
+      providers: { ...media.providers, [id]: { ...mediaConfigOf(id), ...patch } },
+    })
+
+  const save = () => {
+    window.aiOffice
+      .setAiSettings?.(settings)
+      .then(() => {
+        setDirty(false)
+        setSaved(true)
+      })
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : String(error))
+      })
+  }
+  // every distinct BYOK vendor the four blocks point at is checked once; first failure wins
+  const test = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const vendors = new Set<AiMediaProviderId>(
+        [media.imageProvider, media.analysisProvider, media.videoAnalysisProvider].filter(
+          (id) => id !== 'genspark',
+        ),
+      )
+      const checks: Promise<{ ok: boolean; error?: string } | undefined>[] = [...vendors].map(
+        (id) =>
+          window.aiOffice.testAiMediaSettings?.({ provider: id, config: mediaConfigOf(id) }) ??
+          Promise.resolve(undefined),
+      )
+      if (search.provider !== 'genspark') {
+        checks.push(
+          window.aiOffice.testAiSearchSettings?.({
+            provider: search.provider,
+            apiKey: search.providers[search.provider]?.apiKey ?? '',
+          }) ?? Promise.resolve(undefined),
+        )
+      }
+      if (checks.length === 0) {
+        checks.push(
+          window.aiOffice.testAiMediaSettings?.({
+            provider: 'genspark',
+            config: mediaConfigOf('genspark'),
+          }) ?? Promise.resolve(undefined),
+        )
+      }
+      const results = await Promise.all(checks)
+      setTestResult(results.find((r) => r && !r.ok) ?? { ok: true })
+    } catch (error) {
+      setTestResult({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const providerRow = (
+    label: string,
+    value: string,
+    options: { id: string; label: string }[],
+    onPick: (id: string) => void,
+  ) => (
+    <div className="set-field">
+      <div className="set-field-text">
+        <label className="set-field-label">{t('setAiProvider')}</label>
+      </div>
+      <Dropdown
+        className="set-dd"
+        value={value}
+        ariaLabel={label}
+        options={options.map((c) => ({
+          value: c.id,
+          label: c.label,
+          render: (
+            <>
+              <ProviderLogo id={c.id} />
+              {c.label}
+            </>
+          ),
+        }))}
+        onPick={onPick}
+      />
+    </div>
+  )
+
+  const modelRow = (
+    id: string,
+    models: string[],
+    fallback: string,
+    value: string,
+    onChange: (v: string) => void,
+  ) => (
+    <div className="set-field">
+      <div className="set-field-text">
+        <label className="set-field-label" htmlFor={id}>
+          {t('setAiModelId')}
+        </label>
+      </div>
+      {models.length > 0 ? (
+        <Dropdown
+          className="set-dd"
+          value={value || fallback}
+          ariaLabel={t('setAiModelId')}
+          options={models.map((m) => ({ value: m, label: m }))}
+          onPick={onChange}
+        />
+      ) : (
+        <input
+          id={id}
+          className="set-input"
+          type="text"
+          value={value}
+          placeholder="model-id"
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  )
+
+  const keyRow = (
+    id: string,
+    value: string,
+    placeholder: string,
+    onChange: (v: string) => void,
+  ) => (
+    <div className="set-field">
+      <div className="set-field-text">
+        <div className="set-field-stack">
+          <label className="set-field-label" htmlFor={id}>
+            {t('setAiApiKey')}
+          </label>
+          <div className="set-field-desc">{t('setAiKeyHint')}</div>
+        </div>
+      </div>
+      <input
+        id={id}
+        className="set-input"
+        type="password"
+        value={value}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value.trim())}
+      />
+    </div>
+  )
+
+  const baseUrlRow = (
+    id: string,
+    meta: AiMediaProviderMeta,
+    value: string,
+    onChange: (v: string) => void,
+  ) => (
+    <div className="set-field">
+      <div className="set-field-text">
+        <div className="set-field-stack">
+          <label className="set-field-label" htmlFor={id}>
+            {t('setAiBaseUrl')}
+          </label>
+          {!meta.needsBaseUrl && <div className="set-field-desc">{t('setAiBaseUrlHint')}</div>}
+        </div>
+      </div>
+      <input
+        id={id}
+        className="set-input"
+        type="text"
+        value={value}
+        placeholder={meta.needsBaseUrl ? 'https://…/v1' : meta.defaultBaseUrl}
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value.trim())}
+      />
+    </div>
+  )
+
+  /** one media block: provider → model → key → base URL (key/base URL shared per vendor) */
+  const mediaBlock = (cap: Exclude<Capability, 'search'>) => {
+    const title =
+      cap === 'image'
+        ? t('setAiCapImage')
+        : cap === 'analysis'
+          ? t('setAiCapAnalysis')
+          : t('setAiCapVideo')
+    const options = mediaCatalog.filter((m) =>
+      cap === 'image'
+        ? !!m.imageProtocol
+        : cap === 'video'
+          ? !!m.analysisProtocol && m.videoAnalysis
+          : !!m.analysisProtocol,
+    )
+    const current =
+      cap === 'image'
+        ? media.imageProvider
+        : cap === 'video'
+          ? media.videoAnalysisProvider
+          : media.analysisProvider
+    const meta = options.find((m) => m.id === current) ?? options[0]!
+    const id = meta.id
+    const config = mediaConfigOf(id)
+    const pick = (next: string) => {
+      const p = next as AiMediaProviderId
+      setMedia(
+        cap === 'image'
+          ? { ...media, imageProvider: p }
+          : cap === 'video'
+            ? { ...media, videoAnalysisProvider: p }
+            : { ...media, analysisProvider: p },
+      )
+    }
+    const modelField = cap === 'image' ? 'imageModel' : 'analysisModel'
+    return (
+      <section key={cap}>
+        <h4 className="set-pane-subtitle">{title}</h4>
+        {providerRow(title, id, options, pick)}
+        <div className="set-field-desc set-ai-note">
+          {id === 'genspark' ? t('setAiMediaHermesHint') : meta.description}
+        </div>
+        {id !== 'genspark' && (
+          <>
+            {modelRow(
+              `set-ai-${cap}-model`,
+              cap === 'image' ? meta.imageModels : meta.analysisModels,
+              cap === 'image' ? meta.defaultImageModel : meta.defaultAnalysisModel,
+              config[modelField],
+              (m) => updateMediaConfig(id, { [modelField]: m }),
+            )}
+            {keyRow(`set-ai-${cap}-key`, config.apiKey, meta.keyPlaceholder, (v) =>
+              updateMediaConfig(id, { apiKey: v }),
+            )}
+            {baseUrlRow(`set-ai-${cap}-base-url`, meta, config.baseUrl ?? '', (v) =>
+              updateMediaConfig(id, { baseUrl: v }),
+            )}
+          </>
+        )}
+      </section>
+    )
+  }
+
+  const searchMeta = searchCatalog.find((m) => m.id === search.provider)
+  const searchKey =
+    search.provider === 'genspark' ? '' : (search.providers[search.provider]?.apiKey ?? '')
+
+  return (
+    <>
+      <h3 className="set-pane-title">{t('setSecAiMedia')}</h3>
+      <div className="set-field-desc set-ai-note">{t('setAiSharedKeyHint')}</div>
+      <section>
+        <h4 className="set-pane-subtitle">{t('setAiCapSearch')}</h4>
+        {providerRow(t('setAiCapSearch'), search.provider, searchCatalog, (v) =>
+          setSearch({ ...search, provider: v as AiSearchSettings['provider'] }),
+        )}
+        <div className="set-field-desc set-ai-note">
+          {search.provider === 'genspark'
+            ? t('setAiSearchHermesHint')
+            : searchMeta?.imageSearch
+              ? t('setAiSearchSerperHint')
+              : t('setAiSearchTavilyHint')}
+        </div>
+        {search.provider !== 'genspark' &&
+          keyRow('set-ai-search-key', searchKey, searchMeta?.keyPlaceholder ?? 'API Key', (v) =>
+            setSearch({
+              ...search,
+              providers: { ...search.providers, [search.provider]: { apiKey: v } },
+            }),
+          )}
+      </section>
+      {mediaBlock('image')}
+      {mediaBlock('analysis')}
+      {mediaBlock('video')}
+      <div className="set-pane-footer">
+        <AiStatusPill
+          status={
+            testing
+              ? { kind: 'testing', text: t('setAiTesting') }
+              : testResult
+                ? testResult.ok
+                  ? { kind: 'ok', text: t('setAiTestOk') }
+                  : { kind: 'err', text: testResult.error || t('setAiTestFail') }
+                : saved
+                  ? { kind: 'ok', text: t('setAiSaved') }
+                  : null
+          }
+        />
+        <button className="set-btn" disabled={testing} onClick={() => void test()}>
           {t('setAiTest')}
         </button>
         <button className="set-btn primary" disabled={!dirty} onClick={save}>
@@ -434,9 +986,12 @@ export interface SettingsModalProps {
   onOpenLoginUrl: () => void
   onCopyLoginUrl: () => void
   onClose: () => void
-  /** closes the modal and launches the Genspark login flow (progress shows on the account entry) */
+  /** closes the modal and launches the Hermes login flow (progress shows on the account entry) */
   onLogin: () => void
   onLogout: () => void
+  /** an installed skill is older than the bundled one: dot on the Integrations entry */
+  skillUpdateDue?: boolean
+  onSkillUpdateDue?: (due: boolean) => void
 }
 
 export function SettingsModal({
@@ -450,6 +1005,8 @@ export function SettingsModal({
   onClose,
   onLogin,
   onLogout,
+  skillUpdateDue: updateDue = false,
+  onSkillUpdateDue,
 }: SettingsModalProps) {
   const { lang, setLang, t } = useI18n()
   const [section, setSection] = useState<SectionId>('account')
@@ -457,6 +1014,8 @@ export function SettingsModal({
   const [saveDir, setSaveDir] = useState('')
   const [analyticsOn, setAnalyticsOn] = useState(true)
   const [analyticsSaving, setAnalyticsSaving] = useState(false)
+  const [autoSaveOn, setAutoSaveOn] = useState(false)
+  const [aiPrefs, setAiPrefs] = useState<AiPanelPrefs>(DEFAULT_AI_PANEL_PREFS)
   const [channel, setChannel] = useState<'stable' | 'beta'>('stable')
   const [appVersion, setAppVersion] = useState('')
   const [githubStars, setGithubStars] = useState<number | null>(null)
@@ -471,6 +1030,12 @@ export function SettingsModal({
     })
     void window.aiOffice.getAnalyticsEnabled?.().then((on) => {
       if (alive) setAnalyticsOn(on !== false)
+    })
+    void window.aiOffice.getAutoSaveDefault?.().then((v) => {
+      if (alive) setAutoSaveOn(v.on)
+    })
+    void window.aiOffice.getAiPanelPrefs?.().then((prefs) => {
+      if (alive) setAiPrefs(prefs)
     })
     void window.aiOffice.getUpdateChannel?.().then((ch) => {
       if (alive) setChannel(ch)
@@ -499,6 +1064,11 @@ export function SettingsModal({
     void window.aiOffice.setTheme(next)
     if (next === 'system') document.documentElement.removeAttribute('data-theme')
     else document.documentElement.setAttribute('data-theme', next)
+  }
+
+  const updateAiPrefs = (patch: Partial<AiPanelPrefs>) => {
+    setAiPrefs((prev) => ({ ...prev, ...patch }))
+    void window.aiOffice.setAiPanelPrefs(patch).then(setAiPrefs)
   }
 
   const changeSaveDir = () => {
@@ -542,6 +1112,9 @@ export function SettingsModal({
               >
                 <SectionIcon id={s.id} />
                 {t(s.labelKey)}
+                {s.id === 'integrations' && updateDue && (
+                  <span className="set-nav-dot" role="img" aria-label={t('intgUpdateDue')} />
+                )}
               </button>
             ))}
           </nav>
@@ -587,7 +1160,7 @@ export function SettingsModal({
                         </>
                       )}
                       <button className="set-btn primary" onClick={onLogin}>
-                        {loginWaiting ? t('waitingShort') : t('loginGenspark')}
+                        {loginWaiting ? t('waitingShort') : t('loginHermes')}
                       </button>
                     </>
                   )}
@@ -595,6 +1168,7 @@ export function SettingsModal({
               </>
             )}
             {section === 'aiModel' && <AiModelPane t={t} />}
+            {section === 'aiMedia' && <AiMediaPane t={t} />}
             {section === 'general' && (
               <>
                 <h3 className="set-pane-title">{t('setSecGeneral')}</h3>
@@ -625,6 +1199,66 @@ export function SettingsModal({
                     onPick={(v) => applyTheme(v as UiTheme)}
                   />
                 </div>
+                <div className="set-field">
+                  <div className="set-field-text">
+                    <label className="set-field-label">{t('setAiPanelSide')}</label>
+                  </div>
+                  <Dropdown
+                    className="set-dd"
+                    value={aiPrefs.side}
+                    ariaLabel={t('setAiPanelSide')}
+                    options={[
+                      { value: 'left', label: t('aiPanelSideLeft') },
+                      { value: 'right', label: t('aiPanelSideRight') },
+                    ]}
+                    onPick={(side) => updateAiPrefs({ side: side as AiPanelSide })}
+                  />
+                </div>
+                <div className="set-field">
+                  <div className="set-field-text">
+                    <label className="set-field-label">{t('setAiFontSize')}</label>
+                  </div>
+                  {aiPrefs.fontSize === 'custom' && (
+                    <CustomFontSizeInput
+                      value={aiPrefs.customFontSize}
+                      label={t('aiFontSizeCustom')}
+                      onCommit={(px) => updateAiPrefs({ customFontSize: px })}
+                    />
+                  )}
+                  <Dropdown
+                    className="set-dd"
+                    value={aiPrefs.fontSize}
+                    ariaLabel={t('setAiFontSize')}
+                    options={AI_FONT_SIZE_OPTIONS.map((opt) => ({
+                      value: opt.value,
+                      label: t(opt.labelKey),
+                    }))}
+                    onPick={(v) => {
+                      const fontSize = v as AiFontSize
+                      // start the custom size from the preset being left so nothing jumps
+                      updateAiPrefs(
+                        fontSize === 'custom' && aiPrefs.fontSize !== 'custom'
+                          ? { fontSize, customFontSize: aiPanelFontPx(aiPrefs) }
+                          : { fontSize },
+                      )
+                    }}
+                  />
+                </div>
+                <div className="set-field">
+                  <div className="set-field-text">
+                    <div className="set-field-stack">
+                      <div className="set-field-label">{t('setAiSpellcheck')}</div>
+                      <div className="set-field-desc">{t('setAiSpellcheckDesc')}</div>
+                    </div>
+                  </div>
+                  <button
+                    className="set-switch"
+                    role="switch"
+                    aria-checked={aiPrefs.spellcheck}
+                    aria-label={t('setAiSpellcheck')}
+                    onClick={() => updateAiPrefs({ spellcheck: !aiPrefs.spellcheck })}
+                  />
+                </div>
                 <Field
                   label={t('saveLocation')}
                   value={saveDir || '—'}
@@ -635,6 +1269,25 @@ export function SettingsModal({
                     </button>
                   }
                 />
+                <div className="set-field">
+                  <div className="set-field-text">
+                    <div className="set-field-stack">
+                      <div className="set-field-label">{t('setAutoSave')}</div>
+                      <div className="set-field-desc">{t('setAutoSaveDesc')}</div>
+                    </div>
+                  </div>
+                  <button
+                    className="set-switch"
+                    role="switch"
+                    aria-checked={autoSaveOn}
+                    aria-label={t('setAutoSave')}
+                    onClick={() => {
+                      const next = !autoSaveOn
+                      setAutoSaveOn(next)
+                      void window.aiOffice.setAutoSaveDefault?.(next).catch(() => {})
+                    }}
+                  />
+                </div>
                 <div className="set-field">
                   <div className="set-field-text">
                     <div className="set-field-stack">
@@ -663,6 +1316,9 @@ export function SettingsModal({
                 </div>
               </>
             )}
+            {section === 'integrations' && (
+              <IntegrationsPane t={t} onStatus={(st) => onSkillUpdateDue?.(skillUpdateDue(st))} />
+            )}
             {section === 'about' && (
               <>
                 <h3 className="set-pane-title">{t('setSecAbout')}</h3>
@@ -690,8 +1346,8 @@ export function SettingsModal({
                   label={t('setGithub')}
                   value={
                     githubStars === null
-                      ? 'github.com/genspark-ai/hermesoffice'
-                      : `github.com/genspark-ai/hermesoffice · ★ ${formatStars(githubStars)}`
+                      ? 'github.com/criptogus/HermesOffice'
+                      : `github.com/criptogus/HermesOffice · ★ ${formatStars(githubStars)}`
                   }
                   action={
                     <button

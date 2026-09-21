@@ -1,14 +1,32 @@
+import { aiPanelWidthAtPointer, AiPanelSideButton } from '@hermesoffice/ui'
 import { useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/core'
 import type { Block } from '@hermesoffice/docx-engine'
-import { AgentLoop, composeSkills, type AgentImage } from '@hermesoffice/agent-core'
+import { AgentLoop, composeSkills, streamText, type AgentImage } from '@hermesoffice/agent-core'
+import { imageGenerationAvailable, mediaAnalysisAvailable } from '@hermesoffice/ai-provider/browser'
 import type { AiSettings, AttachmentAddResult, AttachmentMeta } from '../../shared/ipc'
 import { ATTACHMENT_IMAGE_EXTS } from '../../shared/ipc'
 import type { PmNode } from '../editor/convert'
+import { TABLE_TRAILING_SKIP } from '../editor/extensions'
 import { countWords, findNumId, type NumIds } from './protocol'
 import { DOC_NAV_SCHEME, navigateToBlock, parseDocNavHref } from './doc-nav'
-import { markDocSeen, type AiCommentsAccess, type AiHeaderFooterAccess } from './tools'
+import {
+  markDocSeen,
+  type AiCommentsAccess,
+  type AiDocExtras,
+  type AiHeaderFooterAccess,
+} from './tools'
+import type { AiPageSetupAccess } from './page-setup'
+import type { AiNotesAccess } from './note-ops'
 import { createDocsSkill } from './docs-skill'
+import {
+  buildDocWriterRequest,
+  countFragmentBlocks,
+  DOC_MAX_CHARS,
+  extractFragment,
+  type DocWriteResult,
+  type DocWriteSpec,
+} from './doc-writer'
 import { EditQueueCard } from './EditQueueCard'
 import {
   buildQueueInstruction,
@@ -17,13 +35,16 @@ import {
   resolveQueue,
   type DocsEditQueueItem,
 } from './edit-queue'
+import { setInactiveSelectionShown } from '../editor/inactive-selection'
 import { applyRevisionsBy } from '../editor/revisions'
 import { DOCS_CONTINUE_INSTRUCTION } from './continuation'
+import { waitForFullContent } from '../phased-content'
+import { currentDocGeneration } from '../file-actions'
 import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
 import { useI18n, t as tModule, aiLangDirective, type StringKey } from '../i18n/locale'
 import { Markdown } from '@hermesoffice/ui'
-import { AiComposer, AiTypingIndicator } from '@hermesoffice/ui'
+import { AiComposer, AiScopeQuote, AiTypingIndicator, type AiScopeQuoteData } from '@hermesoffice/ui'
 import { HermesMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
@@ -53,6 +74,9 @@ interface ToolActivity {
 /** Max characters of tool output in the UI expansion panel */
 const TOOL_OUTPUT_MAX_CHARS = 2000
 
+/** progress chip refresh while a write streams */
+const CHIP_UPDATE_MS = 400
+
 /** Cap on tool args/output persisted in the transcript (the store layer has another 16k truncation fallback) */
 const PERSIST_TOOL_FIELD_MAX = 16_000
 
@@ -72,7 +96,7 @@ interface ChatEntry {
   error?: string
   streaming?: boolean
   turnLimit?: boolean
-  /** the run failed because Genspark is signed out — render an inline sign-in button */
+  /** the run failed because Hermes is signed out — render an inline sign-in button */
   loginRequired?: boolean
   /** tool executions performed during this assistant turn */
   tools?: ToolActivity[]
@@ -80,7 +104,12 @@ interface ChatEntry {
   snapshot?: PmNode
   /** attachments consumed from the composer by this user message (read-only echo chips) */
   attachments?: AttachmentMeta[]
+  /** the selection this user message targeted, frozen at send */
+  scope?: AiScopeQuoteData
 }
+
+/** longest selection excerpt echoed on a user bubble */
+const SCOPE_TEXT_MAX = 200
 
 /** clickable starter prompts for the empty state (fill the input, do not send) —
  * blank documents get generation starters, documents with content get edit starters */
@@ -131,7 +160,7 @@ const PASTE_MIME_EXT: Record<string, string> = {
   'image/webp': 'webp',
 }
 
-/** File-type icons for attachment cards (Genspark attachment icon set); exts the
+/** File-type icons for attachment cards (Hermes attachment icon set); exts the
  *  attachment allowlist doesn't accept yet are mapped ahead so they light up when added */
 const ATTACHMENT_CARD_ICON_GROUPS: [icon: string, exts: string[]][] = [
   [fileWordIcon, ['doc', 'docx']],
@@ -283,6 +312,12 @@ interface AiPanelProps {
   commentsAccess?: AiCommentsAccess
   /** header/footer state for the set_header_footer tool and per-turn context */
   hfAccess?: AiHeaderFooterAccess
+  /** section store for set_page_setup / insert_section_break and the page-setup context line */
+  pageSetupAccess?: AiPageSetupAccess
+  /** style catalog and watermark stores for define_style / applyStyle / set_watermark */
+  docExtras?: AiDocExtras
+  /** footnote / endnote lists for insert_footnote, insert_endnote, delete_note, read_notes */
+  notesAccess?: AiNotesAccess
 }
 
 export function AiPanel({
@@ -304,13 +339,25 @@ export function AiPanel({
   onQueueConsume,
   commentsAccess,
   hfAccess,
+  pageSetupAccess,
+  docExtras,
+  notesAccess,
 }: AiPanelProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  // Panel chrome follows the UI language; message text follows its own content (dir=auto below)
+  const isRtl = lang === 'ar' || lang === 'he'
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   /** Wall-clock start of the current run, drives the elapsed badge */
   const runStartedAtRef = useRef(0)
+  /** a send waiting on a phased open's tail; Stop / New chat abort it before it runs */
+  const pendingSendRef = useRef<{ aborted: boolean } | null>(null)
   const [chat, setChat] = useState<ChatEntry[]>([])
+  /** a streamed write stopped early: the draft stays in the document until the user keeps or discards it */
+  const [activePartial, setActivePartial] = useState<{ blocks: number } | null>(null)
+  const partialResolverRef = useRef<((keep: boolean) => void) | null>(null)
+  /** bumped by New chat / unmount: a writer resuming after its abort must not open the keep card */
+  const writerEpochRef = useRef(0)
   /** Past conversation restored from JSONL (read-only transcript, not fed to the model) */
   const [historicChat, setHistoricChat] = useState<ChatEntry[]>([])
   const [trackChanges, setTrackChanges] = useState(
@@ -319,7 +366,7 @@ export function AiPanel({
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [attachments, setAttachments] = useState<AttachmentMeta[]>([])
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
-  /** data-URL previews for image attachments, keyed by path (Genspark composer thumbnails) */
+  /** data-URL previews for image attachments, keyed by path (Hermes composer thumbnails) */
   const [attachmentPreviews, setAttachmentPreviews] = useState<Record<string, string>>({})
   /** image paths with a read already issued — one readAttachmentImage per attach, even while pending */
   const previewRequestedRef = useRef(new Set<string>())
@@ -350,15 +397,23 @@ export function AiPanel({
     for (const a of wanted) {
       if (!ATTACHMENT_IMAGE_EXTS.has(a.ext) || previewRequestedRef.current.has(a.path)) continue
       previewRequestedRef.current.add(a.path)
-      void window.desktop.readAttachmentImage(a.path).then((r) => {
-        if (!previewRequestedRef.current.has(a.path)) return // removed while the read was in flight
-        if (r.ok && r.base64 && r.mime) {
-          setAttachmentPreviews((prev) => ({
-            ...prev,
-            [a.path]: `data:${r.mime};base64,${r.base64}`,
-          }))
-        }
-      })
+      void window.desktop
+        .readAttachmentImage(a.path)
+        .then((r) => {
+          if (!previewRequestedRef.current.has(a.path)) return // removed while the read was in flight
+          if (r.ok && r.base64 && r.mime) {
+            setAttachmentPreviews((prev) => ({
+              ...prev,
+              [a.path]: `data:${r.mime};base64,${r.base64}`,
+            }))
+          }
+        })
+        .catch(() => {
+          // A rejected read (bridge error, teardown race) must not leave the
+          // path marked requested forever — that would permanently skip the
+          // thumbnail with no retry. Clear it so the next effect run retries.
+          previewRequestedRef.current.delete(a.path)
+        })
     }
   }, [attachments, chat, historicChat])
   /** paints the strip's scrollbar thumb while the user scrolls it (cleared 800ms after the last event) */
@@ -393,6 +448,15 @@ export function AiPanel({
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+  // a pending keep/discard must not outlive the panel: settle it as discard
+  useEffect(
+    () => () => {
+      writerEpochRef.current++
+      partialResolverRef.current?.(false)
+      partialResolverRef.current = null
+    },
+    [],
+  )
   // bumped on selection/doc changes so the scope hint & quick actions stay fresh
   const [, setScopeTick] = useState(0)
   /** the scope chip's expandable preview of the selected text */
@@ -409,6 +473,26 @@ export function AiPanel({
   editorRef.current = editor
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  /** gsk login state for the generate_image gate (refreshed on mount and window focus) */
+  const gskLoggedInRef = useRef(false)
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      // tests render the panel without a preload bridge
+      void window.desktop
+        ?.aiGskStatus?.()
+        .then((s) => {
+          if (alive) gskLoggedInRef.current = !!s?.loggedIn
+        })
+        .catch(() => {})
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const blocksRef = useRef(blocks)
   blocksRef.current = blocks
   const numIdFallbackRef = useRef(numIdFallback)
@@ -417,6 +501,8 @@ export function AiPanel({
   attachmentsRef.current = attachments
   /** attachments consumed by the most recent send — retry resends the same set */
   const lastAttachmentsRef = useRef<AttachmentMeta[]>([])
+  /** the scope quote of the last send, so a retry reuses it instead of re-reading the live selection */
+  const lastScopeRef = useRef<AiScopeQuoteData | undefined>(undefined)
   /** composer attachments plus everything already sent this session (deduped by path) */
   const availableAttachments = (): AttachmentMeta[] => {
     const seen = new Set<string>()
@@ -430,6 +516,12 @@ export function AiPanel({
   commentsAccessRef.current = commentsAccess
   const hfAccessRef = useRef(hfAccess)
   hfAccessRef.current = hfAccess
+  const pageSetupAccessRef = useRef(pageSetupAccess)
+  pageSetupAccessRef.current = pageSetupAccess
+  const docExtrasRef = useRef(docExtras)
+  docExtrasRef.current = docExtras
+  const notesAccessRef = useRef(notesAccess)
+  notesAccessRef.current = notesAccess
 
   /** drop every aiChanged flag; silent = skip undo history (auto-accept path) */
   const clearAiHighlights = (silent = false) => {
@@ -494,6 +586,7 @@ export function AiPanel({
                 ext: a.ext ?? '',
                 sizeBytes: a.sizeBytes ?? 0,
               })),
+            ...(m.scope ? { scope: m.scope } : {}),
           })),
         )
         // restore model context: follow-ups after reopening a file continue the previous conversation (only when the loop is idle with no history)
@@ -531,6 +624,7 @@ export function AiPanel({
       output?: string
     }>,
     attachments?: AttachmentMeta[],
+    scope?: AiScopeQuoteData,
   ) => {
     const ids = chatRefIds.current
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
@@ -552,6 +646,7 @@ export function AiPanel({
               })),
             }
           : {}),
+        ...(scope ? { scope } : {}),
       })
       .catch(() => {
         /* silent */
@@ -570,6 +665,83 @@ export function AiPanel({
     })
   }
 
+  const transportRef = useRef<ReturnType<typeof createElectronTransport> | null>(null)
+  if (!transportRef.current)
+    transportRef.current = createElectronTransport(() => settingsRef.current)
+
+  /**
+   * Long-form writing: one tool-less request whose reply is the fragment, streamed
+   * into the document as a draft by the tool. A stream that stops early leaves the
+   * user a keep-or-discard choice; a stream that produced nothing is retried once.
+   */
+  const runDocWriter = async (
+    spec: DocWriteSpec,
+    onProgress: (html: string) => void,
+    signal?: AbortSignal,
+  ): Promise<DocWriteResult> => {
+    const { system, user } = buildDocWriterRequest(spec, aiLangDirective())
+    const epoch = writerEpochRef.current
+    let closed = false
+    let chipTimer: ReturnType<typeof setTimeout> | null = null
+    let latest = ''
+    const updateChip = () => {
+      chipTimer = null
+      if (closed) return
+      const blocks = countFragmentBlocks(latest)
+      patchLastAssistant((last) => ({
+        tools: last.tools?.map((tl) =>
+          tl.running ? { ...tl, summary: tModule('aiWritingDocument', { blocks }) } : tl,
+        ),
+      }))
+    }
+    const attempt = () =>
+      streamText({
+        transport: transportRef.current!,
+        system,
+        user,
+        signal,
+        maxChars: DOC_MAX_CHARS,
+        extract: (raw) => ({ text: extractFragment(raw) }),
+        onProgress: (html) => {
+          if (closed) return
+          latest = html
+          onProgress(html)
+          if (chipTimer === null) chipTimer = setTimeout(updateChip, CHIP_UPDATE_MS)
+        },
+      })
+    let outcome = await attempt()
+    if (outcome.status === 'empty' && !signal?.aborted) outcome = await attempt()
+    closed = true
+    if (chipTimer !== null) clearTimeout(chipTimer)
+    if (outcome.status === 'complete') return { ok: true, html: outcome.text }
+    if (outcome.status === 'empty') return { ok: false, error: outcome.error }
+    if (epoch !== writerEpochRef.current) return { ok: false, error: 'the chat was reset' }
+    // the draft stays in the document while the user decides
+    const keep = await new Promise<boolean>((resolve) => {
+      partialResolverRef.current = resolve
+      setActivePartial({ blocks: countFragmentBlocks(outcome.text) })
+    })
+    return keep
+      ? { ok: true, html: outcome.text, truncated: true }
+      : {
+          ok: false,
+          error: `${outcome.reason}${outcome.error ? `: ${outcome.error}` : ''}; the user discarded the partial content`,
+        }
+  }
+  const runDocWriterRef = useRef(runDocWriter)
+  runDocWriterRef.current = runDocWriter
+
+  const decidePartial = (keep: boolean): void => {
+    partialResolverRef.current?.(keep)
+    partialResolverRef.current = null
+    setActivePartial(null)
+  }
+  /** New chat / unmount: discard an open keep card and keep a still-settling writer from opening one */
+  const abandonWriter = (): void => {
+    writerEpochRef.current++
+    decidePartial(false)
+  }
+
   const loopRef = useRef<AgentLoop<PmNode> | null>(null)
   if (!loopRef.current) {
     const numIds = (): NumIds => ({
@@ -577,7 +749,7 @@ export function AiPanel({
       ordered: findNumId(blocksRef.current, 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
     })
     loopRef.current = new AgentLoop<PmNode>({
-      transport: createElectronTransport(() => settingsRef.current),
+      transport: transportRef.current,
       systemSuffix: aiLangDirective,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(
@@ -586,6 +758,14 @@ export function AiPanel({
           () => (trackChangesRef.current ? { author: AI_REVISION_AUTHOR } : undefined),
           () => commentsAccessRef.current,
           () => hfAccessRef.current,
+          () => imageGenerationAvailable(settingsRef.current, gskLoggedInRef.current),
+          () => ({
+            write: (spec, onProgress, signal) => runDocWriterRef.current(spec, onProgress, signal),
+          }),
+          () => pageSetupAccessRef.current,
+          () => docExtrasRef.current,
+          () => notesAccessRef.current,
+          () => mediaAnalysisAvailable(settingsRef.current, gskLoggedInRef.current),
         ),
         createFilesSkill(availableAttachments),
       ]),
@@ -740,6 +920,29 @@ export function AiPanel({
     editor.commands.setTextSelection(editor.state.selection.to)
   }
 
+  const selectionScopeQuote = (): AiScopeQuoteData | undefined => {
+    const { from, to, empty } = editor.state.selection
+    if (empty) return undefined
+    const text = editor.state.doc.textBetween(from, to, ' ', ' ').replace(/\s+/g, ' ').trim()
+    if (!text) return undefined
+    return {
+      label: t('aiScopeSelection', { words: countWords(text) }),
+      text: text.length > SCOPE_TEXT_MAX ? `${text.slice(0, SCOPE_TEXT_MAX)}…` : text,
+    }
+  }
+
+  // the frozen-range highlight ends with the run, or as soon as the editor is focused again
+  useEffect(() => {
+    if (!busy) setInactiveSelectionShown(editor, false)
+  }, [busy, editor])
+  useEffect(() => {
+    const off = () => setInactiveSelectionShown(editor, false)
+    editor.on('focus', off)
+    return () => {
+      editor.off('focus', off)
+    }
+  }, [editor])
+
   /** [label](docnav://block/N) links in replies select and scroll to that block */
   const docNav = {
     scheme: DOC_NAV_SCHEME,
@@ -793,9 +996,11 @@ export function AiPanel({
     instruction: string,
     displayInstruction = instruction,
     attachmentsOverride?: AttachmentMeta[],
+    /** null = a retry that had no scope; undefined = capture the live selection */
+    retryScope?: AiScopeQuoteData | null,
   ) => {
     const loop = loopRef.current
-    if (!instruction || !loop || loop.busy) return
+    if (!instruction || !loop || loop.busy || pendingSendRef.current) return
     setInput('')
     // The message consumes the composer attachments: they ride along (echoed on the
     // bubble, images multimodal, files via the files skill) and the composer clears.
@@ -809,6 +1014,16 @@ export function AiPanel({
       setAttachments([])
     }
     lastAttachmentsRef.current = sentAtts
+    // the queue batch and the continue action carry their own display text: no selection quote
+    const scope =
+      retryScope !== undefined
+        ? (retryScope ?? undefined)
+        : displayInstruction === instruction
+          ? selectionScopeQuote()
+          : undefined
+    lastScopeRef.current = scope
+    // the popover input / composer own the DOM selection now: keep the targeted range visible until the run ends
+    if (scope) setInactiveSelectionShown(editor, true)
     instructionRef.current = instruction
     lastInstructionRef.current = instruction
     runToolsRef.current = []
@@ -820,12 +1035,17 @@ export function AiPanel({
         role: 'user',
         text: displayInstruction,
         ...(sentAtts.length > 0 ? { attachments: sentAtts } : {}),
+        ...(scope ? { scope } : {}),
       },
       { role: 'assistant', text: '', streaming: true },
     ])
     runStartedAtRef.current = Date.now()
     setBusy(true)
-    persistMessage('user', instruction, undefined, sentAtts)
+    // claimed before the async image read so Stop / New chat can flag this send at any point
+    const generation = currentDocGeneration()
+    const pending = { aborted: false }
+    pendingSendRef.current = pending
+    persistMessage('user', instruction, undefined, sentAtts, scope)
     // a rejected image read must not strand the run (busy would stay true forever): degrade to a no-image send
     void collectImageAttachments(sentAtts)
       .catch((): AgentImage[] => {
@@ -833,10 +1053,31 @@ export function AiPanel({
         window.setTimeout(() => setAttachNotice(null), 5000)
         return []
       })
-      .then((images) => loop.run(instruction, images))
+      // a phased open still streaming its tail: the context must describe the whole document
+      .then(async (images) => {
+        await waitForFullContent()
+        // a newer send (after New chat) owns the panel now: leave its state alone
+        if (pendingSendRef.current !== pending) return
+        pendingSendRef.current = null
+        // the wait ended because another document replaced this one, or the
+        // user stopped / reset the chat meanwhile: nothing to run
+        if (pending.aborted || currentDocGeneration() !== generation) {
+          setChat((prev) =>
+            prev.filter(
+              (m, i) => !(i === prev.length - 1 && m.role === 'assistant' && m.streaming),
+            ),
+          )
+          setBusy(false)
+          return
+        }
+        return loop.run(instruction, images)
+      })
   }
 
-  const cancel = () => loopRef.current?.cancel()
+  const cancel = () => {
+    if (pendingSendRef.current) pendingSendRef.current.aborted = true
+    loopRef.current?.cancel()
+  }
 
   /** submit every still-anchored queued edit as one batch run */
   const sendQueue = () => {
@@ -856,14 +1097,32 @@ export function AiPanel({
   }
 
   const retry = () =>
-    runWith(lastInstructionRef.current, lastInstructionRef.current, lastAttachmentsRef.current)
+    runWith(
+      lastInstructionRef.current,
+      lastInstructionRef.current,
+      lastAttachmentsRef.current,
+      lastScopeRef.current ?? null,
+    )
 
   const continueRun = () => runWith(DOCS_CONTINUE_INSTRUCTION, t('aiContinue'))
 
   const newChat = () => {
+    if (pendingSendRef.current) {
+      pendingSendRef.current.aborted = true
+      pendingSendRef.current = null
+    }
+    abandonWriter()
     loopRef.current?.reset()
     setBusy(false)
     setChat([])
+    // Restored history is painted above the live turn: without this the
+    // previous conversation survives "New chat" on screen (#195).
+    setHistoricChat([])
+    // Unsent composer attachments would otherwise ride into the next chat's
+    // file context (availableAttachments merges sent + live). The typed
+    // draft itself is kept — only staged files are dropped.
+    setAttachments([])
+    setAttachNotice(null)
     sentAttachmentsRef.current = []
     inputRef.current?.focus()
   }
@@ -932,7 +1191,11 @@ export function AiPanel({
   }
 
   const rollback = (entryIdx: number, snapshot: PmNode) => {
-    editor.commands.setContent(snapshot as never)
+    editor
+      .chain()
+      .setMeta(TABLE_TRAILING_SKIP, true)
+      .setContent(snapshot as never)
+      .run()
     // The document rewound to before this turn, so this and every later
     // rollback point now describe discarded futures
     setChat((prev) =>
@@ -943,7 +1206,7 @@ export function AiPanel({
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   useEffect(() => () => resizeCleanupRef.current?.(), [])
 
-  /** drag the panel's right edge to resize; panel is flush with the window's left edge */
+  /** Drag the inner panel edge to resize from the selected window side. */
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     const resizer = e.currentTarget
@@ -951,7 +1214,7 @@ export function AiPanel({
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
-      const w = clampPanelWidth(ev.clientX)
+      const w = clampPanelWidth(aiPanelWidthAtPointer(ev.clientX))
       preferredWidthRef.current = w
       setPanelWidth(w)
     }
@@ -996,6 +1259,7 @@ export function AiPanel({
     <aside
       ref={asideRef}
       style={{ width: '100%' }}
+      dir={isRtl ? 'rtl' : undefined}
       className={`ai-panel${dragOver ? ' ai-panel-dragover' : ''}${resizing ? ' ai-panel-resizing' : ''}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
@@ -1022,7 +1286,11 @@ export function AiPanel({
           {t('aiPanelTitle')}
         </span>
         <div className="ai-panel-header-actions">
-          {chat.length > 0 && (
+          <AiPanelSideButton
+            lang={lang}
+            onMove={(side) => window.desktop.setAiPanelPrefs({ side })}
+          />
+          {(chat.length > 0 || historicChat.length > 0) && (
             <button
               className="ai-header-btn"
               onClick={newChat}
@@ -1034,7 +1302,7 @@ export function AiPanel({
           )}
           {onCollapse && (
             <button
-              className="ai-header-btn"
+              className="ai-header-btn ai-panel-collapse"
               onClick={onCollapse}
               data-tip={t('aiCollapseTitle')}
               aria-label={t('aiCollapseTitle')}
@@ -1051,11 +1319,16 @@ export function AiPanel({
           <>
             {historicChat.map((entry, i) => (
               <div key={`h${i}`} className={`ai-msg ai-msg-${entry.role} ai-msg-historic`}>
+                {entry.role === 'user' && entry.scope && <AiScopeQuote scope={entry.scope} />}
                 {entry.role === 'user' && entry.attachments && entry.attachments.length > 0 && (
                   <SentAttachments atts={entry.attachments} previews={attachmentPreviews} />
                 )}
                 {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
-                {entry.text && <Markdown text={entry.text} nav={docNav} />}
+                {entry.text && (
+                  <div dir="auto">
+                    <Markdown text={entry.text} nav={docNav} />
+                  </div>
+                )}
               </div>
             ))}
             <div className="ai-history-sep">{t('aiHistorySep')}</div>
@@ -1113,6 +1386,7 @@ export function AiPanel({
               key={i}
               className={`ai-msg ai-msg-${entry.role}${entry.role === 'assistant' && entry.streaming ? ' ai-msg-streaming' : ''}`}
             >
+              {entry.role === 'user' && entry.scope && <AiScopeQuote scope={entry.scope} />}
               {entry.role === 'user' && entry.attachments && entry.attachments.length > 0 && (
                 <SentAttachments atts={entry.attachments} previews={attachmentPreviews} />
               )}
@@ -1123,9 +1397,11 @@ export function AiPanel({
                   />
                 </span>
               ) : entry.role === 'assistant' ? (
-                <Markdown text={entry.text} nav={docNav} />
+                <div dir="auto">
+                  <Markdown text={entry.text} nav={docNav} />
+                </div>
               ) : (
-                entry.text
+                <span dir="auto">{entry.text}</span>
               )}
               {entry.tools && entry.tools.length > 0 && <ToolChipList tools={entry.tools} />}
               {entry.error && (
@@ -1219,6 +1495,28 @@ export function AiPanel({
 
       <div className="ai-composer">
         {attachNotice && <div className="ai-attach-notice">{attachNotice}</div>}
+        {activePartial && (
+          <div className="ai-queue ai-partial-card" role="group" aria-label={t('aiPartialTitle')}>
+            <div className="ai-queue-head">
+              <span className="ai-queue-title">{t('aiPartialTitle')}</span>
+            </div>
+            <div className="ai-queue-hint">
+              {t('aiPartialBody', { blocks: activePartial.blocks })}
+            </div>
+            <div className="ai-queue-foot">
+              <button
+                type="button"
+                className="ai-queue-discard"
+                onClick={() => decidePartial(false)}
+              >
+                {t('aiPartialDiscard')}
+              </button>
+              <button type="button" className="ai-queue-send" onClick={() => decidePartial(true)}>
+                {t('aiPartialAdopt')}
+              </button>
+            </div>
+          </div>
+        )}
         <EditQueueCard
           items={editQueue}
           editor={editor}

@@ -26,7 +26,13 @@ export const hexTo255 = (hex: string): [number, number, number] => [
 ]
 
 export const rgb255ToHex = (c: readonly [number, number, number]): string =>
-  `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`
+  `#${c
+    .map((v) =>
+      Math.max(0, Math.min(255, Math.round(v)))
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`
 
 /** 0-255 RGB → [hue 0-360, saturation 0-1, value 0-1] */
 export const rgbToHsv = (r: number, g: number, b: number): [number, number, number] => {

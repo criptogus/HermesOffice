@@ -23,6 +23,7 @@ import { fontFamiliesFor, isEastAsianFontName } from '../font-list'
 import { useSystemFontFamilies } from '../system-fonts'
 import { cssFontFamily } from '../line-metrics'
 import { setParaAttrs, activeParaAttrs } from './ribbon-tabs'
+import { wordRangeAtCaret } from '../editor/comments'
 import { setSelectionAlign } from '../editor/direction'
 import { IconSparkle } from './icons'
 import { useModalKeys } from './modal-keys'
@@ -35,6 +36,8 @@ import { useModalKeys } from './modal-keys'
 export interface ContextMenuState {
   x: number
   y: number
+  /** src of the picture under the pointer, when the click landed on one */
+  imageSrc?: string | null
 }
 
 interface EditorContextMenuProps {
@@ -45,6 +48,8 @@ interface EditorContextMenuProps {
   onParagraphDialog: () => void
   onLink: () => void
   onNewComment: () => void
+  onViewImage: (src: string) => void
+  onSaveImageAs: (src: string) => void
   onAiPreset: (instruction: string) => void
   /** List items: restart numbering / continue numbering (shown when the cursor is on a docListItem) */
   onRestartNumbering?: () => void
@@ -74,6 +79,8 @@ export function EditorContextMenu({
   onParagraphDialog,
   onLink,
   onNewComment,
+  onViewImage,
+  onSaveImageAs,
   onAiPreset,
   onRestartNumbering,
   onContinueNumbering,
@@ -85,6 +92,7 @@ export function EditorContextMenu({
 
   const { from, to } = editor.state.selection
   const hasSelection = from !== to
+  const canComment = hasSelection || wordRangeAtCaret(editor) !== null
   const canEdit = editor.isEditable
   const selectedText = hasSelection ? editor.state.doc.textBetween(from, to, ' ').trim() : ''
   // Synonyms targets a word / short phrase, not long selections
@@ -309,6 +317,13 @@ export function EditorContextMenu({
       style={{ left: pos.left, top: pos.top, minWidth: MENU_WIDTH }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {menu.imageSrc && (
+        <>
+          {item(t('appViewImage'), { onClick: run(() => onViewImage(menu.imageSrc!)) })}
+          {item(t('appSaveImageAs'), { onClick: run(() => onSaveImageAs(menu.imageSrc!)) })}
+          <div className="ctx-sep" />
+        </>
+      )}
       {item(t('appCut'), {
         key: '⌘X',
         disabled: !hasSelection || !canEdit,
@@ -500,7 +515,7 @@ export function EditorContextMenu({
       )}
       <div className="ctx-sep" />
       {item(t('appHyperlinkMenu'), { key: '⌘K', onClick: run(onLink) })}
-      {item(t('appNewComment'), { disabled: !hasSelection, onClick: run(onNewComment) })}
+      {item(t('appNewComment'), { disabled: !canComment, onClick: run(onNewComment) })}
     </div>
   )
 }
@@ -550,6 +565,8 @@ export function FontDialog({ editor, onClose }: { editor: Editor; onClose: () =>
   )
   const [style, setStyle] = useState<string>(initialStyle)
   const [color, setColor] = useState(`#${(textAttrs.color as string | null) ?? '000000'}`)
+  // the input has no "unset" state: an untouched swatch keeps the run's colour as it was
+  const [colorTouched, setColorTouched] = useState(false)
   const [underline, setUnderline] = useState(editor.isActive('underline'))
   const [strike, setStrike] = useState(editor.isActive('strike'))
   const [vertAlign, setVertAlign] = useState<string>((textAttrs.vertAlign as string | null) ?? '')
@@ -559,12 +576,13 @@ export function FontDialog({ editor, onClose }: { editor: Editor; onClose: () =>
       onClose()
       return
     }
-    const hex = color.replace('#', '').toUpperCase()
     let chain = editor
       .chain()
       .focus()
       .setMark('docTextStyle', {
-        color: hex === '000000' ? null : hex,
+        color: colorTouched
+          ? color.replace('#', '').toUpperCase()
+          : ((textAttrs.color as string | null) ?? null),
         sizeHalfPoints: Math.round(size * 2),
         // picks target only their script's rFonts slot; the other slot survives
         ...(!font
@@ -657,7 +675,10 @@ export function FontDialog({ editor, onClose }: { editor: Editor; onClose: () =>
               type="color"
               className="font-color-input"
               value={color}
-              onChange={(e) => setColor(e.target.value)}
+              onChange={(e) => {
+                setColor(e.target.value)
+                setColorTouched(true)
+              }}
             />
           </label>
           <label className="font-check">

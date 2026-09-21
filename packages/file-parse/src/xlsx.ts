@@ -36,13 +36,16 @@ function sharedStringText(si: Record<string, unknown>): string {
     .join('')
 }
 
-/** "BC12" → zero-based column index 54 */
+/** "BC12" → zero-based column index 54 (cell refs are case-insensitive per ECMA-376) */
 function columnIndex(cellRef: string): number {
   let index = 0
-  for (const ch of cellRef) {
+  let letters = 0
+  for (const ch of cellRef.toUpperCase()) {
     if (ch < 'A' || ch > 'Z') break
+    letters += 1
     index = index * 26 + (ch.charCodeAt(0) - 64)
   }
+  if (letters === 0) return -1
   return index - 1
 }
 
@@ -59,7 +62,16 @@ function cellText(cell: Cell, shared: string[]): string {
   // <v> is ST_Xstring so it reaches the caller verbatim; the two reads that need it as a
   // scalar handle their own whitespace (Number tolerates it, the boolean compare strips it)
   const value = textOf(cell.v)
-  if (type === 's') return shared[Number(value)] ?? ''
+  if (type === 's') {
+    // An empty or missing <v> must stay empty: Number('') is 0 and would
+    // otherwise leak shared[0] into the cell. Out-of-range or non-numeric
+    // indexes also degrade to empty rather than corrupting the row.
+    const trimmed = value.trim()
+    if (trimmed === '') return ''
+    const index = Number(trimmed)
+    if (!Number.isInteger(index) || index < 0 || index >= shared.length) return ''
+    return shared[index] ?? ''
+  }
   if (type === 'b') return value.trim() === '1' ? 'TRUE' : 'FALSE'
   return value
 }
@@ -68,6 +80,35 @@ async function zipText(zip: JSZip, path: string): Promise<string | undefined> {
   const file = zip.file(path)
   return file ? file.async('text') : undefined
 }
+
+/**
+ * Normalize a workbook relationship target to a zip path. Relative targets
+ * resolve under `xl/`; backslashes become slashes; `.` segments drop out;
+ * `..` pops one segment but never escapes the `xl/` root (or the zip root
+ * for absolute targets). Mirrors the pptx target resolution.
+ */
+export function normalizeXlsxRelTarget(target: string): string {
+  const absolute = target.startsWith('/')
+  const stack: string[] = absolute ? [] : ['xl']
+  const floor = absolute ? 0 : 1
+  for (const part of target.replace(/\\/g, '/').split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      if (stack.length > floor) stack.pop()
+      continue
+    }
+    if (!absolute && stack.length === 1 && stack[0] === 'xl' && part === 'xl') continue
+    stack.push(part)
+  }
+  return stack.join('/') || 'xl'
+}
+
+/** Bounds for xlsx text extraction: malformed refs (e.g. XXXXXX99) would
+ *  otherwise grow the cells array by millions via the padding loop below. */
+export const MAX_XLSX_SHARED = 200_000
+export const MAX_XLSX_SHEETS = 100
+export const MAX_XLSX_ROWS = 200_000
+export const MAX_XLSX_COLS = 16_384
 
 /** extract sheet text from an xlsx: one "# SheetName" section per sheet, cells joined with " | " */
 export async function xlsxToText(bytes: Uint8Array): Promise<string> {
@@ -85,10 +126,7 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
     const rels = parser.parse(relsXml) as Record<string, any>
     for (const rel of asArray(rels.Relationships?.Relationship) as Array<Record<string, unknown>>) {
       const target = String(rel['@_Target'] ?? '')
-      relTargets.set(
-        String(rel['@_Id'] ?? ''),
-        target.startsWith('/') ? target.slice(1) : `xl/${target}`,
-      )
+      relTargets.set(String(rel['@_Id'] ?? ''), normalizeXlsxRelTarget(target))
     }
   }
 
@@ -97,26 +135,32 @@ export async function xlsxToText(bytes: Uint8Array): Promise<string> {
   if (sharedXml) {
     const sst = parser.parse(sharedXml) as Record<string, any>
     for (const si of asArray(sst.sst?.si) as Array<Record<string, unknown>>) {
+      if (shared.length >= MAX_XLSX_SHARED) break
       shared.push(sharedStringText(si))
     }
   }
 
   const sections: string[] = []
-  for (const sheet of sheets) {
+  for (const sheet of sheets.slice(0, MAX_XLSX_SHEETS)) {
     const path = relTargets.get(String(sheet['@_r:id'] ?? ''))
     const sheetXml = path ? await zipText(zip, path) : undefined
     if (!sheetXml) continue
     const worksheet = parser.parse(sheetXml) as Record<string, any>
     const lines: string[] = [`# ${String(sheet['@_name'] ?? '')}`]
-    for (const row of asArray(worksheet.worksheet?.sheetData?.row) as Array<
-      Record<string, unknown>
-    >) {
+    const rows = asArray(worksheet.worksheet?.sheetData?.row) as Array<Record<string, unknown>>
+    for (const row of rows.slice(0, MAX_XLSX_ROWS)) {
       const cells: string[] = []
       for (const cell of asArray(row.c as Cell | Cell[])) {
         const text = cellText(cell, shared)
-        const col = cell['@_r'] ? columnIndex(cell['@_r']) : cells.length
-        while (cells.length < col) cells.push('')
-        cells[col] = text
+        const ref = cell['@_r']
+        // A malformed ref (no leading column letters) yields -1; append in
+        // document order instead of writing cells[-1] which would drop text.
+        // Clamp wild columns (e.g. XXXXXX99) to append: padding millions of
+        // empty cells would OOM on a hostile file.
+        const col = ref ? columnIndex(ref) : cells.length
+        const target = col >= 0 && col <= MAX_XLSX_COLS ? col : cells.length
+        while (cells.length < target) cells.push('')
+        cells[target] = text
       }
       lines.push(cells.join(' | '))
     }

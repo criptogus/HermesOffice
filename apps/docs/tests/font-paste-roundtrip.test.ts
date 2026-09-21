@@ -83,9 +83,7 @@ describe('fontAttrsFromFamilyChain', () => {
 
   it('skips internal HermesOffice aliases even at the chain head', () => {
     expect(
-      fontAttrsFromFamilyChain(
-        "'HermesOffice Songti SC','STSong','SimSun','Noto Serif CJK SC',serif",
-      ),
+      fontAttrsFromFamilyChain("'HermesOffice Songti SC','STSong','SimSun','Noto Serif CJK SC',serif"),
     ).toEqual({ font: 'STSong' })
   })
 
@@ -95,9 +93,7 @@ describe('fontAttrsFromFamilyChain', () => {
       fontAscii: 'SomeCustomFont',
     })
     expect(
-      fontAttrsFromFamilyChain(
-        "'PT Serif Custom','Noto Serif CJK GO','HermesOffice PUA Blank',serif",
-      ),
+      fontAttrsFromFamilyChain("'PT Serif Custom','Noto Serif CJK GO','HermesOffice PUA Blank',serif"),
     ).toEqual({ font: 'PT Serif Custom', fontAscii: 'PT Serif Custom' })
   })
 

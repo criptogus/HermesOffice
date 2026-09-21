@@ -50,10 +50,14 @@ export function anchoredInkRunXml(
   rId: string,
   docPrId: number,
 ): string {
-  const cx = Math.max(1, Math.round(ink.widthPx * EMU_PER_PX))
-  const cy = Math.max(1, Math.round(ink.heightPx * EMU_PER_PX))
-  const x = Math.round(ink.offsetXPx * EMU_PER_PX)
-  const y = Math.round(ink.offsetYPx * EMU_PER_PX)
+  // Math.max/min propagate NaN, so sanitize first: a non-finite measurement
+  // would otherwise serialize as cx="NaN" corrupt OOXML.
+  const safePx = (v: number, fallback: number): number =>
+    Number.isFinite(v) ? Math.round(v * EMU_PER_PX) : fallback
+  const cx = Math.max(1, safePx(ink.widthPx, 1))
+  const cy = Math.max(1, safePx(ink.heightPx, 1))
+  const x = safePx(ink.offsetXPx, 0)
+  const y = safePx(ink.offsetYPx, 0)
   const name = `${INK_NAME_PREFIX} ${docPrId}`
   const descr = ink.payload ? ` descr="${escapeXmlAttr(ink.payload)}"` : ''
   return (

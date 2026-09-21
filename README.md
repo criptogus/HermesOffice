@@ -3,7 +3,9 @@
 **The world's first full-featured open-source AI Office suite.**
 
 [![License: Apache-2.0](https://img.shields.io/github/license/genspark-ai/hermesoffice)](LICENSE)
+
 [![Latest release](https://img.shields.io/github/v/release/genspark-ai/hermesoffice)](https://github.com/genspark-ai/hermesoffice/releases/latest)
+
 [![Downloads](https://img.shields.io/github/downloads/genspark-ai/hermesoffice/total)](https://github.com/genspark-ai/hermesoffice/releases)
 
 [Website](https://hermesoffice.ai/) · [Download](https://github.com/genspark-ai/hermesoffice/releases/latest) · [Privacy](PRIVACY.md) · [Demo](https://www.youtube.com/watch?v=B2pLdMX95v4)

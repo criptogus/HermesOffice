@@ -1,4 +1,4 @@
-import { getSystemShortDate } from '../shared/short-date'
+import { getSystemShortDate } from '@hermesoffice/xlsx-gateway/shared/short-date'
 import { DEFAULT_NUMFMT_OPTIONS, numfmtPattern, type NumfmtOptions } from './numfmt-dialog'
 import { numberFormatLabel } from './selection-format'
 

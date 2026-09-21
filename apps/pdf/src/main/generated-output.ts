@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
-/** Pick a safe, unused PDF path inside the configured HermesOffice save directory. */
+/** Pick a safe, unused PDF path inside the configured GenOffice save directory. */
 export function uniqueGeneratedPdfPath(
   dir: string,
   suggestedName: string,

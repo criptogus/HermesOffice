@@ -31,13 +31,13 @@ function okFetch() {
 
 describe('extractAnalyticsKeys', () => {
   it('reads the injected block from package.json', () => {
-    expect(extractAnalyticsKeys({ hermesofficeAnalytics: KEYS })).toEqual(KEYS)
+    expect(extractAnalyticsKeys({ genofficeAnalytics: KEYS })).toEqual(KEYS)
   })
 
   it('trims whitespace around the values', () => {
     expect(
       extractAnalyticsKeys({
-        hermesofficeAnalytics: { measurementId: ' G-1 ', apiSecret: ' s ' },
+        genofficeAnalytics: { measurementId: ' G-1 ', apiSecret: ' s ' },
       }),
     ).toEqual({ measurementId: 'G-1', apiSecret: 's' })
   })
@@ -50,17 +50,17 @@ describe('extractAnalyticsKeys', () => {
 
   it('returns null when either credential is empty or not a string', () => {
     expect(
-      extractAnalyticsKeys({ hermesofficeAnalytics: { measurementId: 'G-1', apiSecret: '' } }),
+      extractAnalyticsKeys({ genofficeAnalytics: { measurementId: 'G-1', apiSecret: '' } }),
     ).toBeNull()
     expect(
-      extractAnalyticsKeys({ hermesofficeAnalytics: { measurementId: 42, apiSecret: 's' } }),
+      extractAnalyticsKeys({ genofficeAnalytics: { measurementId: 42, apiSecret: 's' } }),
     ).toBeNull()
-    expect(extractAnalyticsKeys({ hermesofficeAnalytics: { measurementId: 'G-1' } })).toBeNull()
+    expect(extractAnalyticsKeys({ genofficeAnalytics: { measurementId: 'G-1' } })).toBeNull()
   })
 
   it('accepts metadata only for a packaged runtime', () => {
-    expect(extractPackagedAnalyticsKeys({ hermesofficeAnalytics: KEYS }, true)).toEqual(KEYS)
-    expect(extractPackagedAnalyticsKeys({ hermesofficeAnalytics: KEYS }, false)).toBeNull()
+    expect(extractPackagedAnalyticsKeys({ genofficeAnalytics: KEYS }, true)).toEqual(KEYS)
+    expect(extractPackagedAnalyticsKeys({ genofficeAnalytics: KEYS }, false)).toBeNull()
   })
 })
 

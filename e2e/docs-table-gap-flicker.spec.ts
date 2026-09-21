@@ -7,9 +7,9 @@ import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
  * straddling a page boundary must keep a stable layout. Pre-fix, the in-table
  * page-gap row's td[colspan=1000] widened the column grid, collapsing every
  * cell to ~1px and flipping the page count in an endless ~3Hz remeasure loop.
- * Render-plane oscillation is invisible to the file-based edit-eval harness,
- * so it gets its own E2E probe: sample layout at the flicker period and demand
- * a single stable state.
+ * Render-plane oscillation is invisible to file-based checks (the saved docx
+ * is fine), so it gets its own E2E probe: sample layout at the flicker period
+ * and demand a single stable state.
  */
 
 interface AidocsWindow {
@@ -24,7 +24,7 @@ test.describe('docs table page-gap stability', () => {
     try {
       await expect(page.locator('.quick-card').first()).toContainText('AI Docs')
       await page.locator('.quick-card').first().click()
-      const editorPage = await waitForPageWithUrl(app, 'docs/out')
+      const editorPage = await waitForPageWithUrl(app, '://docs/')
       await editorPage.waitForFunction(
         () => Boolean((window as unknown as AidocsWindow).__aidocs?.editor),
         undefined,

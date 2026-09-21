@@ -1,7 +1,9 @@
-GenOffice
-Copyright 2026 Mainfunc, Inc.
+HermesOffice
+Copyright 2026 HermesOffice contributors
 
-This product includes software developed at Mainfunc, Inc.
+HermesOffice is a fork of GenOffice (genspark-ai/genoffice, Apache-2.0).
+GenOffice and related names are trademarks of Mainfunc, Inc.; see upstream
+NOTICE and THIRD-PARTY-NOTICES for bundled components.
 
 Bundled third-party components are listed in THIRD-PARTY-NOTICES.txt, which
 tools/gen-third-party-notices.mjs generates at packaging time. It is not
@@ -23,3 +25,11 @@ https://www.unicode.org/Public/17.0.0/ucd/EquivalentUnifiedIdeograph.txt
 Copyright © 1991-2026 Unicode, Inc. This data is distributed under Unicode
 License v3. The complete copyright and permission notice is reproduced in
 LICENSE-UNICODE.txt.
+
+Office Open XML schemas
+
+tools/ooxml-validate/schemas contains the ISO/IEC 29500-4:2016 (ECMA-376
+Part 4, Transitional) XML Schema files for PresentationML and DrawingML, as
+distributed in the python-docx repository (ref/xsd), with one marked local
+amendment (see tools/ooxml-validate/README.md). They are used only by tests
+and development tooling and are not shipped in the application.

@@ -10,6 +10,9 @@ import type { UpdateUiState } from '../src/shared/update-api'
 const appState = { isPackaged: true }
 
 const openExternal = vi.hoisted(() => vi.fn())
+const showMessageBox = vi.hoisted(() =>
+  vi.fn<(opts: unknown) => Promise<{ response: number }>>(() => Promise.resolve({ response: 0 })),
+)
 const readFileSyncMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => string>())
 
 vi.mock('electron', () => ({
@@ -21,6 +24,9 @@ vi.mock('electron', () => ({
   },
   shell: {
     openExternal: (url: string) => openExternal(url),
+  },
+  dialog: {
+    showMessageBox: (opts: unknown) => showMessageBox(opts),
   },
 }))
 
@@ -112,6 +118,15 @@ async function loadUpdater() {
   return import('../src/main/updater')
 }
 
+async function offerUpdate(info: { version: string; files?: { url: string }[] }): Promise<void> {
+  const { checkForUpdatesNow } = await loadUpdater()
+  checkForUpdates.mockImplementationOnce(() => {
+    updaterState.listeners.get('update-available')!(info)
+    return Promise.resolve({ isUpdateAvailable: true } as never)
+  })
+  await checkForUpdatesNow()
+}
+
 async function flushAsync(): Promise<void> {
   // drain promise chains queued by download callbacks
   for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -129,14 +144,15 @@ beforeEach(() => {
   vi.resetModules()
   vi.useFakeTimers()
   appState.isPackaged = true
-  delete process.env.HERMESOFFICE_FAKE_UPDATE
+  delete process.env.GENOFFICE_FAKE_UPDATE
   updaterState.listeners.clear()
   updaterState.autoDownload = true
   updaterState.autoInstallOnAppQuit = false
   updaterState.disableDifferentialDownload = false
   updaterState.channel = null
   updaterState.allowDowngrade = false
-  checkForUpdates.mockClear()
+  checkForUpdates.mockReset()
+  checkForUpdates.mockResolvedValue(null)
   downloadUpdate.mockReset()
   downloadUpdate.mockImplementation(() => Promise.resolve([]))
   quitAndInstall.mockClear()
@@ -144,6 +160,8 @@ beforeEach(() => {
   pushUpdateState.mockClear()
   closeUpdateWindow.mockClear()
   openExternal.mockClear()
+  showMessageBox.mockReset()
+  showMessageBox.mockImplementation(() => Promise.resolve({ response: 0 }))
   readFileSyncMock.mockReset()
   readFileSyncMock.mockImplementation(() => {
     throw new Error('no app-update.yml')
@@ -155,7 +173,7 @@ afterEach(() => {
   vi.useRealTimers()
   platformSpy?.restore()
   platformSpy = null
-  delete process.env.HERMESOFFICE_FAKE_UPDATE
+  delete process.env.GENOFFICE_FAKE_UPDATE
 })
 
 describe('initAutoUpdater', () => {
@@ -183,7 +201,7 @@ describe('initAutoUpdater', () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
     expect(updaterState.autoDownload).toBe(false)
-    expect(updaterState.autoInstallOnAppQuit).toBe(true)
+    expect(updaterState.autoInstallOnAppQuit).toBe(false)
     expect(updaterState.disableDifferentialDownload).toBe(true)
     expect(checkForUpdates).not.toHaveBeenCalled()
     vi.advanceTimersByTime(FIRST_CHECK_DELAY_MS)
@@ -207,10 +225,44 @@ describe('initAutoUpdater', () => {
     expect(checkForUpdates).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps launch, periodic and channel checks silent when updates exist', async () => {
+    const { initAutoUpdater, applyUpdateChannel } = await loadUpdater()
+    checkForUpdates.mockImplementation(() => {
+      updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+      return Promise.resolve({ isUpdateAvailable: true } as never)
+    })
+    initAutoUpdater(() => null)
+    vi.advanceTimersByTime(FIRST_CHECK_DELAY_MS)
+    vi.advanceTimersByTime(RECHECK_INTERVAL_MS)
+    applyUpdateChannel('beta')
+    await flushAsync()
+
+    expect(checkForUpdates).toHaveBeenCalledTimes(3)
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+    expect(showMessageBox).not.toHaveBeenCalled()
+    expect(downloadUpdate).not.toHaveBeenCalled()
+    expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('lets users decline a downloaded update without installing on quit', async () => {
+    const { initAutoUpdater } = await loadUpdater()
+    initAutoUpdater(() => null)
+    await offerUpdate({ version: '0.2.0' })
+    expect(downloadUpdate).not.toHaveBeenCalled()
+    lastShownActions().onDownload()
+    updaterState.listeners.get('update-downloaded')!({ version: '0.2.0' })
+    lastShownActions().onLater()
+    vi.advanceTimersByTime(0)
+
+    expect(closeUpdateWindow).toHaveBeenCalledTimes(1)
+    expect(updaterState.autoInstallOnAppQuit).toBe(false)
+    expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('opens the update window with the available state when an update is found', async () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
-    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    await offerUpdate({ version: '0.2.0' })
     expect(showUpdateWindow).toHaveBeenCalledTimes(1)
     const state = lastShownState()
     expect(state.phase).toBe('available')
@@ -225,7 +277,7 @@ describe('initAutoUpdater', () => {
   it('starts the download and pushes progress when the user clicks download', async () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
-    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    await offerUpdate({ version: '0.2.0' })
     lastShownActions().onDownload()
     expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'downloading', percent: 0 })
     expect(downloadUpdate).toHaveBeenCalledTimes(1)
@@ -241,7 +293,7 @@ describe('initAutoUpdater', () => {
     downloadUpdate.mockImplementation(() => Promise.reject(new Error('offline')))
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
-    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    await offerUpdate({ version: '0.2.0' })
     lastShownActions().onDownload()
     await flushAsync()
     expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'error' })
@@ -250,7 +302,7 @@ describe('initAutoUpdater', () => {
   it('closes the window and installs on restart when the user confirms', async () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
-    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    await offerUpdate({ version: '0.2.0' })
     lastShownActions().onInstall()
     expect(closeUpdateWindow).toHaveBeenCalledTimes(1)
     // quitAndInstall is deferred so the window can finish closing first
@@ -263,7 +315,7 @@ describe('initAutoUpdater', () => {
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
     const available = updaterState.listeners.get('update-available')!
-    available({ version: '0.2.0' })
+    await offerUpdate({ version: '0.2.0' })
     expect(showUpdateWindow).toHaveBeenCalledTimes(1)
     lastShownActions().onLater()
     expect(closeUpdateWindow).toHaveBeenCalledTimes(1)
@@ -271,9 +323,11 @@ describe('initAutoUpdater', () => {
     available({ version: '0.2.0' })
     expect(showUpdateWindow).toHaveBeenCalledTimes(1)
 
-    // a newer version prompts again
+    // Even a newer release stays silent until the user checks again.
     available({ version: '0.3.0' })
-    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    expect(downloadUpdate).not.toHaveBeenCalled()
+    expect(quitAndInstall).not.toHaveBeenCalled()
   })
 
   it('swallows background check failures', async () => {
@@ -329,10 +383,10 @@ describe('initAutoUpdater', () => {
 
 describe('manual download fallback', () => {
   const macFiles = [
-    { url: 'HermesOffice-0.2.0-arm64.zip' },
-    { url: 'HermesOffice-0.2.0.zip' },
-    { url: 'HermesOffice-0.2.0-arm64.dmg' },
-    { url: 'HermesOffice-0.2.0.dmg' },
+    { url: 'GenOffice-0.2.0-arm64.zip' },
+    { url: 'GenOffice-0.2.0.zip' },
+    { url: 'GenOffice-0.2.0-arm64.dmg' },
+    { url: 'GenOffice-0.2.0.dmg' },
   ]
 
   function setArch(arch: string): () => void {
@@ -345,7 +399,7 @@ describe('manual download fallback', () => {
     downloadUpdate.mockImplementation(() => Promise.reject(new Error('team id changed')))
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
-    updaterState.listeners.get('update-available')!({ version: '0.2.0', files })
+    await offerUpdate({ version: '0.2.0', files })
     const actions = lastShownActions()
     actions.onDownload()
     await flushAsync()
@@ -364,7 +418,7 @@ describe('manual download fallback', () => {
       const actions = await failTwiceIntoManual(macFiles)
       actions.onOpenDownload()
       expect(openExternal).toHaveBeenCalledWith(
-        'https://cdn.example.com/mac/HermesOffice-0.2.0-arm64.dmg',
+        'https://cdn.example.com/mac/GenOffice-0.2.0-arm64.dmg',
       )
     } finally {
       restoreArch()
@@ -378,8 +432,62 @@ describe('manual download fallback', () => {
     try {
       const actions = await failTwiceIntoManual(macFiles)
       actions.onOpenDownload()
+      expect(openExternal).toHaveBeenCalledWith('https://cdn.example.com/mac/GenOffice-0.2.0.dmg')
+    } finally {
+      restoreArch()
+    }
+  })
+
+  const winFiles = [
+    { url: 'GenOfficeSetup-v0.2.0.exe' },
+    { url: 'GenOfficeSetup-v0.2.0-arm64.exe' },
+  ]
+
+  it('picks the arm64 installer on Windows arm64', async () => {
+    Object.defineProperty(process, 'resourcesPath', { value: '/res', configurable: true })
+    readFileSyncMock.mockReturnValue('url: https://cdn.example.com/win\n')
+    platformSpy?.restore()
+    setPlatform('win32')
+    const restoreArch = setArch('arm64')
+    try {
+      const actions = await failTwiceIntoManual(winFiles)
+      actions.onOpenDownload()
       expect(openExternal).toHaveBeenCalledWith(
-        'https://cdn.example.com/mac/HermesOffice-0.2.0.dmg',
+        'https://cdn.example.com/win/GenOfficeSetup-v0.2.0-arm64.exe',
+      )
+    } finally {
+      restoreArch()
+    }
+  })
+
+  it('picks the arch-less installer on Windows x64 even when arm64 is listed', async () => {
+    Object.defineProperty(process, 'resourcesPath', { value: '/res', configurable: true })
+    readFileSyncMock.mockReturnValue('url: https://cdn.example.com/win\n')
+    platformSpy?.restore()
+    setPlatform('win32')
+    const restoreArch = setArch('x64')
+    try {
+      const actions = await failTwiceIntoManual([...winFiles].reverse())
+      actions.onOpenDownload()
+      expect(openExternal).toHaveBeenCalledWith(
+        'https://cdn.example.com/win/GenOfficeSetup-v0.2.0.exe',
+      )
+    } finally {
+      restoreArch()
+    }
+  })
+
+  it('falls back to the x64 installer on Windows arm64 when the feed predates arm64', async () => {
+    Object.defineProperty(process, 'resourcesPath', { value: '/res', configurable: true })
+    readFileSyncMock.mockReturnValue('url: https://cdn.example.com/win\n')
+    platformSpy?.restore()
+    setPlatform('win32')
+    const restoreArch = setArch('arm64')
+    try {
+      const actions = await failTwiceIntoManual([{ url: 'GenOfficeSetup-v0.2.0.exe' }])
+      actions.onOpenDownload()
+      expect(openExternal).toHaveBeenCalledWith(
+        'https://cdn.example.com/win/GenOfficeSetup-v0.2.0.exe',
       )
     } finally {
       restoreArch()
@@ -392,13 +500,13 @@ describe('manual download fallback', () => {
     const restoreArch = setArch('arm64')
     try {
       const actions = await failTwiceIntoManual([
-        { url: 'https://attacker.example/HermesOffice-0.2.0-arm64.zip' },
-        { url: 'https://attacker.example/HermesOffice-0.2.0-arm64.dmg' },
-        { url: 'https://attacker.example/HermesOffice-0.2.0.dmg' },
+        { url: 'https://attacker.example/GenOffice-0.2.0-arm64.zip' },
+        { url: 'https://attacker.example/GenOffice-0.2.0-arm64.dmg' },
+        { url: 'https://attacker.example/GenOffice-0.2.0.dmg' },
       ])
       actions.onOpenDownload()
       expect(openExternal).toHaveBeenCalledWith(
-        'https://cdn.example.com/mac/HermesOffice-0.2.0-arm64.dmg',
+        'https://cdn.example.com/mac/GenOffice-0.2.0-arm64.dmg',
       )
     } finally {
       restoreArch()
@@ -411,18 +519,18 @@ describe('manual download fallback', () => {
     const actions = await failTwiceIntoManual(macFiles)
     actions.onOpenDownload()
     expect(openExternal).toHaveBeenCalledWith(
-      'https://github.com/genspark-ai/hermesoffice/releases/latest',
+      'https://github.com/genspark-ai/genoffice/releases/latest',
     )
   })
 
   it('falls back to the generic download page when the feed base cannot be read', async () => {
     // readFileSyncMock throws by default (no app-update.yml)
     const actions = await failTwiceIntoManual([
-      { url: 'https://attacker.example/HermesOffice-0.2.0-arm64.dmg' },
+      { url: 'https://attacker.example/GenOffice-0.2.0-arm64.dmg' },
     ])
     actions.onOpenDownload()
     expect(openExternal).toHaveBeenCalledWith(
-      'https://github.com/genspark-ai/hermesoffice/releases/latest',
+      'https://github.com/genspark-ai/genoffice/releases/latest',
     )
   })
 })
@@ -430,7 +538,7 @@ describe('manual download fallback', () => {
 describe('initAutoUpdater (fake update preview)', () => {
   it('runs a simulated download to completion in unpacked runs', async () => {
     appState.isPackaged = false
-    process.env.HERMESOFFICE_FAKE_UPDATE = '9.9.9'
+    process.env.GENOFFICE_FAKE_UPDATE = '9.9.9'
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
 
@@ -451,7 +559,7 @@ describe('initAutoUpdater (fake update preview)', () => {
 
   it('closes the window on later and install without touching electron-updater', async () => {
     appState.isPackaged = false
-    process.env.HERMESOFFICE_FAKE_UPDATE = '9.9.9'
+    process.env.GENOFFICE_FAKE_UPDATE = '9.9.9'
     const { initAutoUpdater } = await loadUpdater()
     initAutoUpdater(() => null)
     vi.advanceTimersByTime(1500)
@@ -461,5 +569,253 @@ describe('initAutoUpdater (fake update preview)', () => {
     lastShownActions().onInstall()
     expect(closeUpdateWindow).toHaveBeenCalledTimes(2)
     expect(quitAndInstall).not.toHaveBeenCalled()
+  })
+})
+
+describe('checkForUpdatesNow (r148 manual check)', () => {
+  function lastDialogOpts(): { type: string; message: string; buttons: string[] } {
+    return showMessageBox.mock.calls.at(-1)![0] as never
+  }
+
+  it('points installs without a self-update mechanism at the download page', async () => {
+    appState.isPackaged = false
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    showMessageBox.mockImplementation(() => Promise.resolve({ response: 1 }))
+
+    await checkForUpdatesNow()
+
+    expect(showMessageBox).toHaveBeenCalledTimes(1)
+    expect(lastDialogOpts().buttons.length).toBe(2)
+    expect(openExternal).toHaveBeenCalledWith(
+      'https://github.com/genspark-ai/genoffice/releases/latest',
+    )
+    expect(checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it("shows you're-up-to-date (with the current version) when nothing newer exists", async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    checkForUpdates.mockImplementation(() => Promise.resolve({ isUpdateAvailable: false } as never))
+
+    await checkForUpdatesNow()
+
+    expect(showMessageBox).toHaveBeenCalledTimes(1)
+    expect(lastDialogOpts().type).toBe('info')
+    expect(lastDialogOpts().message).toContain('0.1.0')
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+  })
+
+  it('does not report up-to-date when the updater skips the check', async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    checkForUpdates.mockResolvedValue(null)
+
+    await checkForUpdatesNow()
+
+    expect(lastDialogOpts().type).toBe('warning')
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+    expect(downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('ignores duplicate clicks while checking and allows a retry afterwards', async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    let resolveCheck!: (value: null) => void
+    checkForUpdates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCheck = resolve
+        }),
+    )
+
+    const pending = checkForUpdatesNow()
+    await checkForUpdatesNow()
+    expect(checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(showMessageBox).not.toHaveBeenCalled()
+    resolveCheck(null)
+    await pending
+    await checkForUpdatesNow()
+    expect(checkForUpdates).toHaveBeenCalledTimes(2)
+    expect(downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it.each(['0.2.0', '0.3.0'])(
+    'focuses the existing download on a manual check finding %s',
+    async (version) => {
+      downloadUpdate.mockImplementation(() => new Promise(() => {}))
+      const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+      initAutoUpdater(() => null)
+      const available = updaterState.listeners.get('update-available')!
+      await offerUpdate({ version: '0.2.0' })
+      lastShownActions().onDownload()
+      updaterState.listeners.get('download-progress')!({ percent: 37 })
+
+      // Background checks must not steal focus from the user's document.
+      available({ version })
+      expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+      checkForUpdates.mockImplementation(() => {
+        available({ version })
+        return Promise.resolve({ isUpdateAvailable: true } as never)
+      })
+      await checkForUpdatesNow()
+
+      expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+      expect(lastShownState()).toMatchObject({
+        version: '0.2.0',
+        phase: 'downloading',
+        percent: 37,
+      })
+      expect(showMessageBox).not.toHaveBeenCalled()
+      expect(downloadUpdate).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('re-offers a version the user dismissed with "later" this session', async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    await offerUpdate({ version: '0.2.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    lastShownActions().onLater()
+    // background recheck stays quiet for the dismissed version…
+    updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    // …but an explicit user check offers it again, with no extra dialog
+    checkForUpdates.mockImplementation(() => {
+      updaterState.listeners.get('update-available')!({ version: '0.2.0' })
+      return Promise.resolve({ isUpdateAvailable: true } as never)
+    })
+
+    await checkForUpdatesNow()
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(showMessageBox).not.toHaveBeenCalled()
+  })
+
+  it('resumes a downloaded update at Restart & Install instead of re-offering the download', async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    const available = updaterState.listeners.get('update-available')!
+    await offerUpdate({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    updaterState.listeners.get('update-downloaded')!({ version: '0.2.0' })
+    lastShownActions().onLater()
+    checkForUpdates.mockImplementation(() => {
+      available({ version: '0.2.0' })
+      return Promise.resolve({ isUpdateAvailable: true } as never)
+    })
+
+    await checkForUpdatesNow()
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(lastShownState().phase).toBe('downloaded')
+    expect(lastShownState().percent).toBe(100)
+    lastShownActions().onDownload()
+    expect(downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('resumes an in-flight download with its progress and does not start a second one', async () => {
+    downloadUpdate.mockImplementation(() => new Promise(() => {}))
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    const available = updaterState.listeners.get('update-available')!
+    await offerUpdate({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    updaterState.listeners.get('download-progress')!({ percent: 37 })
+    lastShownActions().onLater()
+    checkForUpdates.mockImplementation(() => {
+      available({ version: '0.2.0' })
+      return Promise.resolve({ isUpdateAvailable: true } as never)
+    })
+
+    await checkForUpdatesNow()
+
+    expect(lastShownState().phase).toBe('downloading')
+    expect(lastShownState().percent).toBe(37)
+    lastShownActions().onDownload()
+    expect(downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a newer version alone while the previous one is downloading or downloaded', async () => {
+    downloadUpdate.mockImplementation(() => new Promise(() => {}))
+    const { initAutoUpdater } = await loadUpdater()
+    initAutoUpdater(() => null)
+    const available = updaterState.listeners.get('update-available')!
+    await offerUpdate({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    available({ version: '0.3.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    updaterState.listeners.get('update-downloaded')!({ version: '0.2.0' })
+    available({ version: '0.3.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    lastShownActions().onDownload()
+    expect(downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('brings back the in-progress flow when a manual check finds a newer version mid-download', async () => {
+    downloadUpdate.mockImplementation(() => new Promise(() => {}))
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    const available = updaterState.listeners.get('update-available')!
+    await offerUpdate({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    updaterState.listeners.get('download-progress')!({ percent: 58 })
+    lastShownActions().onLater()
+    // background recheck with a newer version stays quiet…
+    available({ version: '0.3.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    // …an explicit check re-opens the download that is already running
+    checkForUpdates.mockImplementation(() => {
+      available({ version: '0.3.0' })
+      return Promise.resolve({ isUpdateAvailable: true } as never)
+    })
+
+    await checkForUpdatesNow()
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(lastShownState().version).toBe('0.2.0')
+    expect(lastShownState().phase).toBe('downloading')
+    expect(lastShownState().percent).toBe(58)
+    expect(showMessageBox).not.toHaveBeenCalled()
+  })
+
+  it('offers a newer version from scratch after the previous download failed', async () => {
+    downloadUpdate.mockImplementation(() => Promise.reject(new Error('offline')))
+    const { initAutoUpdater } = await loadUpdater()
+    initAutoUpdater(() => null)
+    await offerUpdate({ version: '0.2.0' })
+    lastShownActions().onDownload()
+    await flushAsync()
+    expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'error' })
+    await offerUpdate({ version: '0.3.0' })
+    expect(showUpdateWindow).toHaveBeenCalledTimes(2)
+    expect(lastShownState().version).toBe('0.3.0')
+    expect(lastShownState().phase).toBe('available')
+    expect(lastShownState().percent).toBe(0)
+  })
+
+  it('shows the failure dialog when the check itself fails', async () => {
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+    checkForUpdates.mockImplementation(() => Promise.reject(new Error('offline')))
+
+    await checkForUpdatesNow()
+
+    expect(showMessageBox).toHaveBeenCalledTimes(1)
+    expect(lastDialogOpts().type).toBe('warning')
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+  })
+
+  it('re-shows the simulated update window in GENOFFICE_FAKE_UPDATE runs', async () => {
+    appState.isPackaged = false
+    process.env.GENOFFICE_FAKE_UPDATE = '9.9.9'
+    const { initAutoUpdater, checkForUpdatesNow } = await loadUpdater()
+    initAutoUpdater(() => null)
+
+    await checkForUpdatesNow()
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    expect(lastShownState().version).toBe('9.9.9')
+    expect(showMessageBox).not.toHaveBeenCalled()
   })
 })

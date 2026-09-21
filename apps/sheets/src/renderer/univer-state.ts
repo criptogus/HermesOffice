@@ -4,7 +4,7 @@
  * Used by both the App component (App.tsx) and the module-level sync
  * helpers (univer-sync.ts).
  */
-import { BorderType, LocalUndoRedoService, type IRange } from '@univerjs/core'
+import { BorderType, LocalUndoRedoService, Worksheet, type IRange } from '@univerjs/core'
 import { SheetInterceptorService } from '@univerjs/sheets'
 
 import type {
@@ -22,14 +22,30 @@ export type ActiveWorkbook = NonNullable<
 >
 export type UniverWorksheet = NonNullable<ReturnType<ActiveWorkbook['getActiveSheet']>>
 
+/// Column intervals (inclusive) of one row whose cells fed a wrap measure.
+export type WrapMeasureCoverage = Array<readonly [number, number]>
+
 export interface LazyWorkbookState {
   readonly file: WorkbookFile
   readonly generation: number
   readonly loadedRanges: Map<string, IRange>
+  /// Sheets duplicated this session from a streaming source: Univer's copy
+  /// cloned only the resident window, so the copy streams from its source's
+  /// worksheet part (the save clones that part) until the workbook reloads.
+  readonly streamAliases: Map<string, string>
   readonly loadingKeys: Map<string, string>
   readonly retryTimers: Map<string, ReturnType<typeof setTimeout>>
   readonly appliedMerges: Map<string, Set<string>>
   readonly appliedRowKeys: Map<string, Set<string>>
+  /// Per-sheet, per-row column intervals already run through the load-time
+  /// wrap auto-fit measure. Streamed windows re-patch constantly (indexing
+  /// growth, evict/reload) and a re-measure of an unchanged row still emits
+  /// row-height mutations — find-replace re-searches on every mutation and
+  /// re-scrolls to its match, so an unmemoized measure keeps the grid
+  /// oscillating for as long as the stream runs. A row is only
+  /// measured again when a window brings wrap cells in columns no earlier
+  /// measure of that row has seen.
+  readonly measuredWrapRows: Map<string, Map<number, WrapMeasureCoverage>>
   /// Per-sheet union of IStyleData keys carried by <row s= customFormat> and
   /// <col style=> defaults. Univer composes row/col styles into every cell
   /// per-property, but an OOXML cell xf is complete: styled cells null these
@@ -64,6 +80,10 @@ export interface LazyWorkbookState {
   /// autoFilter (saveable) or a table part (whose filter lives in the table
   /// XML — editing it is blocked).
   readonly filterOrigins: Map<string, { origin: 'worksheet' | 'table'; range: IRange }>
+  /// Data-row span of a filter whose file criteria were restored at install:
+  /// the filter model owns row visibility there, so streamed hidden="1" rows
+  /// feed its filtered-out cache instead of becoming manual row hides.
+  readonly restoredFilterSpans: Map<string, { startRow: number; endRow: number }>
   /// Sheets whose view shows formulas instead of values
   /// (sheetView/@showFormulas): seeded from the file, flipped by the
   /// Formulas-tab toggle, applied
@@ -73,7 +93,9 @@ export interface LazyWorkbookState {
   /// for live recalculation; large ones stream cached values only.
   readonly formulaMode: boolean
   readonly editJournal: EditJournal
-  readonly flags: { preloadComplete: boolean }
+  /// preloadRunning: preloadEntireWorkbook is filling the model — viewport
+  /// loads must not evict installed rows or shrink loadedRanges meanwhile.
+  readonly flags: { preloadComplete: boolean; preloadRunning: boolean }
   /// Closure mode: on streamed workbooks whose formula dependency closure is
   /// small, the closure cells are installed once and pinned (re-applied after
   /// viewport eviction) so the engine recalculates them live.
@@ -92,6 +114,13 @@ export interface LazyWorkbookState {
   /// Parsed pivot definitions keyed by part path, loaded eagerly at open so
   /// pivot refresh stays synchronous.
   readonly pivotDefinitions: Map<string, WorkbookPivotDefinition>
+  /// File-declared hidden rows per sheet, recorded as row properties stream
+  /// in — lets the viewport loader budget its window by VISIBLE rows.
+  readonly hiddenFileRows: Map<string, Set<number>>
+  /// Row-property stream coverage per sheet, contiguous from row 0. Beyond
+  /// this row the hidden set is incomplete, so consumers ranking by VISIBLE
+  /// order (filtered-table stripes) must fall back to physical parity.
+  readonly hiddenRowsCoveredThrough: Map<string, number>
   /// Known row/column outline levels per sheet (file reads + this session's
   /// group edits). Rows outside loaded ranges default to level 0.
   readonly outline: Map<
@@ -112,14 +141,15 @@ export interface LazyWorkbookState {
     /// a sheet's formula list came back truncated (>100k formulas): a cold
     /// IronCalc import of such a workbook grinds for minutes and gigabytes,
     /// so the engine fallback is off for the session — cached values stand
+    /// (unless the file has none: see truncatedIndexRetiresEngine)
     engineOverBudget: boolean
     readonly formulaCells: Map<string, ReadonlySet<number>>
     readonly overlay: Map<string, Map<string, PinnedClosureCell>>
     /// per-sheet: viewport row the last SUCCESSFUL overlay window was
     /// anchored at and whether it covered every formula band; a partial
-    /// window re-anchors when the user scrolls far from it (alpha ledger
-    /// r141). Written only after the sidecar run succeeds — early writes
-    /// latched stale flags on failure (bugbot).
+    /// window re-anchors when the user scrolls far from it. Written only
+    /// after the sidecar run succeeds — early writes latched stale flags on
+    /// failure.
     readonly follow: Map<string, { anchorRow: number; complete: boolean }>
     /// re-anchor throttle: no new run while one is in flight, and at most
     /// one every few seconds — each run reads thousands of sidecar cells
@@ -131,6 +161,7 @@ export interface LazyWorkbookState {
 export interface PinnedClosureCell {
   readonly f?: string
   readonly v?: string | number | boolean | null
+  readonly isError?: boolean
 }
 
 /// Data extent in screen coordinates: the file extent shifted by this
@@ -139,13 +170,33 @@ export function lazySheetScreenExtent(
   state: LazyWorkbookState,
   sheetId: string,
 ): { rows: number; columns: number } | null {
-  const sheet = state.file.sheets.find((candidate) => candidate.id === sheetId)
+  const sheet = lazySheetMeta(state, sheetId)
   if (!sheet) return null
   const ops = state.editJournal.structuralOps.get(sheetId) ?? []
   return {
     rows: Math.max(sheet.rowCount + netAxisDelta(ops, 'row'), 0),
     columns: Math.max(sheet.columnCount + netAxisDelta(ops, 'column'), 0),
   }
+}
+
+/// The file sheet a grid sheet streams from: itself, or the end of its
+/// duplicate chain.
+export function lazyFileSheetId(state: LazyWorkbookState, sheetId: string): string {
+  let current = sheetId
+  for (let hops = 0; hops < 64; hops += 1) {
+    const source = state.streamAliases?.get(current)
+    if (source === undefined) break
+    current = source
+  }
+  return current
+}
+
+export function lazySheetMeta(
+  state: LazyWorkbookState,
+  sheetId: string,
+): WorkbookFile['sheets'][number] | undefined {
+  const fileSheetId = lazyFileSheetId(state, sheetId)
+  return state.file.sheets.find((candidate) => candidate.id === fileSheetId)
 }
 
 /// Budget for closure mode: formula cells plus every precedent they read.
@@ -269,6 +320,17 @@ export function installLoadAutoHeightGate(): void {
       return { preUndos: [], undos: [], preRedos: [], redos: [] }
     }
     return original.call(this, ctx)
+  }
+  // SetRangeValuesCommand measures every written cell's height (a canvas
+  // text layout each) BEFORE asking for the auto-height mutations, so the
+  // gate above alone still paid the measure on every streamed window.
+  const worksheetProto = Worksheet.prototype as unknown as {
+    getCellHeight(row: number, col: number): number
+  }
+  const originalCellHeight = worksheetProto.getCellHeight
+  worksheetProto.getCellHeight = function (this: unknown, row: number, col: number) {
+    if (loadAutoHeightSuppression.active) return 0
+    return originalCellHeight.call(this, row, col)
   }
 }
 

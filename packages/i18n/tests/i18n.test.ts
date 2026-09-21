@@ -46,6 +46,7 @@ describe('normalizeLang', () => {
     expect(normalizeLang('pt-PT')).toBe('pt')
     expect(normalizeLang('it-IT')).toBe('it')
     expect(normalizeLang('pl-PL')).toBe('pl')
+    expect(normalizeLang('cs-CZ')).toBe('cs')
     expect(normalizeLang('nl-NL')).toBe('nl')
     expect(normalizeLang('ms-MY')).toBe('ms')
     expect(normalizeLang('he-IL')).toBe('he')
@@ -55,10 +56,23 @@ describe('normalizeLang', () => {
 
   it('maps everything else (and missing) to en', () => {
     expect(normalizeLang('en-US')).toBe('en')
+    expect(normalizeLang('en_US')).toBe('en')
     expect(normalizeLang('sv-SE')).toBe('en')
     expect(normalizeLang('')).toBe('en')
     expect(normalizeLang(undefined)).toBe('en')
     expect(normalizeLang(null)).toBe('en')
+  })
+
+  it('requires a BCP-47 boundary after the language code', () => {
+    expect(normalizeLang('deleted')).toBe('en')
+    expect(normalizeLang('french')).toBe('en')
+    expect(normalizeLang('thread')).toBe('en')
+    expect(normalizeLang('italian')).toBe('en')
+    expect(normalizeLang('hebrew')).toBe('en')
+    expect(normalizeLang('de')).toBe('de')
+    expect(normalizeLang('de-DE')).toBe('de')
+    expect(normalizeLang('de_DE')).toBe('de')
+    expect(normalizeLang('es-419')).toBe('es')
   })
 })
 
@@ -78,6 +92,7 @@ describe('isLang', () => {
     expect(isLang('pt')).toBe(true)
     expect(isLang('it')).toBe(true)
     expect(isLang('pl')).toBe(true)
+    expect(isLang('cs')).toBe(true)
     expect(isLang('nl')).toBe(true)
     expect(isLang('ms')).toBe(true)
     expect(isLang('he')).toBe(true)
@@ -104,6 +119,12 @@ describe('format', () => {
     expect(format('已选 {n} 项', { n: 3 })).toBe('已选 3 项')
     expect(format('{a} and {b}', { a: 'x' })).toBe('x and {b}')
     expect(format('no params')).toBe('no params')
+  })
+
+  it('does not leak prototype properties into placeholders', () => {
+    expect(format('{toString}', {})).toBe('{toString}')
+    expect(format('{constructor} and {valueOf}', {})).toBe('{constructor} and {valueOf}')
+    expect(format('{n}', { n: 1 })).toBe('1')
   })
 })
 
@@ -173,6 +194,7 @@ describe('createI18n', () => {
     pt: { hello: 'Olá {name}', plain: 'Arquivos' },
     it: { hello: 'Ciao {name}', plain: 'File' },
     pl: { hello: 'Cześć {name}', plain: 'Pliki' },
+    cs: { hello: 'Ahoj {name}', plain: 'Soubory' },
     nl: { hello: 'Hallo {name}', plain: 'Bestanden' },
     ms: { hello: 'Helo {name}', plain: 'Fail' },
     he: { hello: 'שלום {name}', plain: 'קבצים' },
@@ -191,6 +213,7 @@ describe('createI18n', () => {
     expect(t('ar', 'plain')).toBe('الملفات')
     expect(t('pt', 'hello', { name: 'mundo' })).toBe('Olá mundo')
     expect(t('he', 'plain')).toBe('קבצים')
+    expect(t('cs', 'plain')).toBe('Soubory')
     expect(t('zh-TW', 'plain')).toBe('檔案')
   })
 })

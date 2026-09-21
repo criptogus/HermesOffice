@@ -1,11 +1,11 @@
 /* First-run onboarding: full-window overlay above the home screen.
  * Layout follows the design spec: 540×420 white
  * card, left-aligned content column, slide-2 credits offer panel, and a
- * dots-left / Skip-Back-Next-right footer. Genspark tokens: black pill primary,
+ * dots-left / Skip-Back-Next-right footer. Hermes tokens: black pill primary,
  * gray ramp, brand blue #0f7fff only on the credits line. */
 
 .onb-overlay {
-  /* Genspark tokens, scoped to the overlay (home.css keeps its own --accent) */
+  /* Hermes tokens, scoped to the overlay (home.css keeps its own --accent) */
   --onb-font-sans:
     'Arial', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     sans-serif;
@@ -21,7 +21,7 @@
   --onb-bg-panel: #f0f7ff;
   --onb-border-default: #eaeaea;
   --onb-border-strong: #d0d3d8;
-  /* outline-CTA seat (shared by the GitHub star buttons) */
+  /* outline-CTA seat (shared by the GenTeam join and GitHub star buttons) */
   --onb-cta-bg: #fff;
   --onb-cta-hover-text: #fff;
   --onb-cta-shadow: 0 1px 3px rgba(15, 127, 255, 0.18);
@@ -429,18 +429,18 @@
   --onb-bg-panel: #1a2a3a;
   --onb-border-default: #444;
   --onb-border-strong: #555;
-  --onb-card-bg: #2a2a2a;
-  --onb-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 [data-theme='dark'] .onb-card {
-  background: var(--onb-card-bg);
-  box-shadow: var(--onb-shadow);
+  background: #2a2a2a;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 [data-theme='dark'] .onb-join,
 [data-theme='dark'] .onb-star-btn {
-  background: var(--onb-card-bg);
+  background: #2a2a2a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -455,16 +455,16 @@
     --onb-bg-panel: #1a2a3a;
     --onb-border-default: #444;
     --onb-border-strong: #555;
-    --onb-card-bg: #2a2a2a;
-    --onb-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .onb-card {
-    background: var(--onb-card-bg);
-    box-shadow: var(--onb-shadow);
+    background: #2a2a2a;
+    box-shadow:
+      0 24px 64px rgba(0, 0, 0, 0.5),
+      0 2px 8px rgba(0, 0, 0, 0.3);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .onb-join,
   :root:not([data-theme='light']):not([data-theme='dark']) .onb-star-btn {
-    background: var(--onb-card-bg);
+    background: #2a2a2a;
   }
 }
 /* Motion accessibility: suppress all animation for users who opt out */

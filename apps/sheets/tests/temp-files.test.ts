@@ -20,7 +20,7 @@ afterEach(async () => {
 })
 
 async function tempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'hermesoffice-sheets-temp-test-'))
+  const root = await mkdtemp(join(tmpdir(), 'genoffice-sheets-temp-test-'))
   roots.push(root)
   return root
 }
@@ -28,8 +28,8 @@ async function tempRoot(): Promise<string> {
 describe('session temporary resources', () => {
   it('closes the sidecar before removing the snapshot and converted import directory', async () => {
     const root = await tempRoot()
-    const snapshotDir = join(root, 'hermesoffice-sheets-sessions')
-    const importDir = join(root, 'hermesoffice-imports', randomUUID())
+    const snapshotDir = join(root, 'genoffice-sheets-sessions')
+    const importDir = join(root, 'genoffice-imports', randomUUID())
     const snapshotPath = join(snapshotDir, `${randomUUID()}.xlsx`)
     await mkdir(importDir, { recursive: true })
     await mkdir(snapshotDir, { recursive: true })
@@ -67,7 +67,7 @@ describe('session temporary resources', () => {
 describe('pasted-image TTL cleanup', () => {
   it('removes only expired app-owned files from the direct pasted temp directory', async () => {
     const root = await tempRoot()
-    const pastedDir = join(root, 'hermesoffice-pasted')
+    const pastedDir = join(root, 'genoffice-pasted')
     const oldOwned = join(pastedDir, 'pasted-20260101-010203-1.png')
     const recentOwned = join(pastedDir, 'pasted-20260101-010203-2.jpeg')
     const arbitrary = join(pastedDir, 'vacation.png')

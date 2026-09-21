@@ -2,21 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Dropdown, useDismissablePopover } from '@hermesoffice/ui'
+import {
+  Dropdown,
+  RibbonCollapseButton,
+  RibbonExpandButton,
+  useDismissablePopover,
+  useRibbonCollapse,
+} from '@hermesoffice/ui'
 import { useI18n } from '../i18n/locale'
 import type { StringKey } from '../i18n/locale'
 import { HermesMark } from '../ai/AiPanel'
-import { liftFromList } from '../editor/slashCommand'
+import { uiOp, type BlockType, type ListKind, type StylableMark } from '../editor/ops'
 import {
   IconBullets,
   IconHr,
   IconInlineCode,
   IconLink,
   IconNumbered,
+  IconOutlineView,
   IconPicture,
   IconProperties,
   IconRedo,
   IconSave,
+  IconSearch,
+  IconSpellcheck,
   IconTable,
   IconTaskList,
   IconUndo,
@@ -27,12 +36,19 @@ interface Props {
   disabled: boolean
   dirty: boolean
   onSave: () => void
+  onSaveAs: () => void
+  onFind: () => void
   autoSave: boolean
   onToggleAutoSave: (on: boolean) => void
   imageEnabled: boolean
   onInsertImage: () => void
   frontmatterOpen: boolean
   onToggleFrontmatter: () => void
+  outlineOpen: boolean
+  onToggleOutline: () => void
+  hasOutline: boolean
+  spellcheck: boolean
+  onToggleSpellcheck: () => void
   aiOpen: boolean
   onToggleAi: () => void
   onAiPreset: (instruction: string) => void
@@ -53,23 +69,21 @@ const STYLE_LABEL: Record<BlockStyle, StringKey> = {
 }
 
 function applyBlockStyle(editor: Editor, style: BlockStyle): void {
-  // block-type conversions are illegal inside list items — leave the list first
-  liftFromList(editor)
-  const chain = editor.chain().focus()
-  switch (style) {
-    case 'paragraph':
-      chain.setParagraph().run()
-      break
-    case 'quote':
-      chain.setParagraph().setBlockquote().run()
-      break
-    case 'codeBlock':
-      chain.setCodeBlock().run()
-      break
-    default:
-      chain.setHeading({ level: Number(style.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6 }).run()
-  }
+  const type: BlockType =
+    style === 'quote'
+      ? 'blockquote'
+      : style === 'paragraph' || style === 'codeBlock'
+        ? style
+        : 'heading'
+  const level = type === 'heading' ? Number(style.slice(1)) : undefined
+  uiOp(editor, { op: 'setBlockType', target: 'selection', type, ...(level ? { level } : {}) })
 }
+
+const toggleStyle = (editor: Editor | null, style: StylableMark) =>
+  editor && uiOp(editor, { op: 'setStyle', target: 'selection', style, mode: 'toggle' })
+
+const toggleList = (editor: Editor | null, list: ListKind) =>
+  editor && uiOp(editor, { op: 'toggleList', target: 'selection', list })
 
 /** doc + sparkle / pen + sparkle / lines + sparkle, same glyphs as the docs ribbon */
 function AiFeatureIcon({ kind }: { kind: 'summarize' | 'polish' | 'tidy' }) {
@@ -146,17 +160,25 @@ export function Ribbon({
   disabled,
   dirty,
   onSave,
+  onSaveAs,
+  onFind,
   autoSave,
   onToggleAutoSave,
   imageEnabled,
   onInsertImage,
   frontmatterOpen,
   onToggleFrontmatter,
+  outlineOpen,
+  onToggleOutline,
+  hasOutline,
+  spellcheck,
+  onToggleSpellcheck,
   aiOpen,
   onToggleAi,
   onAiPreset,
 }: Props) {
   const { t } = useI18n()
+  const collapse = useRibbonCollapse('mdapp.ribbonCollapsed')
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
   const linkInputRef = useRef<HTMLInputElement>(null)
@@ -208,10 +230,7 @@ export function Ribbon({
 
   const applyLink = () => {
     if (!editor) return
-    const url = linkUrl.trim()
-    const chain = editor.chain().focus().extendMarkRange('link')
-    if (url) chain.setLink({ href: url }).run()
-    else chain.unsetLink().run()
+    uiOp(editor, { op: 'setLink', target: 'selection', href: linkUrl.trim() || null })
     setLinkOpen(false)
   }
 
@@ -237,7 +256,7 @@ export function Ribbon({
   ] as const
 
   return (
-    <div className="ribbon">
+    <div className={`ribbon ${collapse.rootClass}`} ref={collapse.rootRef}>
       {/* quick-access row above the toolbar (save / undo / redo / autosave), same as the docs QAT row */}
       <div className="ribbon-tabs">
         <button
@@ -250,6 +269,17 @@ export function Ribbon({
           onClick={onSave}
         >
           <IconSave size={16} />
+        </button>
+        <button
+          type="button"
+          className="qa-btn qa-save-as"
+          data-tip={t('saveAs')}
+          aria-label={t('saveAs')}
+          disabled={off}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onSaveAs}
+        >
+          {t('saveAs')}
         </button>
         <button
           type="button"
@@ -273,6 +303,17 @@ export function Ribbon({
         >
           <IconRedo size={16} />
         </button>
+        <button
+          type="button"
+          className="qa-btn"
+          data-tip={t('findTip')}
+          aria-label={t('findTip')}
+          disabled={off}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onFind}
+        >
+          <IconSearch size={16} />
+        </button>
         <label className={`autosave-toggle${autoSave ? ' on' : ''}`} data-tip={t('autoSaveTip')}>
           <span className="autosave-knob" />
           <span className="autosave-text">{t('autoSave')}</span>
@@ -282,9 +323,10 @@ export function Ribbon({
             onChange={(e) => onToggleAutoSave(e.target.checked)}
           />
         </label>
+        <RibbonExpandButton state={collapse} label={t('ribbonExpand')} />
       </div>
 
-      <div className="ribbon-body">
+      <div className="ribbon-body" data-ribbon-body="">
         <div className="ribbon-group">
           <div className="ribbon-group-items">
             <button
@@ -346,7 +388,7 @@ export function Ribbon({
               title={t('bold')}
               active={state?.bold}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleBold().run()}
+              onClick={() => toggleStyle(editor, 'bold')}
             >
               <b>B</b>
             </IconBtn>
@@ -354,7 +396,7 @@ export function Ribbon({
               title={t('italic')}
               active={state?.italic}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleItalic().run()}
+              onClick={() => toggleStyle(editor, 'italic')}
             >
               <i>I</i>
             </IconBtn>
@@ -362,7 +404,7 @@ export function Ribbon({
               title={t('strike')}
               active={state?.strike}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleStrike().run()}
+              onClick={() => toggleStyle(editor, 'strike')}
             >
               <s>ab</s>
             </IconBtn>
@@ -370,7 +412,7 @@ export function Ribbon({
               title={t('inlineCode')}
               active={state?.code}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleCode().run()}
+              onClick={() => toggleStyle(editor, 'code')}
             >
               <IconInlineCode size={ICON} />
             </IconBtn>
@@ -407,7 +449,7 @@ export function Ribbon({
               title={t('bulletList')}
               active={state?.bullet}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleBulletList().run()}
+              onClick={() => toggleList(editor, 'bullet')}
             >
               <IconBullets size={ICON} />
             </IconBtn>
@@ -415,7 +457,7 @@ export function Ribbon({
               title={t('orderedList')}
               active={state?.ordered}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+              onClick={() => toggleList(editor, 'ordered')}
             >
               <IconNumbered size={ICON} />
             </IconBtn>
@@ -423,7 +465,7 @@ export function Ribbon({
               title={t('taskList')}
               active={state?.task}
               disabled={off}
-              onClick={() => editor?.chain().focus().toggleTaskList().run()}
+              onClick={() => toggleList(editor, 'task')}
             >
               <IconTaskList size={ICON} />
             </IconBtn>
@@ -437,9 +479,7 @@ export function Ribbon({
             <IconBtn
               title={t('insertTable')}
               disabled={off}
-              onClick={() =>
-                editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-              }
+              onClick={() => editor && uiOp(editor, { op: 'insertTable', after: 'selection' })}
             >
               <IconTable size={ICON} />
             </IconBtn>
@@ -453,7 +493,9 @@ export function Ribbon({
             <IconBtn
               title={t('insertHr')}
               disabled={off}
-              onClick={() => editor?.chain().focus().setHorizontalRule().run()}
+              onClick={() =>
+                editor && uiOp(editor, { op: 'insertHorizontalRule', after: 'selection' })
+              }
             >
               <IconHr size={ICON} />
             </IconBtn>
@@ -472,9 +514,29 @@ export function Ribbon({
             >
               <IconProperties size={ICON} />
             </IconBtn>
+            <IconBtn
+              title={t('outline')}
+              active={outlineOpen}
+              disabled={disabled || (!hasOutline && !outlineOpen)}
+              onClick={onToggleOutline}
+            >
+              <IconOutlineView size={ICON} />
+            </IconBtn>
+            <IconBtn
+              title={t('spellcheck')}
+              active={spellcheck}
+              disabled={disabled}
+              onClick={onToggleSpellcheck}
+            >
+              <IconSpellcheck size={ICON} />
+            </IconBtn>
           </div>
         </div>
       </div>
+      <RibbonCollapseButton
+        state={collapse}
+        labels={{ collapse: t('ribbonCollapse'), pin: t('ribbonPin') }}
+      />
     </div>
   )
 }

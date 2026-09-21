@@ -10,7 +10,7 @@ import {
   withDefaultBarLabels,
   type ChartVisualState,
   valueAxisScale,
-} from '../src/domain/chart-visual'
+} from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 
 const base = (): ChartVisualState => ({
   chartTypes: ['barChart'],
@@ -76,6 +76,16 @@ describe('applyChartStateEdit', () => {
       series: [{ index: 0, categories: ['x', 'y'] }],
     })
     expect(replaced.series[0]?.categoryGroups).toBeUndefined()
+  })
+
+  it('drops stale blank markers when an edit replaces the values', () => {
+    const chart = base()
+    const first = chart.series[0]
+    if (first) first.blanks = [1]
+    const kept = applyChartStateEdit(chart, { series: [{ index: 0, name: 'R' }] })
+    expect(kept.series[0]?.blanks).toEqual([1])
+    const replaced = applyChartStateEdit(chart, { series: [{ index: 0, values: [5, 6] }] })
+    expect(replaced.series[0]?.blanks).toBeUndefined()
   })
 
   it('merges slice explosions per point over the series default', () => {
@@ -166,7 +176,7 @@ describe('chart data-sync ref helpers', () => {
 
 describe('chartDataFromValues orientation and header detection', () => {
   it('wide cross-tab: rows become series, numeric year headers become categories', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues([
       ['', 2020, 2021, 2022],
       ['Division 1', 225, 210, 211.5],
@@ -183,7 +193,7 @@ describe('chartDataFromValues orientation and header detection', () => {
   })
 
   it('wide month table: one series per salesperson, months as categories', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues([
       ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
       ['Ann', 1, 2, 3, 4, 5, 6],
@@ -198,7 +208,7 @@ describe('chartDataFromValues orientation and header detection', () => {
   })
 
   it('tall two-column data keeps the column orientation (pie shape)', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues([
       ['Apples', 10],
       ['Pears', 20],
@@ -210,7 +220,7 @@ describe('chartDataFromValues orientation and header detection', () => {
   })
 
   it('keeps an all-numeric block header-less', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues([
       [1, 2],
       [3, 4],
@@ -218,11 +228,65 @@ describe('chartDataFromValues orientation and header detection', () => {
     expect(parsed?.hasHeaderRow).toBe(false)
     expect(parsed?.series).toHaveLength(2)
   })
+
+  it('charts a mixed first column when every other column is text', async () => {
+    // Numbered checklists: the only numeric column doubles as the row-label
+    // column, so claiming it for the category axis left zero series.
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
+    const parsed = chartDataFromValues([
+      ['Monitoring checklist', null],
+      [null, null],
+      ['No.', 'Task'],
+      [1, 'cart'],
+      [2, 'cart'],
+      [3, 'carousel'],
+    ])
+    expect(parsed?.hasCategoryColumn).toBe(false)
+    expect(parsed?.series).toHaveLength(1)
+    expect(parsed?.series[0]?.column).toBe(0)
+    expect(parsed?.series[0]?.values).toEqual([0, 0, 0, 1, 2, 3])
+  })
+
+  it('charts a sparse numeric first column between blank filler rows', async () => {
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
+    const parsed = chartDataFromValues([
+      [null, null],
+      ['id', 'employee'],
+      [1, 'Alice'],
+      [2, 'Bob'],
+      ['total', null],
+      [null, null],
+    ])
+    expect(parsed?.series).toHaveLength(1)
+    expect(parsed?.series[0]?.column).toBe(0)
+  })
+
+  it('keeps a mixed later column as a series despite text notes', async () => {
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
+    const parsed = chartDataFromValues([
+      ['label', 'value'],
+      ['a', 1],
+      ['b', 'n/a'],
+      ['c', 3],
+    ])
+    expect(parsed?.hasCategoryColumn).toBe(true)
+    expect(parsed?.series[0]?.values).toEqual([1, 0, 3])
+  })
+
+  it('still rejects a range with no numeric cells anywhere', async () => {
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
+    const parsed = chartDataFromValues([
+      ['question', 'answer'],
+      ['agree', 'agree'],
+      ['disagree', 'agree'],
+    ])
+    expect(parsed).toBeNull()
+  })
 })
 
 describe('transposeChartSeries', () => {
   it('pivots categories into series and series names into categories', async () => {
-    const { transposeChartSeries } = await import('../src/domain/chart-visual')
+    const { transposeChartSeries } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const seriesSet = transposeChartSeries(
       [
         { name: 'Grinsley', categories: ['Jan', 'Feb'], values: [1, 2] },
@@ -237,7 +301,7 @@ describe('transposeChartSeries', () => {
   })
 
   it('returns null when there are no categories to pivot on', async () => {
-    const { transposeChartSeries } = await import('../src/domain/chart-visual')
+    const { transposeChartSeries } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     expect(
       transposeChartSeries([{ name: 'S1', categories: [], values: [1] }], (n) => `${n}`),
     ).toBeNull()
@@ -245,7 +309,7 @@ describe('transposeChartSeries', () => {
   })
 
   it('fills gaps with zeros and labels blank names', async () => {
-    const { transposeChartSeries } = await import('../src/domain/chart-visual')
+    const { transposeChartSeries } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const seriesSet = transposeChartSeries(
       [{ name: '', categories: ['', 'B'], values: [5] }],
       (n) => `Series ${n}`,
@@ -324,7 +388,7 @@ describe('scatterAxisBounds', () => {
 
 describe('chartDataFromValues scatter X column', () => {
   it('routes a numeric first column into categories for scatter', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues(
       [
         ['Sales', 'EBIT'],
@@ -340,7 +404,7 @@ describe('chartDataFromValues scatter X column', () => {
   })
 
   it('by-row selections pivot the first data row into X', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     // 2 rows × 4 cols with a label column: row 1 = X, row 2 = Y (corpus shape)
     const parsed = chartDataFromValues(
       [
@@ -357,7 +421,7 @@ describe('chartDataFromValues scatter X column', () => {
   })
 
   it('non-scatter parsing is unchanged (each numeric column a series)', async () => {
-    const { chartDataFromValues } = await import('../src/domain/chart-visual')
+    const { chartDataFromValues } = await import('@hermesoffice/xlsx-gateway/domain/chart-visual')
     const parsed = chartDataFromValues([
       ['Sales', 'EBIT'],
       [0.0626, 0.152],
@@ -369,6 +433,10 @@ describe('chartDataFromValues scatter X column', () => {
 })
 
 describe('valueAxisScale', () => {
+  it('scales flat data 0..1 in 0.2 steps like Excel', () => {
+    expect(valueAxisScale(0)).toEqual({ min: 0, max: 1, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] })
+  })
+
   it('matches Excel defaults on the run5 corpus', () => {
     // 60509: data max 11162 → 0..12000 step 2000
     expect(valueAxisScale(11162)).toEqual({

@@ -282,6 +282,76 @@ describe('grouped and sibling pictures', () => {
     expect(img?.heightPx).toBe(25)
   })
 
+  it('an explicit solid prstDash keeps a solid border; dash presets map to dashed/dotted', async () => {
+    const withDash = (val: string) =>
+      anchorParagraph(
+        `<wps:wsp ${WPS_NS}><wps:cNvSpPr/><wps:spPr>` +
+          `<a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="476250"/></a:xfrm>` +
+          `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+          `<a:ln w="6096"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:prstDash val="${val}"/></a:ln>` +
+          `</wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>term</w:t></w:r></w:p>` +
+          `</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>`,
+        SHAPE_URI,
+      )
+    const dashOf = async (val: string) =>
+      (await parseDocx(await buildDocx({ bodyXml: withDash(val) }))).blocks[0].textboxes![0]
+        .borderDash
+    expect(await dashOf('solid')).toBeUndefined()
+    expect(await dashOf('dash')).toBe('dashed')
+    expect(await dashOf('sysDot')).toBe('dotted')
+  })
+
+  it('a text-bearing anchor paragraph keeps its own spacing as the stray line format', async () => {
+    const textbox = anchorParagraph(
+      `<wps:wsp ${WPS_NS}><wps:cNvSpPr/><wps:spPr>` +
+        `<a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="476250"/></a:xfrm>` +
+        `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+        `</wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>term</w:t></w:r></w:p>` +
+        `</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>`,
+      SHAPE_URI,
+    )
+      .replace('<w:p>', '<w:p><w:pPr><w:spacing w:before="169"/><w:ind w:left="2894"/></w:pPr>')
+      .replace(
+        /<\/w:p>$/,
+        '<w:r><w:t>=</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>+</w:t></w:r></w:p>',
+      )
+    const doc = await parseDocx(await buildDocx({ bodyXml: textbox }))
+    const block = doc.blocks[0]
+    expect(block.strayRuns?.map((r) => r.text).join('')).toBe('=\t+')
+    expect(block.anchorLine?.format?.spaceBefore).toBe(169)
+    expect(block.strayIndent).toEqual({ leftTwips: 2894 })
+    // style-chain stops reach the stray line too (direct wins per position, clear removes)
+    const styled = await parseDocx(
+      await buildDocx({
+        bodyXml: textbox.replace(
+          '<w:pPr>',
+          '<w:pPr><w:pStyle w:val="Ops"/><w:tabs><w:tab w:val="clear" w:pos="1200"/><w:tab w:val="left" w:pos="4385"/></w:tabs>',
+        ),
+        extraStylesXml:
+          '<w:style w:type="paragraph" w:styleId="Ops"><w:name w:val="Ops"/><w:pPr><w:tabs>' +
+          '<w:tab w:val="left" w:pos="1200"/><w:tab w:val="right" w:pos="4385"/><w:tab w:val="left" w:pos="6000"/>' +
+          '</w:tabs><w:ind w:left="143"/></w:pPr></w:style>',
+      }),
+    )
+    expect(styled.blocks[0].anchorLine?.format?.tabStops).toEqual([
+      { pos: 6000, val: 'left' },
+      { pos: 4385, val: 'left' },
+    ])
+    // the direct w:ind wins; a style-only indent still reaches the stray line's tab grid
+    expect(styled.blocks[0].anchorLine?.format?.indentLeft).toBe(2894)
+    const styleInd = await parseDocx(
+      await buildDocx({
+        bodyXml: textbox
+          .replace('<w:ind w:left="2894"/>', '')
+          .replace('<w:pPr>', '<w:pPr><w:pStyle w:val="Ops"/>'),
+        extraStylesXml:
+          '<w:style w:type="paragraph" w:styleId="Ops"><w:name w:val="Ops"/><w:pPr>' +
+          '<w:ind w:left="143"/></w:pPr></w:style>',
+      }),
+    )
+    expect(styleInd.blocks[0].anchorLine?.format?.indentLeft).toBe(143)
+  })
+
   it('an anchored sibling picture becomes a floating photo box carrying its rotation', async () => {
     const textbox = anchorParagraph(
       `<wps:wsp ${WPS_NS}><wps:cNvSpPr/><wps:spPr>` +
@@ -435,5 +505,89 @@ describe('centered wrapSquare pictures', () => {
       `</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`
     const doc = await parseDocx(await buildDocx({ bodyXml: body, withImage: true }))
     expect(doc.blocks[0].imageWrap).toBe('square-left')
+  })
+})
+
+describe('label group over an inline chart picture', () => {
+  // JP marketing decks overlay bar-chart labels as a wpg group of text boxes
+  // plus a thin white strip masking the picture's own axis row; the picture
+  // itself stays inline in a centered paragraph
+  const labelGroup =
+    `<wpg:wgp ${WPG_NS} ${WPS_NS}><wpg:cNvGrpSpPr/><wpg:grpSpPr>` +
+    `<a:xfrm><a:off x="0" y="0"/><a:ext cx="4135267" cy="635391"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="4135267" cy="635391"/></a:xfrm></wpg:grpSpPr>` +
+    `<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr>` +
+    `<a:xfrm><a:off x="0" y="0"/><a:ext cx="913765" cy="493395"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>` +
+    `<wps:txbx><w:txbxContent><w:p><w:r><w:t>Top 25%</w:t></w:r></w:p></w:txbxContent></wps:txbx>` +
+    `<wps:bodyPr/></wps:wsp>` +
+    `<wps:wsp><wps:cNvSpPr/><wps:spPr>` +
+    `<a:xfrm><a:off x="21102" y="513471"/><a:ext cx="3896995" cy="121920"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:schemeClr val="bg1"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr>` +
+    `<wps:bodyPr/></wps:wsp>` +
+    `</wpg:wgp>`
+  const inlinePic =
+    `<w:r><w:drawing><wp:inline><wp:extent cx="4698125" cy="2412895"/>` +
+    `<wp:docPr id="4" name="Picture 4"/>` +
+    `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:pic><pic:blipFill><a:blip r:embed="rId10"/></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4698125" cy="2412895"/></a:xfrm></pic:spPr>` +
+    `</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+  const paragraph = (pPr: string) =>
+    anchorParagraph(labelGroup, GROUP_URI)
+      .replace('<w:p>', `<w:p>${pPr}`)
+      .replace(/<\/w:p>$/, '') + inlinePic
+
+  it('keeps the thin filled masking strip as a white box', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: paragraph('<w:pPr><w:jc w:val="center"/></w:pPr>'),
+        withImage: true,
+      }),
+    )
+    const boxes = doc.blocks[0].textboxes
+    expect(boxes?.length).toBe(2)
+    expect(boxes![0].paras[0]?.runs[0]?.text).toBe('Top 25%')
+    const strip = boxes![1]
+    expect(strip.fill).toBe('FFFFFF')
+    expect(strip.floating).toBe(true)
+    expect(strip.offsetXEmu).toBe(100000 + 21102)
+    expect(strip.offsetYEmu).toBe(200000 + 513471)
+    expect(strip.heightPx).toBe(13)
+  })
+
+  it('keeps a standalone filled strip anchored next to sibling drawings', async () => {
+    const strip =
+      `<wps:wsp ${WPS_NS}><wps:cNvSpPr/><wps:spPr>` +
+      `<a:xfrm><a:off x="0" y="0"/><a:ext cx="3896995" cy="121920"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:schemeClr val="bg1"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp>`
+    const alone = await parseDocx(await buildDocx({ bodyXml: anchorParagraph(strip, SHAPE_URI) }))
+    expect(alone.blocks[0].textboxes ?? []).toHaveLength(0)
+    const withLabel = await parseDocx(
+      await buildDocx({
+        bodyXml:
+          anchorParagraph(labelGroup, GROUP_URI).replace(/<\/w:p>$/, '') +
+          anchorParagraph(strip, SHAPE_URI).replace('<w:p>', ''),
+      }),
+    )
+    const boxes = withLabel.blocks[0].textboxes
+    expect(boxes?.length).toBe(3)
+    expect(boxes![2].fill).toBe('FFFFFF')
+    expect(boxes![2].heightPx).toBe(13)
+  })
+
+  it('the stray picture line follows the anchor paragraph justification', async () => {
+    const centered = await parseDocx(
+      await buildDocx({
+        bodyXml: paragraph('<w:pPr><w:jc w:val="center"/></w:pPr>'),
+        withImage: true,
+      }),
+    )
+    expect(centered.blocks[0].strayRuns?.find((r) => r.image)?.image?.widthPx).toBe(493)
+    expect(centered.blocks[0].strayAlign).toBe('center')
+    const plain = await parseDocx(await buildDocx({ bodyXml: paragraph(''), withImage: true }))
+    expect(plain.blocks[0].strayAlign).toBeUndefined()
   })
 })

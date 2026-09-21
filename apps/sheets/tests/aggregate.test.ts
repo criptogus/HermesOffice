@@ -68,6 +68,19 @@ describe('createRangeAggregator', () => {
     expect(result.numericCount).toBe(0)
     expect(result.topValues).toEqual([])
   })
+
+  it('distinguishes equal-looking values of different types', () => {
+    const aggregator = createRangeAggregator()
+    aggregator.add(1)
+    aggregator.add('1')
+    aggregator.add(true)
+    aggregator.add('true')
+    aggregator.add(1)
+    const result = aggregator.finish(10)
+    expect(result.distinct).toBe(4)
+    expect(result.topValues).toContainEqual({ value: '1', count: 2 })
+    expect(result.topValues).toContainEqual({ value: '1', count: 1 })
+  })
 })
 
 describe('formatRangeAggregate', () => {

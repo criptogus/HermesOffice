@@ -2,6 +2,10 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { EditorView } from '@tiptap/pm/view'
+import { splitFloatStyle } from '../pagination-lines'
+import type { ColumnSplitShape, VerticalBlockSpec } from '../pagination-types'
+import { TopLevelPositions } from './top-level-pos'
+import type { LayoutBatch } from './pagination-gaps'
 
 const key = new PluginKey<DecorationSet>('columnLayout')
 
@@ -56,52 +60,159 @@ export interface ColumnBlockSpec {
   /** owning section's side margins (--doc-margin-left/right overrides) */
   marginLeftPx?: number
   marginRightPx?: number
+  /** owning section's top margin (--doc-margin-top override) in docs whose sections disagree on it */
+  marginTopPx?: number
+  /** owning section's typed docGrid pitch (pt) in mixed-grid docs; 0 = untyped
+   *  section (opts out like snapToGrid=0 via doc-grid-nosnap) */
+  gridPitchPt?: number
+  /** owning section's character-grid letter-spacing delta (pt) in docs whose
+   *  sections disagree on docGrid charSpace (doc-charspace-block) */
+  charSpacePt?: number
   /** translate; dy < 0 pulls content up over vacated column space */
   dx: number
   dy: number
+  /** left edge of the block's page on the shared paper (--page-cx); not undone by page-relative anchors */
+  pageDx?: number
+  /** vertical-text section block (doc-vert-block): writing-mode box, see verticalTextSpecs */
+  vertical?: VerticalBlockSpec
+  /** paragraph straddling two columns of different widths: a leading float
+   *  (doc-col-split-float) rewraps the head or the tail at the narrower width */
+  split?: ColumnSplitShape
+}
+
+const SPLIT_CLASS = 'doc-col-split-float'
+
+function splitFloatEl(style: string): HTMLElement {
+  const span = document.createElement('span')
+  span.className = SPLIT_CLASS
+  span.contentEditable = 'false'
+  span.setAttribute('aria-hidden', 'true')
+  span.style.cssText = style
+  return span
 }
 
 const PATCH_PROPS = [
   '--col-w',
   '--col-dx',
   '--col-dy',
+  '--page-cx',
   '--doc-content-w',
   '--doc-margin-left',
   '--doc-margin-right',
+  '--doc-margin-top',
+  '--doc-grid-pitch',
+  '--doc-char-space',
+  '--vert-mb',
 ]
 
+const PATCH_CLASSES = [
+  'doc-col-block',
+  'doc-grid-block',
+  'doc-grid-nosnap',
+  'doc-charspace-block',
+  'doc-vert-block',
+  'doc-vert-first',
+  'doc-vert-tbRl',
+  'doc-vert-tbRlV',
+  'doc-vert-btLr',
+]
+
+/** pitch/charSpace-only specs get an inert marker class: .doc-col-block's
+ *  width/transform rules must not touch blocks that only carry their section's
+ *  grid pitch or character spacing. Pitch-0 opt-outs use their own class (same
+ *  CSS as doc-nosnap): reusing doc-nosnap would trip sectionGridPitchSpecs'
+ *  own-opt-out skip on the next pass and let patch cleanup strip a node's own
+ *  snapToGrid=0 class. */
+function specClass(spec: ColumnBlockSpec): string {
+  const varsOnly =
+    (spec.gridPitchPt !== undefined ||
+      spec.charSpacePt !== undefined ||
+      spec.marginTopPx !== undefined) &&
+    spec.widthPx === undefined &&
+    spec.contentWPx === undefined &&
+    spec.dx === 0 &&
+    spec.dy === 0 &&
+    !spec.pageDx
+  let cls = varsOnly ? 'doc-grid-block' : 'doc-col-block'
+  if (spec.gridPitchPt === 0) cls += ' doc-grid-nosnap'
+  if (spec.charSpacePt !== undefined) cls += ' doc-charspace-block'
+  if (spec.vertical) {
+    cls += ` doc-vert-block doc-vert-${spec.vertical.mode}`
+    if (spec.vertical.firstOnPage) cls += ' doc-vert-first'
+  }
+  return cls
+}
+
 /** Rebuild the column-layout decorations (an empty list clears them). */
-export function setColumnLayout(view: EditorView, specs: ColumnBlockSpec[]): void {
+export function setColumnLayout(
+  view: EditorView,
+  specs: ColumnBlockSpec[],
+  batch?: LayoutBatch,
+): void {
   const decos: Decoration[] = []
-  const styleOf = new Map<HTMLElement, string>()
+  const positions = new TopLevelPositions(view)
+  const styleOf = new Map<HTMLElement, { style: string; cls: string }>()
+  const splitOf = new Map<HTMLElement, string>()
   for (const spec of specs) {
+    if (spec.split)
+      splitOf.set(
+        spec.el,
+        splitFloatStyle(
+          spec.split.floatPx,
+          spec.split.heightPx,
+          spec.split.insetPx,
+          spec.split.rtl,
+        ),
+      )
     const style =
       (spec.widthPx !== undefined ? `--col-w:${round2(spec.widthPx)}px;` : '') +
       (spec.contentWPx !== undefined
         ? `--doc-content-w:${round2(spec.contentWPx)}px;--doc-margin-left:${round2(spec.marginLeftPx ?? 0)}px;--doc-margin-right:${round2(spec.marginRightPx ?? 0)}px;`
         : '') +
+      (spec.marginTopPx !== undefined ? `--doc-margin-top:${round2(spec.marginTopPx)}px;` : '') +
+      (spec.gridPitchPt !== undefined
+        ? `--doc-grid-pitch:${spec.gridPitchPt > 0 ? `${round2(spec.gridPitchPt)}pt` : '0.0001px'};`
+        : '') +
+      (spec.charSpacePt !== undefined ? `--doc-char-space:${round4(spec.charSpacePt)}pt;` : '') +
+      (spec.pageDx ? `--page-cx:${round2(spec.pageDx)}px;` : '') +
+      (spec.vertical ? `--vert-mb:${round2(spec.vertical.marginBottomPx)}px;` : '') +
       `--col-dx:${round2(spec.dx)}px;--col-dy:${round2(spec.dy)}px`
-    styleOf.set(spec.el, style)
-    let from: number
-    let to: number
-    try {
-      const $inside = view.state.doc.resolve(view.posAtDOM(spec.el, 0))
-      from = $inside.before(1)
-      to = $inside.after(1)
-    } catch {
-      continue
-    }
-    decos.push(
-      Decoration.node(from, to, { class: 'doc-col-block', style }, { key: `col-${style}` }),
-    )
+    const cls = specClass(spec)
+    styleOf.set(spec.el, { style, cls })
+    const range = positions.of(spec.el)
+    if (!range) continue
+    const { from, to } = range
+    decos.push(Decoration.node(from, to, { class: cls, style }, { key: `col-${cls}-${style}` }))
+    const split = splitOf.get(spec.el)
+    if (split)
+      decos.push(
+        Decoration.widget(from + 1, () => splitFloatEl(split), {
+          side: -1,
+          key: `col-split-${split}`,
+          ignoreSelection: true,
+        }),
+      )
   }
   const next = DecorationSet.create(view.state.doc, decos)
   const prev = key.getState(view.state)
-  if (!prev || !sameCols(prev, next))
-    view.dispatch(view.state.tr.setMeta(key, next).setMeta('addToHistory', false))
-  // custom NodeViews (protected blocks etc.) don't apply node decorations — patch
-  // their DOM directly, observer paused so PM never re-parses the mutation (same
-  // technique as the phantom-rowspan sync). Re-applied by every remeasure pass.
+  if (!prev || !sameCols(prev, next)) {
+    if (batch) batch.set(key, next)
+    else view.dispatch(view.state.tr.setMeta(key, next).setMeta('addToHistory', false))
+  }
+  if (batch) batch.then(() => patchNodeViews(view, styleOf, splitOf))
+  else patchNodeViews(view, styleOf, splitOf)
+}
+
+/**
+ * custom NodeViews (protected blocks etc.) don't apply node decorations — patch
+ * their DOM directly, observer paused so PM never re-parses the mutation (same
+ * technique as the phantom-rowspan sync). Re-applied by every remeasure pass.
+ */
+function patchNodeViews(
+  view: EditorView,
+  styleOf: Map<HTMLElement, { style: string; cls: string }>,
+  splitOf: Map<HTMLElement, string>,
+): void {
   const obs = (view as unknown as { domObserver?: { stop(): void; start(): void } }).domObserver
   obs?.stop()
   try {
@@ -110,13 +221,29 @@ export function setColumnLayout(view: EditorView, specs: ColumnBlockSpec[]): voi
     ) as HTMLElement[]) {
       if (styleOf.has(el)) continue
       el.removeAttribute('data-col-patch')
-      el.classList.remove('doc-col-block')
+      el.classList.remove(...PATCH_CLASSES)
       for (const p of PATCH_PROPS) el.style.removeProperty(p)
     }
-    for (const [el, style] of styleOf) {
-      if (el.classList.contains('doc-col-block') && !el.hasAttribute('data-col-patch')) continue
+    // split floats the widget decoration could not place (atomic node views)
+    for (const el of Array.from(
+      view.dom.querySelectorAll<HTMLElement>(`[data-col-split-patch] > .${SPLIT_CLASS}`),
+    ) as HTMLElement[]) {
+      const host = el.parentElement as HTMLElement
+      if (splitOf.get(host) === el.style.cssText) continue
+      el.remove()
+      host.removeAttribute('data-col-split-patch')
+    }
+    for (const [el, style] of splitOf) {
+      if (el.querySelector(`:scope > .${SPLIT_CLASS}`)) continue
+      el.setAttribute('data-col-split-patch', '1')
+      el.insertBefore(splitFloatEl(style), el.firstChild)
+    }
+    for (const [el, { style, cls }] of styleOf) {
+      const classes = cls.split(' ')
+      if (classes.every((c) => el.classList.contains(c)) && !el.hasAttribute('data-col-patch'))
+        continue
       el.setAttribute('data-col-patch', '1')
-      el.classList.add('doc-col-block')
+      el.classList.add(...classes)
       const parts = style.split(';')
       for (const p of PATCH_PROPS) el.style.removeProperty(p)
       for (const part of parts) {
@@ -130,6 +257,7 @@ export function setColumnLayout(view: EditorView, specs: ColumnBlockSpec[]): voi
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+const round4 = (n: number) => Math.round(n * 10000) / 10000
 
 function sameCols(a: DecorationSet, b: DecorationSet): boolean {
   const fa = a.find()

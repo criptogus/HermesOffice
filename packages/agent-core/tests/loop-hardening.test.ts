@@ -175,7 +175,8 @@ describe('AgentLoop request shaping', () => {
     })
     loop.run('x')
     await flush()
-    expect(transport.requests[0]!.system).toBe('SYSTEM\nSUFFIX')
+    expect(transport.requests[0]!.system).toContain('SYSTEM\nSUFFIX')
+    expect(transport.requests[0]!.system).toMatch(/Today's date is \d{4}-\d{2}-\d{2}/)
   })
 
   it('uses formatUserMessage to combine instruction and skill context', async () => {

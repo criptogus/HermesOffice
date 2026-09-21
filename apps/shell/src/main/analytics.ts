@@ -52,7 +52,7 @@ export interface Analytics {
  */
 export function extractAnalyticsKeys(pkg: unknown): AnalyticsKeys | null {
   if (!pkg || typeof pkg !== 'object') return null
-  const raw = (pkg as Record<string, unknown>).hermesofficeAnalytics
+  const raw = (pkg as Record<string, unknown>).genofficeAnalytics
   if (!raw || typeof raw !== 'object') return null
   const { measurementId, apiSecret } = raw as Record<string, unknown>
   if (typeof measurementId !== 'string' || !measurementId.trim()) return null

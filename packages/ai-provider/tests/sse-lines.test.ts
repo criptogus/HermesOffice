@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sseLines } from '../src/protocols/shared'
+import { MAX_SSE_LINE_BYTES, sseLines } from '../src/protocols/shared'
 
 function sseBody(lines: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
@@ -29,6 +29,24 @@ describe('sseLines', () => {
     expect(lines).toEqual(['data: a', 'data: b', ''])
   })
 
+  it('flushes a truncated multibyte tail instead of dropping it silently', async () => {
+    const head = new TextEncoder().encode('data: \u4e2d')
+    // A stream cut inside the next char (E4… with no completion bytes coming):
+    // without a final decode() the buffered byte is discarded silently.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(head)
+        controller.enqueue(new Uint8Array([0xe4]))
+        controller.close()
+      },
+    })
+    const lines: string[] = []
+    for await (const line of sseLines(body)) {
+      lines.push(line)
+    }
+    expect(lines).toEqual(['data: \u4e2d\ufffd'])
+  })
+
   it('releases the reader when the consumer abandons mid-stream', async () => {
     const body = hangingBody()
     const reader = body.getReader()
@@ -53,5 +71,20 @@ describe('sseLines', () => {
     // which runs the finally block.
     await expect(gen.throw(new Error('gateway error'))).rejects.toThrow('gateway error')
     expect(() => body.getReader()).not.toThrow()
+  })
+
+  it('rejects a single line exceeding the buffer cap', async () => {
+    const big = 'x'.repeat(MAX_SSE_LINE_BYTES + 1)
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(big))
+        controller.close()
+      },
+    })
+    await expect(async () => {
+      for await (const _line of sseLines(body)) {
+        // should throw before yielding
+      }
+    }).rejects.toThrow(/buffer limit/)
   })
 })

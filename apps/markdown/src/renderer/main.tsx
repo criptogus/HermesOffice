@@ -6,9 +6,15 @@ import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
 import '@hermesoffice/ui/dropdown.css'
+import '@hermesoffice/ui/find-panel.css'
+import '@hermesoffice/ui/ribbon-collapse.css'
+import '@hermesoffice/ui/markdown.css'
+import '@hermesoffice/ui/ai-panel-prefs.css'
+import '@hermesoffice/ui/ai-scope-quote.css'
+import '@hermesoffice/ui/image-viewer.css'
 import 'katex/dist/katex.min.css'
 import './styles.css'
-import { installScreenTips } from '@hermesoffice/ui'
+import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
 
 installScreenTips()
 
@@ -25,6 +31,11 @@ void (async () => {
   document.documentElement.lang = htmlLang(lang as Lang)
   applyTheme(theme)
   window.markdownApi.onThemeChanged(applyTheme)
+  void window.markdownApi
+    ?.getAiPanelPrefs?.()
+    .then(applyAiPanelPrefs)
+    .catch(() => {})
+  window.markdownApi?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   createRoot(document.getElementById('root')!).render(
     <LocaleProvider initial={lang}>
       <App />

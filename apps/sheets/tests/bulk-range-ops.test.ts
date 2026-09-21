@@ -5,8 +5,8 @@ import {
   MAX_EXPANDED_CELL_OPS,
   replaceOccurrences,
   type WorkbookCommandBatch,
-} from '../src/domain/workbook-dsl'
-import { InMemoryWorkbookAdapter } from '../src/domain/in-memory-workbook'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import { buildLazyChangePlan } from '../src/renderer/lazy-plan'
 
 const readCell = (): { value: null } => ({ value: null })
@@ -192,6 +192,11 @@ describe('replaceOccurrences (shared by expansion and the chunked executor)', ()
 
   it('keeps a literal $ in the replacement literal', () => {
     expect(replaceOccurrences('price: X', 'X', '$1.00', false)).toBe('price: $1.00')
+  })
+
+  it('leaves text unchanged for an empty needle', () => {
+    expect(replaceOccurrences('abc', '', 'X', false)).toBe('abc')
+    expect(replaceOccurrences('abc', '', 'X', true)).toBe('abc')
   })
 })
 

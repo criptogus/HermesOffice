@@ -1,7 +1,12 @@
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
-import { generateParagraphXml, generateTocFieldXml, parseDocx } from '../src/index'
-import type { GenerateContext } from '../src/index'
+import { generateParagraphXml, generateTocFieldXml, parseDocx, saveDocx } from '../src/index'
+import { sdtCheckboxGlyphs } from '../src/checkbox-control'
+import type { Block, GenerateContext, GeneratedBlock } from '../src/index'
 import { buildDocx } from './helpers/build-docx'
+
+const documentXmlOf = async (bytes: Uint8Array): Promise<string> =>
+  (await JSZip.loadAsync(bytes)).file('word/document.xml')!.async('string')
 
 // TOC entry paragraph as Word writes it: TOC field begin + hyperlink entry
 // with a dot-leader tab and a nested PAGEREF field for the page number.
@@ -44,6 +49,28 @@ const PAGE_FIELD_PARAGRAPH =
   '<w:r><w:t>- 8 -</w:t></w:r>' +
   '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
 
+const ZOTERO_CITATION_INSTR =
+  'ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"citation-1","citationItems":[{"id":1}]}'
+const ZOTERO_CITATION_PARAGRAPH =
+  '<w:p><w:r><w:t>Evidence </w:t></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+  `<w:r><w:instrText xml:space="preserve"> ${ZOTERO_CITATION_INSTR} </w:instrText></w:r>` +
+  '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+  '<w:r><w:t>(Smith, 2024)</w:t></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+  '<w:r><w:t>.</w:t></w:r></w:p>'
+
+const ZOTERO_BIBLIOGRAPHY_INSTR =
+  'ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY'
+const ZOTERO_BIBLIOGRAPHY_PARAGRAPHS =
+  '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+  `<w:r><w:instrText xml:space="preserve"> ${ZOTERO_BIBLIOGRAPHY_INSTR} </w:instrText></w:r>` +
+  '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+  '<w:r><w:rPr><w:i/></w:rPr><w:t>Alpha, A. (2024). First study.</w:t></w:r></w:p>' +
+  '<w:p><w:r><w:t>Beta, B. (2023). Second study.</w:t></w:r></w:p>' +
+  '<w:p><w:r><w:t>Gamma, G. (2022). Third study.</w:t></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+
 describe('field paragraph display model', () => {
   it('TOC entry becomes a tocLine with title, page number and level', async () => {
     const doc = await parseDocx(await buildDocx({ bodyXml: TOC_ENTRY_PARAGRAPH }))
@@ -55,7 +82,116 @@ describe('field paragraph display model', () => {
       right: '2',
       level: 1,
       anchor: '_Toc1',
+      leader: 'dot',
     })
+  })
+
+  it('TOC entry splits on spaced and paired tab variants (LO/Google converters)', async () => {
+    for (const tab of ['<w:tab />', '<w:tab></w:tab>']) {
+      const body =
+        '<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>' +
+        `<w:r><w:t>Chapter One</w:t></w:r><w:r>${tab}</w:r><w:r><w:t>12</w:t></w:r></w:p>`
+      const doc = await parseDocx(await buildDocx({ bodyXml: body }))
+      expect(doc.blocks[0].fieldDisplay).toMatchObject({
+        kind: 'tocLine',
+        left: 'Chapter One',
+        right: '12',
+      })
+    }
+  })
+
+  it('a TOC entry carries the leader of its page-number tab (direct stop, else the style)', async () => {
+    const entry = (pPrTail: string, style = 'TOC1') =>
+      `<w:p><w:pPr><w:pStyle w:val="${style}"/>${pPrTail}</w:pPr>` +
+      '<w:r><w:t>Title</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>3</w:t></w:r></w:p>'
+    const styles =
+      '<w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/>' +
+      '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9350"/></w:tabs></w:pPr></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="TOC2"><w:name w:val="toc 2"/></w:style>'
+    const doc = await parseDocx(
+      await buildDocx({
+        extraStylesXml: styles,
+        bodyXml:
+          entry('<w:tabs><w:tab w:val="right" w:leader="hyphen" w:pos="9350"/></w:tabs>') +
+          entry('<w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs>') +
+          entry('<w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs>') +
+          entry('', 'TOC2') +
+          entry(
+            '<w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="right" w:leader="underscore" w:pos="9350"/></w:tabs>',
+          ),
+      }),
+    )
+    const leaders = doc.blocks.slice(0, 5).map((b) => b.fieldDisplay?.leader)
+    // direct stop wins; a direct right stop without w:leader is a bare tab;
+    // no direct right stop falls back to the style; nothing known stays undefined
+    expect(leaders).toEqual(['hyphen', 'none', 'dot', undefined, 'underscore'])
+  })
+
+  it('a TOC entry reads single-quoted tab stop values and leaders', async () => {
+    const body =
+      '<w:p><w:pPr><w:pStyle w:val="TOC1"/>' +
+      "<w:tabs><w:tab w:val='right' w:leader='dot' w:pos='9350'/></w:tabs></w:pPr>" +
+      '<w:r><w:t>Title</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>3</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml: body }))
+    expect(doc.blocks[0].fieldDisplay).toMatchObject({ kind: 'tocLine', leader: 'dot' })
+  })
+
+  it('a TOC entry carries the leading result run face and weight (Word draws the entry with its runs)', async () => {
+    const entry = (rPr: string) =>
+      '<w:p><w:pPr><w:pStyle w:val="TOC2"/><w:tabs><w:tab w:val="right" w:pos="8786"/></w:tabs>' +
+      '<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>' +
+      '<w:hyperlink w:anchor="_Toc1">' +
+      `<w:r>${rPr}<w:t>Annexe 1-1 : Classification</w:t></w:r>` +
+      '<w:r><w:tab/></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \\h </w:instrText></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+      '<w:r><w:t>6</w:t></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+      '</w:hyperlink></w:p>'
+    const styled = entry(
+      '<w:rPr><w:rFonts w:ascii="Times New Roman" w:eastAsia="MS Gothic" w:hAnsi="Times New Roman"/><w:b/></w:rPr>',
+    )
+    const doc = await parseDocx(await buildDocx({ bodyXml: styled + entry('') }))
+    expect(doc.blocks[0].fieldDisplay).toMatchObject({
+      kind: 'tocLine',
+      left: 'Annexe 1-1 : Classification',
+      right: '6',
+      fontFamily: 'Times New Roman',
+      bold: true,
+    })
+    // the paragraph mark's sz is not the entry's text size
+    expect(doc.blocks[0].fieldDisplay?.szHalfPoints).toBeUndefined()
+    expect(doc.blocks[1].fieldDisplay?.fontFamily).toBeUndefined()
+    expect(doc.blocks[1].fieldDisplay?.bold).toBeUndefined()
+    // a wholly deleted CJK entry still resolves the East Asian face
+    const deleted =
+      '<w:p><w:pPr><w:pStyle w:val="TOC2"/></w:pPr><w:del w:id="1" w:author="a" w:date="2024-01-01T00:00:00Z">' +
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:eastAsia="SimSun"/></w:rPr><w:delText>\u7b2c\u4e00\u7ae0</w:delText></w:r>' +
+      '</w:del></w:p>'
+    const del = await parseDocx(await buildDocx({ bodyXml: deleted }))
+    expect(del.blocks[0].fieldDisplay).toMatchObject({ deleted: true, fontFamily: 'SimSun' })
+  })
+
+  it('TOC bold respects off/none/case variants (onOff parity)', async () => {
+    const offEntry = (b: string) =>
+      '<w:p><w:pPr><w:pStyle w:val="TOC2"/><w:tabs><w:tab w:val="right" w:pos="8786"/></w:tabs>' +
+      '<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>' +
+      '<w:hyperlink w:anchor="_Toc1">' +
+      `<w:r><w:rPr>${b}</w:rPr><w:t>Title</w:t></w:r>` +
+      '<w:r><w:tab/></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \\h </w:instrText></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+      '<w:r><w:t>6</w:t></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+      '</w:hyperlink></w:p>'
+    for (const v of ['off', 'none', 'False', 'OFF', '0']) {
+      const doc = await parseDocx(await buildDocx({ bodyXml: offEntry(`<w:b w:val="${v}"/>`) }))
+      expect(doc.blocks[0].fieldDisplay?.bold).toBeUndefined()
+    }
+    const on = await parseDocx(await buildDocx({ bodyXml: offEntry('<w:b w:val="true"/>') }))
+    expect(on.blocks[0].fieldDisplay?.bold).toBe(true)
   })
 
   it('field-end + page break paragraph shows as a pageBreak marker', async () => {
@@ -67,6 +203,124 @@ describe('field paragraph display model', () => {
     const doc = await parseDocx(await buildDocx({ bodyXml: PAGE_FIELD_PARAGRAPH }))
     expect(doc.blocks[0].type).toBe('paragraph')
     expect(doc.blocks[0].runs?.[0]).toMatchObject({ text: '- 8 -', instrField: 'PAGE' })
+  })
+
+  it('Zotero citation fields remain editable and round-trip as Word ADDIN fields', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: ZOTERO_CITATION_PARAGRAPH }))
+    expect(doc.blocks[0].type).toBe('paragraph')
+    expect(doc.blocks[0].runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: '(Smith, 2024)', instrField: ZOTERO_CITATION_INSTR }),
+      ]),
+    )
+
+    const block = doc.blocks[0]
+    const saved = await saveDocx(doc, [{ kind: 'generated', block: block as GeneratedBlock }])
+    const reparsed = await parseDocx(saved)
+    expect(reparsed.blocks[0].runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: '(Smith, 2024)', instrField: ZOTERO_CITATION_INSTR }),
+      ]),
+    )
+  })
+
+  it('keeps styled runs inside one single-paragraph Zotero field', async () => {
+    const xml = ZOTERO_CITATION_PARAGRAPH.replace(
+      '<w:r><w:t>(Smith, 2024)</w:t></w:r>',
+      '<w:r><w:t xml:space="preserve">(Smith, </w:t></w:r>' +
+        '<w:r><w:rPr><w:i/></w:rPr><w:t>2024)</w:t></w:r>',
+    )
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    const fieldRuns = doc.blocks[0].runs?.filter((run) => run.instrField) ?? []
+    expect(fieldRuns.map((run) => run.zoteroFieldPart)).toEqual(['begin', 'end'])
+    expect(fieldRuns[1].italic).toBe(true)
+
+    const saved = await saveDocx(doc, [
+      { kind: 'generated', block: doc.blocks[0] as GeneratedBlock },
+    ])
+    const reparsed = await parseDocx(saved)
+    const reparsedRuns = reparsed.blocks[0].runs?.filter((run) => run.instrField) ?? []
+    expect(reparsedRuns.map((run) => run.text).join('')).toBe('(Smith, 2024)')
+    expect(new Set(reparsedRuns.map((run) => run.zoteroFieldId)).size).toBe(1)
+  })
+
+  it('keeps a Zotero bibliography spanning multiple paragraphs as one editable field', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: ZOTERO_BIBLIOGRAPHY_PARAGRAPHS }))
+    const blocks = doc.blocks.filter((block) => !block.hidden)
+
+    expect(blocks).toHaveLength(3)
+    expect(blocks.map((block) => block.type)).toEqual(['paragraph', 'paragraph', 'paragraph'])
+    expect(blocks.map((block) => block.runs?.map((run) => run.text).join(''))).toEqual([
+      'Alpha, A. (2024). First study.',
+      'Beta, B. (2023). Second study.',
+      'Gamma, G. (2022). Third study.',
+    ])
+    const fieldRuns = blocks.flatMap((block) => block.runs ?? [])
+    expect(new Set(fieldRuns.map((run) => run.zoteroFieldId)).size).toBe(1)
+    expect(fieldRuns.map((run) => run.zoteroFieldPart)).toEqual(['begin', 'inside', 'end'])
+    expect(fieldRuns.every((run) => run.instrField === ZOTERO_BIBLIOGRAPHY_INSTR)).toBe(true)
+    expect(fieldRuns[0].italic).toBe(true)
+
+    const generated = blocks.map((block) => ({
+      kind: 'generated' as const,
+      block: {
+        type: 'paragraph' as const,
+        styleId: block.styleId,
+        format: block.format,
+        rawPPr: block.rawPPr,
+        runs: block.runs ?? [],
+      },
+    }))
+    const saved = await saveDocx(doc, generated)
+    const reparsed = await parseDocx(saved)
+    const reparsedBlocks = reparsed.blocks.filter((block) => !block.hidden)
+    expect(reparsedBlocks.map((block) => block.runs?.map((run) => run.text).join(''))).toEqual([
+      'Alpha, A. (2024). First study.',
+      'Beta, B. (2023). Second study.',
+      'Gamma, G. (2022). Third study.',
+    ])
+    const reparsedRuns = reparsedBlocks.flatMap((block) => block.runs ?? [])
+    expect(new Set(reparsedRuns.map((run) => run.zoteroFieldId)).size).toBe(1)
+    expect(reparsedRuns.map((run) => run.zoteroFieldPart)).toEqual(['begin', 'inside', 'end'])
+  })
+
+  it('closes a bibliography field whose end paragraph was deleted instead of writing an open field', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: ZOTERO_BIBLIOGRAPHY_PARAGRAPHS }))
+    const blocks = doc.blocks.filter((block) => !block.hidden)
+    // the first two paragraphs are untouched originals; the paragraph carrying the field end is gone
+    const saved = await saveDocx(
+      doc,
+      blocks
+        .slice(0, 2)
+        .map((block) => ({ kind: 'original' as const, docxIndex: block.docxIndex! })),
+    )
+    const xml = await documentXmlOf(saved)
+    expect(xml.match(/w:fldCharType="begin"/g)).toHaveLength(1)
+    expect(xml.match(/w:fldCharType="end"/g)).toHaveLength(1)
+    const reparsed = await parseDocx(saved)
+    const reparsedBlocks = reparsed.blocks.filter((block) => !block.hidden)
+    expect(reparsedBlocks.map((block) => block.runs?.map((run) => run.text).join(''))).toEqual([
+      'Alpha, A. (2024). First study.',
+      'Beta, B. (2023). Second study.',
+    ])
+    expect(reparsedBlocks[0].runs?.map((run) => run.zoteroFieldPart)).toEqual(['single'])
+    expect(reparsedBlocks[1].runs?.every((run) => run.instrField === undefined)).toBe(true)
+  })
+
+  it('does not merge an inline citation with a cross-paragraph bibliography', async () => {
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: ZOTERO_CITATION_PARAGRAPH + ZOTERO_BIBLIOGRAPHY_PARAGRAPHS }),
+    )
+    const blocks = doc.blocks.filter((block) => !block.hidden)
+    const citationId = blocks[0].runs?.find((run) => run.instrField)?.zoteroFieldId
+    const bibliographyIds = blocks
+      .slice(1)
+      .flatMap((block) => block.runs ?? [])
+      .map((run) => run.zoteroFieldId)
+
+    expect(citationId).toBeDefined()
+    expect(new Set(bibliographyIds).size).toBe(1)
+    expect(bibliographyIds[0]).not.toBe(citationId)
   })
 
   it('a resultless INCLUDEPICTURE text field keeps spaces and run metrics (public issue #118)', async () => {
@@ -166,6 +420,74 @@ describe('field paragraph display model', () => {
       right: '11',
       level: 1,
     })
+  })
+})
+
+// IF field whose instruction text runs across three paragraphs: Word hides
+// the first two paragraph marks and shows one line "Left {It’s not "
+const SPLIT_CODE_PARAGRAPHS =
+  '<w:p><w:r><w:t xml:space="preserve">Left </w:t></w:r><w:r><w:t>{</w:t></w:r>' +
+  '<w:r><w:t xml:space="preserve">It’s </w:t></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+  '<w:r><w:instrText xml:space="preserve">IF DATE \\@ "M-d" &lt;&gt; "1-4" "not " </w:instrText></w:r></w:p>' +
+  '<w:p><w:r><w:instrText xml:space="preserve">second code paragraph </w:instrText></w:r></w:p>' +
+  '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>' +
+  '<w:r><w:instrText xml:space="preserve">\\* MERGEFORMAT </w:instrText></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+  '<w:r><w:rPr><w:b/></w:rPr><w:t>not</w:t></w:r>' +
+  '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+  '<w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>' +
+  '<w:p><w:r><w:t>After</w:t></w:r></w:p>'
+
+describe('field code spanning paragraphs', () => {
+  const shownMarkers = (blocks: Block[]) =>
+    blocks.filter((b) => !b.hidden).map((b) => b.invisibleMarker ?? false)
+
+  it('paragraph marks inside field code are hidden; the last mark shows the joined result', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: SPLIT_CODE_PARAGRAPHS }))
+    expect(shownMarkers(doc.blocks)).toEqual([true, true, false, false])
+    const tail = doc.blocks[2]
+    expect(tail.type).toBe('passthrough')
+    expect(tail.fieldDisplay?.kind).toBe('text')
+    expect(tail.fieldDisplay?.left).toBe('Left {It’s not')
+    expect(tail.fieldDisplay?.align).toBe('center')
+    expect(tail.fieldDisplay?.runs?.map((r) => [r.text, r.bold ?? false])).toEqual([
+      ['Left {It’s ', false],
+      ['not', true],
+    ])
+    expect(doc.blocks[3].type).toBe('paragraph')
+    // the blocks still save byte-identically
+    for (const b of doc.blocks.slice(0, 3)) expect(b.originalXml).toMatch(/^<w:p>/)
+  })
+
+  it('a field code left open at the end of the body folds nothing', async () => {
+    const xml =
+      '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText xml:space="preserve"> DATE </w:instrText></w:r></w:p>' +
+      '<w:p><w:r><w:t>Plain</w:t></w:r></w:p>'
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(shownMarkers(doc.blocks)).toEqual([false, false])
+    expect(doc.blocks[1].type).toBe('paragraph')
+  })
+
+  it('single-quoted fldChar runs fold like double-quoted ones', async () => {
+    const xml = SPLIT_CODE_PARAGRAPHS.replaceAll(
+      /w:fldCharType="(begin|separate|end)"/g,
+      "w:fldCharType='$1'",
+    )
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(shownMarkers(doc.blocks)).toEqual([true, true, false, false])
+    const tail = doc.blocks[2]
+    expect(tail.fieldDisplay?.kind).toBe('text')
+    expect(tail.fieldDisplay?.left).toBe('Left {It’s not')
+  })
+
+  it('paragraph marks inside a field result (TOC entries) stay visible', async () => {
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: TOC_ENTRY_PARAGRAPH + FIELD_END_PAGEBREAK_PARAGRAPH }),
+    )
+    expect(shownMarkers(doc.blocks)).toEqual([false, false])
+    expect(doc.blocks[0].fieldDisplay?.kind).toBe('tocLine')
   })
 })
 
@@ -295,9 +617,34 @@ describe('FORMCHECKBOX form fields', () => {
     expect(doc.blocks[0].runs?.map((r) => r.text)).toEqual(['item: ', '☐'])
   })
 
+  it('sizes the glyph by the begin run rPr like a sizeAuto box', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: checkboxParagraph('<w:default w:val="0"/>').replace(
+          '<w:r><w:fldChar w:fldCharType="begin">',
+          '<w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="16"/></w:rPr><w:fldChar w:fldCharType="begin">',
+        ),
+      }),
+    )
+    expect(doc.blocks[0].runs?.[1]).toMatchObject({
+      text: '☐',
+      instrField: 'FORMCHECKBOX',
+      sizeHalfPoints: 16,
+      font: 'Calibri',
+    })
+    expect(doc.blocks[0].runs?.[1].fldBeginXml).toContain('<w:sz w:val="16"/>')
+  })
+
   it('checked state comes from w:checked (wins over w:default)', async () => {
     const doc = await parseDocx(
       await buildDocx({ bodyXml: checkboxParagraph('<w:default w:val="0"/><w:checked/>') }),
+    )
+    expect(doc.blocks[0].runs?.[1]).toMatchObject({ text: '☒', instrField: 'FORMCHECKBOX' })
+  })
+
+  it('reads uppercase checked values (TRUE/ON) like Word does', async () => {
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: checkboxParagraph('<w:checked w:val="ON"/>') }),
     )
     expect(doc.blocks[0].runs?.[1]).toMatchObject({ text: '☒', instrField: 'FORMCHECKBOX' })
   })
@@ -446,12 +793,12 @@ describe('mixed-size text fields (manual drop cap)', () => {
     // dominant size = the inherited default (body text outweighs the cap letter)
     expect(field.szHalfPoints).toBeUndefined()
     expect(field.runs).toEqual([
-      { text: 'L', szHalfPoints: 96 },
+      { text: 'L', sizeHalfPoints: 96 },
       { text: 'ight. Living give. Rule grass light.' },
     ])
   })
 
-  it('a uniform explicit size keeps the single-size shape (no runs)', async () => {
+  it('a uniform explicit size keeps the dominant size on the wrapper', async () => {
     const xml =
       '<w:p>' +
       '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
@@ -461,6 +808,149 @@ describe('mixed-size text fields (manual drop cap)', () => {
     const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
     const field = doc.blocks[0].fieldDisplay!
     expect(field.szHalfPoints).toBe(24)
-    expect(field.runs).toBeUndefined()
+    expect(field.runs).toEqual([{ text: 'uniform text', sizeHalfPoints: 24 }])
+  })
+})
+
+describe('editable citation fields (ADDIN ZOTERO_ITEM in a justified body paragraph)', () => {
+  const CITATION_PARAGRAPH =
+    '<w:p><w:pPr><w:jc w:val="both"/></w:pPr>' +
+    '<w:r><w:t xml:space="preserve">Published in </w:t></w:r>' +
+    '<w:r><w:rPr><w:i/></w:rPr><w:t>European Radiology</w:t></w:r>' +
+    '<w:r><w:t xml:space="preserve">, this study </w:t></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+    '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"x"} </w:instrText></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+    '<w:r><w:rPr><w:i/></w:rPr><w:t>(21)</w:t></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r>' +
+    '<w:r><w:t xml:space="preserve">. </w:t></w:r></w:p>'
+
+  it('keeps the result runs formatted and the paragraph justified', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: CITATION_PARAGRAPH }))
+    const block = doc.blocks[0]
+    expect(block.type).toBe('paragraph')
+    expect(block.format?.align).toBe('justify')
+    expect(block.runs).toEqual([
+      expect.objectContaining({ text: 'Published in ' }),
+      expect.objectContaining({ text: 'European Radiology', italic: true }),
+      expect.objectContaining({ text: ', this study ' }),
+      expect.objectContaining({
+        text: '(21)',
+        italic: true,
+        instrField: 'ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"x"}',
+      }),
+      expect.objectContaining({ text: '. ' }),
+    ])
+  })
+
+  it('keeps tabs inside the editable field result', async () => {
+    const xml = CITATION_PARAGRAPH.replace('<w:t>(21)</w:t>', '<w:tab/><w:t>(21)</w:t>')
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    const fieldRun = doc.blocks[0].runs?.find((run) => run.instrField)
+    expect(fieldRun).toMatchObject({
+      text: '\t(21)',
+      italic: true,
+      instrField: 'ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"x"}',
+      zoteroFieldPart: 'single',
+    })
+  })
+})
+
+// Content-control checkbox as Word writes it: the state lives in w14:checkbox,
+// the run in sdtContent repeats the glyph the state selects.
+const sdtCheckboxParagraph = (checked: '0' | '1', glyph: string) =>
+  '<w:p><w:r><w:t xml:space="preserve">agree </w:t></w:r><w:sdt><w:sdtPr><w:id w:val="42"/>' +
+  `<w14:checkbox><w14:checked w14:val="${checked}"/>` +
+  '<w14:checkedState w14:val="2612" w14:font="MS Gothic"/>' +
+  '<w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr>' +
+  '<w:sdtContent><w:r><w:rPr><w:rFonts w:ascii="MS Gothic" w:hAnsi="MS Gothic"/></w:rPr>' +
+  `<w:t>${glyph}</w:t></w:r></w:sdtContent></w:sdt></w:p>`
+
+describe('w14:checkbox content controls', () => {
+  const ctx: GenerateContext = { headingStyleIds: new Map(), allocateHyperlinkRel: () => 'rId1' }
+
+  it('folds into one glyph run that keeps the control properties', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('1', '\u2612') }))
+    expect(doc.blocks[0].runs?.map((r) => r.text)).toEqual(['agree ', '\u2612'])
+    expect(doc.blocks[0].runs?.[1]).toMatchObject({ font: 'MS Gothic' })
+    expect(doc.blocks[0].runs?.[1].sdtCheckboxXml).toContain('<w14:checkbox>')
+  })
+
+  it('draws the glyph from the state, not from the text the file carried', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('0', '\u2612') }))
+    expect(doc.blocks[0].runs?.[1].text).toBe('\u2610')
+  })
+
+  it('writes the control back around the glyph with w14:checked following an in-editor toggle', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('0', '\u2610') }))
+    const runs = doc.blocks[0].runs!.map((r) => (r.sdtCheckboxXml ? { ...r, text: '\u2612' } : r))
+    const xml = generateParagraphXml({ type: 'paragraph', runs }, ctx)
+    expect(xml).toMatch(
+      /<w:sdt><w:sdtPr>.*<w14:checked w14:val="1"\/>.*<\/w:sdtPr><w:sdtContent><w:r>.*\u2612.*<\/w:sdtContent><\/w:sdt>/,
+    )
+    expect(xml).not.toContain('w14:val="0"')
+  })
+
+  it('drops the control when the glyph was typed over', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: sdtCheckboxParagraph('1', '☒') }))
+    const runs = doc.blocks[0].runs!.map((r) => (r.sdtCheckboxXml ? { ...r, text: 'yes' } : r))
+    const xml = generateParagraphXml({ type: 'paragraph', runs }, ctx)
+    expect(xml).not.toContain('<w:sdt>')
+    expect(xml).toContain('yes')
+  })
+
+  it('reads uppercase checked values (TRUE) as checked', async () => {
+    const xml = sdtCheckboxParagraph('1', '☐').replace('w14:val="1"', 'w14:val="TRUE"')
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(doc.blocks[0].runs?.[1].text).toBe('☒')
+  })
+
+  it('reads single-quoted checkbox glyph values', () => {
+    const glyphs = sdtCheckboxGlyphs(
+      "<w:sdtPr><w14:checkbox><w14:checkedState w14:val='2611'/><w14:uncheckedState w14:val='2610'/></w14:checkbox></w:sdtPr>",
+    )
+    expect(glyphs).toEqual({ checked: '☑', unchecked: '☐' })
+  })
+})
+
+describe('dirty inline fields', () => {
+  const DIRTY_DATE_P =
+    '<w:p><w:r><w:t xml:space="preserve">Printed </w:t></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>' +
+    '<w:r><w:instrText xml:space="preserve"> DATE \\@ "yyyy-MM-dd" </w:instrText></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+    '<w:r><w:t>2026-01-01</w:t></w:r>' +
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+
+  it('parses w:dirty on the begin fldChar into Run.fldDirty and writes it back', async () => {
+    const doc = await parseDocx(await buildDocx({ bodyXml: DIRTY_DATE_P }))
+    expect(doc.blocks[0].runs?.[1]).toMatchObject({
+      text: '2026-01-01',
+      instrField: 'DATE \\@ "yyyy-MM-dd"',
+      fldDirty: true,
+    })
+    const out = await saveDocx(doc, [
+      {
+        kind: 'generated',
+        block: {
+          type: 'paragraph',
+          runs: [
+            { text: 'Printed ' },
+            { text: '1', instrField: 'NUMPAGES', fldDirty: true },
+            { text: ' of ', instrField: undefined },
+            { text: '3', instrField: 'PAGE' },
+          ],
+        },
+      },
+    ])
+    const xml = await (await JSZip.loadAsync(out)).file('word/document.xml')!.async('string')
+    expect(xml).toContain('<w:fldChar w:fldCharType="begin" w:dirty="true"/>')
+    expect(xml).toMatch(/NUMPAGES[\s\S]*<w:fldChar w:fldCharType="begin"\/>[\s\S]*PAGE/)
+    const reparsed = await parseDocx(out)
+    const fields = reparsed.blocks[0].runs?.filter((r) => r.instrField) ?? []
+    expect(fields.map((r) => [r.instrField, r.fldDirty ?? false])).toEqual([
+      ['NUMPAGES', true],
+      ['PAGE', false],
+    ])
   })
 })

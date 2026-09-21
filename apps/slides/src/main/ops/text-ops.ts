@@ -26,7 +26,11 @@ import {
   type TextElement,
 } from '@hermesoffice/pptx-engine'
 import type { EditParagraph } from '../../shared/ipc'
-import { applyEditParagraphs, collectParagraphFormatPatches, levelsChanged } from '../edit-text'
+import {
+  applyEditParagraphs,
+  collectParagraphFormatPatches,
+  levelsChanged,
+} from '@hermesoffice/pptx-ops'
 import {
   GuidedError,
   register,

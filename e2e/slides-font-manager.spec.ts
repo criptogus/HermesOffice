@@ -12,7 +12,7 @@ import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
  */
 async function buildRubikFixture(): Promise<string> {
   const out = join(
-    await mkdtemp(join(tmpdir(), 'hermesoffice-font-manager-')),
+    await mkdtemp(join(tmpdir(), 'genoffice-font-manager-')),
     'font-manager-rubik.pptx',
   )
   execFileSync('zip', ['-X', '-q', '-r', out, '.'], {
@@ -23,7 +23,7 @@ async function buildRubikFixture(): Promise<string> {
 
 /**
  * Font manager smoke: source builds without an injected font CDN hide download
- * prompts. Providing HERMESOFFICE_FONT_CDN_URL enables the catalog/banner; the
+ * prompts. Providing GENOFFICE_FONT_CDN_URL enables the catalog/banner; the
  * actual network download runs only with E2E_FONT_CDN=1.
  */
 test('font download UI follows CDN configuration', async () => {
@@ -34,7 +34,7 @@ test('font download UI follows CDN configuration', async () => {
     openFile: await buildRubikFixture(),
   })
   try {
-    const editorPage = await waitForPageWithUrl(launched.app, 'slides/out')
+    const editorPage = await waitForPageWithUrl(launched.app, '://slides/')
     await editorPage.waitForSelector('.stage-wrap canvas', { timeout: 30_000 })
 
     const banner = editorPage.locator('.font-missing-banner')
@@ -52,7 +52,7 @@ test('font download UI follows CDN configuration', async () => {
         missing: await api.fontMissing(),
       }
     })
-    const configured = Boolean(process.env.HERMESOFFICE_FONT_CDN_URL?.trim())
+    const configured = Boolean(process.env.GENOFFICE_FONT_CDN_URL?.trim())
     if (!configured) {
       expect(fontState.catalog).toEqual([])
       expect(fontState.missing).toEqual([])

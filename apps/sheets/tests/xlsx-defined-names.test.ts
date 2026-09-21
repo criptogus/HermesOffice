@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyDefinedNamesState, DefinedNameError } from '../src/gateway/xlsx-defined-names'
+import {
+  applyDefinedNamesState,
+  DefinedNameError,
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-defined-names'
 
 const WORKBOOK =
   '<workbook><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>' +
@@ -32,6 +35,22 @@ describe('applyDefinedNamesState', () => {
       '<definedNames><definedName name="Gone">D!$A$1</definedName></definedNames></workbook>'
     expect(applyDefinedNamesState(bare, { names: [], preserveNames: [] })).toBe(
       '<workbook><sheets><sheet name="D"/></sheets></workbook>',
+    )
+  })
+
+  it('fills a self-closing <definedNames/> rather than appending after it', () => {
+    const exported =
+      '<workbook><sheets><sheet name="D" sheetId="1" r:id="rId1"/></sheets>' +
+      '<definedNames/><calcPr/></workbook>'
+    const xml = applyDefinedNamesState(exported, {
+      names: [{ name: 'N', formula: 'D!$A$1' }],
+      preserveNames: [],
+    })
+    expect(xml.match(/<definedNames\b/g)).toHaveLength(1)
+    expect(xml).toBe(
+      '<workbook><sheets><sheet name="D" sheetId="1" r:id="rId1"/></sheets>' +
+        '<definedNames><definedName name="N">D!$A$1</definedName></definedNames>' +
+        '<calcPr/></workbook>',
     )
   })
 

@@ -21,7 +21,7 @@
 
 /* While a Home popover is open the strip must deliver presses (drag regions
    swallow them), so outside-press dismissal can see presses on the blank band */
-html.hermesoffice-popover-open .tab-bar {
+html.genoffice-popover-open .tab-bar {
   -webkit-app-region: no-drag;
 }
 
@@ -29,6 +29,24 @@ html.hermesoffice-popover-open .tab-bar {
 .tab-bar-drag-spacer {
   width: 78px;
   flex-shrink: 0;
+}
+
+/* desktops that put the window controls on the leading edge (some Linux
+   layouts) report them as titlebar-area-x; keep the menu button clear */
+body.overlay-title-bar .tab-bar-drag-spacer {
+  width: max(8px, env(titlebar-area-x, 0px));
+}
+
+/* Windows/Linux caption buttons are drawn over the strip's right end
+   (titleBarOverlay); the Window Controls Overlay env vars give their width,
+   and resolve to 0 where the overlay is absent */
+.tab-bar-caption-spacer {
+  flex-shrink: 0;
+  width: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+}
+
+.tab-app-menu-btn {
+  margin-right: 2px;
 }
 
 /* scrollable middle section; empty space stays part of the window drag region.
@@ -255,7 +273,8 @@ html.hermesoffice-popover-open .tab-bar {
 }
 
 .tab-new-btn,
-.tab-overflow-btn {
+.tab-overflow-btn,
+.tab-app-menu-btn {
   -webkit-app-region: no-drag;
   position: relative;
   flex-shrink: 0;
@@ -273,7 +292,8 @@ html.hermesoffice-popover-open .tab-bar {
 }
 
 .tab-new-btn:hover,
-.tab-overflow-btn:hover {
+.tab-overflow-btn:hover,
+.tab-app-menu-btn:hover {
   background: rgba(0, 0, 0, 0.08);
 }
 
@@ -288,9 +308,6 @@ html.hermesoffice-popover-open .tab-bar {
   --tabstrip-text: #b0b0b0;
   --tabstrip-text-active: #e4e4e4;
   --tab-separator: rgba(255, 255, 255, 0.15);
-  --tab-hover-plate: rgba(255, 255, 255, 0.08);
-  --tab-hover-close: rgba(255, 255, 255, 0.12);
-  --tab-hover-btn: rgba(255, 255, 255, 0.1);
 }
 
 [data-theme='dark'] .tab-item.active .tab-plate {
@@ -298,16 +315,17 @@ html.hermesoffice-popover-open .tab-bar {
 }
 
 [data-theme='dark'] .tab-item:not(.active):hover .tab-plate {
-  background: var(--tab-hover-plate);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 [data-theme='dark'] .tab-close:hover {
-  background: var(--tab-hover-close);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 [data-theme='dark'] .tab-new-btn:hover,
-[data-theme='dark'] .tab-overflow-btn:hover {
-  background: var(--tab-hover-btn);
+[data-theme='dark'] .tab-overflow-btn:hover,
+[data-theme='dark'] .tab-app-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* System dark: same overrides when following OS preference */
@@ -317,22 +335,20 @@ html.hermesoffice-popover-open .tab-bar {
     --tabstrip-text: #b0b0b0;
     --tabstrip-text-active: #e4e4e4;
     --tab-separator: rgba(255, 255, 255, 0.15);
-    --tab-hover-plate: rgba(255, 255, 255, 0.08);
-    --tab-hover-close: rgba(255, 255, 255, 0.12);
-    --tab-hover-btn: rgba(255, 255, 255, 0.1);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-item.active .tab-plate {
     background: var(--surface);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-item:not(.active):hover .tab-plate {
-    background: var(--tab-hover-plate);
+    background: rgba(255, 255, 255, 0.08);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-close:hover {
-    background: var(--tab-hover-close);
+    background: rgba(255, 255, 255, 0.12);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-new-btn:hover,
-  :root:not([data-theme='light']):not([data-theme='dark']) .tab-overflow-btn:hover {
-    background: var(--tab-hover-btn);
+  :root:not([data-theme='light']):not([data-theme='dark']) .tab-overflow-btn:hover,
+  :root:not([data-theme='light']):not([data-theme='dark']) .tab-app-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
   }
 }
 /* Motion accessibility: suppress all animation for users who opt out */

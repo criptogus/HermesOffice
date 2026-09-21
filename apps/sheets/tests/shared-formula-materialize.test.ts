@@ -1,8 +1,8 @@
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 
-import { applyCellEditsToXlsx, type CellEdit } from '../src/gateway/xlsx-gateway'
-import { translateSharedFormula } from '../src/gateway/xlsx-structure'
+import { applyCellEditsToXlsx, type CellEdit } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { translateSharedFormula } from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
 
 describe('translateSharedFormula', () => {
   it('shifts relative references by the follower offset', () => {

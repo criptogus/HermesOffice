@@ -10,11 +10,20 @@
       "@hermesoffice/pptx-engine": ["../../packages/pptx-engine/src/index.ts"],
       "@hermesoffice/pptx-engine/table-grid": ["../../packages/pptx-engine/src/table-grid.ts"],
       "@hermesoffice/pptx-engine/identity": ["../../packages/pptx-engine/src/identity.ts"],
+      "@hermesoffice/pptx-engine/named-action": ["../../packages/pptx-engine/src/named-action.ts"],
       "@hermesoffice/pptx-engine/background-promote": [
         "../../packages/pptx-engine/src/background-promote.ts"
       ],
+      "@hermesoffice/pptx-ops": ["../../packages/pptx-ops/src/index.ts"],
+      "@hermesoffice/pptx-ops/op-docs": ["../../packages/pptx-ops/src/op-docs.ts"],
+      "@hermesoffice/pptx-ops/font-size": ["../../packages/pptx-ops/src/font-size.ts"],
       "@hermesoffice/pptx-render": ["../../packages/pptx-render/src/index.ts"],
-      "@hermesoffice/docx-engine/metafile": ["../../packages/docx-engine/src/metafile.ts"]
+      "@hermesoffice/pipelines/slides": ["../../packages/pipelines/src/slides/index.ts"],
+      "@hermesoffice/pipelines/slides/layout-audit": [
+        "../../packages/pipelines/src/slides/layout-audit.ts"
+      ],
+      "@hermesoffice/docx-engine/metafile": ["../../packages/docx-engine/src/metafile.ts"],
+      "@hermesoffice/docx-engine/math": ["../../packages/docx-engine/src/math.ts"]
     }
   },
   "include": ["src", "tests", "electron.vite.config.ts", "vitest.config.ts"]

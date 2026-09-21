@@ -3,8 +3,8 @@
  * vocabularies, Univer mutation/command names the edit journal listens to,
  * and the Home → Cell Styles presets. Extracted from App.tsx verbatim.
  */
-import type { CellFormatPatch } from '../domain/workbook-dsl'
-import type { WorkbookSnapshot } from '../domain/workbook.types'
+import type { CellFormatPatch } from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
+import type { WorkbookSnapshot } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import type { ChartEditData } from './WorkbookVisuals'
 
 export const CHART_TYPE_COMMANDS = ['column', 'bar', 'line', 'area', 'pie', 'doughnut'] as const
@@ -54,6 +54,15 @@ export const SET_NUMFMT_MUTATION = 'sheet.mutation.set.numfmt'
 // undo/redo re-records the restored state (ribbon handlers do not record).
 export const SET_FROZEN_MUTATION = 'sheet.mutation.set-frozen'
 export const TOGGLE_GRIDLINES_MUTATION = 'sheet.mutation.toggle-gridlines'
+export const SET_ZOOM_OPERATION = 'sheet.operation.set-zoom-ratio'
+export const SET_ZOOM_COMMAND = 'sheet.command.set-zoom-ratio'
+export const OPEN_FILTER_PANEL_OPERATION = 'sheet.operation.open-filter-panel'
+/// Full-preload offer cap: loading every cell into the Univer model costs
+/// renderer memory, and formula-dense sheets recalculate on install — a
+/// formula-heavy 480k-cell book blocked the renderer for minutes in testing,
+/// and sheet metadata carries no formula count to gate on. Above this the
+/// filter dialog explains instead of offering.
+export const FULL_LOAD_MAX_CELLS = 250_000
 // Undoing a numfmt set emits the remove mutation; only the ribbon echo cares.
 export const REMOVE_NUMFMT_MUTATION = 'sheet.mutation.remove.numfmt'
 // Row/column inserts/removals and merges are journaled and replayed at save
@@ -108,7 +117,7 @@ export function getWorkbookMdw(): number {
 /// Univer column pixels → OOXML character width (inverse of
 /// characterWidthToPixels), snapped to the format's 1/256 granularity.
 export function pixelsToCharacterWidth(pixels: number): number {
-  return Math.max(Math.round(((pixels - 5) / workbookMdw) * 256) / 256, 1 / 256)
+  return Math.max(Math.round((pixels / workbookMdw) * 256) / 256, 1 / 256)
 }
 // Sorting reorders the model in place; the journal snapshots the sorted
 // range afterwards, so the save writes exactly what the screen shows.

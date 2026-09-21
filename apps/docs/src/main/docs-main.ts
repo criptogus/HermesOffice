@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -8,8 +9,20 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { copyFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   BrowserWindow,
   Menu,
@@ -21,6 +34,7 @@ import {
   nativeImage,
   net,
   shell,
+  webContents,
 } from 'electron'
 import {
   appMenuLabels,
@@ -30,12 +44,22 @@ import {
   fetchRemoteImage,
   installContextMenu,
   installNavigationGuard,
+  isHeadlessMode,
   printHtmlToPdf,
   safeExternalUrl,
+  saveAsSuggestion,
+  saveImageFromUrl,
   showOpenDialogWithMemory,
   showSaveDialogWithMemory,
+  aboutMenuItem,
+  checkUpdatesMenuItem,
   toggleDevToolsItem,
   windowMenuTemplate,
+  type HeadlessExportFormat,
+  type HeadlessExportTarget,
+  installRendererProtocol,
+  registerRendererScheme,
+  rendererUrl,
 } from '@hermesoffice/electron-utils'
 import { configureMetricsCache, familyVerticalMetrics } from '@hermesoffice/font-metrics'
 import { createI18n, getUiLang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
@@ -48,6 +72,8 @@ import type {
   WebContents,
 } from 'electron'
 import { parseFileToText } from '@hermesoffice/file-parse'
+import { convertHtmlToDocx } from '../../../../packages/html2docx/src'
+import { ElectronBrowserDriver } from '../../../../packages/html2docx/src/drivers/electron'
 import {
   AiCreditsError,
   AiTimeoutError,
@@ -55,8 +81,14 @@ import {
   isAiOverloadedError,
   chatForProvider,
   defaultAiSettings,
-  cloudToolsEnabled,
+  activeProvider,
+  testMediaProvider,
+  type AiMediaProviderConfig,
+  type AiMediaProviderId,
+  type AiSearchProviderId,
   resolveAiSettings,
+  maxOutputTokensOf,
+  setAiUserAgent,
   setRescueFetch,
   streamForProvider,
   type AiChatRequest,
@@ -66,14 +98,17 @@ import {
   type GenSparkAccountStatus,
   type LegacyAiSettings,
 } from '@hermesoffice/ai-provider'
+import { listCodexModels, shutdownCodexAppServers } from '@hermesoffice/ai-provider/codex-app-server'
 import {
   ensureGenofficeLogin,
   gskApiKey,
-  gskGenerateImage,
+  generateImageTool,
+  testSearchProvider,
   gskLoginInfo,
   hasGskAuth,
-  webSearch,
-  imageSearch,
+  webSearchTool,
+  imageSearchTool,
+  analyzeMediaTool,
 } from '@hermesoffice/ai-search'
 import type {
   AiDocContent,
@@ -91,6 +126,15 @@ import type {
 import { ATTACHMENT_IMAGE_EXTS } from '../shared/ipc'
 import { findDocxPath } from '../shared/open-file'
 import { atomicWriteFile, looksLikeZip } from './atomic-write'
+import {
+  adoptLazyMediaHashes,
+  forgetLazyMediaOwner,
+  materializeLazyDocx,
+  openLazyDocx,
+  pointLazyMediaAt,
+  readLazyMedia,
+  registerLazyMediaProtocol,
+} from './lazy-media'
 import {
   commitDocPasswordSave,
   currentDocPasswordIntentRevision,
@@ -111,6 +155,7 @@ import {
 } from './docx-encryption'
 import { isExternallyModified, type DiskFileState } from './external-change'
 import { initDocsAutoUpdater } from './updater'
+import { registerZoteroIpc, teardownZoteroIpc } from './zotero-ipc'
 
 /**
  * Docs main-process logic as an embeddable module: no top-level side effects.
@@ -146,6 +191,8 @@ const tMain = createI18n({
     filterSupported: '支持的文件',
     filterAll: '所有文件',
     dlgExportPdf: '导出为 PDF',
+    dlgExportHtml: '导出为 HTML',
+    dlgPickExportDir: '选择导出目录',
     errUnsupportedExt: '暂不支持 .{ext} 类型',
     errNotFile: '不是文件',
     errTooLarge: '超过 {mb}MB 上限',
@@ -170,6 +217,8 @@ const tMain = createI18n({
     menuSaveAs: '另存为…',
     menuPageSetup: '页面设置…',
     menuExportPdf: '导出为 PDF…',
+    menuExportHtml: '导出为 HTML…',
+    menuExportImages: '导出为图片…',
     menuPrint: '打印…',
     menuEdit: '编辑',
     menuUndo: '撤销',
@@ -213,7 +262,7 @@ const tMain = createI18n({
     menuWindow: '窗口',
     menuHelp: '帮助',
     menuShortcuts: '键盘快捷键',
-    menuDocsHelp: 'HermesOffice Docs 帮助',
+    menuDocsHelp: 'GenOffice Docs 帮助',
   },
   en: {
     dlgOpenDoc: 'Open Document',
@@ -240,6 +289,8 @@ const tMain = createI18n({
     filterSupported: 'Supported Files',
     filterAll: 'All Files',
     dlgExportPdf: 'Export as PDF',
+    dlgExportHtml: 'Export as HTML',
+    dlgPickExportDir: 'Choose Export Folder',
     errUnsupportedExt: '.{ext} files are not supported',
     errNotFile: 'not a file',
     errTooLarge: 'exceeds the {mb}MB limit',
@@ -265,6 +316,8 @@ const tMain = createI18n({
     menuSaveAs: 'Save As…',
     menuPageSetup: 'Page Setup…',
     menuExportPdf: 'Export as PDF…',
+    menuExportHtml: 'Export as HTML…',
+    menuExportImages: 'Export as Images…',
     menuPrint: 'Print…',
     menuEdit: 'Edit',
     menuUndo: 'Undo',
@@ -308,7 +361,7 @@ const tMain = createI18n({
     menuWindow: 'Window',
     menuHelp: 'Help',
     menuShortcuts: 'Keyboard Shortcuts',
-    menuDocsHelp: 'HermesOffice Docs Help',
+    menuDocsHelp: 'GenOffice Docs Help',
   },
   ja: {
     dlgOpenDoc: '文書を開く',
@@ -334,6 +387,8 @@ const tMain = createI18n({
     filterSupported: 'サポートされているファイル',
     filterAll: 'すべてのファイル',
     dlgExportPdf: 'PDF としてエクスポート',
+    dlgExportHtml: 'HTML としてエクスポート',
+    dlgPickExportDir: 'エクスポート先フォルダーの選択',
     errUnsupportedExt: '.{ext} 形式には対応していません',
     errNotFile: 'ファイルではありません',
     errTooLarge: '{mb}MB の上限を超えています',
@@ -360,6 +415,8 @@ const tMain = createI18n({
     menuSaveAs: '名前を付けて保存…',
     menuPageSetup: 'ページ設定…',
     menuExportPdf: 'PDF としてエクスポート…',
+    menuExportHtml: 'HTML としてエクスポート…',
+    menuExportImages: '画像としてエクスポート…',
     menuPrint: '印刷…',
     menuEdit: '編集',
     menuUndo: '元に戻す',
@@ -403,7 +460,7 @@ const tMain = createI18n({
     menuWindow: 'ウィンドウ',
     menuHelp: 'ヘルプ',
     menuShortcuts: 'キーボードショートカット',
-    menuDocsHelp: 'HermesOffice Docs ヘルプ',
+    menuDocsHelp: 'GenOffice Docs ヘルプ',
   },
   ko: {
     dlgOpenDoc: '문서 열기',
@@ -430,6 +487,8 @@ const tMain = createI18n({
     filterSupported: '지원되는 파일',
     filterAll: '모든 파일',
     dlgExportPdf: 'PDF로 내보내기',
+    dlgExportHtml: 'HTML로 내보내기',
+    dlgPickExportDir: '내보낼 폴더 선택',
     errUnsupportedExt: '.{ext} 형식은 지원되지 않습니다',
     errNotFile: '파일이 아닙니다',
     errTooLarge: '{mb}MB 제한을 초과했습니다',
@@ -456,6 +515,8 @@ const tMain = createI18n({
     menuSaveAs: '다른 이름으로 저장…',
     menuPageSetup: '페이지 설정…',
     menuExportPdf: 'PDF로 내보내기…',
+    menuExportHtml: 'HTML로 내보내기…',
+    menuExportImages: '이미지로 내보내기…',
     menuPrint: '인쇄…',
     menuEdit: '편집',
     menuUndo: '실행 취소',
@@ -499,7 +560,7 @@ const tMain = createI18n({
     menuWindow: '창',
     menuHelp: '도움말',
     menuShortcuts: '키보드 바로 가기',
-    menuDocsHelp: 'HermesOffice Docs 도움말',
+    menuDocsHelp: 'GenOffice Docs 도움말',
   },
   fr: {
     dlgOpenDoc: 'Ouvrir un document',
@@ -527,6 +588,8 @@ const tMain = createI18n({
     filterSupported: 'Fichiers pris en charge',
     filterAll: 'Tous les fichiers',
     dlgExportPdf: 'Exporter au format PDF',
+    dlgExportHtml: 'Exporter au format HTML',
+    dlgPickExportDir: "Choisir le dossier d'exportation",
     errUnsupportedExt: 'les fichiers .{ext} ne sont pas pris en charge',
     errNotFile: "n'est pas un fichier",
     errTooLarge: 'dépasse la limite de {mb} Mo',
@@ -553,6 +616,8 @@ const tMain = createI18n({
     menuSaveAs: 'Enregistrer sous…',
     menuPageSetup: 'Mise en page…',
     menuExportPdf: 'Exporter au format PDF…',
+    menuExportHtml: 'Exporter au format HTML…',
+    menuExportImages: 'Exporter en images…',
     menuPrint: 'Imprimer…',
     menuEdit: 'Édition',
     menuUndo: 'Annuler',
@@ -596,7 +661,7 @@ const tMain = createI18n({
     menuWindow: 'Fenêtre',
     menuHelp: 'Aide',
     menuShortcuts: 'Raccourcis clavier',
-    menuDocsHelp: 'Aide HermesOffice Docs',
+    menuDocsHelp: 'Aide GenOffice Docs',
   },
   de: {
     dlgOpenDoc: 'Dokument öffnen',
@@ -624,6 +689,8 @@ const tMain = createI18n({
     filterSupported: 'Unterstützte Dateien',
     filterAll: 'Alle Dateien',
     dlgExportPdf: 'Als PDF exportieren',
+    dlgExportHtml: 'Als HTML exportieren',
+    dlgPickExportDir: 'Exportordner auswählen',
     errUnsupportedExt: '.{ext}-Dateien werden nicht unterstützt',
     errNotFile: 'keine Datei',
     errTooLarge: 'überschreitet das Limit von {mb} MB',
@@ -650,6 +717,8 @@ const tMain = createI18n({
     menuSaveAs: 'Speichern unter…',
     menuPageSetup: 'Seite einrichten…',
     menuExportPdf: 'Als PDF exportieren…',
+    menuExportHtml: 'Als HTML exportieren…',
+    menuExportImages: 'Als Bilder exportieren…',
     menuPrint: 'Drucken…',
     menuEdit: 'Bearbeiten',
     menuUndo: 'Rückgängig',
@@ -693,7 +762,7 @@ const tMain = createI18n({
     menuWindow: 'Fenster',
     menuHelp: 'Hilfe',
     menuShortcuts: 'Tastenkombinationen',
-    menuDocsHelp: 'HermesOffice Docs-Hilfe',
+    menuDocsHelp: 'GenOffice Docs-Hilfe',
   },
   es: {
     dlgOpenDoc: 'Abrir documento',
@@ -720,6 +789,8 @@ const tMain = createI18n({
     filterSupported: 'Archivos compatibles',
     filterAll: 'Todos los archivos',
     dlgExportPdf: 'Exportar como PDF',
+    dlgExportHtml: 'Exportar como HTML',
+    dlgPickExportDir: 'Elegir carpeta de exportación',
     errUnsupportedExt: 'los archivos .{ext} no son compatibles',
     errNotFile: 'no es un archivo',
     errTooLarge: 'supera el límite de {mb} MB',
@@ -747,6 +818,8 @@ const tMain = createI18n({
     menuSaveAs: 'Guardar como…',
     menuPageSetup: 'Configurar página…',
     menuExportPdf: 'Exportar como PDF…',
+    menuExportHtml: 'Exportar como HTML…',
+    menuExportImages: 'Exportar como imágenes…',
     menuPrint: 'Imprimir…',
     menuEdit: 'Edición',
     menuUndo: 'Deshacer',
@@ -790,7 +863,7 @@ const tMain = createI18n({
     menuWindow: 'Ventana',
     menuHelp: 'Ayuda',
     menuShortcuts: 'Atajos de teclado',
-    menuDocsHelp: 'Ayuda de HermesOffice Docs',
+    menuDocsHelp: 'Ayuda de GenOffice Docs',
   },
   th: {
     dlgOpenDoc: 'เปิดเอกสาร',
@@ -816,6 +889,8 @@ const tMain = createI18n({
     filterSupported: 'ไฟล์ที่รองรับ',
     filterAll: 'ไฟล์ทั้งหมด',
     dlgExportPdf: 'ส่งออกเป็น PDF',
+    dlgExportHtml: 'ส่งออกเป็น HTML',
+    dlgPickExportDir: 'เลือกโฟลเดอร์ส่งออก',
     errUnsupportedExt: 'ไม่รองรับไฟล์ .{ext}',
     errNotFile: 'ไม่ใช่ไฟล์',
     errTooLarge: 'เกินขีดจำกัด {mb}MB',
@@ -842,6 +917,8 @@ const tMain = createI18n({
     menuSaveAs: 'บันทึกเป็น…',
     menuPageSetup: 'ตั้งค่าหน้ากระดาษ…',
     menuExportPdf: 'ส่งออกเป็น PDF…',
+    menuExportHtml: 'ส่งออกเป็น HTML…',
+    menuExportImages: 'ส่งออกเป็นรูปภาพ…',
     menuPrint: 'พิมพ์…',
     menuEdit: 'แก้ไข',
     menuUndo: 'เลิกทำ',
@@ -885,7 +962,7 @@ const tMain = createI18n({
     menuWindow: 'หน้าต่าง',
     menuHelp: 'วิธีใช้',
     menuShortcuts: 'แป้นพิมพ์ลัด',
-    menuDocsHelp: 'วิธีใช้ HermesOffice Docs',
+    menuDocsHelp: 'วิธีใช้ GenOffice Docs',
   },
   id: {
     dlgOpenDoc: 'Buka Dokumen',
@@ -912,6 +989,8 @@ const tMain = createI18n({
     filterSupported: 'File yang Didukung',
     filterAll: 'Semua File',
     dlgExportPdf: 'Ekspor sebagai PDF',
+    dlgExportHtml: 'Ekspor sebagai HTML',
+    dlgPickExportDir: 'Pilih Folder Ekspor',
     errUnsupportedExt: 'file .{ext} tidak didukung',
     errNotFile: 'bukan file',
     errTooLarge: 'melebihi batas {mb}MB',
@@ -937,6 +1016,8 @@ const tMain = createI18n({
     menuSaveAs: 'Simpan Sebagai…',
     menuPageSetup: 'Penyetelan Halaman…',
     menuExportPdf: 'Ekspor sebagai PDF…',
+    menuExportHtml: 'Ekspor sebagai HTML…',
+    menuExportImages: 'Ekspor sebagai gambar…',
     menuPrint: 'Cetak…',
     menuEdit: 'Edit',
     menuUndo: 'Urungkan',
@@ -980,7 +1061,7 @@ const tMain = createI18n({
     menuWindow: 'Jendela',
     menuHelp: 'Bantuan',
     menuShortcuts: 'Pintasan Papan Ketik',
-    menuDocsHelp: 'Bantuan HermesOffice Docs',
+    menuDocsHelp: 'Bantuan GenOffice Docs',
   },
   ru: {
     dlgOpenDoc: 'Открыть документ',
@@ -1007,6 +1088,8 @@ const tMain = createI18n({
     filterSupported: 'Поддерживаемые файлы',
     filterAll: 'Все файлы',
     dlgExportPdf: 'Экспорт в PDF',
+    dlgExportHtml: 'Экспорт в HTML',
+    dlgPickExportDir: 'Выбор папки для экспорта',
     errUnsupportedExt: 'файлы .{ext} не поддерживаются',
     errNotFile: 'не является файлом',
     errTooLarge: 'превышает лимит {mb} МБ',
@@ -1033,6 +1116,8 @@ const tMain = createI18n({
     menuSaveAs: 'Сохранить как…',
     menuPageSetup: 'Параметры страницы…',
     menuExportPdf: 'Экспорт в PDF…',
+    menuExportHtml: 'Экспорт в HTML…',
+    menuExportImages: 'Экспорт в изображения…',
     menuPrint: 'Печать…',
     menuEdit: 'Правка',
     menuUndo: 'Отменить',
@@ -1076,7 +1161,7 @@ const tMain = createI18n({
     menuWindow: 'Окно',
     menuHelp: 'Справка',
     menuShortcuts: 'Сочетания клавиш',
-    menuDocsHelp: 'Справка HermesOffice Docs',
+    menuDocsHelp: 'Справка GenOffice Docs',
   },
   ar: {
     dlgOpenDoc: 'فتح مستند',
@@ -1103,6 +1188,8 @@ const tMain = createI18n({
     filterSupported: 'الملفات المدعومة',
     filterAll: 'كل الملفات',
     dlgExportPdf: 'تصدير بتنسيق PDF',
+    dlgExportHtml: 'تصدير بتنسيق HTML',
+    dlgPickExportDir: 'اختيار مجلد التصدير',
     errUnsupportedExt: 'ملفات .{ext} غير مدعومة',
     errNotFile: 'ليس ملفًا',
     errTooLarge: 'يتجاوز الحد {mb}MB',
@@ -1129,6 +1216,8 @@ const tMain = createI18n({
     menuSaveAs: 'حفظ باسم…',
     menuPageSetup: 'إعداد الصفحة…',
     menuExportPdf: 'تصدير بتنسيق PDF…',
+    menuExportHtml: 'تصدير بتنسيق HTML…',
+    menuExportImages: 'تصدير كصور…',
     menuPrint: 'طباعة…',
     menuEdit: 'تحرير',
     menuUndo: 'تراجع',
@@ -1172,7 +1261,7 @@ const tMain = createI18n({
     menuWindow: 'نافذة',
     menuHelp: 'تعليمات',
     menuShortcuts: 'اختصارات لوحة المفاتيح',
-    menuDocsHelp: 'تعليمات HermesOffice Docs',
+    menuDocsHelp: 'تعليمات GenOffice Docs',
   },
   pt: {
     dlgOpenDoc: 'Abrir Documento',
@@ -1199,6 +1288,8 @@ const tMain = createI18n({
     filterSupported: 'Arquivos Compatíveis',
     filterAll: 'Todos os Arquivos',
     dlgExportPdf: 'Exportar como PDF',
+    dlgExportHtml: 'Exportar como HTML',
+    dlgPickExportDir: 'Escolher Pasta de Exportação',
     errUnsupportedExt: 'arquivos .{ext} não são suportados',
     errNotFile: 'não é um arquivo',
     errTooLarge: 'excede o limite de {mb}MB',
@@ -1225,6 +1316,8 @@ const tMain = createI18n({
     menuSaveAs: 'Salvar Como…',
     menuPageSetup: 'Configurar Página…',
     menuExportPdf: 'Exportar como PDF…',
+    menuExportHtml: 'Exportar como HTML…',
+    menuExportImages: 'Exportar como imagens…',
     menuPrint: 'Imprimir…',
     menuEdit: 'Editar',
     menuUndo: 'Desfazer',
@@ -1268,7 +1361,7 @@ const tMain = createI18n({
     menuWindow: 'Janela',
     menuHelp: 'Ajuda',
     menuShortcuts: 'Atalhos de Teclado',
-    menuDocsHelp: 'Ajuda do HermesOffice Docs',
+    menuDocsHelp: 'Ajuda do GenOffice Docs',
   },
   it: {
     dlgOpenDoc: 'Apri documento',
@@ -1295,6 +1388,8 @@ const tMain = createI18n({
     filterSupported: 'File supportati',
     filterAll: 'Tutti i file',
     dlgExportPdf: 'Esporta come PDF',
+    dlgExportHtml: 'Esporta come HTML',
+    dlgPickExportDir: 'Scegli la cartella di esportazione',
     errUnsupportedExt: 'i file .{ext} non sono supportati',
     errNotFile: 'non è un file',
     errTooLarge: 'supera il limite di {mb} MB',
@@ -1321,6 +1416,8 @@ const tMain = createI18n({
     menuSaveAs: 'Salva con nome…',
     menuPageSetup: 'Imposta pagina…',
     menuExportPdf: 'Esporta come PDF…',
+    menuExportHtml: 'Esporta come HTML…',
+    menuExportImages: 'Esporta come immagini…',
     menuPrint: 'Stampa…',
     menuEdit: 'Modifica',
     menuUndo: 'Annulla',
@@ -1364,7 +1461,7 @@ const tMain = createI18n({
     menuWindow: 'Finestra',
     menuHelp: 'Aiuto',
     menuShortcuts: 'Scelte rapide da tastiera',
-    menuDocsHelp: 'Guida di HermesOffice Docs',
+    menuDocsHelp: 'Guida di GenOffice Docs',
   },
   pl: {
     dlgOpenDoc: 'Otwórz dokument',
@@ -1391,6 +1488,8 @@ const tMain = createI18n({
     filterSupported: 'Obsługiwane pliki',
     filterAll: 'Wszystkie pliki',
     dlgExportPdf: 'Eksportuj jako PDF',
+    dlgExportHtml: 'Eksportuj jako HTML',
+    dlgPickExportDir: 'Wybierz folder eksportu',
     errUnsupportedExt: 'pliki .{ext} nie są obsługiwane',
     errNotFile: 'to nie jest plik',
     errTooLarge: 'przekracza limit {mb} MB',
@@ -1417,6 +1516,8 @@ const tMain = createI18n({
     menuSaveAs: 'Zapisz jako…',
     menuPageSetup: 'Ustawienia strony…',
     menuExportPdf: 'Eksportuj jako PDF…',
+    menuExportHtml: 'Eksportuj jako HTML…',
+    menuExportImages: 'Eksportuj jako obrazy…',
     menuPrint: 'Drukuj…',
     menuEdit: 'Edycja',
     menuUndo: 'Cofnij',
@@ -1460,7 +1561,107 @@ const tMain = createI18n({
     menuWindow: 'Okno',
     menuHelp: 'Pomoc',
     menuShortcuts: 'Skróty klawiaturowe',
-    menuDocsHelp: 'Pomoc HermesOffice Docs',
+    menuDocsHelp: 'Pomoc GenOffice Docs',
+  },
+  cs: {
+    dlgOpenDoc: 'Otevřít dokument',
+    filterWord: 'Dokumenty Wordu',
+    dlgSaveAs: 'Uložit jako',
+    closeUnsavedMsg: 'Tento dokument obsahuje neuložené změny.',
+    closeUnsavedDetail: 'Chcete je před zavřením uložit?',
+    closeNoReplyMsg: 'Dokument neodpovídá a může obsahovat neuložené změny.',
+    closeNoReplyDetail: 'Přesto zavřít? Neuložené změny budou ztraceny.',
+    btnCloseAnyway: 'Přesto zavřít',
+    autosaveFoundTitle: 'Nalezena obnovená verze',
+    autosaveFoundBody:
+      'Z poslední relace existují neuložené změny. Obnovit automaticky uloženou verzi?',
+    autosaveRestore: 'Obnovit',
+    autosaveDiscard: 'Zahodit',
+    btnDontSave: 'Neukládat',
+    btnCancel: 'Zrušit',
+    extModifiedMsg: 'Soubor byl změněn jiným programem.',
+    extModifiedDetail: 'Přesto uložit a přepsat změny na disku?',
+    btnOverwrite: 'Přepsat',
+    dlgInsertImage: 'Vložit obrázek',
+    filterImages: 'Obrázky',
+    dlgAddAttachment: 'Přidat přílohy',
+    filterSupported: 'Podporované soubory',
+    filterAll: 'Všechny soubory',
+    dlgExportPdf: 'Exportovat jako PDF',
+    dlgExportHtml: 'Exportovat jako HTML',
+    dlgPickExportDir: 'Zvolte složku pro export',
+    errUnsupportedExt: 'soubory .{ext} nejsou podporovány',
+    errNotFile: 'není soubor',
+    errTooLarge: 'překračuje limit {mb} MB',
+    errImageTooLarge: 'obrázek překračuje limit 5 MB',
+    errUnreadable: 'nelze přečíst',
+    errFileTooLarge: 'Soubor překračuje limit velikosti',
+    errParseFailed: 'Soubor se nepodařilo zpracovat',
+    errImageNoText:
+      'Obrázkové přílohy neobsahují text; obrázek se odesílá spolu se zprávou uživatele',
+    errNotImage: 'nepodporovaný typ obrázku',
+    errGskNotLoggedIn:
+      'Nejste přihlášeni do Genspark: klikněte níže na „Přihlásit se do Genspark“, přihlaste se a zkuste to znovu',
+    errNoApiKey: 'Pro {provider} není nakonfigurován žádný klíč API',
+    errAiBusy: 'Služba AI je právě zaneprázdněna — zkuste to prosím za chvíli znovu',
+    errNoModel: 'Není nakonfigurován název modelu',
+    menuFile: 'Soubor',
+    menuNewDoc: 'Nový dokument',
+    menuNewWindow: 'Nové okno',
+    menuOpen: 'Otevřít…',
+    menuOpenRecent: 'Otevřít poslední',
+    menuNoRecent: 'Žádné poslední dokumenty',
+    menuClose: 'Zavřít',
+    menuSave: 'Uložit',
+    menuSaveAs: 'Uložit jako…',
+    menuPageSetup: 'Vzhled stránky…',
+    menuExportPdf: 'Exportovat jako PDF…',
+    menuExportHtml: 'Exportovat jako HTML…',
+    menuExportImages: 'Exportovat jako obrázky…',
+    menuPrint: 'Tisk…',
+    menuEdit: 'Úpravy',
+    menuUndo: 'Zpět',
+    menuRedo: 'Znovu',
+    menuCut: 'Vyjmout',
+    menuCopy: 'Kopírovat',
+    menuPaste: 'Vložit',
+    menuPasteMatch: 'Vložit a přizpůsobit styl',
+    menuFindReplace: 'Najít a nahradit…',
+    menuSelectAll: 'Vybrat vše',
+    menuView: 'Zobrazení',
+    menuZoomIn: 'Zvětšit',
+    menuZoomOut: 'Zmenšit',
+    menuZoom100: 'Skutečná velikost (100 %)',
+    menuPageWidth: 'Šířka stránky',
+    menuWholePage: 'Celá stránka',
+    menuAiSidebar: 'Boční panel AI',
+    menuDarkMode: 'Tmavý režim',
+    menuFullscreen: 'Přejít na celou obrazovku',
+    menuInsert: 'Vložení',
+    menuInsertTable: 'Tabulka (3×3)',
+    menuInsertImage: 'Obrázek…',
+    menuInsertPageBreak: 'Konec stránky',
+    menuInsertLink: 'Hypertextový odkaz…',
+    menuInsertEquation: 'Rovnice…',
+    menuComment: 'Komentář',
+    menuFormat: 'Formát',
+    menuBold: 'Tučné',
+    menuItalic: 'Kurzíva',
+    menuUnderline: 'Podtržení',
+    menuAlign: 'Zarovnat',
+    menuAlignLeft: 'Zarovnat vlevo',
+    menuAlignCenter: 'Zarovnat na střed',
+    menuAlignRight: 'Zarovnat vpravo',
+    menuAlignJustify: 'Zarovnat do bloku',
+    menuFont: 'Písmo…',
+    menuParagraph: 'Odstavec…',
+    menuTools: 'Nástroje',
+    menuWordCount: 'Počet slov…',
+    menuAiProofread: 'Korektura AI',
+    menuWindow: 'Okno',
+    menuHelp: 'Nápověda',
+    menuShortcuts: 'Klávesové zkratky',
+    menuDocsHelp: 'Nápověda GenOffice Docs',
   },
   nl: {
     dlgOpenDoc: 'Document openen',
@@ -1487,6 +1688,8 @@ const tMain = createI18n({
     filterSupported: 'Ondersteunde bestanden',
     filterAll: 'Alle bestanden',
     dlgExportPdf: 'Exporteren als PDF',
+    dlgExportHtml: 'Exporteren als HTML',
+    dlgPickExportDir: 'Exportmap kiezen',
     errUnsupportedExt: '.{ext}-bestanden worden niet ondersteund',
     errNotFile: 'geen bestand',
     errTooLarge: 'overschrijdt de limiet van {mb} MB',
@@ -1513,6 +1716,8 @@ const tMain = createI18n({
     menuSaveAs: 'Opslaan als…',
     menuPageSetup: 'Pagina-instelling…',
     menuExportPdf: 'Exporteren als PDF…',
+    menuExportHtml: 'Exporteren als HTML…',
+    menuExportImages: 'Exporteren als afbeeldingen…',
     menuPrint: 'Afdrukken…',
     menuEdit: 'Bewerken',
     menuUndo: 'Ongedaan maken',
@@ -1556,7 +1761,7 @@ const tMain = createI18n({
     menuWindow: 'Venster',
     menuHelp: 'Help',
     menuShortcuts: 'Sneltoetsen',
-    menuDocsHelp: 'HermesOffice Docs Help',
+    menuDocsHelp: 'GenOffice Docs Help',
   },
   ms: {
     dlgOpenDoc: 'Buka Dokumen',
@@ -1583,6 +1788,8 @@ const tMain = createI18n({
     filterSupported: 'Fail yang Disokong',
     filterAll: 'Semua Fail',
     dlgExportPdf: 'Eksport sebagai PDF',
+    dlgExportHtml: 'Eksport sebagai HTML',
+    dlgPickExportDir: 'Pilih Folder Eksport',
     errUnsupportedExt: 'fail .{ext} tidak disokong',
     errNotFile: 'bukan fail',
     errTooLarge: 'melebihi had {mb}MB',
@@ -1609,6 +1816,8 @@ const tMain = createI18n({
     menuSaveAs: 'Simpan Sebagai…',
     menuPageSetup: 'Persediaan Halaman…',
     menuExportPdf: 'Eksport sebagai PDF…',
+    menuExportHtml: 'Eksport sebagai HTML…',
+    menuExportImages: 'Eksport sebagai imej…',
     menuPrint: 'Cetak…',
     menuEdit: 'Edit',
     menuUndo: 'Buat Asal',
@@ -1652,7 +1861,7 @@ const tMain = createI18n({
     menuWindow: 'Tetingkap',
     menuHelp: 'Bantuan',
     menuShortcuts: 'Pintasan Papan Kekunci',
-    menuDocsHelp: 'Bantuan HermesOffice Docs',
+    menuDocsHelp: 'Bantuan GenOffice Docs',
   },
   he: {
     dlgOpenDoc: 'פתיחת מסמך',
@@ -1678,6 +1887,8 @@ const tMain = createI18n({
     filterSupported: 'קבצים נתמכים',
     filterAll: 'כל הקבצים',
     dlgExportPdf: 'ייצוא כ-PDF',
+    dlgExportHtml: 'ייצוא כ-HTML',
+    dlgPickExportDir: 'בחירת תיקיית ייצוא',
     errUnsupportedExt: 'קובצי .{ext} אינם נתמכים',
     errNotFile: 'אינו קובץ',
     errTooLarge: 'חורג מהמגבלה של {mb}MB',
@@ -1703,6 +1914,8 @@ const tMain = createI18n({
     menuSaveAs: 'שמירה בשם…',
     menuPageSetup: 'הגדרת עמוד…',
     menuExportPdf: 'ייצוא כ-PDF…',
+    menuExportHtml: 'ייצוא כ-HTML…',
+    menuExportImages: 'ייצוא כתמונות…',
     menuPrint: 'הדפסה…',
     menuEdit: 'עריכה',
     menuUndo: 'בטל',
@@ -1746,7 +1959,7 @@ const tMain = createI18n({
     menuWindow: 'חלון',
     menuHelp: 'עזרה',
     menuShortcuts: 'קיצורי מקלדת',
-    menuDocsHelp: 'עזרה של HermesOffice Docs',
+    menuDocsHelp: 'עזרה של GenOffice Docs',
   },
   hi: {
     dlgOpenDoc: 'दस्तावेज़ खोलें',
@@ -1773,6 +1986,8 @@ const tMain = createI18n({
     filterSupported: 'समर्थित फ़ाइलें',
     filterAll: 'सभी फ़ाइलें',
     dlgExportPdf: 'PDF के रूप में निर्यात करें',
+    dlgExportHtml: 'HTML के रूप में निर्यात करें',
+    dlgPickExportDir: 'निर्यात फ़ोल्डर चुनें',
     errUnsupportedExt: '.{ext} फ़ाइलें समर्थित नहीं हैं',
     errNotFile: 'फ़ाइल नहीं है',
     errTooLarge: '{mb}MB की सीमा से अधिक है',
@@ -1799,6 +2014,8 @@ const tMain = createI18n({
     menuSaveAs: 'इस रूप में सहेजें…',
     menuPageSetup: 'पृष्ठ सेटअप…',
     menuExportPdf: 'PDF के रूप में निर्यात करें…',
+    menuExportHtml: 'HTML के रूप में निर्यात करें…',
+    menuExportImages: 'छवियों के रूप में निर्यात…',
     menuPrint: 'प्रिंट करें…',
     menuEdit: 'संपादन',
     menuUndo: 'पूर्ववत करें',
@@ -1842,7 +2059,7 @@ const tMain = createI18n({
     menuWindow: 'विंडो',
     menuHelp: 'सहायता',
     menuShortcuts: 'कीबोर्ड शॉर्टकट',
-    menuDocsHelp: 'HermesOffice Docs सहायता',
+    menuDocsHelp: 'GenOffice Docs सहायता',
   },
   'zh-TW': {
     dlgOpenDoc: '開啟文件',
@@ -1868,6 +2085,8 @@ const tMain = createI18n({
     filterSupported: '支援的檔案',
     filterAll: '所有檔案',
     dlgExportPdf: '匯出為 PDF',
+    dlgExportHtml: '匯出為 HTML',
+    dlgPickExportDir: '選擇匯出目錄',
     errUnsupportedExt: '暫不支援 .{ext} 類型',
     errNotFile: '不是檔案',
     errTooLarge: '超過 {mb}MB 上限',
@@ -1892,6 +2111,8 @@ const tMain = createI18n({
     menuSaveAs: '另存新檔…',
     menuPageSetup: '版面設定…',
     menuExportPdf: '匯出為 PDF…',
+    menuExportHtml: '匯出為 HTML…',
+    menuExportImages: '匯出為圖片…',
     menuPrint: '列印…',
     menuEdit: '編輯',
     menuUndo: '復原',
@@ -1935,7 +2156,7 @@ const tMain = createI18n({
     menuWindow: '視窗',
     menuHelp: '說明',
     menuShortcuts: '鍵盤快速鍵',
-    menuDocsHelp: 'HermesOffice Docs 說明',
+    menuDocsHelp: 'GenOffice Docs 說明',
   },
 })
 const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[2]) =>
@@ -2020,7 +2241,7 @@ async function saveDialog(event: IpcMainInvokeEvent, options: SaveDialogOptions)
   return showSaveDialogWithMemory(dialog, dialogParent(event), options, defaultSaveDir())
 }
 
-/** default folder where new files land on their first (silent) save; shared with the other editors via shell. User-configurable (app-settings.json), falls back to <Documents>/HermesOffice. */
+/** default folder where new files land on their first (silent) save; shared with the other editors via shell. User-configurable (app-settings.json), falls back to <Documents>/GenOffice. */
 export function defaultSaveDir(): string {
   return configuredDefaultSaveDir(app)
 }
@@ -2088,9 +2309,11 @@ function pushRecent(filePath: string): void {
   buildDocsMenu() // keep File > Open Recent in sync
 }
 
-/** unified recents for the shell home screen (paths only; type = extension) */
+/** unified recents for the shell home screen (paths only; type = extension).
+ *  No existence filter: a transiently unavailable path (disconnected drive,
+ *  pending mount) must stay listed — the stat layer flags it instead (r158) */
 export function readRecentFiles(): string[] {
-  return readJson<string[]>(RECENT_PATH(), []).filter((p) => existsSync(p))
+  return readJson<string[]>(RECENT_PATH(), [])
 }
 
 export function recordRecentFile(filePath: string): void {
@@ -2147,8 +2370,11 @@ export function replaceRecentFile(oldPath: string, newPath: string): void {
 
 const STARRED_PATH = () => userDataPath('starred.json')
 
+/** No existence filter, same rationale as readRecentFiles: a transiently
+ *  unavailable starred file must keep its star and its Starred-view row —
+ *  filtering here also desynced the star state shown on recents rows (r158) */
 export function readStarredFiles(): string[] {
-  return readJson<string[]>(STARRED_PATH(), []).filter((p) => existsSync(p))
+  return readJson<string[]>(STARRED_PATH(), [])
 }
 
 export function toggleStarredFile(filePath: string): void {
@@ -2159,16 +2385,26 @@ export function toggleStarredFile(filePath: string): void {
   writeJson(STARRED_PATH(), next)
 }
 
+/** Bulk unstar (in-app delete, or removing an unavailable entry from the
+ *  recents list): the star must not outlive the row it pointed at (r158) */
+export function removeStarredFiles(filePaths: string[]): void {
+  const drop = new Set(filePaths)
+  if (drop.size === 0) return
+  const starred = readJson<string[]>(STARRED_PATH(), [])
+  const next = starred.filter((p) => !drop.has(p))
+  if (next.length !== starred.length) writeJson(STARRED_PATH(), next)
+}
+
 // ---- original archive (pass-through base: original file archived by content hash) ----
 
-async function archiveOriginal(filePath: string, bytes: Buffer): Promise<string> {
-  const hash = sha256Hex(bytes)
+async function archiveOriginal(filePath: string, hash: string, size: number): Promise<void> {
+  // a copy larger than the whole cap would only evict every other original
+  if (size > ORIGINALS_MAX_BYTES) return
   const dir = userDataPath('originals')
   await mkdir(dir, { recursive: true })
   const target = join(dir, `${hash}.docx`)
   if (!existsSync(target)) await copyFile(filePath, target)
   void pruneOriginals(dir)
-  return hash
 }
 
 const ORIGINALS_MAX_BYTES = 500 * 1024 * 1024
@@ -2218,6 +2454,11 @@ function allowDocWrite(wcId: number, filePath: string): void {
   docWritablePaths.set(wcId, set)
 }
 
+/** MCP save_session: the shell resolved this path for the tab, so docs:save-to may write it */
+export function authorizeMcpDocWrite(wcId: number, filePath: string): void {
+  allowDocWrite(wcId, filePath)
+}
+
 function canDocWrite(wcId: number, filePath: string): boolean {
   return docWritablePaths.get(wcId)?.has(filePath) === true
 }
@@ -2231,17 +2472,31 @@ function allowPdfWrite(wcId: number, filePath: string): void {
 // Fidelity-harness escape hatch: headless runs have no save dialog to authorize
 // paths, so an explicitly configured directory (set only by our test scripts)
 // is treated as pre-authorized for PDF export.
-const testExportDir = process.env.HERMESOFFICE_TEST_EXPORT_DIR || null
+const testExportDir = process.env.GENOFFICE_TEST_EXPORT_DIR || null
 
 function canPdfWrite(wcId: number, filePath: string): boolean {
   if (testExportDir && filePath.startsWith(testExportDir + '/')) return true
   return pdfWritablePaths.get(wcId)?.has(filePath) === true
 }
 
+// Export as images runs the regular PDF export against a temp file: that file must
+// not be revealed like a user export, and only the tab that asked may read it back
+// (or write PNGs into the folder it picked).
+const imageExportTemps = new Map<number, Set<string>>()
+const imageExportDirs = new Map<number, Set<string>>()
+
+function isImageExportTemp(wcId: number, filePath: string): boolean {
+  return imageExportTemps.get(wcId)?.has(filePath) === true
+}
+
 function dropDocWriter(wcId: number): void {
   docWritablePaths.delete(wcId)
   pdfWritablePaths.delete(wcId)
+  for (const p of imageExportTemps.get(wcId) ?? []) void rm(p, { force: true })
+  imageExportTemps.delete(wcId)
+  imageExportDirs.delete(wcId)
   docDiskStates.delete(wcId)
+  forgetLazyMediaOwner(wcId)
   // Destroyed renderers count as torn down too: window-close paths never run
   // teardownDocsRenderer, but an in-flight save handler resuming after the
   // destruction must still fail its re-check (wcIds are never reused, so the
@@ -2255,11 +2510,11 @@ const docDiskStates = new Map<number, Map<string, DiskFileState>>()
 
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
-async function rememberDiskState(wcId: number, filePath: string, bytes: Buffer): Promise<void> {
+async function rememberDiskState(wcId: number, filePath: string, hash: string): Promise<void> {
   try {
     const s = await stat(filePath)
     const states = docDiskStates.get(wcId) ?? new Map<string, DiskFileState>()
-    states.set(filePath, { mtimeMs: s.mtimeMs, size: s.size, hash: sha256Hex(bytes) })
+    states.set(filePath, { mtimeMs: s.mtimeMs, size: s.size, hash })
     docDiskStates.set(wcId, states)
   } catch {
     /* unstatable target: skip tracking; the next save simply won't flag a conflict */
@@ -2286,7 +2541,9 @@ async function diskChangedExternally(wcId: number, filePath: string): Promise<bo
  * workaround), so the orphan must lose write access and stop its timers — otherwise
  * its 30s recovery loop resurrects content the user already discarded. */
 export function teardownDocsRenderer(contents: WebContents): void {
+  teardownZoteroIpc(contents)
   tornDownWcIds.add(contents.id)
+  forgetLazyMediaOwner(contents.id)
   // Sweep recovery copies for this renderer's documents: every non-crash close
   // either saved (docs:save already cleared it) or explicitly discarded, so a
   // copy still on disk here is a leftover from an in-flight recovery write.
@@ -2368,6 +2625,17 @@ async function maybeRecoverDocBytes(
   return { bytes: original, recovered: false }
 }
 
+// Word's own .docx ceiling; past ~1 GB the IPC reply serializer doubles its buffer beyond the allocator's map limit and crashes the main process
+const MAX_OPEN_BYTES = 512 * 1024 * 1024
+
+async function showOpenError(wcId: number, detail: string): Promise<void> {
+  const wc = webContents.fromId(wcId)
+  const parent = docsShellWindow ?? (wc && BrowserWindow.fromWebContents(wc)) ?? mainWindow
+  const options = { type: 'error' as const, message: tm('dlgOpenDoc'), detail }
+  if (parent && !parent.isDestroyed()) await dialog.showMessageBox(parent, options)
+  else await dialog.showMessageBox(options)
+}
+
 async function loadDocx(
   filePath: string,
   wcId: number,
@@ -2375,7 +2643,14 @@ async function loadDocx(
 ): Promise<OpenDocxResult> {
   if (typeof filePath !== 'string' || !/\.docx$/i.test(filePath)) return null
   if (!existsSync(filePath)) return null
-  const original = await readFile(filePath)
+  const size = (await stat(filePath)).size
+  const lazy = await openLazyDocx(filePath, wcId)
+  if ((lazy?.bytes.length ?? size) > MAX_OPEN_BYTES) {
+    const mb = MAX_OPEN_BYTES / 1024 / 1024
+    await showOpenError(wcId, `${basename(filePath)}: ${tm('errTooLarge', { mb })}`)
+    return null
+  }
+  const original = lazy?.bytes ?? (await readFile(filePath))
   // Password-protected docx (ECMA-376 CFB container): without a password, hand
   // back a marker — the renderer prompts and retries via docs:open-decrypt.
   // No side effects (recents/write grant) until the password checks out.
@@ -2391,7 +2666,8 @@ async function loadDocx(
   }
   // the archive keeps the on-disk original as-is (encrypted ones included: they
   // reopen with the user's password), so a bad save never loses the source file
-  const hash = await archiveOriginal(filePath, original)
+  const hash = lazy?.hash ?? sha256Hex(original)
+  await archiveOriginal(filePath, hash, size)
   const recovery = await maybeRecoverDocBytes(filePath, plainBytes)
   let bytes = recovery.bytes
   let recovered = recovery.recovered
@@ -2405,12 +2681,13 @@ async function loadDocx(
       recovered = false
     }
   }
+  if (recovered) await adoptLazyMediaHashes(bytes, filePath, wcId)
   pushRecent(filePath)
   allowDocWrite(wcId, filePath)
   if (fileOpenedHook) fileOpenedHook(wcId, filePath)
   markDiskEncrypted(wcId, filePath, encrypted)
   // record the on-disk file, not the recovery copy: what matters is what save would overwrite
-  await rememberDiskState(wcId, filePath, original)
+  await rememberDiskState(wcId, filePath, hash)
   return {
     path: filePath,
     name: basename(filePath),
@@ -2554,7 +2831,7 @@ function savePastedImage(data: unknown, ext: unknown): string | null {
         ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
         : null
   if (!bytes || bytes.byteLength === 0) return null
-  const dir = join(app.getPath('temp'), 'hermesoffice-pasted')
+  const dir = join(app.getPath('temp'), 'genoffice-pasted')
   mkdirSync(dir, { recursive: true })
   prunePastedImages(dir)
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
@@ -2593,11 +2870,6 @@ const TWIPS_PER_INCH = 1440
 
 const SETTINGS_PATH = () => userDataPath('ai-settings.json')
 
-/** live read: the shell settings pane writes the file; every tool call re-checks */
-function gskCloudToolsOn(): boolean {
-  return cloudToolsEnabled(readJson<Partial<AiSettings>>(SETTINGS_PATH(), {}))
-}
-
 const activeAiStreams = new Map<string, AbortController>()
 
 /**
@@ -2606,6 +2878,7 @@ const activeAiStreams = new Map<string, AbortController>()
  * sheets' standalone AI handlers use the same channel names.
  */
 export function registerAiIpc(): void {
+  app.once('before-quit', shutdownCodexAppServers)
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     // pre-lock legacy file: genspark selected with cloud tools opted out. The
@@ -2642,10 +2915,14 @@ export function registerAiIpc(): void {
     writeJson(SETTINGS_PATH(), settings)
   })
 
+  ipcMain.handle('ai:codex-models', async (_event, cliPath: unknown) => {
+    return listCodexModels(typeof cliPath === 'string' ? cliPath : undefined)
+  })
+
   ipcMain.handle('ai:stream', async (event, request: AiStreamRequest) => {
     const { requestId, settings, system, messages } = request
     const tools = request.tools ?? []
-    const maxTokens = request.maxTokens ?? 8192
+    const maxTokens = request.maxTokens ?? maxOutputTokensOf(settings)
     const provider = settings.provider
     let config = settings.providers?.[provider]
     // the genspark key never enters the settings file; requests take it from the gsk login state
@@ -2655,7 +2932,7 @@ export function registerAiIpc(): void {
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
-    if (!config?.apiKey) {
+    if (!config || (provider !== 'codex' && !config.apiKey)) {
       send({
         requestId,
         type: 'error',
@@ -2663,7 +2940,7 @@ export function registerAiIpc(): void {
       })
       return
     }
-    if (!config.model) {
+    if (provider !== 'codex' && !config.model) {
       send({ requestId, type: 'error', error: tm('errNoModel') })
       return
     }
@@ -2680,6 +2957,7 @@ export function registerAiIpc(): void {
     try {
       let stopReason: string | undefined
       await streamForProvider(provider, config, system, messages, tools, maxTokens, {
+        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
         signal: controller.signal,
         onDelta: (text) => send({ requestId, type: 'delta', text }),
         onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
@@ -2721,10 +2999,10 @@ export function registerAiIpc(): void {
   // shared search tools (content + images): Serper with DuckDuckGo fallback (same source as slides/sheets)
   ipcMain.handle('ai:web-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await webSearch(
+      return await webSearchTool(
+        SETTINGS_PATH(),
         String(query),
         typeof maxResults === 'number' ? maxResults : 6,
-        gskCloudToolsOn(),
       )
     } catch (err) {
       return { results: [], method: 'error', error: String(err) }
@@ -2732,15 +3010,37 @@ export function registerAiIpc(): void {
   })
   ipcMain.handle('ai:image-search', async (_event, query: string, maxResults?: number) => {
     try {
-      return await imageSearch(
+      return await imageSearchTool(
+        SETTINGS_PATH(),
         String(query),
         typeof maxResults === 'number' ? maxResults : 8,
-        gskCloudToolsOn(),
       )
     } catch (err) {
       return { images: [], method: 'error', error: String(err) }
     }
   })
+
+  // media understanding (pictures in the document, attachments, local files): BYOK media
+  // provider when one is configured, otherwise the Genspark CLI behind its login gate.
+  ipcMain.handle(
+    'ai:analyze-media',
+    async (_event, op: { mediaUrls: string[]; requirements: string }) => {
+      const mediaUrls = (op.mediaUrls ?? []).map(String).filter(Boolean)
+      // a picture opened lazily from a large docx is only addressable by its main-process
+      // store; hand its bytes over as a data URL so the loader can read them like any other
+      const resolved: string[] = []
+      for (const url of mediaUrls) {
+        const lazy = await readLazyMedia(url).catch(() => null)
+        resolved.push(
+          lazy ? `data:${lazy.mime};base64,${lazy.body.toString('base64')}` : url,
+        )
+      }
+      return analyzeMediaTool(SETTINGS_PATH(), {
+        mediaUrls: resolved,
+        requirements: String(op.requirements ?? ''),
+      })
+    },
+  )
 
   // download image from URL → base64+mime (download in the main process avoids CORS; the renderer builds the image node and measures size itself)
   ipcMain.handle(
@@ -2771,29 +3071,33 @@ export function registerAiIpc(): void {
   // registered once a slides view exists, so docs needs its own channel
   ipcMain.handle(
     'docs:ai-generate-image',
-    async (_event, op: { prompt?: unknown; aspectRatio?: unknown }) => {
-      if (!hasGskAuth())
-        return {
-          error: 'Genspark account is not logged in on this machine; ask the user to log in first',
-        }
-      if (!gskCloudToolsOn())
-        return {
-          error:
-            'Genspark cloud tools are turned off in Settings (AI Model); enable them to use this tool',
-        }
-      const prompt = String(op?.prompt ?? '').trim()
-      if (!prompt) return { error: 'prompt must not be empty' }
-      try {
-        const r = await gskGenerateImage({
-          prompt,
-          aspectRatio: op?.aspectRatio ? String(op.aspectRatio) : undefined,
-        })
-        return { url: r.url }
-      } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) }
-      }
-    },
+    (_event, op: { prompt?: unknown; aspectRatio?: unknown }) =>
+      generateImageTool(SETTINGS_PATH(), {
+        prompt: String(op?.prompt ?? ''),
+        aspectRatio: op?.aspectRatio ? String(op.aspectRatio) : undefined,
+      }),
   )
+
+  ipcMain.handle('ai:search-test', (_event, input: unknown) => {
+    const { provider, apiKey } = (input ?? {}) as { provider?: AiSearchProviderId; apiKey?: string }
+    if (!provider || provider === 'genspark') {
+      return hasGskAuth() ? { ok: true } : { ok: false, error: tm('errGskNotLoggedIn') }
+    }
+    return testSearchProvider(provider, String(apiKey ?? ''))
+  })
+
+  // settings-UI connection test for the media provider (genspark = the gsk login state)
+  ipcMain.handle('ai:media-test', (_event, input: unknown) => {
+    const { provider, config } = (input ?? {}) as {
+      provider?: AiMediaProviderId
+      config?: AiMediaProviderConfig
+    }
+    if (!provider || provider === 'genspark') {
+      return hasGskAuth() ? { ok: true } : { ok: false, error: tm('errGskNotLoggedIn') }
+    }
+    if (!config) return { ok: false, error: 'No media provider configuration' }
+    return testMediaProvider(provider, config)
+  })
 
   ipcMain.handle('ai:chat', async (_event, request: AiChatRequest) => {
     const { settings, system, user } = request
@@ -2802,13 +3106,13 @@ export function registerAiIpc(): void {
     if (provider === 'genspark' && config && !config.apiKey) {
       config = { ...config, apiKey: gskApiKey() }
     }
-    if (!config?.apiKey) {
+    if (!config || (provider !== 'codex' && !config.apiKey)) {
       return {
         ok: false,
         error: provider === 'genspark' ? tm('errGskNotLoggedIn') : tm('errNoApiKey', { provider }),
       }
     }
-    if (!config.model) return { ok: false, error: tm('errNoModel') }
+    if (provider !== 'codex' && !config.model) return { ok: false, error: tm('errNoModel') }
     try {
       const result = await chatForProvider(provider, config, system, user)
       // the one-shot path reports HTTP failures as ok:false with the raw body —
@@ -2929,8 +3233,21 @@ export function registerProjectIpc(): void {
           output?: string
         }>
         attachments?: Array<{ name: string; path?: string; ext?: string; sizeBytes?: number }>
+        scope?: { label: string; text?: string }
       },
     ) => {
+      if (args.role !== 'user' && args.role !== 'assistant') {
+        throw new Error(`Invalid chat role: ${String(args.role)}`)
+      }
+      if (typeof args.text !== 'string' || args.text.length > 200_000) {
+        throw new Error('Invalid chat text: must be a string up to 200000 chars')
+      }
+      if (args.tools && (!Array.isArray(args.tools) || args.tools.length > 50)) {
+        throw new Error('Invalid chat tools: must be an array up to 50 entries')
+      }
+      if (args.attachments && (!Array.isArray(args.attachments) || args.attachments.length > 20)) {
+        throw new Error('Invalid chat attachments: must be an array up to 20 entries')
+      }
       const store = getProjectStore()
       const msg: Parameters<ProjectStore['appendChatMessage']>[2] = {
         role: args.role,
@@ -2938,6 +3255,8 @@ export function registerProjectIpc(): void {
       }
       if (args.tools) msg.tools = args.tools
       if (args.attachments) msg.attachments = args.attachments
+      if (args.scope) msg.scope = args.scope
+
       store.appendChatMessage(args.projectId, args.chatId, msg)
     },
   )
@@ -2983,52 +3302,35 @@ export function registerProjectIpc(): void {
       return { projectId: args.projectId, chatId: args.newChatId ?? args.tempChatId }
     },
   )
-
-  // ── P1 extension IPC ─────────────────────────────────────
-
-  /** List all projects (with file count + last-active time) */
-  ipcMain.handle('project:list', () => {
-    return getProjectStore().listProjectsSummary()
-  })
-
-  /** List existing files belonging to one project */
-  ipcMain.handle('project:files', (_event, args: { projectId: string }) => {
-    return getProjectStore().listProjectFiles(args.projectId)
-  })
-
-  /** Create a project */
-  ipcMain.handle('project:create', (_event, args: { name: string }) => {
-    const store = getProjectStore()
-    const data = store.createProject(args.name)
-    // returns ProjectSummary shape
-    return store.listProjectsSummary().find((s) => s.id === data.id) ?? data
-  })
-
-  /** Rename a project */
-  ipcMain.handle('project:rename', (_event, args: { id: string; name: string }) => {
-    getProjectStore().renameProject(args.id, args.name)
-  })
-
-  /** Soft-delete a project */
-  ipcMain.handle('project:delete', (_event, args: { id: string }) => {
-    getProjectStore().deleteProject(args.id)
-  })
-
-  /** Move a file into the given project */
-  ipcMain.handle('project:moveFile', (_event, args: { filePath: string; projectId: string }) => {
-    getProjectStore().moveFileToProject(args.filePath, args.projectId)
-  })
-
-  /** Get the project timeline */
-  ipcMain.handle('project:timeline', (_event, args: { projectId: string; limit?: number }) => {
-    return getProjectStore().getProjectTimeline(args.projectId, args.limit ?? 20)
-  })
 }
+
+/** A4 at 96dpi, as the HTML app exports */
+const ALT_CHUNK_VIEWPORT = { width: 794, height: 1123, deviceScaleFactor: 2 }
+const ALT_CHUNK_HTML_MAX_CHARS = 64 * 1024 * 1024
+
+/** an encrypted save leaves no plain file to serve lazy pictures from: the
+ *  renderer takes the materialized document back and leaves lazy mode */
+const reissuedDoc = (
+  encrypted: boolean,
+  hashes: Set<string>,
+  plain: Buffer,
+): { data?: ArrayBuffer } =>
+  encrypted && hashes.size > 0
+    ? {
+        data: plain.buffer.slice(
+          plain.byteOffset,
+          plain.byteOffset + plain.byteLength,
+        ) as ArrayBuffer,
+      }
+    : {}
 
 /** document/attachment/window IPC (everything except the AI proxy above) */
 export function registerDocsIpc(): void {
+  registerZoteroIpc()
+  void app.whenReady().then(registerLazyMediaProtocol)
   // Node fetch (undici) direct connections get reset under VPN/tun setups; retry over Chromium's stack
   setRescueFetch((url, init) => net.fetch(url, init))
+  setAiUserAgent(`GenOffice/${app.getVersion()}`)
 
   // shared with the other editor modules — last (identical) registration wins
   ipcMain.removeHandler('app:get-language')
@@ -3050,6 +3352,32 @@ export function registerDocsIpc(): void {
   })
 
   ipcMain.handle('docs:open-path', (event, filePath: string) => loadDocx(filePath, event.sender.id))
+
+  // w:altChunk HTML: the same html2docx chain as the HTML app's export, in a
+  // hidden window; the renderer parses the result and shows its blocks
+  ipcMain.handle('docs:altchunk-html-to-docx', async (_event, html: unknown) => {
+    if (typeof html !== 'string' || !html.trim() || html.length > ALT_CHUNK_HTML_MAX_CHARS) {
+      return null
+    }
+    const workDir = await mkdtemp(join(tmpdir(), 'genoffice-altchunk-'))
+    let driver: ElectronBrowserDriver | null = null
+    try {
+      const htmlPath = join(workDir, 'chunk.html')
+      // the BOM outranks a stale <meta charset> left in the decoded markup
+      await writeFile(htmlPath, `\ufeff${html}`, 'utf8')
+      driver = await ElectronBrowserDriver.create(ALT_CHUNK_VIEWPORT)
+      const { docx } = await convertHtmlToDocx({ url: pathToFileURL(htmlPath).href }, driver, {
+        naturalTableWidth: true,
+      })
+      return docx
+    } catch (err) {
+      console.warn('[docs] altChunk conversion failed:', err)
+      return null
+    } finally {
+      await driver?.close()
+      await rm(workDir, { recursive: true, force: true }).catch(() => {})
+    }
+  })
 
   // Review > Protect > Encrypt with Password: set/clear the open password.
   // Takes effect on the next save (docs:save / save-as / save-new all consult the store).
@@ -3141,6 +3469,25 @@ export function registerDocsIpc(): void {
     return content
   })
 
+  // ---- headless export mode (--headless-export) ----
+
+  ipcMain.handle('docs:consume-headless-export', (event): HeadlessExportTarget | null => {
+    const target = headlessExportTargets.get(event.sender.id) ?? null
+    headlessExportTargets.delete(event.sender.id)
+    return target
+  })
+
+  ipcMain.on('docs:headless-export-done', (event, result: unknown) => {
+    const settle = headlessExportWaiters.get(event.sender.id)
+    if (!settle) return
+    headlessExportWaiters.delete(event.sender.id)
+    const state = result as { ok?: unknown; error?: unknown } | null
+    settle({
+      ok: state?.ok === true,
+      ...(typeof state?.error === 'string' ? { error: state.error } : {}),
+    })
+  })
+
   ipcMain.handle(
     'docs:save',
     async (event, filePath: string, data: ArrayBuffer, auto?: boolean) => {
@@ -3178,19 +3525,24 @@ export function registerDocsIpc(): void {
         // Snapshot desired state: the disk password remains unchanged until the
         // atomic write succeeds, and a newer ribbon intent survives this save.
         const passwordState = snapshotDocPassword(event.sender.id, filePath)
-        const bytes = passwordState.password
-          ? encryptDocx(Buffer.from(data), passwordState.password)
-          : Buffer.from(data)
+        const { bytes: plain, hashes } = await materializeLazyDocx(Buffer.from(data))
+        const bytes = passwordState.password ? encryptDocx(plain, passwordState.password) : plain
         await atomicWriteFile(filePath, bytes)
         // Teardown may have cleared all in-memory secrets while the atomic
         // write was pending. Never resurrect state for an orphaned renderer.
         if (tornDownWcIds.has(event.sender.id)) {
           return { ok: false, error: 'save target is not an opened document' }
         }
-        await rememberDiskState(event.sender.id, filePath, bytes)
+        await rememberDiskState(event.sender.id, filePath, sha256Hex(bytes))
         if (tornDownWcIds.has(event.sender.id)) {
           return { ok: false, error: 'save target is not an opened document' }
         }
+        pointLazyMediaAt(
+          hashes,
+          filePath,
+          event.sender.id,
+          passwordState.password ? plain : undefined,
+        )
         // Commit immediately after the final await: intents received during
         // post-write bookkeeping are included, with no later async race.
         const passwordIntentPending = commitDocPasswordSave(
@@ -3200,7 +3552,11 @@ export function registerDocsIpc(): void {
         )
         clearRecoveryCopy(filePath)
         pushRecent(filePath)
-        return { ok: true, passwordIntentPending }
+        return {
+          ok: true,
+          passwordIntentPending,
+          ...reissuedDoc(!!passwordState.password, hashes, plain),
+        }
       } catch (err) {
         return { ok: false, error: String(err) }
       }
@@ -3241,6 +3597,42 @@ export function registerDocsIpc(): void {
     }
   })
 
+  // Blink only respells an editable as a consequence of real (trusted) typing
+  // of a word-committing character inside it: attribute flips, focus cycles,
+  // script selection moves, execCommand edits, fresh DOM nodes, synthetic
+  // clicks/arrow keys — and even a typed zero-width space — all leave existing
+  // typos unmarked (each verified pixel-by-pixel).
+  // Type one trusted space; the RENDERER removes it again by script (a
+  // trusted Backspace would work too, but its deletion re-suppresses the
+  // caret paragraph and that line stays unmarked) with ProseMirror's DOM
+  // observer paused, so the round trip never becomes a transaction.
+  // spell-diag trace (intermittent squiggle loss, platform-bound
+  // and unreproducible on demand) — a tiny always-on log support can ask for.
+  // Size-capped: over 256KB the file restarts from its last half.
+  ipcMain.on('docs:spell-diag', (_event, line: unknown) => {
+    if (typeof line !== 'string' || line.length > 500) return
+    try {
+      const path = userDataPath('spell-diag.log')
+      if (existsSync(path) && statSync(path).size > 256 * 1024) {
+        const tail = readFileSync(path, 'utf-8').slice(-128 * 1024)
+        writeFileSync(path, tail.slice(tail.indexOf('\n') + 1))
+      }
+      appendFileSync(path, `${new Date().toISOString()} ${line}\n`)
+    } catch {
+      // diagnostics must never break the app
+    }
+  })
+
+  ipcMain.handle('docs:respell-kick', async (event) => {
+    const wc = event.sender
+    if (tornDownWcIds.has(wc.id) || wc.isDestroyed()) return
+    wc.focus()
+    wc.sendInputEvent({ type: 'char', keyCode: ' ' })
+    // resolve only after the input pipeline has delivered the keystroke, so
+    // the caller can scrub the space it produced
+    await new Promise((r) => setTimeout(r, 120))
+  })
+
   ipcMain.handle(
     'docs:save-as',
     async (event, defaultName: string, data: ArrayBuffer, sourcePath?: string | null) => {
@@ -3248,7 +3640,10 @@ export function registerDocsIpc(): void {
       if (tornDownWcIds.has(event.sender.id)) return { ok: false }
       const result = await saveDialog(event, {
         title: tm('dlgSaveAs'),
-        defaultPath: defaultName,
+        defaultPath: saveAsSuggestion(
+          typeof sourcePath === 'string' ? sourcePath : null,
+          defaultName,
+        ),
         filters: [{ name: tm('filterWord'), extensions: ['docx'] }],
       })
       if (result.canceled || !result.filePath) return { ok: false }
@@ -3260,13 +3655,18 @@ export function registerDocsIpc(): void {
           event.sender.id,
           typeof sourcePath === 'string' && sourcePath ? sourcePath : null,
         )
-        const bytes = passwordState.password
-          ? encryptDocx(Buffer.from(data), passwordState.password)
-          : Buffer.from(data)
+        const { bytes: plain, hashes } = await materializeLazyDocx(Buffer.from(data))
+        const bytes = passwordState.password ? encryptDocx(plain, passwordState.password) : plain
         await atomicWriteFile(result.filePath, bytes)
         if (tornDownWcIds.has(event.sender.id)) return { ok: false }
         allowDocWrite(event.sender.id, result.filePath)
-        await rememberDiskState(event.sender.id, result.filePath, bytes)
+        await rememberDiskState(event.sender.id, result.filePath, sha256Hex(bytes))
+        pointLazyMediaAt(
+          hashes,
+          result.filePath,
+          event.sender.id,
+          passwordState.password ? plain : undefined,
+        )
         if (tornDownWcIds.has(event.sender.id)) return { ok: false }
         const passwordIntentPending = commitDocPasswordSave(
           event.sender.id,
@@ -3275,7 +3675,12 @@ export function registerDocsIpc(): void {
         )
         pushRecent(result.filePath)
         notifyFileSaved(event.sender, result.filePath)
-        return { ok: true, path: result.filePath, passwordIntentPending }
+        return {
+          ok: true,
+          path: result.filePath,
+          passwordIntentPending,
+          ...reissuedDoc(!!passwordState.password, hashes, plain),
+        }
       } catch (err) {
         return { ok: false, error: String(err) }
       }
@@ -3289,9 +3694,8 @@ export function registerDocsIpc(): void {
       if (tornDownWcIds.has(event.sender.id)) return { ok: false }
       const filePath = uniquePathIn(defaultSaveDir(), defaultName)
       const passwordState = snapshotDocPassword(event.sender.id, null)
-      const bytes = passwordState.password
-        ? encryptDocx(Buffer.from(data), passwordState.password)
-        : Buffer.from(data)
+      const { bytes: plain, hashes } = await materializeLazyDocx(Buffer.from(data))
+      const bytes = passwordState.password ? encryptDocx(plain, passwordState.password) : plain
       await atomicWriteFile(filePath, bytes)
       // teardown may have happened while the write was in flight — the path is
       // freshly created, so rolling it back is safe (mirrors docs:write-recovery)
@@ -3300,7 +3704,13 @@ export function registerDocsIpc(): void {
         return { ok: false }
       }
       allowDocWrite(event.sender.id, filePath)
-      await rememberDiskState(event.sender.id, filePath, bytes)
+      await rememberDiskState(event.sender.id, filePath, sha256Hex(bytes))
+      pointLazyMediaAt(
+        hashes,
+        filePath,
+        event.sender.id,
+        passwordState.password ? plain : undefined,
+      )
       if (tornDownWcIds.has(event.sender.id)) {
         await unlink(filePath).catch(() => {})
         return { ok: false }
@@ -3308,7 +3718,12 @@ export function registerDocsIpc(): void {
       const passwordIntentPending = commitDocPasswordSave(event.sender.id, passwordState, filePath)
       pushRecent(filePath)
       notifyFileSaved(event.sender, filePath)
-      return { ok: true, path: filePath, passwordIntentPending }
+      return {
+        ok: true,
+        path: filePath,
+        passwordIntentPending,
+        ...reissuedDoc(!!passwordState.password, hashes, plain),
+      }
     } catch (err) {
       return { ok: false, error: String(err) }
     }
@@ -3318,6 +3733,71 @@ export function registerDocsIpc(): void {
     'docs:create-document',
     (_event, request: CreateDocumentRequest): Promise<CreateDocumentResult> =>
       createAiDocument(request),
+  )
+
+  // MCP-driven output: write the live document to an explicit absolute path with
+  // no dialog. Mirrors docs:save-new's bookkeeping (write allowlist, disk state,
+  // recents, tab-title sync) but targets a caller-chosen path and refuses to
+  // clobber an existing file unless the caller asked for overwrite.
+  ipcMain.handle(
+    'docs:save-to',
+    async (event, filePath: string, data: ArrayBuffer, overwrite: boolean) => {
+      try {
+        if (tornDownWcIds.has(event.sender.id)) return { ok: false }
+        if (typeof filePath !== 'string' || !isAbsolute(filePath)) {
+          return { ok: false, error: 'path must be absolute' }
+        }
+        if (extname(filePath).toLowerCase() !== '.docx') {
+          return { ok: false, error: 'path must point to a .docx file' }
+        }
+        // only a target the MCP layer resolved for this tab may be written
+        if (!canDocWrite(event.sender.id, filePath)) {
+          return { ok: false, error: 'save target was not authorized' }
+        }
+        const existed = existsSync(filePath)
+        if (!overwrite && existed) {
+          return {
+            ok: false,
+            error: `file already exists: ${filePath} (pass overwrite:true to replace it)`,
+          }
+        }
+        await mkdir(dirname(filePath), { recursive: true })
+        const passwordState = snapshotDocPassword(event.sender.id, null)
+        const { bytes: plain, hashes } = await materializeLazyDocx(Buffer.from(data))
+        const bytes = passwordState.password ? encryptDocx(plain, passwordState.password) : plain
+        await atomicWriteFile(filePath, bytes)
+        // teardown may have happened while the write was in flight — only a file
+        // this handler created is safe to roll back; an overwritten one stays
+        const rollback = async (): Promise<{ ok: false }> => {
+          if (!existed) await unlink(filePath).catch(() => {})
+          return { ok: false }
+        }
+        if (tornDownWcIds.has(event.sender.id)) return rollback()
+        await rememberDiskState(event.sender.id, filePath, sha256Hex(bytes))
+        pointLazyMediaAt(
+          hashes,
+          filePath,
+          event.sender.id,
+          passwordState.password ? plain : undefined,
+        )
+        if (tornDownWcIds.has(event.sender.id)) return rollback()
+        const passwordIntentPending = commitDocPasswordSave(
+          event.sender.id,
+          passwordState,
+          filePath,
+        )
+        pushRecent(filePath)
+        notifyFileSaved(event.sender, filePath)
+        return {
+          ok: true,
+          path: filePath,
+          passwordIntentPending,
+          ...reissuedDoc(!!passwordState.password, hashes, plain),
+        }
+      } catch (err) {
+        return { ok: false, error: String(err) }
+      }
+    },
   )
 
   ipcMain.handle('docs:recent', () =>
@@ -3421,12 +3901,22 @@ export function registerDocsIpc(): void {
   // (the protected wrapper round-tripped as a "protected content" shell).
   ipcMain.handle(
     'docs:copy-image-to-clipboard',
-    (_event, dataUrl: unknown, meta: unknown): boolean => {
-      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return false
-      const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    async (_event, dataUrl: unknown, meta: unknown): Promise<boolean> => {
+      if (typeof dataUrl !== 'string') return false
+      let bytes: Buffer
+      let htmlSrc = dataUrl
+      if (dataUrl.startsWith('data:image/')) {
+        bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
+      } else {
+        const media = await readLazyMedia(dataUrl)
+        if (!media) return false
+        bytes = media.body
+        // another document cannot resolve this document's lazy URL; inline the bytes
+        htmlSrc = `data:${media.mime};base64,${bytes.toString('base64')}`
+      }
       // createFromBuffer, not createFromDataURL — the latter returns an empty
       // image for valid PNGs in this Electron
-      const image = nativeImage.createFromBuffer(Buffer.from(base64, 'base64'))
+      const image = nativeImage.createFromBuffer(bytes)
       if (image.isEmpty()) return false
       // the html flavor carries the DISPLAY size + layout meta so an in-app
       // paste keeps size/align/wrap instead of falling back to bitmap pixels
@@ -3448,23 +3938,31 @@ export function registerDocsIpc(): void {
       }
       clipboard.write({
         image,
-        html: `<img src="${dataUrl}" width="${width}" height="${height}"${metaAttr}>`,
+        html: `<img src="${htmlSrc}" width="${width}" height="${height}"${metaAttr}>`,
       })
       return true
     },
   )
 
-  ipcMain.handle('docs:print', async (event) => {
+  // renderer print scale (inverse of the preview's print zoom, see print-zoom.ts)
+  const pdfScale = (scale?: number) => (scale && scale > 0 && scale !== 1 ? { scale } : {})
+  const printScale = (scale?: number) =>
+    scale && scale > 0 && scale !== 1 ? { scaleFactor: Math.round(scale * 100) } : {}
+
+  ipcMain.handle('docs:print', async (event, scale?: number) => {
     // print the calling tab's own content; zero margins — the docx page padding provides them.
     // Resolves when the system dialog is dismissed; the print dialog stays open on cancel
     // (ok=false without error) and surfaces real failures.
     return new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      event.sender.print({ margins: { marginType: 'none' } }, (success, failureReason) => {
-        resolve({
-          ok: success,
-          ...(failureReason && !/cancel/i.test(failureReason) ? { error: failureReason } : {}),
-        })
-      })
+      event.sender.print(
+        { margins: { marginType: 'none' }, ...printScale(scale) },
+        (success, failureReason) => {
+          resolve({
+            ok: success,
+            ...(failureReason && !/cancel/i.test(failureReason) ? { error: failureReason } : {}),
+          })
+        },
+      )
     })
   })
 
@@ -3476,6 +3974,7 @@ export function registerDocsIpc(): void {
       pageWidthTwips: number,
       pageHeightTwips: number,
       outPath?: string,
+      scale?: number,
     ) => {
       // renderer-supplied outPath is only honored when a save dialog authorized it before
       let filePath = outPath ?? null
@@ -3501,9 +4000,76 @@ export function registerDocsIpc(): void {
             height: pageHeightTwips / TWIPS_PER_INCH,
           },
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          ...pdfScale(scale),
         })
         writeFileSync(filePath, data)
-        openGeneratedFile(filePath)
+        if (!isImageExportTemp(event.sender.id, filePath)) openGeneratedFile(filePath)
+        return { ok: true, path: filePath }
+      } catch (err) {
+        // path is already authorized, so the renderer can retry chunked to the same target
+        return { ok: false, error: String(err), path: filePath }
+      }
+    },
+  )
+
+  ipcMain.handle('docs:save-image-as', async (event, src: unknown) => {
+    if (tornDownWcIds.has(event.sender.id) || typeof src !== 'string') return { ok: false }
+    return saveImageFromUrl(dialogParent(event), src, {
+      title: tm('dlgSaveAs'),
+      fallbackDir: defaultSaveDir(),
+    })
+  })
+
+  ipcMain.handle('docs:pick-export-images-target', async (event) => {
+    let dir = testExportDir
+    if (!dir) {
+      const r = await openDialog(event, {
+        title: tm('dlgPickExportDir'),
+        properties: ['openDirectory', 'createDirectory'],
+      })
+      dir = r.canceled ? null : (r.filePaths[0] ?? null)
+    }
+    if (!dir) return null
+    const wcId = event.sender.id
+    const pdfPath = join(tmpdir(), `genoffice-docs-images-${randomUUID()}.pdf`)
+    allowPdfWrite(wcId, pdfPath)
+    imageExportTemps.set(wcId, (imageExportTemps.get(wcId) ?? new Set()).add(pdfPath))
+    imageExportDirs.set(wcId, (imageExportDirs.get(wcId) ?? new Set()).add(dir))
+    return { dir, pdfPath }
+  })
+
+  ipcMain.handle('docs:take-export-pdf', async (event, pdfPath: string) => {
+    const temps = imageExportTemps.get(event.sender.id)
+    if (typeof pdfPath !== 'string' || !temps?.has(pdfPath)) {
+      return { ok: false, error: 'not an image-export temp file' }
+    }
+    temps.delete(pdfPath)
+    try {
+      const data = await readFile(pdfPath)
+      return { ok: true, base64: data.toString('base64') }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    } finally {
+      await rm(pdfPath, { force: true })
+    }
+  })
+
+  ipcMain.handle(
+    'docs:write-export-image',
+    async (event, dir: string, fileName: string, pngBase64: string) => {
+      if (typeof dir !== 'string' || !imageExportDirs.get(event.sender.id)?.has(dir)) {
+        return { ok: false, error: 'export target is not an authorized folder' }
+      }
+      if (
+        typeof fileName !== 'string' ||
+        fileName !== basename(fileName) ||
+        !/^[^/\\]+\.png$/.test(fileName)
+      ) {
+        return { ok: false, error: 'invalid image file name' }
+      }
+      try {
+        const filePath = join(dir, fileName)
+        await writeFile(filePath, Buffer.from(String(pngBase64), 'base64'))
         return { ok: true, path: filePath }
       } catch (err) {
         return { ok: false, error: String(err) }
@@ -3511,10 +4077,38 @@ export function registerDocsIpc(): void {
     },
   )
 
+  ipcMain.handle(
+    'docs:export-html',
+    async (event, defaultName: string, html: string, outPath?: string) => {
+      if (typeof html !== 'string' || !html) return { ok: false, error: 'empty document' }
+      let filePath = outPath ?? null
+      if (filePath && !canPdfWrite(event.sender.id, filePath)) {
+        return { ok: false, error: 'export target is not an authorized path' }
+      }
+      if (!filePath) {
+        const result = await saveDialog(event, {
+          title: tm('dlgExportHtml'),
+          defaultPath: defaultName.replace(/\.docx$/i, '') + '.html',
+          filters: [{ name: 'HTML', extensions: ['html'] }],
+        })
+        if (result.canceled || !result.filePath) return { ok: false }
+        filePath = result.filePath
+        allowPdfWrite(event.sender.id, filePath)
+      }
+      try {
+        writeFileSync(filePath, html, 'utf8')
+        openGeneratedFile(filePath)
+        return { ok: true, path: filePath }
+      } catch (err) {
+        return { ok: false, error: String(err), path: filePath }
+      }
+    },
+  )
+
   // mixed paper-size export: the renderer prints group by group per size (other pages hidden via CSS); this produces one group's bytes
   ipcMain.handle(
     'docs:print-pdf-buffer',
-    async (event, pageWidthTwips: number, pageHeightTwips: number) => {
+    async (event, pageWidthTwips: number, pageHeightTwips: number, scale?: number) => {
       try {
         const data = await event.sender.printToPDF({
           printBackground: true,
@@ -3523,6 +4117,7 @@ export function registerDocsIpc(): void {
             height: pageHeightTwips / TWIPS_PER_INCH,
           },
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          ...pdfScale(scale),
         })
         return { ok: true, base64: data.toString('base64') }
       } catch (err) {
@@ -3558,7 +4153,7 @@ export function registerDocsIpc(): void {
           for (const page of pages) merged.addPage(page)
         }
         writeFileSync(filePath, Buffer.from(await merged.save()))
-        openGeneratedFile(filePath)
+        if (!isImageExportTemp(event.sender.id, filePath)) openGeneratedFile(filePath)
         return { ok: true, path: filePath }
       } catch (err) {
         return { ok: false, error: String(err) }
@@ -3608,7 +4203,7 @@ interface DocsShellHooks {
   focusTab(id: string): void
   /** closes the calling tab instead of the whole shell window (Cmd+W / role:'close') */
   closeActiveTab(): void
-  /** Shell router used to open exported PDFs in a new HermesOffice tab. */
+  /** Shell router used to open exported PDFs in a new GenOffice tab. */
   openGeneratedPath?(path: string): boolean
 }
 let shellHooks: DocsShellHooks | null = null
@@ -3620,6 +4215,9 @@ export function setDocsShellHooks(hooks: DocsShellHooks | null): void {
  * (shell) or reveal it in the folder (standalone). Tab-opening failure must
  * not report the write itself as failed — the file is already persisted. */
 function openGeneratedFile(path: string): void {
+  // Headless export has no tab strip and no user: revealing the file in Finder
+  // would be the only visible effect of a run that must stay silent.
+  if (isHeadlessMode()) return
   try {
     if (shellHooks?.openGeneratedPath?.(path)) return
   } catch (err) {
@@ -3676,8 +4274,8 @@ export async function createAiDocument(
       openGeneratedFile(filePath)
       return { ok: true, path: filePath }
     }
-    if (type === 'md') {
-      const filePath = uniquePathIn(defaultSaveDir(), `${title}.md`)
+    if (type === 'md' || type === 'html') {
+      const filePath = uniquePathIn(defaultSaveDir(), `${title}.${type}`)
       await writeFile(filePath, content, 'utf8')
       openGeneratedFile(filePath)
       return { ok: true, path: filePath }
@@ -3802,6 +4400,8 @@ export function buildDocsMenu(): void {
         { type: 'separator' },
         { label: tm('menuPageSetup'), click: () => sendCommand('page-setup') },
         { label: tm('menuExportPdf'), click: () => sendCommand('export-pdf') },
+        { label: tm('menuExportHtml'), click: () => sendCommand('export-html') },
+        { label: tm('menuExportImages'), click: () => sendCommand('export-images') },
         {
           label: tm('menuPrint'),
           accelerator: 'CmdOrCtrl+P',
@@ -3949,11 +4549,81 @@ export function buildDocsMenu(): void {
         },
         { type: 'separator' },
         { label: tm('menuDocsHelp'), enabled: false },
+        { type: 'separator' },
+        checkUpdatesMenuItem(appMenuLabels(getUiLang())),
+        aboutMenuItem(appMenuLabels(getUiLang())),
       ],
     },
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+// ---- headless export ----
+
+/** hidden export windows: webContents id -> what the renderer must write */
+const headlessExportTargets = new Map<number, HeadlessExportTarget>()
+/** settled by 'docs:headless-export-done' (or by the renderer dying) */
+const headlessExportWaiters = new Map<number, (result: HeadlessExportReport) => void>()
+
+interface HeadlessExportReport {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * Render `input` to `outPath` (as PDF or standalone HTML) with no visible window.
+ *
+ * The window is wired exactly like createDocsWindow's (same preload, sandbox
+ * and `backgroundThrottling: false`) and the document rides the normal
+ * pending-open queue, so the renderer runs its usual load -> paginate ->
+ * export pipeline; only the save dialog is skipped, by pre-authorizing
+ * `outPath` the way a dialog would. Rejects with the renderer's reason when
+ * the export fails or the deadline passes.
+ */
+export async function exportDocsHeadless(
+  input: string,
+  outPath: string,
+  format: HeadlessExportFormat = 'pdf',
+  timeoutMs = 300_000,
+): Promise<void> {
+  const win = new BrowserWindow({
+    show: false,
+    width: 1360,
+    height: 900,
+    webPreferences: {
+      preload: runtime.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  })
+  const wcId = win.webContents.id
+  pendingWindowOpens.set(wcId, input)
+  headlessExportTargets.set(wcId, { outPath, format })
+  allowPdfWrite(wcId, outPath)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const report = await new Promise<HeadlessExportReport>((resolve) => {
+      headlessExportWaiters.set(wcId, resolve)
+      win.webContents.on('render-process-gone', (_event, details) =>
+        resolve({ ok: false, error: `docs renderer stopped (${details.reason})` }),
+      )
+      timer = setTimeout(
+        () => resolve({ ok: false, error: `docs export timed out after ${timeoutMs}ms` }),
+        timeoutMs,
+      )
+      void win.webContents.loadURL(rendererUrl(runtime.rendererUrl, 'docs'))
+    })
+    if (!report.ok) throw new Error(report.error ?? 'docs export failed')
+  } finally {
+    if (timer) clearTimeout(timer)
+    headlessExportWaiters.delete(wcId)
+    headlessExportTargets.delete(wcId)
+    pendingWindowOpens.delete(wcId)
+    if (!win.isDestroyed()) win.destroy()
+  }
 }
 
 // ---- window ----
@@ -3962,9 +4632,9 @@ export function createDocsWindow(openPath?: string): BrowserWindow {
   const win = new BrowserWindow({
     width: 1360,
     height: 900,
-    minWidth: 980,
-    minHeight: 600,
-    title: 'HermesOffice Docs',
+    minWidth: 720,
+    minHeight: 550,
+    title: 'GenOffice Docs',
     // Word-like custom title bar (document name centered, quick-access buttons)
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const }
@@ -3999,11 +4669,7 @@ export function createDocsWindow(openPath?: string): BrowserWindow {
     return { action: 'deny' }
   })
 
-  if (runtime.rendererUrl) {
-    void win.loadURL(runtime.rendererUrl)
-  } else {
-    void win.loadFile(runtime.rendererFile)
-  }
+  void win.loadURL(rendererUrl(runtime.rendererUrl, 'docs'))
   // close guard for standalone-window mode (tab mode goes through the same flow via the shell's tab-manager/window-close path)
   let closeConfirmed = false
   win.on('close', (event) => {
@@ -4222,14 +4888,7 @@ export function createDocsView(openPath?: string): WebContentsView {
 
   // mode=tab: the shell's tab strip owns the traffic lights / caption buttons,
   // so the ribbon must not reserve space for them
-  if (runtime.rendererUrl) {
-    // append via URL so a dev URL that already carries query params stays valid
-    const devUrl = new URL(runtime.rendererUrl)
-    devUrl.searchParams.set('mode', 'tab')
-    void view.webContents.loadURL(devUrl.toString())
-  } else {
-    void view.webContents.loadFile(runtime.rendererFile, { query: { mode: 'tab' } })
-  }
+  void view.webContents.loadURL(rendererUrl(runtime.rendererUrl, 'docs', { mode: 'tab' }))
   // view.webContents becomes undefined after destroy, so grab the id beforehand
   const wcId = view.webContents.id
   view.webContents.once('destroyed', () => {
@@ -4251,15 +4910,16 @@ export function hasDocsWindow(): boolean {
 // ---- standalone lifecycle (apps/docs running on its own) ----
 
 export function startDocsStandalone(): void {
+  registerRendererScheme()
   installNavigationGuard(app)
   installContextMenu(app, () => contextMenuLabels(getUiLang()))
   // dev runs must not share the packaged app's userData (recent files, AI settings)
   // or its single-instance lock — otherwise `npm run dev` silently quits whenever
-  // the installed HermesOffice Docs is open and forwards its argv there instead.
+  // the installed GenOffice Docs is open and forwards its argv there instead.
   // AI_OFFICE_USER_DATA: E2E/screenshot runs isolate userData (and the
   // single-instance lock) so parallel automation sessions don't evict each other
   if (process.env.AI_OFFICE_USER_DATA) app.setPath('userData', process.env.AI_OFFICE_USER_DATA)
-  else if (isDev) app.setPath('userData', join(app.getPath('appData'), 'HermesOffice Docs Dev'))
+  else if (isDev) app.setPath('userData', join(app.getPath('appData'), 'GenOffice Docs Dev'))
 
   const hasSingleInstanceLock = app.requestSingleInstanceLock()
   if (!hasSingleInstanceLock) {
@@ -4283,7 +4943,8 @@ export function startDocsStandalone(): void {
   registerDocsIpc()
 
   app.whenReady().then(() => {
-    setUiLang(normalizeLang(process.env.HERMESOFFICE_LANG ?? app.getLocale()))
+    installRendererProtocol({ docs: join(__dirname, '../renderer') })
+    setUiLang(normalizeLang(process.env.GENOFFICE_LANG ?? app.getLocale()))
     // packaged builds get the Dock icon from icon.icns; dev shows Electron's default
     if (isDev && process.platform === 'darwin') {
       app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))

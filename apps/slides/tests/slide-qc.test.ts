@@ -108,7 +108,7 @@ describe('vision capability fallback', () => {
     const withProvider = (provider: AiProviderId) => ({ ...defaultAiSettings(), provider })
     const deepseek = withProvider('deepseek')
     expect(settingsSupportVision(deepseek)).toBe(false)
-    deepseek.providers.deepseek.model = 'deepseek-v4-flash-vision-exp'
+    deepseek.providers.deepseek.model = 'deepseek-flash'
     expect(settingsSupportVision(deepseek)).toBe(true)
     expect(settingsSupportVision(withProvider('glm'))).toBe(false)
     expect(settingsSupportVision(withProvider('gemini'))).toBe(true)
@@ -116,7 +116,6 @@ describe('vision capability fallback', () => {
 
   it('does not send screenshots to text-only models under a vision-capable provider', () => {
     const settings = defaultAiSettings()
-    // Fork: default provider is hermes; this test isolates the genspark vision policy.
     settings.provider = 'genspark'
     settings.providers.genspark.model = 'deep-seek-v4-flash'
     expect(settingsSupportVision(settings)).toBe(false)

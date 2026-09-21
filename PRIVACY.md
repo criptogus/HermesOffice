@@ -1,9 +1,9 @@
-# HermesOffice Privacy
+# GenOffice Privacy
 
 Last updated: August 26, 2026
 
-HermesOffice opens, edits, and saves documents locally. Document editing does not
-upload files to HermesOffice. AI features require a network connection and send
+GenOffice opens, edits, and saves documents locally. Document editing does not
+upload files to GenOffice. AI features require a network connection and send
 requests only when you use them.
 
 ## Usage analytics
@@ -25,6 +25,8 @@ When enabled, the app sends these events:
 - `app_launch` — no event-specific parameter
 - `file_open` — `ext`, the file extension such as `docx` or `xlsx`
 - `file_new` — `kind`, one of `docx`, `xlsx`, `pptx`, `md`, or `pdf`
+- `login_click` — no event-specific parameter
+- `login_success` — no event-specific parameter
 
 Every event includes:
 
@@ -49,12 +51,12 @@ email address.
 Events are sent to Google Analytics 4 using the Measurement Protocol over
 HTTPS. As the HTTPS recipient, Google necessarily sees the connection's public
 IP address and transport metadata, and may use them for coarse geolocation and
-security or spam-abuse processing. HermesOffice does not add an IP address to the
+security or spam-abuse processing. GenOffice does not add an IP address to the
 event payload.
 
 ## Data not collected by analytics
 
-HermesOffice analytics never sends:
+GenOffice analytics never sends:
 
 - document content
 - file names

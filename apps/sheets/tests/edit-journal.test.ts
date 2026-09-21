@@ -1,3 +1,4 @@
+import { CellValueType } from '@univerjs/core'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -270,6 +271,26 @@ describe('bulk constant-fill journal', () => {
   })
 })
 
+describe('recordSetRangeValues cell types', () => {
+  it('journals a BOOLEAN-typed 0/1 as a boolean so the save keeps t="b"', () => {
+    // copy_range of a TRUE cell (file `<c t="b"><v>1</v>`) reaches the
+    // mutation as Univer's normalized {v: 1, t: BOOLEAN}; journaling the
+    // bare 1 saved a number where the source had TRUE.
+    const journal = createEditJournal()
+    recordSetRangeValues(journal, 'sheet-2', {
+      0: { 1: { v: 1, t: CellValueType.BOOLEAN }, 2: { v: 0, t: CellValueType.BOOLEAN } },
+      1: { 1: { v: 1 }, 2: { v: '1', t: CellValueType.STRING } },
+    })
+    const at = (row: number, column: number) =>
+      journalCellContentAt(journal, 'sheet-2', row, column)
+    expect(at(0, 1)).toEqual({ found: true, value: true, formula: null })
+    expect(at(0, 2)).toEqual({ found: true, value: false, formula: null })
+    expect(at(1, 1)).toEqual({ found: true, value: 1, formula: null })
+    expect(at(1, 2)).toEqual({ found: true, value: '1', formula: null })
+    expect(toSaveEdits(journal).map((entry) => entry.value)).toEqual([true, false, 1, '1'])
+  })
+})
+
 describe('recordTableAdd', () => {
   const table = {
     sheetId: 'sheet-1',
@@ -388,6 +409,40 @@ describe('recordSetRangeValues', () => {
     const entry = journal.cells.get('sheet-1')?.get('0:0')
     expect(entry?.styleReset).toBe(true)
     expect(entry?.style).toEqual({ italic: true })
+  })
+
+  it('journals the ribbon No Fill (bg: { rgb: null }) as a fill clear', () => {
+    // setBackground(null) reaches the mutation wrapped as { rgb: null }, not
+    // as a bare null. Dropping it left Save disabled and the fill in the
+    // file after the ribbon had already painted the cells clear.
+    const journal = createEditJournal()
+    recordSetRangeValues(journal, 'sheet-1', { 0: { 2: { s: { bg: { rgb: null } } } } })
+    expect(journal.cells.get('sheet-1')?.get('0:2')).toEqual({
+      row: 0,
+      column: 2,
+      hasValue: false,
+      value: null,
+      style: { fillColor: null },
+    })
+    expect(journalSize(journal)).toBe(1)
+  })
+
+  it('journals the empty-rgb no-fill sentinel and a wrapped Automatic font color', () => {
+    const journal = createEditJournal()
+    recordSetRangeValues(journal, 'sheet-1', {
+      0: { 0: { s: { bg: { rgb: '' }, cl: { rgb: null } } } },
+    })
+    expect(journal.cells.get('sheet-1')?.get('0:0')?.style).toEqual({
+      fillColor: null,
+      fontColor: null,
+    })
+  })
+
+  it('lets a later fill override a journaled clear', () => {
+    const journal = createEditJournal()
+    recordSetRangeValues(journal, 'sheet-1', { 0: { 0: { s: { bg: { rgb: null } } } } })
+    recordSetRangeValues(journal, 'sheet-1', { 0: { 0: { s: { bg: { rgb: '#00FF00' } } } } })
+    expect(journal.cells.get('sheet-1')?.get('0:0')?.style).toEqual({ fillColor: '#00FF00' })
   })
 
   it('flattens rich-text edits to plain text', () => {

@@ -1,7 +1,7 @@
 /**
  * Downloadable/installable font store (main process).
  *
- * A curated catalog of OFL-licensed families is mirrored on the HermesOffice CDN
+ * A curated catalog of OFL-licensed families is mirrored on the GenOffice CDN
  * (versioned paths, sha256-pinned). Downloads and user-installed font files both
  * land in <userData>/fonts, which the FontRegistry scans as a private dir — the
  * same measure-and-register pipeline as Office DFonts, so a newly installed font
@@ -32,7 +32,7 @@ function normalizeFontCdnBaseUrl(value: unknown): string | null {
 /** Read the build-injected font CDN URL from packaged app metadata. */
 export function extractFontCdnBaseUrl(pkg: unknown): string | null {
   if (!pkg || typeof pkg !== 'object') return null
-  const raw = (pkg as Record<string, unknown>).hermesofficeFontCdn
+  const raw = (pkg as Record<string, unknown>).genofficeFontCdn
   if (!raw || typeof raw !== 'object') return null
   return normalizeFontCdnBaseUrl((raw as Record<string, unknown>).baseUrl)
 }
@@ -43,7 +43,7 @@ export function extractFontCdnBaseUrl(pkg: unknown): string | null {
  * all downloadable-font UI stays disabled while local font installation works.
  */
 export function fontCdnBaseUrl(): string | null {
-  if (!app.isPackaged) return normalizeFontCdnBaseUrl(process.env.HERMESOFFICE_FONT_CDN_URL)
+  if (!app.isPackaged) return normalizeFontCdnBaseUrl(process.env.GENOFFICE_FONT_CDN_URL)
   try {
     const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as unknown
     return extractFontCdnBaseUrl(pkg)

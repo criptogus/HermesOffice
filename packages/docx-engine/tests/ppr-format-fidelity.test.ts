@@ -17,10 +17,14 @@ const RAW =
 // what extractParaFormat yields for RAW
 const MODEL: ParaFormat = {
   borders: 'tb',
-  borderLines: { t: { color: 'FF0000', szPt: 1.5 }, b: { color: 'FF0000', szPt: 1.5 } },
+  borderLines: {
+    t: { color: 'FF0000', szPt: 1.5, spacePt: 1 },
+    b: { color: 'FF0000', szPt: 1.5, spacePt: 1 },
+  },
   shadingFill: 'EEEEEE',
   spaceBefore: 240,
   spaceAfter: 120,
+  indentLeft: 0,
   indentFirstLine: 420,
   align: 'justify',
 }
@@ -31,8 +35,21 @@ describe('mergePPrFormat keeps unedited groups byte-identical', () => {
   })
 
   it('model straight from parseDocx round-trips the raw bytes', async () => {
-    const bytes = await buildDocx({ bodyXml: `<w:p>${RAW}<w:r><w:t>正文</w:t></w:r></w:p>` })
+    // firstLineChars="200" next to firstLine="420" is Word's output for a 10.5pt
+    // Normal: the parser resolves the character unit, so the document must carry
+    // the size the twips twin was computed from
+    const stylesXml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      '<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="21"/></w:rPr></w:rPrDefault></w:docDefaults>' +
+      '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+      '</w:styles>'
+    const bytes = await buildDocx({
+      bodyXml: `<w:p>${RAW}<w:r><w:t>正文</w:t></w:r></w:p>`,
+      stylesXml,
+    })
     const doc = await parseDocx(bytes)
+    expect(doc.blocks[0].format).toMatchObject({ indentLeft: 0, indentFirstLine: 420 })
     expect(mergePPrFormat(doc.blocks[0].rawPPr!, doc.blocks[0].format)).toBe(RAW)
   })
 
@@ -69,26 +86,46 @@ describe('mergePPrFormat keeps unedited groups byte-identical', () => {
   it('changing only a border color rebuilds pBdr with the declared color/sz', () => {
     const out = mergePPrFormat(RAW, {
       ...MODEL,
-      borderLines: { t: { color: '00FF00', szPt: 1.5 }, b: { color: 'FF0000', szPt: 1.5 } },
+      borderLines: {
+        t: { color: '00FF00', szPt: 1.5, spacePt: 1 },
+        b: { color: 'FF0000', szPt: 1.5, spacePt: 1 },
+      },
     })
     expect(out).toContain('<w:top w:val="single" w:sz="12" w:space="1" w:color="00FF00"/>')
     expect(out).toContain('<w:bottom w:val="single" w:sz="12" w:space="1" w:color="FF0000"/>')
     expect(out).not.toContain('dashed')
   })
 
-  it('rebuilding pBdr from a bare model writes declared color/sz', () => {
+  it('rebuilding pBdr from a bare model writes declared color/sz and a 0 space', () => {
     const out = mergePPrFormat('<w:pPr></w:pPr>', {
       borders: 'b',
       borderLines: { b: { color: '4472C4', szPt: 2.25 } },
     })
-    expect(out).toContain('<w:bottom w:val="single" w:sz="18" w:space="1" w:color="4472C4"/>')
+    expect(out).toContain('<w:bottom w:val="single" w:sz="18" w:space="0" w:color="4472C4"/>')
+  })
+
+  it('a declared w:space rebuilds per side and an unchanged one keeps the raw bytes', async () => {
+    const raw =
+      '<w:pPr><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="4F81BD"/></w:pBdr></w:pPr>'
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: `<w:p>${raw}<w:r><w:t>x</w:t></w:r></w:p>` }),
+    )
+    const format = doc.blocks[0].format!
+    expect(format.borderLines).toEqual({ b: { color: '4F81BD', szPt: 1, spacePt: 4 } })
+    expect(mergePPrFormat(raw, format)).toBe(raw)
+    const out = mergePPrFormat(raw, {
+      ...format,
+      borderLines: { b: { color: '4F81BD', szPt: 1, spacePt: 6 } },
+    })
+    expect(out).toContain('<w:bottom w:val="single" w:sz="8" w:space="6" w:color="4F81BD"/>')
   })
 
   it('changing indent rebuilds w:ind and drops the char-unit variants', () => {
     // Word prefers *Chars over the twips attrs, so a stale firstLineChars would
     // override the user's new indent — the rebuilt w:ind must not carry them
     const out = mergePPrFormat(RAW, { ...MODEL, indentFirstLine: 640 })
-    expect(out).toContain('<w:ind w:firstLine="640"/>')
+    // the explicit w:left="0" survives the rebuild (it cancels numbering/style indents)
+    expect(out).toContain('<w:ind w:left="0" w:firstLine="640"/>')
     expect(out).not.toContain('firstLineChars')
     expect(out).not.toContain('leftChars')
     expect(out).toContain('w:afterLines="50"')
