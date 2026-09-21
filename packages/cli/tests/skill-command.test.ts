@@ -5,7 +5,7 @@ import { run, tempDir } from './helpers'
 
 const REPO = resolve(__dirname, '../../..')
 const bundledVersion = /^\s+version:\s*(\S+)/m.exec(
-  readFileSync(join(REPO, 'skills/genoffice/SKILL.md'), 'utf-8'),
+  readFileSync(join(REPO, 'skills/hermesoffice/SKILL.md'), 'utf-8'),
 )![1]!
 
 function fakeMachine(agents: string[]) {
@@ -49,7 +49,7 @@ describe('genoffice skill', () => {
     expect(first.code).toBe(0)
     const path = join(m.home, '.claude', 'skills', 'hermesoffice', 'SKILL.md')
     expect(readFileSync(path, 'utf-8')).toBe(
-      readFileSync(join(REPO, 'skills/genoffice/SKILL.md'), 'utf-8'),
+      readFileSync(join(REPO, 'skills/hermesoffice/SKILL.md'), 'utf-8'),
     )
     expect(first.json().detail.agents[0]).toMatchObject({
       agent: 'claude-code',
@@ -108,7 +108,7 @@ describe('genoffice skill', () => {
     const dir = join(m.home, '.claude', 'skills', 'hermesoffice')
     mkdirSync(dir, { recursive: true })
     const path = join(dir, 'SKILL.md')
-    writeFileSync(path, '---\nname: genoffice\nmetadata:\n  version: 99.0.0\n---\nfuture\n')
+    writeFileSync(path, '---\nname: hermesoffice\nmetadata:\n  version: 99.0.0\n---\nfuture\n')
     const newer = await run(['skill', 'install', 'claude-code', '--json'], { env: m.env })
     expect(newer.code).toBe(2)
     expect(newer.json()).toMatchObject({ error: 'output_exists', detail: { status: 'newer' } })
@@ -120,7 +120,7 @@ describe('genoffice skill', () => {
     expect(occupied.code).toBe(2)
     expect(occupied.json().detail.status).toBe('occupied')
 
-    writeFileSync(path, '---\nname: genoffice\nmetadata:\n  version: 0.0.1\n---\nold\n')
+    writeFileSync(path, '---\nname: hermesoffice\nmetadata:\n  version: 0.0.1\n---\nold\n')
     const foreign = await run(['skill', 'install', 'claude-code', '--json'], { env: m.env })
     expect(foreign.code).toBe(0)
     expect(foreign.json().detail.agents[0].action).toBe('written')

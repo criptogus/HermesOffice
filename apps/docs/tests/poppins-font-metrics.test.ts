@@ -9,10 +9,10 @@ import { describe, expect, it } from 'vitest'
 import { advanceEm, readWoff2 } from './helpers/woff2-metrics'
 
 const FONTS = join(__dirname, '../src/renderer/fonts')
-const regular = readWoff2(join(FONTS, 'GenOfficePoppins-Regular-subset.woff2'))
-const bold = readWoff2(join(FONTS, 'GenOfficePoppins-Bold-subset.woff2'))
+const regular = readWoff2(join(FONTS, 'HermesOfficePoppins-Regular-subset.woff2'))
+const bold = readWoff2(join(FONTS, 'HermesOfficePoppins-Bold-subset.woff2'))
 
-describe('GenOffice Poppins (real-metric M365 cloud face)', () => {
+describe('HermesOffice Poppins (real-metric M365 cloud face)', () => {
   it('keeps the upstream 1.5em hhea line box', () => {
     for (const font of [regular, bold]) {
       const hhea = font.tables.get('hhea')!

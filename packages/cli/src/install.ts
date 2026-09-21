@@ -102,7 +102,7 @@ export function inspectCliLink(opts: InstallOptions): InstallOutcome {
 }
 
 function manualCommand(launcher: string): string {
-  return `sudo mkdir -p /usr/local/bin && sudo ln -sf "${launcher}" /usr/local/bin/genoffice`
+  return `sudo mkdir -p /usr/local/bin && sudo ln -sf "${launcher}" /usr/local/bin/hermesoffice`
 }
 
 function linkState(path: string, launcher: string): 'missing' | 'ours' | 'file' | 'foreign' {
@@ -116,9 +116,9 @@ function linkState(path: string, launcher: string): 'missing' | 'ours' | 'file' 
   }
 }
 
-/** Only launchers we shipped (<app resources>/cli/genoffice, any version or install dir) may be replaced. */
+/** Only launchers we shipped (<app resources>/cli/hermesoffice or legacy genoffice) may be replaced. */
 function isOurLauncher(target: string): boolean {
-  return /[\\/]cli[\\/]genoffice$/.test(target)
+  return /[\\/]cli[\\/](?:hermesoffice|genoffice)$/.test(target)
 }
 
 function writable(dir: string): boolean {

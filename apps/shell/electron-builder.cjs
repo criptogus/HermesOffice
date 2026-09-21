@@ -323,8 +323,8 @@ const config = {
       to: 'cli/package.json',
     },
     {
-      from: '../../skills/genoffice/SKILL.md',
-      to: 'cli/skills/genoffice/SKILL.md',
+      from: '../../skills/hermesoffice/SKILL.md',
+      to: 'cli/skills/hermesoffice/SKILL.md',
     },
     // runtime deps the genoffice bundle leaves external (jsdom for the Word/Markdown
     // paths); collected by packages/cli/collect-deps.mjs during its build

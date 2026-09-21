@@ -2491,7 +2491,7 @@ describe('fillLineBoxes — keepNext chain anchors', () => {
   ]
 
   it('keeps lines apart when tall glyph boxes overlap the next line (KR 1.3029 pitch)', () => {
-    // GenOffice Sans KR content area 1.448em under a 1.3029 line: each rect
+    // HermesOffice Sans KR content area 1.448em under a 1.3029 line: each rect
     // runs 2.35px into the next line, so a fixed 1px tolerance merged whole
     // paragraphs into one line and made them atomic at page bottoms
     const el = document.createElement('p')

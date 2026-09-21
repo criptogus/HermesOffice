@@ -28,9 +28,9 @@ export interface IntegrationsDeps {
   settingsPath: () => string
   /** the shell window dialogs attach to */
   window: () => BrowserWindow | null
-  /** directory holding genoffice / genoffice.cmd and, packaged, skills/genoffice/SKILL.md */
+  /** directory holding hermesoffice / genoffice.cmd and, packaged, skills/hermesoffice/SKILL.md */
   cliDir: string
-  /** skills/genoffice/SKILL.md (repo file in dev, Resources/cli/skills/... packaged) */
+  /** skills/hermesoffice/SKILL.md (repo file in dev, Resources/cli/skills/... packaged) */
   skillPath: string
   /** packages/cli/package.json (its version is the CLI version) */
   cliPackageJson: string

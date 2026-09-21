@@ -1,7 +1,7 @@
 /**
  * Meiryo / Meiryo UI metric aliases (fonts.css): Word renders the real faces
  * (probe 2026-09-03, advances read from Word's meiryo.ttc). Kana and JP
- * punctuation ride the bundled GenOffice UI Kana JP faces (Noto Sans JP
+ * punctuation ride the bundled HermesOffice UI Kana JP faces (Noto Sans JP
  * outlines condensed to Meiryo UI's exact per-glyph advances at full height;
  * tools/build-meiryo-ui-kana-font.py) and Latin rides a Verdana size-adjust,
  * so text advances like Meiryo instead of 1em / Helvetica widths.
@@ -33,9 +33,9 @@ describe('Meiryo UI GO', () => {
     rules.find((r) => r.range === range && r.bold === bold)
 
   it('serves kana and JP punctuation from the bundled faces without size-adjust', () => {
-    expect(find(KANA_RANGE)?.src).toBe("url('./GenOfficeUIKanaJP-Regular.woff2') format('woff2')")
+    expect(find(KANA_RANGE)?.src).toBe("url('./HermesOfficeUIKanaJP-Regular.woff2') format('woff2')")
     expect(find(KANA_RANGE, true)?.src).toBe(
-      "url('./GenOfficeUIKanaJP-Bold.woff2') format('woff2')",
+      "url('./HermesOfficeUIKanaJP-Bold.woff2') format('woff2')",
     )
     expect(find(KANA_RANGE)?.adjust).toBeUndefined()
     expect(find(KANA_RANGE, true)?.adjust).toBeUndefined()
@@ -57,9 +57,9 @@ describe('Meiryo UI GO', () => {
   })
 })
 
-describe('GenOffice UI Kana JP (Meiryo UI advances, full height)', () => {
-  const regular = readWoff2(join(FONTS, 'GenOfficeUIKanaJP-Regular.woff2'))
-  const bold = readWoff2(join(FONTS, 'GenOfficeUIKanaJP-Bold.woff2'))
+describe('HermesOffice UI Kana JP (Meiryo UI advances, full height)', () => {
+  const regular = readWoff2(join(FONTS, 'HermesOfficeUIKanaJP-Regular.woff2'))
+  const bold = readWoff2(join(FONTS, 'HermesOfficeUIKanaJP-Bold.woff2'))
   const near = (font: typeof regular, cp: number, em: number) =>
     expect(advanceEm(font, cp)).toBeCloseTo(em, 3)
 

@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { advanceEm, readWoff2 } from './helpers/woff2-metrics'
 
 const FONTS = join(__dirname, '../src/renderer/fonts')
-const sans = readWoff2(join(FONTS, 'GenOfficeSansKR-Regular-subset.woff2'))
-const serif = readWoff2(join(FONTS, 'GenOfficeSerifKR-Regular-subset.woff2'))
+const sans = readWoff2(join(FONTS, 'HermesOfficeSansKR-Regular-subset.woff2'))
+const serif = readWoff2(join(FONTS, 'HermesOfficeSerifKR-Regular-subset.woff2'))
 
 const PRIMARY_NAME_IDS = new Set([1, 2, 3, 4, 6, 16, 17, 18, 20, 21, 22, 25])
 
@@ -46,7 +46,7 @@ function primaryFontNames(font: ReturnType<typeof readWoff2>): Array<{
   return names
 }
 
-describe('GenOffice Sans KR (Malgun-normalized)', () => {
+describe('HermesOffice Sans KR (Malgun-normalized)', () => {
   it('hangul syllables and compatibility jamo stay 1.0em', () => {
     for (const cp of [0xac00, 0xae4e, 0xd558, 0x3131]) {
       expect(advanceEm(sans, cp), `U+${cp.toString(16)}`).toBe(1)
@@ -88,7 +88,7 @@ describe('GenOffice Sans KR (Malgun-normalized)', () => {
   })
 })
 
-describe('GenOffice Serif KR (Batang-normalized)', () => {
+describe('HermesOffice Serif KR (Batang-normalized)', () => {
   it('hangul 1.0em, digits 0.596em, space 0.333em', () => {
     expect(advanceEm(serif, 0xac00)).toBe(1)
     expect(advanceEm(serif, 0x3131)).toBe(1)
@@ -106,8 +106,8 @@ describe('GenOffice Serif KR (Batang-normalized)', () => {
   })
 })
 
-describe('GenOffice Che Latin KR (fixed-pitch half-width)', () => {
-  const che = readWoff2(join(FONTS, 'GenOfficeCheLatinKR.woff2'))
+describe('HermesOffice Che Latin KR (fixed-pitch half-width)', () => {
+  const che = readWoff2(join(FONTS, 'HermesOfficeCheLatinKR.woff2'))
 
   it('every printable ASCII advance is exactly 0.5em (probe 2026-08-24: real -Che faces)', () => {
     for (let cp = 0x20; cp <= 0x7e; cp++) {
@@ -116,8 +116,8 @@ describe('GenOffice Che Latin KR (fixed-pitch half-width)', () => {
   })
 })
 
-describe('GenOffice Gothic KR (real source metrics, unmodified)', () => {
-  const gothicKr = readWoff2(join(FONTS, 'GenOfficeGothicKR-Regular-subset.woff2'))
+describe('HermesOffice Gothic KR (real source metrics, unmodified)', () => {
+  const gothicKr = readWoff2(join(FONTS, 'HermesOfficeGothicKR-Regular-subset.woff2'))
 
   it('keeps the M3 probe truth: hangul 0.94em, space 0.28em, digits 0.606em', () => {
     for (const cp of [0xac00, 0xd55c, 0xae00]) {
@@ -140,8 +140,8 @@ describe('GenOffice Gothic KR (real source metrics, unmodified)', () => {
     for (const { nameId, value } of names) {
       expect(value, `name ID ${nameId}`).not.toMatch(/nanum/i)
     }
-    expect(names).toContainEqual({ nameId: 1, value: 'GenOffice Gothic KR' })
-    expect(names).toContainEqual({ nameId: 6, value: 'GenOfficeGothicKR-Regular' })
+    expect(names).toContainEqual({ nameId: 1, value: 'HermesOffice Gothic KR' })
+    expect(names).toContainEqual({ nameId: 6, value: 'HermesOfficeGothicKR-Regular' })
   })
 })
 

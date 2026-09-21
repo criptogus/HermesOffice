@@ -10,6 +10,7 @@ import {
   LEDGER_KEY,
   ledgerFromSettings,
   readInstallState,
+  SKILL_NAME,
   type AgentId,
   type AgentTarget,
   type BundledSkill,
@@ -214,7 +215,7 @@ function install(
 }
 
 function refusal(state: SkillInstallState, force: boolean): string | null {
-  if (state.status === 'occupied') return 'the genoffice folder there holds something else'
+  if (state.status === 'occupied') return `the ${SKILL_NAME} folder there holds something else`
   if (force) return null
   if (state.status === 'newer')
     return `a newer skill ${state.installedVersion} is installed; not downgrading`
@@ -232,7 +233,7 @@ function row(target: AgentTarget | null, detected: boolean, state: SkillInstallS
     agent: target?.id ?? null,
     label: target?.label ?? state.path,
     detected,
-    skills_dir: target?.skillsDir ?? state.path.replace(/[\\/]genoffice[\\/]SKILL\.md$/, ''),
+    skills_dir: target?.skillsDir ?? state.path.replace(new RegExp(`[\\\\/]${SKILL_NAME}[\\\\/]SKILL\\.md$`), ''),
     status: state.status,
     installed_version: state.installedVersion ?? null,
     up_to_date: state.status === 'installed' || state.status === 'newer',
@@ -247,7 +248,7 @@ function home(env: NodeJS.ProcessEnv): string {
 function skillFile(): string {
   const path = bundledSkillPath()
   if (!path)
-    throw new CliError(EXIT.app, 'the bundled skill (skills/genoffice/SKILL.md) was not found')
+    throw new CliError(EXIT.app, 'the bundled skill (skills/hermesoffice/SKILL.md) was not found')
   return path
 }
 

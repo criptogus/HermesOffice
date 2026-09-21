@@ -16,8 +16,8 @@ import {
   type SkillLedger,
 } from '../src/agent-skills'
 
-const skillText = (version: string, body = 'Run `genoffice --version` first.') =>
-  `---\nname: genoffice\ndescription: test\nmetadata:\n  version: ${version}\n  cli: '>=0.4.0'\n---\n\n${body}\n`
+const skillText = (version: string, body = 'Run `hermesoffice --version` first.') =>
+  `---\nname: hermesoffice\ndescription: test\nmetadata:\n  version: ${version}\n  cli: '>=0.4.0'\n---\n\n${body}\n`
 
 const bundled = (version = '1.2.0') => bundledSkillFrom(Buffer.from(skillText(version)))
 
@@ -147,10 +147,10 @@ describe('uninstallSkill', () => {
 })
 
 describe('buildSkillZip', () => {
-  it('holds genoffice/SKILL.md with the exact bundled bytes', async () => {
+  it('holds hermesoffice/SKILL.md with the exact bundled bytes', async () => {
     const b = bundled('1.2.0')
     const zip = await JSZip.loadAsync(await buildSkillZip(b))
-    expect(Object.keys(zip.files).filter((f) => !zip.files[f]!.dir)).toEqual(['genoffice/SKILL.md'])
-    expect(await zip.file('genoffice/SKILL.md')!.async('string')).toBe(b.text)
+    expect(Object.keys(zip.files).filter((f) => !zip.files[f]!.dir)).toEqual(['hermesoffice/SKILL.md'])
+    expect(await zip.file('hermesoffice/SKILL.md')!.async('string')).toBe(b.text)
   })
 })

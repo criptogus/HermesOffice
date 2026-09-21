@@ -139,7 +139,7 @@ for (const enabled of [false, true]) {
     test(`records insertion-to-frame timings at ${size} bytes, flag ${enabled}`, async ({
       page,
     }) => {
-      const seed = readFileSync(resolve(process.cwd(), 'skills/genoffice/SKILL.md'), 'utf8')
+      const seed = readFileSync(resolve(process.cwd(), 'skills/hermesoffice/SKILL.md'), 'utf8')
       let text = Buffer.from(seed.repeat(Math.ceil(size / Buffer.byteLength(seed)) + 1))
         .subarray(0, size)
         .toString('utf8')

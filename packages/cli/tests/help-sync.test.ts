@@ -12,8 +12,8 @@ import { commandHelp } from '../src/registry'
 const REPO = resolve(__dirname, '../../..')
 const README_PATH = resolve(__dirname, '..', 'README.md')
 const SKILL_CANDIDATES = [
-  resolve(REPO, 'skills/genoffice/SKILL.md'),
-  resolve(__dirname, '..', 'skills/genoffice/SKILL.md'),
+  resolve(REPO, 'skills/hermesoffice/SKILL.md'),
+  resolve(__dirname, '..', 'skills/hermesoffice/SKILL.md'),
 ]
 
 function readFirst(paths: string[], label: string): { path: string; text: string } {
