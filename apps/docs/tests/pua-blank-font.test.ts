@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { advanceEm, readWoff2 } from './helpers/woff2-metrics'
 
-const font = readWoff2(join(__dirname, '../src/renderer/fonts/HermesOfficePUABlank.woff2'))
+const font = readWoff2(join(__dirname, '../src/renderer/fonts/GenOfficePUABlank.woff2'))
 
-describe('HermesOffice PUA Blank', () => {
+describe('GenOffice PUA Blank', () => {
   it('covers the whole BMP Private Use Area at a 1em advance', () => {
     for (const cp of [0xe000, 0xe200, 0xe202, 0xf0b7, 0xf8ff]) {
       expect(font.cmap.get(cp)).toBeDefined()

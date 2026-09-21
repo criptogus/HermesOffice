@@ -4,7 +4,7 @@
  * and be reported as unrunnable when its element is gone or too deeply nested.
  */
 import { describe, it, expect } from 'vitest'
-import type { PlacedBox, RenderSlide } from '@hermesoffice/pptx-render'
+import type { PlacedBox, RenderSlide } from '@genoffice/pptx-render'
 import {
   buildPageInstruction,
   buildSelectionInstruction,

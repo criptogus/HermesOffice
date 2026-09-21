@@ -6,7 +6,6 @@ import {
   parseGskWebSearch,
   parseGskImageSearch,
   parseGskGeneratedImage,
-  parseGskConvertResult,
   parseGskPastProjects,
   extractGskText,
   parseToolCliNdjson,
@@ -25,6 +24,22 @@ describe('parseGskOutput', () => {
   it('parses multi-line JSON after noise', () => {
     const out = '[INFO] x\n{\n "a": 1\n}'
     expect(parseGskOutput(out)).toEqual({ a: 1 })
+  })
+
+  it('skips trailing log lines after JSON', () => {
+    const out = '{"status":"ok","data":[1,2]}\n[INFO] done in 120ms'
+    expect(parseGskOutput(out)).toEqual({ status: 'ok', data: [1, 2] })
+  })
+
+  it('parses multi-line JSON surrounded by leading and trailing noise', () => {
+    const out =
+      '[INFO] Calling /tools...\n{\n "a": 1,\n "b": [1, 2]\n}\n[INFO] cache hit\n[INFO] done'
+    expect(parseGskOutput(out)).toEqual({ a: 1, b: [1, 2] })
+  })
+
+  it('prefers the last JSON block when the CLI echoes an earlier payload', () => {
+    const out = '{"status":"stale"}\n[INFO] retrying\n{"status":"ok"}'
+    expect(parseGskOutput(out)).toEqual({ status: 'ok' })
   })
 
   it('throws when no JSON present', () => {
@@ -106,6 +121,17 @@ describe('parseGskWebSearch', () => {
   it('tolerates missing data', () => {
     expect(parseGskWebSearch({ status: 'ok' }, 5).results).toEqual([])
   })
+
+  it('clamps maxResults and truncates long fields', () => {
+    const big = 'x'.repeat(5000)
+    const raw = {
+      data: { organic_results: [{ title: big, link: 'https://a.com', snippet: big }] },
+    }
+    const r = parseGskWebSearch(raw, 1e9)
+    expect(r.results).toHaveLength(1)
+    expect(r.results[0]!.snippet.length).toBeLessThanOrEqual(2000)
+    expect(parseGskWebSearch(raw, NaN).results).toHaveLength(1)
+  })
 })
 
 describe('parseGskImageSearch', () => {
@@ -146,6 +172,18 @@ describe('parseGskImageSearch', () => {
     }
     const images = parseGskImageSearch(raw, 8)
     expect(images.map((i) => i.title)).toEqual(['ok'])
+  })
+
+  it('keeps benign images whose path or query merely mentions a stock host', () => {
+    const raw = {
+      data: [
+        { image_url: 'https://cdn.example.com/shutterstock-review.png', title: 'review' },
+        { image_url: 'https://img.example.com/a.jpg?ref=shutterstock', title: 'query' },
+        { image_url: 'https://media.gettyimages.com/x.jpg', title: 'blocked' },
+      ],
+    }
+    const images = parseGskImageSearch(raw, 8)
+    expect(images.map((i) => i.title)).toEqual(['review', 'query'])
   })
 })
 
@@ -226,29 +264,6 @@ describe('parseGskPastProjects', () => {
       total: 0,
       hasMore: false,
     })
-  })
-})
-
-describe('parseGskConvertResult', () => {
-  it('extracts the markdown link from the result text', () => {
-    const raw = {
-      status: 'ok',
-      data: {
-        result:
-          'Conversion complete. Download links:\n[report.docx](https://www.genspark.ai/api/files/s/JmS2WJHv)\n',
-      },
-    }
-    expect(parseGskConvertResult(raw)).toBe('https://www.genspark.ai/api/files/s/JmS2WJHv')
-  })
-
-  it('falls back to a bare URL without markdown', () => {
-    const raw = { status: 'ok', data: { result: 'Done: https://example.com/f.docx' } }
-    expect(parseGskConvertResult(raw)).toBe('https://example.com/f.docx')
-  })
-
-  it('throws when the result has no link', () => {
-    expect(() => parseGskConvertResult({ status: 'ok', data: { result: 'no link' } })).toThrow()
-    expect(() => parseGskConvertResult({ status: 'ok' })).toThrow()
   })
 })
 

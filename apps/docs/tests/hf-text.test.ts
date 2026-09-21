@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PAGE_MARK, TOTAL_PAGES_MARK, type HeaderFooter } from '@hermesoffice/docx-engine'
+import { PAGE_MARK, TOTAL_PAGES_MARK, type HeaderFooter } from '@genoffice/docx-engine'
 import { applyHfText, hfEditText } from '../src/renderer/editor/hf-text'
 
 describe('hfEditText', () => {

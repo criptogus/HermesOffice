@@ -1,5 +1,5 @@
 /** Rebuild layer round-trip: IR → docx bytes → docx-engine parseDocx (no wasm needed). */
-import { parseDocx } from '@hermesoffice/docx-engine'
+import { parseDocx } from '@genoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { encodeRgbaPng } from '../src/extract'
 import type { ImageBlock, IrPage, Line, PageSection, Span, TableBlock, TextBlock } from '../src/ir'
@@ -250,7 +250,7 @@ describe('rebuildDocx', () => {
       page([textBlock([line([span('a4')])])], { widthPt: 595, heightPt: 842 }),
     ])
     const parsed = await parseDocx(docx)
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     const section = readSectionSettings(parsed)
     expect(section.pageWidth).toBe(595 * 20)
     expect(section.pageHeight).toBe(842 * 20)
@@ -500,7 +500,7 @@ describe('rebuildDocx: sections, spacing, floats (P3)', () => {
     })
     const docx = await rebuildDocx([p])
     const parsed = await parseDocx(docx)
-    const { readSections } = await import('@hermesoffice/docx-engine')
+    const { readSections } = await import('@genoffice/docx-engine')
     const sections = readSections(parsed)
     expect(sections).toHaveLength(2)
     expect(sections[0]!.settings.columns).toBe(1)
@@ -539,7 +539,7 @@ describe('rebuildDocx: sections, spacing, floats (P3)', () => {
       ],
     })
     const parsed = await parseDocx(await rebuildDocx([p]))
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     const settings = readSectionSettings(parsed)
     expect(settings.columns).toBe(2)
     expect(settings.colWidths).toHaveLength(2)
@@ -569,7 +569,7 @@ describe('rebuildDocx: sections, spacing, floats (P3)', () => {
       ],
     })
     const parsed = await parseDocx(await rebuildDocx([p]))
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     const settings = readSectionSettings(parsed)
     expect(settings.columns).toBe(2)
     expect(settings.colWidths).toHaveLength(2)
@@ -635,7 +635,7 @@ describe('rebuildDocx: sections, spacing, floats (P3)', () => {
       ],
     })
     const parsed = await parseDocx(await rebuildDocx([p]))
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     expect(readSectionSettings(parsed).bidi).toBe(true)
     expect(readSectionSettings(parsed).columns).toBe(2)
   })
@@ -1086,7 +1086,7 @@ describe('rebuildDocx: mixed page sizes (P5)', () => {
       heightPt: 1584,
     })
     const parsed = await parseDocx(await rebuildDocx([first, tall]))
-    const { readSections } = await import('@hermesoffice/docx-engine')
+    const { readSections } = await import('@genoffice/docx-engine')
     const sections = readSections(parsed)
     expect(sections).toHaveLength(2)
     expect(sections[0]!.settings.pageWidth).toBe(595 * 20)
@@ -1119,7 +1119,7 @@ describe('rebuildDocx: blank pages (P24 A)', () => {
       heightPt: 612,
     })
     const parsed = await parseDocx(await rebuildDocx([blank, landscape]))
-    const { readSections } = await import('@hermesoffice/docx-engine')
+    const { readSections } = await import('@genoffice/docx-engine')
     const sections = readSections(parsed)
     expect(sections).toHaveLength(2)
     expect(sections[0]!.settings.pageWidth).toBe(612 * 20)
@@ -1170,7 +1170,7 @@ describe('rebuildDocx: page-fit details (P6 C)', () => {
     // content bottom at y=200 → measured bottom margin 108 (clamped), slack −24
     const block = textBlock([line([span('x')], 212)])
     const parsed = await parseDocx(await rebuildDocx([page([block])]))
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     const settings = readSectionSettings(parsed)
     expect(settings.marginBottom).toBe((108 - 24) * 20)
   })
@@ -1264,7 +1264,8 @@ describe('rebuildDocx: footnotes (P6)', () => {
     )
     expect(parsed.footnotes[0]!.text).toBe('Small print note.')
     expect(parsed.footnotes[0]!.richParas?.[0]).toEqual([
-      { text: 'Small print note.', sizeHalfPoints: 16 },
+      // the Latin face depends on the runner's installed fonts (Arial or its Liberation substitute)
+      { text: 'Small print note.', sizeHalfPoints: 16, fontAscii: expect.any(String) },
     ])
   })
 })

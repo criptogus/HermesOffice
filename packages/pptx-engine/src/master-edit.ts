@@ -101,10 +101,11 @@ export function parseMasterPart(archive: PackageArchive, partPath: string): Slid
   if (ctx.theme)
     ctx.theme.clrMap = isMaster ? parseClrMap(xml) : parseClrMap(masterXml ?? undefined, xml)
   if (isMaster) {
-    ctx.masterTextStyles = parseMasterTextStyles(xml, ctx.theme)
+    ctx.masterTextStyles = parseMasterTextStyles(xml, ctx.theme, ctx.mediaRels)
   } else if (masterXml) {
-    ctx.masterPlaceholders = parsePlaceholderMap(masterXml, ctx.theme)
-    ctx.masterTextStyles = parseMasterTextStyles(masterXml, ctx.theme)
+    if (masterPath) ctx.masterMediaRels = partMedia(archive, masterPath)
+    ctx.masterPlaceholders = parsePlaceholderMap(masterXml, ctx.theme, ctx.masterMediaRels)
+    ctx.masterTextStyles = parseMasterTextStyles(masterXml, ctx.theme, ctx.masterMediaRels)
     ctx.masterBg = masterXml
     if (masterPath) ctx.masterMediaRels = partMedia(archive, masterPath)
   }
@@ -113,7 +114,7 @@ export function parseMasterPart(archive: PackageArchive, partPath: string): Slid
 
   // Layout view renders master concrete shapes underneath (master decorations stay visible when editing a layout)
   if (!isMaster && masterXml && masterPath) {
-    if (!/<p:sldLayout\b[^>]*showMasterSp="(?:0|false)"/.test(xml)) {
+    if (!/<p:sldLayout\b[^>]*showMasterSp=(?:"(?:0|false)"|'(?:0|false)')/.test(xml)) {
       const dctx: ParseContext = { theme: ctx.theme, mediaRels: partMedia(archive, masterPath) }
       const dec = parseDecorations(masterXml, dctx, {})
       if (dec.length) slide.decorations = dec

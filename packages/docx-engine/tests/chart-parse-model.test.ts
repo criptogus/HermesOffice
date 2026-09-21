@@ -13,12 +13,12 @@ const THEME: ThemeColors = {
   accent6: 'F79646',
 }
 
-const chartSpace = (inner: string, pre = '') =>
+const chartSpace = (inner: string, pre = '', post = '') =>
   '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
   'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
   'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ' +
   'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-  `${pre}<c:chart><c:plotArea><c:layout/>${inner}</c:plotArea></c:chart></c:chartSpace>`
+  `${pre}<c:chart><c:plotArea><c:layout/>${inner}</c:plotArea>${post}</c:chart></c:chartSpace>`
 
 const numCache = (tag: string, values: (number | string)[], fmt = 'General') =>
   `<c:${tag}><c:numRef><c:f>S!$A$1</c:f><c:numCache><c:formatCode>${fmt}</c:formatCode>` +
@@ -166,6 +166,49 @@ describe('parseChartPartXml scatter and bubble', () => {
   })
 })
 
+describe('parseChartPartXml doughnut hole and legend position', () => {
+  const pieSer =
+    `<c:ser><c:idx val="0"/><c:order val="0"/>${strCache('tx', ['S1'])}` +
+    `${strCache('cat', ['A', 'B'])}${numCache('val', [67, 33])}</c:ser>`
+  const doughnut = (hole: string) =>
+    chartSpace(`<c:doughnutChart><c:varyColors val="1"/>${pieSer}${hole}</c:doughnutChart>`)
+
+  it('reads doughnut charts as pie carrying the hole size', () => {
+    const display = parseChartPartXml(doughnut('<c:holeSize val="65"/>'), 'p')!
+    expect(display.kind).toBe('pie')
+    expect(display.holePct).toBe(65)
+  })
+
+  it('defaults the hole to 50% when c:holeSize is absent', () => {
+    expect(parseChartPartXml(doughnut(''), 'p')!.holePct).toBe(50)
+  })
+
+  it('defaults the hole to 50% when c:holeSize is unparseable', () => {
+    expect(parseChartPartXml(doughnut('<c:holeSize val="large"/>'), 'p')!.holePct).toBe(50)
+  })
+
+  it('leaves plain pies without a hole', () => {
+    const xml = chartSpace(`<c:pieChart><c:varyColors val="1"/>${pieSer}</c:pieChart>`)
+    expect(parseChartPartXml(xml, 'p')!.holePct).toBeUndefined()
+  })
+
+  it('reads the legend position, defaulting an empty c:legend to right', () => {
+    const pie = (legend: string) =>
+      chartSpace(`<c:pieChart><c:varyColors val="1"/>${pieSer}</c:pieChart>`, '', legend)
+    expect(
+      parseChartPartXml(
+        pie('<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend>'),
+        'p',
+      )!.legendPos,
+    ).toBe('r')
+    expect(
+      parseChartPartXml(pie('<c:legend><c:legendPos val="b"/></c:legend>'), 'p')!.legendPos,
+    ).toBe('b')
+    expect(parseChartPartXml(pie('<c:legend/>'), 'p')!.legendPos).toBe('r')
+    expect(parseChartPartXml(pie(''), 'p')!.legendPos).toBeUndefined()
+  })
+})
+
 describe('parseChartexPartXml leniency', () => {
   it('parses a waterfall whose cx:chartData was renamed (unknown-element corpus)', () => {
     const xml =
@@ -182,5 +225,188 @@ describe('parseChartexPartXml leniency', () => {
     const display = parseChartPartXml(xml, 'word/charts/chartEx1.xml')!
     expect(display.kind).toBe('bar')
     expect(display.series[0]).toEqual({ name: 'Series1', values: [100, -40, 60] })
+  })
+})
+
+describe('parseChartPartXml presentation features', () => {
+  const lineSer = (i: number, values: number[], extra = '') =>
+    `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${strCache('tx', [`S${i + 1}`])}${extra}` +
+    `${strCache('cat', ['A', 'B', 'C'])}${numCache('val', values)}</c:ser>`
+  const axes =
+    '<c:catAx><c:axId val="1"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx>' +
+    '<c:valAx><c:axId val="2"/><c:axPos val="l"/><c:title/><c:crossAx val="1"/></c:valAx>'
+
+  it('reads radar charts with their style and honors symbol="none" over the marker style', () => {
+    const radar = (style: string, marker = '') =>
+      chartSpace(
+        `<c:radarChart><c:radarStyle val="${style}"/>${lineSer(0, [1, 2, 3], marker)}</c:radarChart>`,
+      )
+    const filled = parseChartPartXml(radar('filled'), 'p')!
+    expect(filled.kind).toBe('radar')
+    expect(filled.radarStyle).toBe('filled')
+    expect(filled.markers).toBeUndefined()
+    expect(parseChartPartXml(radar('marker'), 'p')!.markers).toBe(true)
+    const off = '<c:marker><c:symbol val="none"/></c:marker>'
+    expect(parseChartPartXml(radar('marker', off), 'p')!.markers).toBeUndefined()
+    expect(parseChartPartXml(radar('standard'), 'p')!.radarStyle).toBe('standard')
+  })
+
+  it('keeps stacked grouping on line charts', () => {
+    const xml = chartSpace(
+      `<c:lineChart><c:grouping val="stacked"/>${lineSer(0, [1, 2, 3])}${lineSer(1, [1, 1, 1])}` +
+        `<c:marker val="1"/></c:lineChart>`,
+    )
+    const display = parseChartPartXml(xml, 'p')!
+    expect(display.grouping).toBe('stacked')
+    expect(display.markers).toBe(true)
+  })
+
+  it('reads pie explosion and percent data labels', () => {
+    const ser =
+      `<c:ser><c:idx val="0"/><c:order val="0"/>${strCache('tx', ['S1'])}` +
+      `<c:explosion val="25"/><c:dLbls><c:showPercent val="1"/></c:dLbls>` +
+      `${strCache('cat', ['A', 'B'])}${numCache('val', [3, 1])}</c:ser>`
+    const display = parseChartPartXml(chartSpace(`<c:pieChart>${ser}</c:pieChart>`), 'p')!
+    expect(display.explosionPct).toBe(25)
+    expect(display.dataLabels).toEqual({ pct: true })
+  })
+
+  it('flags parts without c:legend and resolves the chart-area border', () => {
+    const line = (post = '', spPr = '') =>
+      chartSpace(`<c:lineChart>${lineSer(0, [1, 2, 3])}</c:lineChart>`, '', post + spPr)
+    const bare = parseChartPartXml(line(), 'p')!
+    expect(bare.noLegend).toBe(true)
+    expect(bare.legendPos).toBeUndefined()
+    // Word's automatic border shows on parts without c:chartSpace/c:spPr
+    expect(bare.frameLine).toBe('868686')
+    const withLegend = parseChartPartXml(line('<c:legend><c:legendPos val="t"/></c:legend>'), 'p')!
+    expect(withLegend.legendPos).toBe('t')
+    expect(withLegend.noLegend).toBeUndefined()
+    const noBorder =
+      '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
+      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      `<c:chart><c:plotArea><c:lineChart>${lineSer(0, [1, 2, 3])}</c:lineChart></c:plotArea></c:chart>` +
+      '<c:spPr><a:ln><a:noFill/></a:ln></c:spPr></c:chartSpace>'
+    expect(parseChartPartXml(noBorder, 'p')!.frameLine).toBeUndefined()
+    const gray = noBorder.replace(
+      '<a:ln><a:noFill/></a:ln>',
+      '<a:ln><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln>',
+    )
+    expect(parseChartPartXml(gray, 'p')!.frameLine).toBe('D9D9D9')
+  })
+
+  it('classifies axes by position with placeholder titles and automatic lines', () => {
+    const xml = chartSpace(`<c:lineChart>${lineSer(0, [1, 2, 3])}</c:lineChart>${axes}`)
+    const display = parseChartPartXml(xml, 'p', THEME)!
+    expect(display.xAxis).toEqual({ line: '404040' })
+    // an empty c:title shows Word's placeholder text
+    expect(display.yAxis).toEqual({ title: 'Axis Title', line: '404040' })
+    const titled = xml.replace(
+      '<c:title/>',
+      '<c:title><c:tx><c:rich><a:p><a:r><a:t>Units</a:t></a:r></a:p></c:rich></c:tx></c:title>',
+    )
+    expect(parseChartPartXml(titled, 'p')!.yAxis!.title).toBe('Units')
+    const hidden = xml.replace(
+      '<c:axPos val="b"/>',
+      '<c:axPos val="b"/><c:delete val="1"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr>',
+    )
+    expect(parseChartPartXml(hidden, 'p')!.xAxis).toEqual({ deleted: true })
+  })
+
+  it('reads the data table flags', () => {
+    const xml = chartSpace(
+      `<c:barChart><c:barDir val="col"/>${lineSer(0, [1, 2, 3])}</c:barChart>${axes}` +
+        '<c:dTable><c:showHorzBorder val="1"/><c:showVertBorder val="1"/><c:showOutline val="1"/><c:showKeys val="1"/></c:dTable>',
+    )
+    expect(parseChartPartXml(xml, 'p')!.dataTable).toEqual({
+      keys: true,
+      horz: true,
+      vert: true,
+      outline: true,
+      line: '404040',
+    })
+    expect(
+      parseChartPartXml(xml.replace(/<c:dTable>.*<\/c:dTable>/, ''), 'p')!.dataTable,
+    ).toBeUndefined()
+  })
+})
+
+describe('parseChartPartXml text sizes and label overrides', () => {
+  const rPr = (sz: number, color = '000000') =>
+    `<a:pPr><a:defRPr sz="${sz}"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:defRPr></a:pPr>`
+  const txPr = (sz: number, color?: string) =>
+    `<c:txPr><a:bodyPr/><a:lstStyle/><a:p>${rPr(sz, color)}</a:p></c:txPr>`
+  const flags = (val: number, cat: number, pct: number) =>
+    `<c:showLegendKey val="0"/><c:showVal val="${val}"/><c:showCatName val="${cat}"/>` +
+    `<c:showSerName val="0"/><c:showPercent val="${pct}"/><c:showBubbleSize val="0"/>`
+  const title =
+    '<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1800"/></a:pPr>' +
+    '<a:r><a:rPr sz="1800"/><a:t>Revenue</a:t></a:r></a:p></c:rich></c:tx></c:title>'
+
+  it('reads title, axis and legend sizes, axis label color and major gridline color', () => {
+    const chart = parseChartPartXml(
+      chartSpace(
+        `<c:barChart><c:barDir val="col"/>${barSer(0, [1, 2])}<c:axId val="1"/><c:axId val="2"/></c:barChart>` +
+          `<c:catAx><c:axId val="1"/><c:axPos val="b"/>${txPr(1200, '000000')}<c:crossAx val="2"/></c:catAx>` +
+          '<c:valAx><c:axId val="2"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln>' +
+          '<a:solidFill><a:srgbClr val="888888"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>' +
+          `${txPr(1200)}<c:crossAx val="1"/></c:valAx>`,
+        '',
+        `${title}<c:legend><c:legendPos val="b"/>${txPr(900)}</c:legend>`,
+      ),
+      'word/charts/chart1.xml',
+      THEME,
+    )!
+    expect(chart.titleFontPt).toBe(18)
+    expect(chart.legendFontPt).toBe(9)
+    expect(chart.xAxis).toMatchObject({ fontPt: 12, color: '000000' })
+    expect(chart.yAxis).toMatchObject({ fontPt: 12, gridLine: '888888' })
+  })
+
+  it('gives an automatic major gridline the Office tint and none without c:majorGridlines', () => {
+    const axes = (grid: string) =>
+      `<c:barChart><c:barDir val="col"/>${barSer(0, [1, 2])}<c:axId val="1"/><c:axId val="2"/></c:barChart>` +
+      '<c:catAx><c:axId val="1"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx>' +
+      `<c:valAx><c:axId val="2"/><c:axPos val="l"/>${grid}<c:crossAx val="1"/></c:valAx>`
+    const auto = parseChartPartXml(chartSpace(axes('<c:majorGridlines/>')), 'p', THEME)!
+    expect(auto.yAxis?.gridLine).toBe('D9D9D9')
+    const none = parseChartPartXml(chartSpace(axes('')), 'p', THEME)!
+    expect(none.yAxis?.gridLine).toBeUndefined()
+    expect(none.titleFontPt).toBeUndefined()
+  })
+
+  it('reads bar value labels with their size, color and number format', () => {
+    const dLbls = `<c:dLbls><c:numFmt formatCode="#,##0" sourceLinked="0"/>${txPr(1200, '000000')}${flags(1, 0, 0)}</c:dLbls>`
+    const chart = parseChartPartXml(
+      chartSpace(`<c:barChart><c:barDir val="col"/>${barSer(0, [1997, 2213], dLbls)}</c:barChart>`),
+      'p',
+      THEME,
+    )!
+    expect(chart.dataLabels).toEqual({ val: true, fontPt: 12, color: '000000', numFmt: '#,##0' })
+  })
+
+  it('lets per-point c:dLbl blocks covering every point override the series flags', () => {
+    const point = (i: number) =>
+      `<c:dLbl><c:idx val="${i}"/><c:numFmt formatCode="0%" sourceLinked="0"/>${txPr(1200)}${flags(0, 0, 1)}</c:dLbl>`
+    const dLbls =
+      `<c:dLbls>${point(0)}${point(1)}<c:numFmt formatCode="0%" sourceLinked="0"/>${txPr(1800)}` +
+      `${flags(0, 1, 1)}</c:dLbls>`
+    const full = parseChartPartXml(
+      chartSpace(
+        `<c:doughnutChart>${barSer(0, [3, 7], dLbls)}<c:holeSize val="50"/></c:doughnutChart>`,
+      ),
+      'p',
+      THEME,
+    )!
+    // Word shows only what the point blocks enable (percent, 12pt), not the series category names
+    expect(full.dataLabels).toEqual({ pct: true, fontPt: 12, color: '000000', numFmt: '0%' })
+    const partial = parseChartPartXml(
+      chartSpace(
+        `<c:doughnutChart>${barSer(0, [3, 7], `<c:dLbls>${point(0)}${txPr(1800)}${flags(0, 1, 1)}</c:dLbls>`)}</c:doughnutChart>`,
+      ),
+      'p',
+      THEME,
+    )!
+    expect(partial.dataLabels).toEqual({ pct: true, cat: true, fontPt: 18, color: '000000' })
   })
 })

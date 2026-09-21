@@ -12,7 +12,7 @@
  * mathNotEqual, circularArrow (approximated multi-adj geometries where a
  * faithful inverse doesn't exist).
  */
-import type { ShapeRenderNode } from '@hermesoffice/pptx-render'
+import type { ShapeRenderNode } from '@genoffice/pptx-render'
 
 /** Raw adjust getter: current value or the preset default. */
 type AdjVal = (name: string, def: number) => number

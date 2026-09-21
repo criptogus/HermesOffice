@@ -1,7 +1,7 @@
 import type { Node as PmNode } from '@tiptap/pm/model'
 import type { Command, EditorState, Transaction } from '@tiptap/pm/state'
 import { isInTable, selectedRect } from '@tiptap/pm/tables'
-import type { TableAutoFitMode, TableLook } from '@hermesoffice/docx-engine'
+import type { TableAutoFitMode, TableLook } from '@genoffice/docx-engine'
 
 interface SelectedTable {
   node: PmNode

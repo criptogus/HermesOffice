@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { Dropdown } from '@hermesoffice/ui'
+import { Dropdown } from '@genoffice/ui'
 import { pdfRectToCss } from './annotations'
 import type { PageGeom } from './annotations'
 import type { FormValueInput } from '../shared/ipc'

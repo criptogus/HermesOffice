@@ -95,8 +95,7 @@ describe('printHtmlToPdf', () => {
   })
 
   it('removes the temp dir when the window cannot be created', async () => {
-    const leftovers = () =>
-      readdirSync(tmpdir()).filter((d) => d.startsWith('hermesoffice-ai-doc-'))
+    const leftovers = () => readdirSync(tmpdir()).filter((d) => d.startsWith('genoffice-ai-doc-'))
     const before = leftovers().length
     await expect(
       printHtmlToPdf(buildPrintableHtml('Test', ''), () => {

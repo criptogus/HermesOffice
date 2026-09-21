@@ -4,7 +4,7 @@
 /// translate screen → file, streamed results translate file → screen; rows
 /// and columns inserted this session have no file backing (`null`).
 
-import type { StructuralOp } from '../gateway/xlsx-structure'
+import type { StructuralOp } from '@genoffice/xlsx-gateway/gateway/xlsx-structure'
 import type { WorkbookRangeResult } from '../shared/desktop-api'
 
 export type Axis = 'row' | 'column'
@@ -124,6 +124,22 @@ export function screenToFile(
     }
   }
   return position
+}
+
+/// Screen position of a file line, falling back to the nearest earlier
+/// surviving line when it was deleted this session. Positional by design:
+/// inserts or deletes past the line must not move it (Ctrl+End's used-range
+/// target — a distant insert in the empty grid is not an extension).
+export function lastSurvivingScreenLine(
+  ops: readonly StructuralOp[],
+  axis: Axis,
+  fileIndex: number,
+): number | null {
+  for (let index = fileIndex; index >= 0; index -= 1) {
+    const screen = fileToScreen(ops, axis, index)
+    if (screen !== null) return screen
+  }
+  return null
 }
 
 /// Net size change of an axis: screen extent = file extent + delta.

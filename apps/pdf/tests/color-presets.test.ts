@@ -68,3 +68,12 @@ describe('hsv <-> rgb conversions', () => {
         }
   })
 })
+
+describe('rgb255ToHex', () => {
+  it('clamps and rounds out-of-range channels to valid hex', () => {
+    expect(rgb255ToHex([300, -5, 12.6])).toBe('#ff000d')
+    expect(rgb255ToHex([0, 0, 0])).toBe('#000000')
+    expect(rgb255ToHex([255, 255, 255])).toBe('#ffffff')
+    expect(rgb255ToHex([300, -5, 12.6])).toMatch(/^#[0-9a-f]{6}$/)
+  })
+})

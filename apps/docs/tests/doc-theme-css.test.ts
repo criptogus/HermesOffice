@@ -4,13 +4,13 @@
  * immediately.
  */
 import { describe, expect, it } from 'vitest'
-import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@hermesoffice/docx-engine'
+import type { ParsedDocFull, StyleDisplay, StyleInfo } from '@genoffice/docx-engine'
 import { docLineFactor, docStyleCss, docThemeCss } from '../src/renderer/doc-style-css'
 
 describe('docThemeCss', () => {
   it('emits body and heading fonts from the theme font pair', () => {
     const css = docThemeCss({ major: 'Trebuchet MS', minor: 'Trebuchet MS' }, null)
-    expect(css).toContain('.doc-page {')
+    expect(css).toContain('.doc-page, .pv-page {')
     expect(css).toContain('Trebuchet MS')
     expect(css).toContain('.doc-page h1')
   })
@@ -58,6 +58,11 @@ describe('docLineFactor — CJK factor source', () => {
   it('a Latin-only Normal (font === fontAscii) does not override the docDefaults EA font', () => {
     const parsed = parsedWith({ font: 'Calibri', fontAscii: 'Calibri' }, 'SimSun')
     expect(docLineFactor(parsed, true)).toBe(1.3029)
+  })
+
+  it('a same-slot Japanese Normal (Meiryo in every slot) is an EA choice, not Latin-only', () => {
+    const parsed = parsedWith({ font: 'メイリオ', fontAscii: 'メイリオ' }, undefined)
+    expect(docLineFactor(parsed, true)).toBe(1.9429)
   })
 
   it('falls back to the SimSun-class factor without any declared EA font', () => {
@@ -124,7 +129,7 @@ describe('docStyleCss — typed line grid', () => {
     expect(css).toContain('--doc-grid-single-mult:1')
     // snapToGrid=0 paragraphs degrade to natural x mult on the paragraph AND its spans
     expect(css).toContain(
-      '.doc-page .doc-nosnap, .doc-page .doc-nosnap * { --doc-line-max:calc(var(--doc-line-factor,1.2) * 1em * var(--doc-line-mult,1)) }',
+      '.doc-page :is(.doc-nosnap, .doc-grid-nosnap), .doc-page :is(.doc-nosnap, .doc-grid-nosnap) * { --doc-line-max:calc(var(--doc-line-factor,1.2) * 1em * var(--doc-line-mult,1)) }',
     )
   })
 
@@ -153,10 +158,10 @@ describe('docStyleCss — style indent vs list geometry', () => {
   it('style w:ind skips list items and becomes the --li-left fallback', () => {
     const css = docStyleCss(parsedWithStyle({ indentLeftTwips: 720 }))
     expect(css).toContain(
-      '.doc-page [data-style="ListParagraph"]:not(.doc-li) { margin-inline-start:36.0pt }',
+      '.doc-page [data-style="ListParagraph"]:not(.doc-li, .doc-li-stray) { margin-inline-start:36.0pt }',
     )
     expect(css).toContain(
-      '.doc-page .doc-li[data-style="ListParagraph"] { --style-li-left:36.0pt }',
+      '.doc-page :is(.doc-li, .doc-li-stray)[data-style="ListParagraph"] { --style-li-left:36.0pt }',
     )
     expect(css).not.toContain('margin-left')
   })

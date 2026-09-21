@@ -1,14 +1,14 @@
 import { ANTHROPIC_BASE_URL } from './protocols/anthropic'
 import { GEMINI_BASE_URL } from './protocols/gemini'
-import { AI_PROVIDERS, GENSPARK_LLM_BASE_URLS, HERMES_LLM_BASE_URL } from './providers'
+import { AI_PROVIDERS, GENSPARK_LLM_BASE_URLS } from './providers'
 import type { AiProviderConfig, AiProviderId, AiProviderMeta } from './types'
 
-/** The three wire protocols every provider maps onto. */
-export type AiProtocol = 'anthropic' | 'gemini' | 'openai-compatible'
+/** Wire protocols every provider maps onto, including the official Codex app-server bridge. */
+export type AiProtocol = 'anthropic' | 'gemini' | 'openai-compatible' | 'codex-app-server'
 
 export interface ProviderCapabilities {
-  /** 'gsk-login': the Genspark session key is injected by the main process; 'api-key': the user supplies their own key */
-  auth: 'gsk-login' | 'api-key'
+  /** How the provider authenticates: app login, user key, or the Codex CLI's existing login. */
+  auth: 'gsk-login' | 'api-key' | 'codex-chatgpt'
   /** chat models accept image input (declarative; for custom endpoints it is assumed, not known) */
   vision: boolean
 }
@@ -39,20 +39,26 @@ function metaOf(id: AiProviderId): AiProviderMeta {
  * Model families that fix sampling and reject a temperature field, on any
  * route — vendor API, the Genspark proxy, OpenRouter's vendor-prefixed ids,
  * or a mirror behind a custom base URL. Kimi K3 answers "only 1 is allowed";
- * OpenAI's GPT-5 reasoning family rejects any temperature other than the
- * default outright.
+ * OpenAI's GPT-5 and GPT-6 reasoning families reject any temperature other
+ * than the default outright, and the o-series reasoning models (o1/o3/o4) likewise
+ * only accept the default. Google's Gemini 3 docs strongly recommend keeping
+ * the default temperature of 1.0 for the whole Gemini 3 family, since lower
+ * values may cause looping or degraded reasoning, so our hard-coded 0.3
+ * must not be sent there either.
  */
 export function modelHasFixedSampling(model: string): boolean {
-  return /(^|\/)(kimi-k3|gpt-5)/.test(model)
+  return /(^|\/)(kimi-k3([^\w]|$)|gpt-[5-9]([^\w]|$)|gemini-3([^\w]|$)|o1(-mini|-preview)?([^\w]|$)|o3(-mini)?([^\w]|$)|o4-mini([^\w]|$))/i.test(
+    model,
+  )
 }
 
 /**
  * Model ids that reject image input even under a vision-capable provider.
- * DeepSeek V4 Pro and Flash are text-only; their -vision* branches are
- * excluded so the direct Vision Exp model can receive screenshots.
+ * DeepSeek V4 Pro and V4 Flash are text-only; V4.1 Flash and the -vision*
+ * branches take images, so they fall through and receive screenshots.
  */
 export function modelLacksVision(model: string): boolean {
-  return /(^|\/)deep-?seek-v4-(?:pro(?:$|-)|flash(?!-vision))/.test(model)
+  return /(^|\/)deep-?seek-v4-(?:pro(?:$|-)|flash(?!-vision))/i.test(model)
 }
 
 /**
@@ -62,7 +68,7 @@ export function modelLacksVision(model: string): boolean {
  * per model because other vendors may reject the unknown field.
  */
 export function modelEchoesReasoning(model: string): boolean {
-  return /(^|\/)(minimax-m|deep-?seek-v4)/i.test(model)
+  return /(^|\/)(minimax-m|deep-?seek-(v4|flash))/i.test(model)
 }
 
 /**
@@ -74,6 +80,39 @@ export function modelEchoesReasoning(model: string): boolean {
  * alias did — until the transcript can round-trip reasoning.
  */
 const DEEPSEEK_NON_THINKING = { thinking: { type: 'disabled' } }
+
+/**
+ * OpenCode Zen / Go (opencode.ai) are protocol passthrough gateways: each
+ * model is served on exactly one vendor protocol and the other paths answer
+ * 500 (verified 2026-09-03 against the public free tier), so the route is
+ * picked per model id the way OpenCode's own client does (models.dev
+ * `provider.npm`). The two tiers route the same vendor differently — MiniMax
+ * is chat-completions on Zen but Anthropic Messages on Go — hence one table
+ * each. Every Kimi id omits temperature, mirroring the direct Kimi adapter.
+ */
+const OPENCODE_GATEWAY_ROOTS = {
+  zen: 'https://opencode.ai/zen',
+  go: 'https://opencode.ai/zen/go',
+} as const
+
+function opencodeEndpoint(
+  root: string,
+  routes: { anthropic: RegExp; gemini?: RegExp },
+): (config: AiProviderConfig) => ResolvedEndpoint {
+  return (config) => {
+    // a stored base URL replaces the gateway root; the documented `/v1` API base is tolerated
+    const base = (config.baseUrl || root).replace(/\/+$/, '').replace(/\/v1$/, '')
+    const model = config.model ?? ''
+    const omit =
+      model !== '' && (modelHasFixedSampling(model) || model.toLowerCase().startsWith('kimi-'))
+    const sampling = omit ? { omitTemperature: true as const } : {}
+    if (routes.anthropic.test(model)) return { protocol: 'anthropic', baseUrl: base, ...sampling }
+    if (routes.gemini?.test(model)) {
+      return { protocol: 'gemini', baseUrl: `${base}/v1`, ...sampling }
+    }
+    return { protocol: 'openai-compatible', baseUrl: `${base}/v1`, ...sampling }
+  }
+}
 
 /** a stored baseUrl overrides the default endpoint (regional mirrors, e.g. api.moonshot.cn vs .ai) */
 function fixedEndpoint(
@@ -98,35 +137,28 @@ function fixedEndpoint(
 }
 
 export const AI_PROVIDER_ADAPTERS: Record<AiProviderId, ProviderAdapter> = {
-  hermes: {
-    meta: metaOf('hermes'),
-    capabilities: { auth: 'api-key', vision: true },
-    // Fork: the local Hermes gateway speaks the OpenAI-compatible protocol; baseUrl
-    // comes from settings, defaulting to the local gateway when unset.
-    resolveEndpoint(config) {
-      return {
-        protocol: 'openai-compatible',
-        baseUrl: config.baseUrl || HERMES_LLM_BASE_URL,
-      }
-    },
-  },
   genspark: {
     meta: metaOf('genspark'),
     capabilities: { auth: 'gsk-login', vision: true },
-    // The proxy exposes three protocol-specific endpoints; route by model id prefix: claude uses
-    // the Anthropic protocol (preserves image input fidelity), gemini uses Gemini, rest OpenAI-compatible
+    // Route by model id prefix: claude uses the Anthropic protocol (preserves image
+    // input fidelity), the rest OpenAI-compatible. The proxy's gemini endpoint was
+    // removed server-side (405 as of 2026-08-31) along with its gemini models.
     resolveEndpoint(config) {
       if (config.model.startsWith('claude')) {
         return { protocol: 'anthropic', baseUrl: GENSPARK_LLM_BASE_URLS.anthropic }
-      }
-      if (config.model.startsWith('gemini')) {
-        return { protocol: 'gemini', baseUrl: GENSPARK_LLM_BASE_URLS.gemini }
       }
       return {
         protocol: 'openai-compatible',
         baseUrl: GENSPARK_LLM_BASE_URLS.openai,
         ...(modelHasFixedSampling(config.model) ? { omitTemperature: true } : {}),
       }
+    },
+  },
+  codex: {
+    meta: metaOf('codex'),
+    capabilities: { auth: 'codex-chatgpt', vision: true },
+    resolveEndpoint() {
+      return { protocol: 'codex-app-server', baseUrl: '' }
     },
   },
   anthropic: {
@@ -199,6 +231,37 @@ export const AI_PROVIDER_ADAPTERS: Record<AiProviderId, ProviderAdapter> = {
     meta: metaOf('openrouter'),
     capabilities: { auth: 'api-key', vision: true },
     resolveEndpoint: fixedEndpoint('openai-compatible', 'https://openrouter.ai/api/v1'),
+  },
+  requesty: {
+    meta: metaOf('requesty'),
+    capabilities: { auth: 'api-key', vision: true },
+    // a stored base URL selects a regional router (https://router.eu.requesty.ai/v1 for the EU)
+    resolveEndpoint: fixedEndpoint('openai-compatible', 'https://router.requesty.ai/v1'),
+  },
+  opper: {
+    meta: metaOf('opper'),
+    capabilities: { auth: 'api-key', vision: true },
+    // one chat-completions endpoint for every pool and vendor route; the model id picks it
+    resolveEndpoint: fixedEndpoint('openai-compatible', 'https://api.opper.ai/v3/compat'),
+  },
+  'opencode-zen': {
+    meta: metaOf('opencode-zen'),
+    capabilities: { auth: 'api-key', vision: true },
+    // Claude and Qwen ride /v1/messages, Gemini its native generateContent path
+    resolveEndpoint: opencodeEndpoint(OPENCODE_GATEWAY_ROOTS.zen, {
+      anthropic: /^(claude-|qwen)/,
+      gemini: /^gemini-/,
+    }),
+  },
+  'opencode-go': {
+    meta: metaOf('opencode-go'),
+    capabilities: { auth: 'api-key', vision: true },
+    // MiniMax and Qwen 3.8 Flash ride /v1/messages; the rest is chat-completions
+    // (the Go docs table lists every Qwen on Messages, but the client config
+    // OpenCode ships routes only 3.8 Flash there — follow the running client)
+    resolveEndpoint: opencodeEndpoint(OPENCODE_GATEWAY_ROOTS.go, {
+      anthropic: /^(minimax-|qwen3\.8-flash$)/,
+    }),
   },
   custom: {
     meta: metaOf('custom'),

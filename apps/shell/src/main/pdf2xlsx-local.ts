@@ -1,7 +1,7 @@
 /**
  * Local PDF → Excel conversion for the shell's pdf tabs (pdf2xlsx P26).
  * Mirrors pdf2pptx-local.ts: same lazy PDFium wasm singleton (shared via
- * ensurePdfium), same password retry loop, pure @hermesoffice/pdf2docx pipeline
+ * ensurePdfium), same password retry loop, pure @genoffice/pdf2docx pipeline
  * in the main process. Imported by relative path so the bundled shell main
  * carries the package inline.
  */

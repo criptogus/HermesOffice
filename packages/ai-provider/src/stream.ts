@@ -1,9 +1,11 @@
-import type { AgentMessage, AgentToolDef } from '@hermesoffice/agent-core'
+import type { AgentMessage, AgentToolDef } from '@genoffice/agent-core'
+import { withOutputCapFallback } from './output-cap'
 import { streamAnthropic } from './protocols/anthropic'
 import { streamGemini } from './protocols/gemini'
 import { streamOpenAiCompatible } from './protocols/openai-compatible'
+import { streamCodexAppServer } from './codex-app-server'
 import type { StreamCallbacks } from './protocols/shared'
-import { getProviderAdapter } from './registry'
+import { getProviderAdapter, type AiProtocol } from './registry'
 import type { AiProviderConfig, AiProviderId } from './types'
 
 export { streamAnthropic } from './protocols/anthropic'
@@ -21,33 +23,27 @@ export async function streamForProvider(
   tools: AgentToolDef[],
   maxTokens: number,
   cb: StreamCallbacks,
-  sessionId?: string,
 ): Promise<void> {
   const endpoint = getProviderAdapter(provider).resolveEndpoint(config)
   const { baseUrl } = endpoint
-  const openAiOptions = {
-    omitTemperature: endpoint.omitTemperature,
-    useMaxCompletionTokens: endpoint.useMaxCompletionTokens,
-    bodyExtras: endpoint.bodyExtras,
-    // Fork: stable per-document session forwarded as X-Hermes-Session-Id so the
-    // local gateway keeps one session per doc.
-    ...(sessionId ? { extraHeaders: { 'X-Hermes-Session-Id': sessionId } } : {}),
+  if (endpoint.protocol === 'codex-app-server') {
+    return streamCodexAppServer(config, system, messages, tools, maxTokens, cb)
   }
-  switch (endpoint.protocol) {
-    case 'anthropic':
-      return streamAnthropic(config, system, messages, tools, maxTokens, cb, baseUrl)
-    case 'gemini':
-      return streamGemini(config, system, messages, tools, maxTokens, cb, baseUrl)
-    case 'openai-compatible':
-      return streamOpenAiCompatible(
-        baseUrl,
-        config,
-        system,
-        messages,
-        tools,
-        maxTokens,
-        cb,
-        openAiOptions,
-      )
-  }
+  const protocol: Exclude<AiProtocol, 'codex-app-server'> = endpoint.protocol
+  return withOutputCapFallback(baseUrl, config.model, maxTokens, (cap) => {
+    switch (protocol) {
+      case 'anthropic':
+        return streamAnthropic(config, system, messages, tools, cap, cb, baseUrl)
+      case 'gemini':
+        return streamGemini(config, system, messages, tools, cap, cb, baseUrl, {
+          omitTemperature: endpoint.omitTemperature,
+        })
+      case 'openai-compatible':
+        return streamOpenAiCompatible(baseUrl, config, system, messages, tools, cap, cb, {
+          omitTemperature: endpoint.omitTemperature,
+          useMaxCompletionTokens: endpoint.useMaxCompletionTokens,
+          bodyExtras: endpoint.bodyExtras,
+        })
+    }
+  })
 }

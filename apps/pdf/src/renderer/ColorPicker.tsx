@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { ReactElement } from 'react'
-import { ColorPicker } from '@hermesoffice/ui'
+import { ColorPicker } from '@genoffice/ui'
 import { useI18n } from './i18n/locale'
 import { isHexColor } from './color-presets'
 

@@ -178,7 +178,7 @@ export async function printHtmlToPdf(
   html: PrintableHtml,
   createWindow: () => PrintWindow,
 ): Promise<Buffer> {
-  const workDir = await mkdtemp(join(tmpdir(), 'hermesoffice-ai-doc-'))
+  const workDir = await mkdtemp(join(tmpdir(), 'genoffice-ai-doc-'))
   let printWin: PrintWindow | undefined
   try {
     printWin = createWindow()

@@ -1,6 +1,6 @@
 /** Empty stroke-frame extraction (P16 K): hand-built strokes, no wasm. */
 import { describe, expect, it } from 'vitest'
-import { extractEmptyFrames } from '../src/analyze'
+import { extractEmptyFrames, frameImage } from '../src/analyze'
 import type { Stroke } from '../src/ir'
 
 const h = (x0: number, x1: number, y: number, w = 1): Stroke => ({
@@ -59,5 +59,26 @@ describe('extractEmptyFrames (P16 K)', () => {
     const strokes = [h(71, 522, 367), h(71, 522, 329), v(329, 367, 71)]
     expect(extractEmptyFrames(strokes, [], [])).toHaveLength(0)
     expect(strokes).toHaveLength(3)
+  })
+})
+
+describe('frameImage bitmap budget', () => {
+  it('renders normal frames at full 2x scale', () => {
+    const img = frameImage({ x0: 71, y0: 329, x1: 522, y1: 367 }, '000000', 1)
+    expect(img.pixelWidth).toBe(Math.round((522 - 71) * 2))
+    expect(img.pixelHeight).toBe(Math.round((367 - 329) * 2))
+  })
+
+  it('caps giant frame bitmaps instead of allocating hundreds of MB', () => {
+    const img = frameImage({ x0: 0, y0: 0, x1: 5000, y1: 5000 }, '000000', 1)
+    expect(img.pixelWidth).toBeLessThanOrEqual(2048)
+    expect(img.pixelHeight).toBeLessThanOrEqual(2048)
+    expect(img.pixelWidth).toBe(img.pixelHeight)
+  })
+
+  it('degrades non-finite boxes to the minimum bitmap instead of throwing', () => {
+    const img = frameImage({ x0: 0, y0: 0, x1: NaN, y1: 100 }, '000000', 1)
+    expect(img.pixelWidth).toBe(2)
+    expect(img.pixelHeight).toBe(200)
   })
 })

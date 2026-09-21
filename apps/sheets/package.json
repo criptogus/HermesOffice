@@ -1,6 +1,6 @@
 {
-  "name": "@hermesoffice/sheets",
-  "productName": "HermesOffice Sheets",
+  "name": "@genoffice/sheets",
+  "productName": "GenOffice Sheets",
   "version": "0.1.0",
   "private": true,
   "description": "Cross-platform AI-native spreadsheet compatibility prototype",
@@ -24,14 +24,16 @@
   },
   "dependencies": {
     "@fluentui/react-icons": "^2.0.333",
-    "@hermesoffice/agent-core": "*",
-    "@hermesoffice/ai-provider": "*",
-    "@hermesoffice/ai-search": "*",
-    "@hermesoffice/docx-engine": "*",
-    "@hermesoffice/electron-utils": "*",
-    "@hermesoffice/file-parse": "*",
-    "@hermesoffice/i18n": "*",
-    "@hermesoffice/ui": "*",
+    "@genoffice/agent-core": "*",
+    "@genoffice/ai-provider": "*",
+    "@genoffice/ai-search": "*",
+    "@genoffice/docx-engine": "*",
+    "@genoffice/electron-utils": "*",
+    "@genoffice/file-parse": "*",
+    "@genoffice/i18n": "*",
+    "@genoffice/ui": "*",
+    "@genoffice/pptx-render": "*",
+    "@genoffice/xlsx-gateway": "*",
     "@univerjs/core": "^0.25.1",
     "@univerjs/data-validation": "^0.25.1",
     "@univerjs/engine-render": "^0.25.1",
@@ -49,13 +51,14 @@
     "@univerjs/themes": "^0.25.1",
     "fast-xml-parser": "^5.3.4",
     "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "rxjs": "^7.8.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@hermesoffice/project-store": "*",
+    "@genoffice/project-store": "*",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -65,7 +68,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   },
-  "author": "HermesOffice"
+  "author": "GenOffice"
 }

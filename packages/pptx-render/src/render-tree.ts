@@ -10,7 +10,7 @@
  * All geometry units = px (absolute target-canvas coordinates), with viewport
  * scale and nested group offsets already applied.
  */
-import type { Fill, Stroke } from '@hermesoffice/pptx-engine'
+import type { Fill, Stroke } from '@genoffice/pptx-engine'
 import type { PlacedBox } from './coords'
 import type { ExtrusionFaceRender } from './scene3d'
 
@@ -57,6 +57,8 @@ export type RenderFill =
       path?: 'circle' | 'rect' | 'shape'
       /** Radial focus center as width/height fractions (from <a:fillToRect>; default 0.5/0.5) */
       center?: { x: number; y: number }
+      /** <a:tileRect> insets as shape fractions (negative = tile extends past the shape) */
+      tileRect?: { l: number; t: number; r: number; b: number }
     }
   | {
       kind: 'image'
@@ -72,8 +74,19 @@ export type RenderFill =
       lum?: { bright: number; contrast: number }
       /** clrChange: pixels matching `from` become `to` (#RRGGBB or #RRGGBBAA) */
       clrChange?: { from: string; to: string }
-      /** Tile grid: scale in px-per-image-px, anchor offsets in px, and the algn anchor */
-      tile?: { scaleX: number; scaleY: number; txPx: number; tyPx: number; algn: string }
+      /** biLevel threshold (0-1): luminance at or above renders white, below black */
+      biLevel?: number
+      /** Tile grid: scale in px-per-image-px, anchor offsets in px, and the algn anchor.
+          `frame` is the box the grid anchors to, in shape-local px (default: the shape
+          box); table cells anchor to the whole table so one picture spans the cells. */
+      tile?: {
+        scaleX: number
+        scaleY: number
+        txPx: number
+        tyPx: number
+        algn: string
+        frame?: { x: number; y: number; w: number; h: number }
+      }
     }
   | {
       kind: 'pattern'
@@ -192,6 +205,12 @@ export interface GlyphRun {
   rotate270?: boolean
   /** Bullet glyph (non-body content injected by layout; text editors should skip it) */
   isBullet?: boolean
+  /** Numbered bullet: its buAutoNum scheme (ribbon highlight / toggle semantics) */
+  numType?: string
+  /** Numbered bullet: the paragraph's explicit startAt (editing preview counts from it) */
+  startAt?: number
+  /** Picture bullet: image data URL drawn in a widthPx × ascentPx box on the baseline (text is ''; ascentPx is the image height, widthPx follows its aspect) */
+  image?: string
   /** RTL direction-level run (Arabic/Hebrew): the renderer must set canvas direction=rtl so punctuation/neutral chars land on the far side */
   rtl?: boolean
   /** Source model run index (into Paragraph.runs); the editor uses it to merge fragments and trace back original formatting */
@@ -215,6 +234,8 @@ export interface TextLine {
   paraStart?: boolean
   /** Trailing whitespace swallowed when wrapping (the editor re-adds a space when joining lines; hard breaks/CJK wrapping don't set it) */
   trailingSpace?: boolean
+  /** The exact swallowed whitespace (spaces / U+3000 / tabs); absent on stored decks → a single space */
+  trailingText?: string
   /** The line ends with an <a:br/> soft break; value = the sentinel run's model index (the editor round-trips soft breaks with it) */
   softBreakAfter?: number
   /** Paragraph horizontal alignment (editor display) */
@@ -256,6 +277,8 @@ export interface RenderTextLayout {
   vert?: 'eaVert' | 'vert' | 'vert270' | 'wordArtVert'
   /** WordArt text extrusion: glyphs get offset copies in this color behind them (px) */
   extrusion?: { color: string; dx: number; dy: number }
+  /** WordArt envelope warp: the renderer bends glyphs along the preset's curves */
+  txWarp?: { prst: string; adj?: Record<string, number> }
 }
 
 /** Connector/line endpoint arrow description (for rendering, sizes converted to px). */
@@ -322,6 +345,8 @@ export interface PictureRenderNode extends RenderNodeBase {
   lum?: { bright: number; contrast: number }
   /** clrChange applied to the picture pixels before duotone */
   clrChange?: { from: string; to: string }
+  /** biLevel threshold (0-1) applied to the picture pixels after clrChange, before duotone */
+  biLevel?: number
   /** Picture shape-geometry clip (picture styles): three channels matching shape geometry; clip when any is set */
   clip?: { cornerRadiusPx?: number; polygonPoints?: number[]; pathData?: string }
   /** Source image crop ratios (0..1, how much each side is cropped) */
@@ -489,7 +514,7 @@ export interface ChartRenderNode extends RenderNodeBase {
   /** Legend swatches */
   swatches: Array<{ x: number; y: number; w: number; h: number; color: string }>
   /** Freeform filled paths (SVG data), painter's order — pseudo-3D pie rims / bar extrusion faces */
-  paths?: Array<{ d: string; fill: string; stroke?: string; dy?: number }>
+  paths?: Array<{ d: string; fill: string; stroke?: string; strokeWidthPx?: number; dy?: number }>
   /** Pie/doughnut wedges (angles: 12 o'clock = -90°, clockwise, Konva Arc semantics) */
   wedges?: Array<{
     cx: number
@@ -499,6 +524,11 @@ export interface ChartRenderNode extends RenderNodeBase {
     startDeg: number
     sweepDeg: number
     color: string
+    /** Outline-only wedge (c:dPt noFill); color then only feeds the legend swatch */
+    noFill?: boolean
+    /** Per-point outline; undefined = default hairline white separator */
+    stroke?: string
+    strokeWidthPx?: number
   }>
 }
 

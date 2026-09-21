@@ -1,20 +1,23 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { htmlLang } from '@hermesoffice/i18n'
+import { htmlLang } from '@genoffice/i18n'
 import { AppFrame } from './AppFrame'
 import { LocaleProvider } from './locale'
-import '@hermesoffice/ui/tokens.css'
-import '@hermesoffice/ui/screentip.css'
-import '@hermesoffice/ui/dropdown.css'
+import '@genoffice/ui/tokens.css'
+import '@genoffice/ui/screentip.css'
+import '@genoffice/ui/dropdown.css'
 import './home.css'
 import './tabbar.css'
-import { installScreenTips } from '@hermesoffice/ui'
+import { installScreenTips } from '@genoffice/ui'
 
 installScreenTips()
 
 // macOS shell window is created with vibrancy; a transparent body lets the
 // editor views' translucent regions (e.g. slides thumbnail pane) show it
-if (navigator.platform.toLowerCase().includes('mac')) document.body.classList.add('vib')
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+if (IS_MAC) document.body.classList.add('vib')
+// non-mac: the tab strip doubles as the title bar (caption buttons overlay it)
+document.body.classList.add(IS_MAC ? 'mac' : 'overlay-title-bar')
 
 // resolve the persisted language, first-run flag, and theme before first paint
 // so the UI never flashes (home showing briefly before the onboarding overlay)

@@ -42,7 +42,7 @@ describe('chatForProvider', () => {
     const result = await chatForProvider('anthropic', { apiKey: 'k', model: 'm' }, 'sys', 'hi')
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Claude HTTP 403/)
-    expect(result.error).toMatch(/web page instead of an API response/)
+    expect(result.error).toMatch(/web page.*instead of an API response/)
     expect(result.error).not.toContain('<!doctype')
   })
 
@@ -101,6 +101,32 @@ describe('chatForProvider', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('custom: omits Authorization when the key is empty for local servers', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await chatForProvider(
+      'custom',
+      { apiKey: '', model: 'llama3', baseUrl: 'http://localhost:11434/v1' },
+      'sys',
+      'hi',
+    )
+    const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
+    fetchMock.mockClear()
+    fetchMock.mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    await chatForProvider(
+      'custom',
+      { apiKey: 'k', model: 'm', baseUrl: 'https://my-endpoint.example.com/v1' },
+      'sys',
+      'hi',
+    )
+    expect((fetchMock.mock.calls[0]![1].headers as Record<string, string>).Authorization).toBe(
+      'Bearer k',
+    )
+  })
+
   it('genspark: routes by model prefix to the proxy endpoints', async () => {
     const fetchMock = vi
       .fn()
@@ -135,6 +161,23 @@ describe('chatForProvider', () => {
     ).toBeUndefined()
   })
 
+  it('opencode: a one-shot call gets its own x-opencode-session', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await chatForProvider('opencode-go', { apiKey: 'k', model: 'kimi-k2.7-code' }, 'sys', 'hi')
+    await chatForProvider('opencode-go', { apiKey: 'k', model: 'kimi-k2.7-code' }, 'sys', 'hi')
+    const first = (fetchMock.mock.calls[0]![1].headers as Record<string, string>)[
+      'x-opencode-session'
+    ]
+    const second = (fetchMock.mock.calls[1]![1].headers as Record<string, string>)[
+      'x-opencode-session'
+    ]
+    expect(first).toMatch(/^[0-9a-f-]{36}$/)
+    expect(second).not.toBe(first)
+  })
+
   it('treats an empty response body as an error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: {} }] })))
     const result = await chatForProvider(
@@ -144,5 +187,25 @@ describe('chatForProvider', () => {
       'hi',
     )
     expect(result).toEqual({ ok: false, error: 'AI returned an empty response' })
+  })
+
+  it('anthropic: a 200 with an HTML body is an error, not a thrown SyntaxError', async () => {
+    const html = '<!doctype html><html><body>gateway</body></html>'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html, { status: 200 })))
+    const result = await chatForProvider('anthropic', { apiKey: 'k', model: 'm' }, 'sys', 'hi')
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/non-JSON response/)
+    expect(result.error).toMatch(/web page.*instead of an API response/)
+  })
+
+  it('openai: a 200 with an empty body is an error, not a thrown SyntaxError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+    const result = await chatForProvider(
+      'openai',
+      { apiKey: 'k', model: 'gpt-4.1-mini' },
+      'sys',
+      'hi',
+    )
+    expect(result).toEqual({ ok: false, error: 'AI returned a non-JSON response: ' })
   })
 })

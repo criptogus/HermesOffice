@@ -1,5 +1,5 @@
 {
-  "name": "@hermesoffice/pdf2docx",
+  "name": "@genoffice/pdf2docx",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -15,15 +15,15 @@
   },
   "dependencies": {
     "@embedpdf/pdfium": "^2.15.0",
-    "@hermesoffice/docx-engine": "*",
-    "@hermesoffice/font-metrics": "*",
-    "@hermesoffice/pptx-engine": "*",
+    "@genoffice/docx-engine": "*",
+    "@genoffice/font-metrics": "*",
+    "@genoffice/pptx-engine": "*",
     "bidi-js": "^1.0.3",
     "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   }
 }

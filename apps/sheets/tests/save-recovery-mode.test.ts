@@ -5,7 +5,7 @@
  */
 import JSZip from 'jszip'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { applyCellEditsToXlsx } from '../src/gateway/xlsx-gateway'
+import { applyCellEditsToXlsx } from '@genoffice/xlsx-gateway/gateway/xlsx-gateway'
 import { handleSave, type SaveContext } from '../src/renderer/save-actions'
 import { createEditJournal, recordSetRangeValues } from '../src/renderer/edit-journal'
 import { buildEditFixture } from './fixture-builder'
@@ -91,10 +91,12 @@ describe('handleSave recovery mode', () => {
     expect(messages).toEqual([])
   })
 
-  it('a failed copy is swallowed (best-effort, never surfaces)', async () => {
+  it('a failed copy is swallowed (best-effort, never surfaces; resolves not-ok)', async () => {
     writeWorkbookRecovery.mockRejectedValue(new Error('disk full'))
     const { ctx, messages } = ctxWith({ dirty: true })
-    await expect(handleSave(ctx, 'recovery')).resolves.toBeUndefined()
+    // handleSave now reports an outcome (the MCP bridge reads it); recovery
+    // mode still stays silent on failure
+    await expect(handleSave(ctx, 'recovery')).resolves.toEqual({ ok: false })
     expect(messages).toEqual([])
   })
 })
@@ -180,6 +182,27 @@ describe('handleSave formula cache overlay', () => {
     const savedB3 = /<c r="B3"[^>]*>[\s\S]*?<\/c>/.exec(savedWorksheet)?.[0]
     expect(savedB3).toContain('<f>2+2</f>')
     expect(savedB3).not.toContain('<v>')
+  })
+
+  it("never writes IronCalc's #ERROR! into a cached <v> (issue 235)", async () => {
+    const { ctx, journal, overlay } = ctxWith({ dirty: false })
+    recordSetRangeValues(journal, 'sheet-1', { 5: { 5: { v: 1 } } })
+    overlay.set(
+      'sheet-1',
+      new Map([
+        ['0:0', { v: '#ERROR!' }],
+        ['0:1', { v: '#N/A' }],
+        ['0:2', { v: 7 }],
+      ]),
+    )
+    await handleSave(ctx, 'save')
+    const payload = saveWorkbookEdits.mock.calls[0]![0] as {
+      formulaValues: { row: number; column: number; value: unknown }[]
+    }
+    expect(payload.formulaValues).toEqual([
+      { sheetId: 'sheet-1', row: 0, column: 1, value: '#N/A' },
+      { sheetId: 'sheet-1', row: 0, column: 2, value: 7 },
+    ])
   })
 })
 

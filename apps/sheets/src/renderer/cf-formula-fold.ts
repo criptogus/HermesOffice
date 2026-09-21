@@ -4,7 +4,7 @@
  * formula engine, and the engine rebuilds that whole graph on every
  * recalculation — every viewport stream-in patch. A single whole-column rule
  * covers millions of cells, freezing the renderer for 10s+ per scroll and
- * growing the heap until the tab dies (genspark-ai/hermesoffice#158).
+ * growing the heap until the tab dies (genspark-ai/genoffice#158).
  *
  * This module shrinks what gets REGISTERED with the engine without touching
  * the rule data, the painted ranges, or the save format:

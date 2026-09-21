@@ -1,11 +1,12 @@
 /**
- * Canonical op layer (main/ops): registry validation with guided errors,
+ * Canonical op layer (@genoffice/pptx-ops): registry validation with guided errors,
  * transaction executor semantics (atomic rollback / per_op / dry-run) — all
  * against a real in-memory deck (createBlankPptx + engine mutations), no mocks.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   addElement,
+  addTable,
   createBlankPptx,
   getSlideAnimations,
   extractMergeSlideSource,
@@ -13,11 +14,20 @@ import {
   parseMasterPart,
   patchSlideXml,
   savePptx,
+  TABLE_STYLE_PRESETS,
   type OpenedPptx,
+  type SlideElement,
   type TextElement,
-} from '@hermesoffice/pptx-engine'
-import { runTxn, opNames, elementDurableId, slideDurableId } from '../src/main/ops'
-import { mapScriptOps } from '../src/main/ops/script-map'
+} from '@genoffice/pptx-engine'
+import {
+  runTxn,
+  opNames,
+  elementDurableId,
+  slideDurableId,
+  mapScriptOps,
+  normalizeLengthUnits,
+  parseLength,
+} from '@genoffice/pptx-ops'
 
 let opened: OpenedPptx
 let titleId: string
@@ -1062,5 +1072,303 @@ describe('applyTheme op', () => {
     })
     expect(r.applied).toBe(false)
     expect(r.failures![0]!.error).toContain('colors.accent1')
+  })
+})
+
+describe('XML-invalid characters are rejected at plan time', () => {
+  const vt = String.fromCharCode(0x0b)
+
+  it('setText with a vertical tab fails guided, nothing applied', () => {
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'setText',
+          target: { slide: 0, el: titleId },
+          paragraphs: [{ runs: [{ text: `PDF${vt}line` }] }],
+        },
+      ],
+    })
+    expect(r.applied).toBe(false)
+    expect(r.failures![0]!.error).toContain('paragraphs[0].runs[0].text')
+    expect(r.failures![0]!.error).toContain('\\u000B')
+    const title = els().find((e) => e.id === titleId) as TextElement
+    expect(title.text!.paragraphs[0]!.runs[0]!.text).toBe('Title')
+  })
+
+  it('tab and newline are legal XML and pass', () => {
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'setText',
+          target: { slide: 0, el: titleId },
+          paragraphs: [{ runs: [{ text: 'a\tb\nc' }] }],
+        },
+      ],
+    })
+    expect(r.applied).toBe(true)
+  })
+
+  it('covers every string field, not just text payloads', () => {
+    const r = runTxn(opened, {
+      ops: [{ op: 'setNotes', target: { slide: 0 }, text: `n${String.fromCharCode(0)}` }],
+    })
+    expect(r.applied).toBe(false)
+    expect(r.failures![0]!.error).toContain('"text"')
+  })
+})
+
+describe('insert-time options (genpptx parity ops)', () => {
+  it('addTable rejects a length-mismatched colWidthsEmu with a guided error', () => {
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'addTable',
+          target: { slide: 0 },
+          rows: 2,
+          cols: 3,
+          offset: { x: 0, y: 0, cx: 3000000, cy: 1000000 },
+          colWidthsEmu: [1000000, 2000000],
+        },
+      ],
+    })
+    expect(r.applied).toBe(false)
+    expect(r.failures![0]!.error).toContain('exactly 3 positive EMU values')
+  })
+
+  it('addTable applies explicit widths/heights and cell merges', () => {
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'addTable',
+          target: { slide: 0 },
+          rows: 2,
+          cols: 2,
+          offset: { x: 0, y: 0, cx: 3000000, cy: 1000000 },
+          colWidthsEmu: [1000000, 2000000],
+          rowHeightsEmu: [400000, 600000],
+          cellProps: [[{ gridSpan: 2 }, { hMerge: true }], []],
+        },
+      ],
+    })
+    expect(r.applied).toBe(true)
+    const el = els().find((e) => e.id === r.records![0]!.created![0]) as SlideElement
+    expect(el.anchor.originalXml).toContain('<a:gridCol w="1000000"/><a:gridCol w="2000000"/>')
+    expect(el.anchor.originalXml).toContain('<a:tc gridSpan="2">')
+  })
+
+  it('addChart validates colorScheme entries and writes per-series colors', () => {
+    const bad = runTxn(opened, {
+      ops: [
+        {
+          op: 'addChart',
+          target: { slide: 0 },
+          kind: 'bar',
+          categories: ['A'],
+          series: [{ name: 'S', values: [1] }],
+          offset: { x: 0, y: 0, cx: 3000000, cy: 2000000 },
+          colorScheme: ['red'],
+        },
+      ],
+    })
+    expect(bad.applied).toBe(false)
+    expect(bad.failures![0]!.error).toContain('colorScheme[]')
+
+    const ok = runTxn(opened, {
+      ops: [
+        {
+          op: 'addChart',
+          target: { slide: 0 },
+          kind: 'doughnut',
+          categories: ['A', 'B'],
+          series: [{ name: 'S', values: [1, 2] }],
+          offset: { x: 0, y: 0, cx: 3000000, cy: 2000000 },
+          colorScheme: ['#C00000'],
+          holeSizePct: 72,
+        },
+      ],
+    })
+    expect(ok.applied).toBe(true)
+    const chartXml = [...opened.archive.entries.keys()]
+      .filter((p) => /^ppt\/charts\/chart\d+\.xml$/.test(p))
+      .map((p) => Buffer.from(opened.archive.entries.get(p) as Uint8Array).toString('utf8'))
+      .join('')
+    expect(chartXml).toContain('<a:srgbClr val="C00000"/>')
+    expect(chartXml).toContain('<c:holeSize val="72"/>')
+  })
+
+  it('addElement carries adjustments and bodyPr.autoFit into the shape XML', () => {
+    const bad = runTxn(opened, {
+      ops: [
+        {
+          op: 'addElement',
+          target: { slide: 0 },
+          kind: 'roundRect',
+          offset: { x: 0, y: 0, cx: 914400, cy: 914400 },
+          bodyPr: { autoFit: 'grow' },
+        },
+      ],
+    })
+    expect(bad.applied).toBe(false)
+    expect(bad.failures![0]!.error).toContain('"shrink"')
+
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'addElement',
+          target: { slide: 0 },
+          kind: 'roundRect',
+          offset: { x: 0, y: 0, cx: 914400, cy: 914400 },
+          adjustments: { adj: 25000 },
+          bodyPr: { autoFit: 'shrink' },
+          paragraphs: [{ runs: [{ text: 'chip' }] }],
+        },
+      ],
+    })
+    expect(r.applied).toBe(true)
+    const el = els().find((e) => e.id === r.records![0]!.created![0]) as SlideElement
+    expect(el.anchor.originalXml).toContain('<a:gd name="adj" fmla="val 25000"/>')
+    expect(el.anchor.originalXml).toContain('<a:normAutofit/>')
+  })
+})
+
+describe('setTableStyle resolves model-facing fields', () => {
+  const tableId = () => {
+    expect(
+      addTable(opened, 0, {
+        rows: 2,
+        cols: 2,
+        offset: { x: 0, y: 1000000, cx: 1828800, cy: 914400 },
+      }),
+    ).toBeTruthy()
+    return els().find((e) => e.type === 'table')!.id
+  }
+  const slideXml = () => patchSlideXml(opened.deck.slides[0]!)
+
+  it('a preset name pins its style part and references it from tblPr', () => {
+    const el = tableId()
+    const r = runTxn(opened, {
+      ops: [{ op: 'setTableStyle', target: { slide: 0, el }, styleName: 'zebraBlue' }],
+    })
+    expect(r.applied).toBe(true)
+    const styleId = TABLE_STYLE_PRESETS.zebraBlue!.styleId!
+    expect(slideXml()).toContain(styleId)
+    expect(opened.archive.readText('ppt/tableStyles.xml')).toContain(styleId)
+  })
+
+  it('flags and borders convert pt to EMU', () => {
+    const el = tableId()
+    const r = runTxn(opened, {
+      ops: [
+        {
+          op: 'setTableStyle',
+          target: { slide: 0, el },
+          firstRow: true,
+          borderPreset: 'all',
+          borderColor: '#FF0000',
+          borderWidthPt: 2,
+        },
+      ],
+    })
+    expect(r.applied).toBe(true)
+    const xml = slideXml()
+    expect(xml).toContain('firstRow="1"')
+    expect(xml).toContain('FF0000')
+    expect(xml).toContain('w="25400"')
+  })
+
+  it('guides an unknown preset, an empty edit and a color name', () => {
+    const el = tableId()
+    const unknown = runTxn(opened, {
+      ops: [{ op: 'setTableStyle', target: { slide: 0, el }, styleName: 'rainbow' }],
+    })
+    expect(unknown.applied).toBe(false)
+    expect(unknown.failures![0]!.error).toContain('Presets: none, lightGrid, zebraBlue')
+    const empty = runTxn(opened, { ops: [{ op: 'setTableStyle', target: { slide: 0, el } }] })
+    expect(empty.applied).toBe(false)
+    expect(empty.failures![0]!.error).toContain('"styleName"')
+    const named = runTxn(opened, {
+      ops: [{ op: 'setTableStyle', target: { slide: 0, el }, shadingColor: 'blue' }],
+    })
+    expect(named.applied).toBe(false)
+    expect(named.failures![0]!.error).toContain('#RRGGBB')
+  })
+})
+
+describe('length units', () => {
+  it('converts unit suffixes to EMU and leaves everything else alone', () => {
+    expect(parseLength('2.54cm')).toBe(914400)
+    expect(parseLength('1in')).toBe(914400)
+    expect(parseLength('10 mm')).toBe(360000)
+    expect(parseLength('12pt')).toBe(152400)
+    expect(parseLength('96px')).toBe(914400)
+    expect(parseLength('914400emu')).toBe(914400)
+    expect(parseLength('2cm wide')).toBeUndefined()
+    const op = normalizeLengthUnits({
+      op: 'setTransform',
+      box: { x: '1in', y: 0, cx: '2.54cm', cy: 457200 },
+      text: '10cm of rope',
+      colWidthsEmu: ['1in', 914400],
+      hEmu: '1cm',
+      stroke: { widthEmu: '2pt' },
+      props: { insets: { l: '0.5cm', t: 0 } },
+      style: { l: '1cm' },
+    }) as {
+      box: { x: number; cx: number; cy: number }
+      text: string
+      colWidthsEmu: number[]
+      hEmu: number
+      stroke: { widthEmu: number }
+      props: { insets: { l: number; t: number } }
+      style: { l: string }
+    }
+    expect(op.box).toEqual({ x: 914400, y: 0, cx: 914400, cy: 457200 })
+    expect(op.text).toBe('10cm of rope')
+    expect(op.colWidthsEmu).toEqual([914400, 914400])
+    expect(op.hEmu).toBe(360000)
+    expect(op.stroke.widthEmu).toBe(25400)
+    expect(op.props.insets).toEqual({ l: 180000, t: 0 })
+    expect(op.style.l).toBe('1cm')
+    const bytes = new Uint8Array(4 * 1024 * 1024)
+    const started = performance.now()
+    const pic = normalizeLengthUnits({ op: 'addPicture', bytes, offset: { x: '1in' } }) as {
+      bytes: Uint8Array
+      offset: { x: number }
+    }
+    expect(pic.bytes).toBe(bytes)
+    expect(pic.offset.x).toBe(914400)
+    expect(performance.now() - started).toBeLessThan(200)
+  })
+
+  it('lets ops take lengths with units end to end', () => {
+    const added = runTxn(opened, {
+      ops: [
+        {
+          op: 'addElement',
+          target: { slide: 0 },
+          kind: 'rect',
+          offset: { x: '1in', y: '0.5in', cx: '2in', cy: '1in' },
+        },
+      ],
+    })
+    expect(added.applied).toBe(true)
+    const id = added.records![0]!.created![0]!
+    const el = opened.deck.slides[0]!.elements.find((x) => x.id === id)!
+    expect(el.transform.offset).toEqual({ x: 914400, y: 457200, cx: 1828800, cy: 914400 })
+    const moved = runTxn(opened, {
+      ops: [
+        {
+          op: 'setTransform',
+          target: { slide: 0, el: id },
+          box: { x: '2cm', y: '2cm', cx: '4cm', cy: '3cm' },
+        },
+      ],
+    })
+    expect(moved.applied).toBe(true)
+    expect(opened.deck.slides[0]!.elements.find((x) => x.id === id)!.transform.offset).toEqual({
+      x: 720000,
+      y: 720000,
+      cx: 1440000,
+      cy: 1080000,
+    })
   })
 })

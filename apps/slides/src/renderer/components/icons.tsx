@@ -2170,3 +2170,32 @@ export function HermesMark({ size = 26 }: { size?: number }) {
     </svg>
   )
 }
+
+export function IconRotateRight(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M 18.6 9.3 a 6.9 6.9 0 1 0 0.9 4.95" />
+      <path d="M 19.05 4.8 v 4.5 h -4.5" />
+    </Svg>
+  )
+}
+
+export function IconRotateLeft(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M 5.4 9.3 a 6.9 6.9 0 1 1 -0.9 4.95" />
+      <path d="M 4.95 4.8 v 4.5 h 4.5" />
+    </Svg>
+  )
+}
+
+export function IconReplacePicture(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="4.3" y="9.05" width="10.67" height="9.48" rx="0.95" />
+      <circle cx="7.38" cy="12" r="1.07" />
+      <path d="M 4.89 17.69 l 3.2 -3.2 2.25 2.25 1.67 -1.67 2.13 2.13" />
+      <path d="M 13.79 5.6 h 5.44 m 0 0 -2.01 -1.89 m 2.01 1.89 -2.01 1.89" />
+    </Svg>
+  )
+}

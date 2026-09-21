@@ -17,10 +17,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import {
-  COPYRIGHT_HOSTS,
   asRecord,
   firstItem,
   gskProxyUrl,
+  isCopyrightHost,
   safeHost,
   type ImageSearchResult,
   type WebSearchResult,
@@ -146,8 +146,9 @@ export function gskChildEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Proce
 // ── Low-level execution ─────────────────────────────────────────────
 
 /**
- * gsk output may have [INFO] log lines mixed in before the JSON; scan from the
- * end for the first line starting with { or [ and parse from there.
+ * gsk output may have [INFO] log lines mixed in before or after the JSON;
+ * scan for a line starting with { or [ and parse the longest valid JSON
+ * block from there, shrinking past any trailing logs.
  */
 export function parseGskOutput(stdout: string): unknown {
   const trimmed = stdout.trim()
@@ -160,10 +161,12 @@ export function parseGskOutput(stdout: string): unknown {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]!.trim()
     if (line.startsWith('{') || line.startsWith('[')) {
-      try {
-        return JSON.parse(lines.slice(i).join('\n'))
-      } catch {
-        continue
+      for (let j = lines.length; j > i; j--) {
+        try {
+          return JSON.parse(lines.slice(i, j).join('\n'))
+        } catch {
+          continue
+        }
       }
     }
   }
@@ -213,22 +216,41 @@ function runGsk(args: string[], timeoutMs: number, signal?: AbortSignal): Promis
 
 // ── Search ──────────────────────────────────────────────────────────
 
+/** Max search results kept; longest snippet/title chars (prevents MB fields blowing context). */
+export const MAX_GSK_RESULTS = 20
+export const MAX_GSK_SNIPPET_CHARS = 2_000
+
+function normalizeMaxResults(n: number): number {
+  if (!Number.isFinite(n)) return 6
+  return Math.min(20, Math.max(1, Math.floor(n)))
+}
+
+function clipField(v: unknown): string {
+  const s = String(v ?? '')
+  return s.length > MAX_GSK_SNIPPET_CHARS ? s.slice(0, MAX_GSK_SNIPPET_CHARS) : s
+}
+
 /** Parses the `gsk search` response shape data.organic_results[{title,link,snippet}] (exported for tests) */
 export function parseGskWebSearch(
   raw: unknown,
   maxResults: number,
 ): { results: WebSearchResult[]; answer?: string } {
+  const bounded = normalizeMaxResults(maxResults)
   const data = asRecord(asRecord(raw).data ?? raw)
   const organic: unknown[] = Array.isArray(data.organic_results) ? data.organic_results : []
-  const results: WebSearchResult[] = organic.slice(0, maxResults).map((item) => {
+  const results: WebSearchResult[] = organic.slice(0, bounded).map((item) => {
     const o = asRecord(item)
     return {
-      title: String(o.title ?? ''),
-      url: String(o.link ?? ''),
-      snippet: String(o.snippet ?? ''),
+      title: clipField(o.title),
+      url: clipField(o.link),
+      snippet: clipField(o.snippet),
     }
   })
-  const answer = typeof data.answer === 'string' && data.answer ? data.answer : undefined
+  const answerRaw = typeof data.answer === 'string' && data.answer ? data.answer : undefined
+  const answer =
+    answerRaw !== undefined && answerRaw.length > MAX_GSK_SNIPPET_CHARS
+      ? answerRaw.slice(0, MAX_GSK_SNIPPET_CHARS)
+      : answerRaw
   return answer !== undefined ? { results, answer } : { results }
 }
 
@@ -249,7 +271,7 @@ export function parseGskImageSearch(raw: unknown, maxResults: number): ImageSear
     const img = asRecord(item)
     const imageUrl = String(img.image_url ?? img.imageUrl ?? '')
     if (!imageUrl) continue
-    if (COPYRIGHT_HOSTS.some((d) => imageUrl.toLowerCase().includes(d))) continue
+    if (isCopyrightHost(imageUrl)) continue
     const width = Number(img.width)
     const height = Number(img.height)
     const entry: ImageSearchResult = {
@@ -449,36 +471,6 @@ export async function gskSlideGenerate(
   return { bytes: new Uint8Array(await resp.arrayBuffer()), model: String(data.model ?? '') }
 }
 
-// ── File conversion (PDF → DOCX) ────────────────────────────────────
-
-/** Extracts the download link from file_convert's markdown result text (exported for tests) */
-export function parseGskConvertResult(raw: unknown): string {
-  const data = asRecord(asRecord(raw).data ?? raw)
-  const text = typeof data.result === 'string' ? data.result : ''
-  const url = /\((https?:\/\/[^)\s]+)\)/.exec(text)?.[1] ?? /https?:\/\/\S+/.exec(text)?.[0]
-  if (!url) {
-    throw new Error(`file_convert returned no link: ${JSON.stringify(raw).slice(0, 200)}`)
-  }
-  return url
-}
-
-/**
- * Uploads a local PDF and converts it to DOCX in the cloud (`gsk convert`,
- * costs 5 credits); returns the DOCX bytes.
- */
-export async function gskConvertPdfToDocx(
-  filePath: string,
-  signal?: AbortSignal,
-): Promise<Uint8Array> {
-  const wrapperUrl = await gskUpload(filePath)
-  const raw = await runGsk(['convert', wrapperUrl], GENERATE_TIMEOUT_MS, signal)
-  const link = parseGskConvertResult(raw)
-  const downloadUrl = await gskResolveDownloadUrl(link)
-  const resp = await fetch(downloadUrl, signal ? { signal } : undefined)
-  if (!resp.ok) throw new Error(`DOCX download failed: HTTP ${resp.status}`)
-  return new Uint8Array(await resp.arrayBuffer())
-}
-
 // ── Media analysis / transcription ──────────────────────────────────
 
 /** Best-effort text extraction from gsk analysis-type command output (shape varies by task, so be lenient; exported for tests) */
@@ -542,17 +534,6 @@ export async function gskTranscribe(
   if (options.model) args.push('-m', options.model)
   const raw = await runGsk(args, GENERATE_TIMEOUT_MS, signal)
   return extractGskText(raw)
-}
-
-// ── File upload / login ─────────────────────────────────────────────
-
-/** Uploads a local file and returns a file wrapper URL (usable as input to other gsk commands) */
-export async function gskUpload(filePath: string): Promise<string> {
-  const raw = asRecord(await runGsk(['upload', filePath], GENERATE_TIMEOUT_MS))
-  const dataRec = asRecord(raw.data)
-  const url = dataRec.file_wrapper_url ?? raw.url ?? dataRec.url
-  if (!url) throw new Error(`gsk upload did not return a URL: ${JSON.stringify(raw).slice(0, 200)}`)
-  return String(url)
 }
 
 // ── Past projects (Genspark web) ────────────────────────────────────

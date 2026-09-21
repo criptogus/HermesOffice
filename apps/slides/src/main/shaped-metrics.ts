@@ -340,7 +340,7 @@ export async function refineComplexWidths(wc: {
         }
         // Same font stack as the Konva renderer (generic fallback of konva-adapter displayFontFamily)
         ctx.font = (it.italic ? 'italic ' : '') + (it.bold ? 'bold ' : '') +
-          '100px "' + it.family + '", \\'PingFang SC\\', \\'Microsoft YaHei\\', sans-serif'
+          '100px "' + it.family + '", \\'PingFang SC\\', \\'Microsoft YaHei\\', \\'Yu Gothic\\', \\'Malgun Gothic\\', sans-serif'
         out[it.key] = ctx.measureText(it.text).width
       }
       return out
@@ -362,6 +362,27 @@ export async function refineComplexWidths(wc: {
 }
 
 /** Draw font family for complex-script text (same font file as shaping); null if not applicable. */
+/**
+ * Renderer ground-truth width for non-complex text (same gtCache/refine batch as the
+ * complex-script channel). Used for faces whose opentype-side advances drift from
+ * Chromium's rendering (variable fonts: HVAR/instancing interpretations differ by a
+ * few percent, which visually swallows word spaces). Returns null on a cache miss and
+ * queues the string for refineComplexWidths; the second layout pass hits the cache.
+ */
+export function gtMeasure(
+  text: string,
+  family: string,
+  fontSizePx: number,
+  bold = false,
+  italic = false,
+): number | null {
+  const key = gtKey(text, family, bold, italic)
+  const gt = gtCache.get(key)
+  if (gt != null) return (gt / 100) * fontSizePx
+  gtPending.add(key)
+  return null
+}
+
 export function shapedFamily(
   text: string,
   pref?: ShapedPrefFace,

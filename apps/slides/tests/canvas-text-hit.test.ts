@@ -1,4 +1,4 @@
-import type { ShapeRenderNode } from '@hermesoffice/pptx-render'
+import type { ShapeRenderNode } from '@genoffice/pptx-render'
 import { describe, expect, it } from 'vitest'
 import { needsTextFrameHitArea } from '../src/renderer/text-hit-area'
 

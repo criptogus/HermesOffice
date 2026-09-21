@@ -1,9 +1,10 @@
-import type { AgentMessage, AgentToolDef } from '@hermesoffice/agent-core'
+import type { AgentMessage, AgentToolDef } from '@genoffice/agent-core'
 import { aiFetch } from '../fetch'
 import { httpBodyDetail } from '../http-error'
-import { gensparkAttributionHeaders } from '../providers'
+import { gensparkAttributionHeaders, opencodeSessionHeaders } from '../providers'
 import type { AiChatResponse, AiProviderConfig } from '../types'
 import { createStreamWatchdog, type StreamWatchdog } from '../watchdog'
+import { toGeminiSchema } from './gemini-schema'
 import {
   jsonBodyInsteadOfSse,
   sseErrorText,
@@ -109,6 +110,11 @@ function emitGeminiJsonMessage(bodyText: string, cb: StreamCallbacks): void {
   if (stopReason) cb.onStopReason?.(stopReason)
 }
 
+/** Per-endpoint request shaping resolved from the provider registry. */
+export interface GeminiRequestOptions {
+  omitTemperature?: boolean | undefined
+}
+
 export async function streamGemini(
   config: AiProviderConfig,
   system: string,
@@ -117,9 +123,12 @@ export async function streamGemini(
   maxTokens: number,
   cb: StreamCallbacks,
   baseUrl = GEMINI_BASE_URL,
+  options: GeminiRequestOptions = {},
 ): Promise<void> {
   const wd = createStreamWatchdog(cb.signal)
-  return wd.guard(() => geminiTurn(config, system, messages, tools, maxTokens, cb, baseUrl, wd))
+  return wd.guard(() =>
+    geminiTurn(config, system, messages, tools, maxTokens, cb, baseUrl, wd, options),
+  )
 }
 
 async function geminiTurn(
@@ -131,6 +140,7 @@ async function geminiTurn(
   cb: StreamCallbacks,
   baseUrl: string,
   wd: StreamWatchdog,
+  options: GeminiRequestOptions,
 ): Promise<void> {
   const onBytes = () => {
     wd.touch()
@@ -144,6 +154,7 @@ async function geminiTurn(
       'Content-Type': 'application/json',
       'x-goog-api-key': config.apiKey,
       ...gensparkAttributionHeaders(baseUrl),
+      ...opencodeSessionHeaders(baseUrl, cb.sessionId),
     },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
@@ -155,13 +166,21 @@ async function geminiTurn(
                 functionDeclarations: tools.map((t) => ({
                   name: t.name,
                   description: t.description,
-                  parameters: t.inputSchema,
+                  // JSON Schema constructs the Gemini proto lacks (type unions,
+                  // $ref, ...) fail the whole request with HTTP 400
+                  parameters: toGeminiSchema(t.inputSchema),
                 })),
               },
             ],
           }
         : {}),
-      generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens },
+      // Google recommends the default temperature (1.0) for the Gemini 3
+      // family — lower values may cause looping or degraded reasoning —
+      // so omit our hard-coded 0.3 for those models via omitTemperature.
+      generationConfig: {
+        ...(options.omitTemperature ? {} : { temperature: 0.3 }),
+        maxOutputTokens: maxTokens,
+      },
     }),
   })
   // headers arrived: ping the renderer watchdog too, or a slow first chunk could trip it
@@ -244,6 +263,7 @@ export async function chatGemini(
   system: string,
   user: string,
   baseUrl = GEMINI_BASE_URL,
+  options: GeminiRequestOptions = {},
 ): Promise<AiChatResponse> {
   const url = `${baseUrl.replace(/\/$/, '')}/models/${config.model}:generateContent`
   const response = await aiFetch(url, {
@@ -253,11 +273,12 @@ export async function chatGemini(
       'Content-Type': 'application/json',
       'x-goog-api-key': config.apiKey,
       ...gensparkAttributionHeaders(baseUrl),
+      ...opencodeSessionHeaders(baseUrl),
     },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { temperature: 0.3 },
+      generationConfig: { ...(options.omitTemperature ? {} : { temperature: 0.3 }) },
     }),
   })
   wd.touch()
@@ -267,8 +288,22 @@ export async function chatGemini(
       error: `Gemini HTTP ${response.status}: ${httpBodyDetail(await response.text())}`,
     }
   }
-  const json = (await response.json()) as {
+  // A 200 with an HTML shell / empty / truncated body (gateway soft-failure)
+  // would make response.json() throw; return ok:false instead of leaking a
+  // raw SyntaxError to the caller.
+  const bodyText = await response.text()
+  let json: {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+  }
+  try {
+    json = JSON.parse(bodyText) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+    }
+  } catch {
+    return {
+      ok: false,
+      error: `Gemini returned a non-JSON response: ${httpBodyDetail(bodyText)}`,
+    }
   }
   const content = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('')
   if (!content) return { ok: false, error: 'Gemini returned an empty response' }

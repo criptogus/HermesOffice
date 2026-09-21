@@ -1,4 +1,4 @@
-import type { ExecutedToolCall } from '@hermesoffice/agent-core'
+import type { ExecutedToolCall } from '@genoffice/agent-core'
 
 /**
  * Claimed-selection guard for the sheets skill (AgentSkill.verifyResponse):

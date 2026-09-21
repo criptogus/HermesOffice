@@ -9,7 +9,7 @@
  * independent right-side range + tick labels). Unrecognized types fall back to a
  * placeholder chip upstream.
  */
-import type { ChartModel } from '@hermesoffice/pptx-engine'
+import type { ChartModel } from '@genoffice/pptx-engine'
 import type { ChartRenderNode } from './render-tree'
 import type { PlacedBox } from './coords'
 import { emuToPx, ptToPx, type Viewport } from './coords'
@@ -58,7 +58,12 @@ function chartTextPt(model: ChartModel): number {
 // Modern charts carry a chartStyle part whose label defaults are gray; legacy charts
 // (python-pptx, Office 2007-era) have none and PowerPoint renders their labels black
 function chartLabelDefault(model: ChartModel): string {
-  return model.hasStylePart ? '#666666' : '#000000'
+  return model.defaultTextColor ?? (model.hasStylePart ? '#666666' : '#000000')
+}
+
+/** Line/scatter stroke without an explicit width: legacy no-style-part charts draw 2.25pt (Office 2007 default). */
+function defaultLineWidthPx(model: ChartModel, scale: number): number {
+  return Math.max(1.5, ptToPx(model.hasStylePart ? 1.5 : 2.25, scale))
 }
 
 function shade(color: string, f: number): string {
@@ -171,7 +176,8 @@ export function buildChartNode(
       x: Math.max((box.w - measureTitle(line)) / 2, 4),
       y: titleSizePx * 0.3 + i * titleSizePx * 1.4,
       fontSizePx: titleSizePx,
-      color: model.titleColor ?? (model.hasStylePart ? '#333333' : '#000000'),
+      color:
+        model.titleColor ?? model.defaultTextColor ?? (model.hasStylePart ? '#333333' : '#000000'),
       bold: titleBold,
       ...(model.titleItalic ? { italic: true } : {}),
     })
@@ -932,7 +938,7 @@ function buildChartNodeInner(
       x: cx - measure(text, dlSize) / 2,
       y,
       fontSizePx: dlSize,
-      color: inside ? '#FFFFFF' : dlBold ? '#000000' : '#404040',
+      color: inside ? '#FFFFFF' : (model.defaultTextColor ?? (dlBold ? '#000000' : '#404040')),
       ...(dlBold ? { bold: true } : {}),
     })
   }
@@ -1001,7 +1007,7 @@ function buildChartNodeInner(
     })
   }
   {
-    const lineW = Math.max(1.5, ptToPx(1.5, vp.scale))
+    const lineW = defaultLineWidthPx(model, vp.scale)
     const markerR = Math.max(2, ptToPx(3, vp.scale))
     // Stacked areas accumulate per category; percentStacked normalizes to column totals
     const areaCum: number[] = new Array(n).fill(0)
@@ -1253,13 +1259,36 @@ function buildPieNode(
   const sliceColor = (i: number) =>
     ser.pointColors?.[i] ??
     (model.varyColors === false ? (ser.color ?? palette[0]!) : palette[i % palette.length]!)
+  // Outline-only wedge (dPt noFill): the legend swatch takes the outline color
+  const swatchColor = (i: number) =>
+    ser.pointNoFill?.[i] ? (ser.pointLines?.[i]?.color ?? sliceColor(i)) : sliceColor(i)
+  const wedgeStroke = (i: number): { stroke?: string; strokeWidthPx?: number } => {
+    const ln = ser.pointLines?.[i]
+    if (!ln) return {}
+    if (ln.color === null) return { strokeWidthPx: 0 }
+    return {
+      stroke: ln.color,
+      ...(ln.widthPt != null ? { strokeWidthPx: ptToPx(ln.widthPt, vp.scale) } : {}),
+    }
+  }
+  // Pseudo-3D top faces: same fill/outline semantics as 2D wedges, resolved to path props
+  const faceProps = (i: number): { fill: string; stroke?: string; strokeWidthPx?: number } => {
+    const st = wedgeStroke(i)
+    const fill = ser.pointNoFill?.[i] ? 'transparent' : sliceColor(i)
+    if (st.strokeWidthPx === 0) return { fill }
+    return {
+      fill,
+      stroke: st.stroke ?? '#ffffff',
+      ...(st.strokeWidthPx != null ? { strokeWidthPx: st.strokeWidthPx } : {}),
+    }
+  }
   const pad = Math.max(6, Math.min(box.w, box.h) * 0.03)
 
   // Legend space (without a legend, the whole box goes to the pie)
   const legendPos = model.legendPos
   const legendItems = model.categories.map((cat, i) => ({
     label: cat,
-    color: sliceColor(i),
+    color: swatchColor(i),
   }))
   const legendRowH = labelSizePx * 1.5
   let plotW = box.w - pad * 2
@@ -1349,6 +1378,11 @@ function buildPieNode(
       if (v <= 0) return
       const sweep = (v / total) * 360
       const { dx, dy } = explOffset(a, sweep, i)
+      // Outline-only points have no rim (nothing to extrude)
+      if (ser.pointNoFill?.[i]) {
+        a += sweep
+        return
+      }
       // normalize wedge interval into [-180, 180) then clamp to the front range [0, 180]
       for (const off of [-360, 0, 360]) {
         const b1 = Math.max(a + off, 0)
@@ -1383,16 +1417,14 @@ function buildPieNode(
           d:
             `M ${p1.x} ${p1.y} A ${rx} ${ry} 0 1 1 ${pm.x} ${pm.y} ` +
             `A ${rx} ${ry} 0 1 1 ${p1.x} ${p1.y} Z`,
-          fill: sliceColor(i),
-          stroke: '#ffffff',
+          ...faceProps(i),
         })
       } else {
         const p2 = ptAt(angle + sweep, dx, dy)
         const large = sweep > 180 ? 1 : 0
         node.paths!.push({
           d: `M ${cx + dx} ${cy + dy} L ${p1.x} ${p1.y} A ${rx} ${ry} 0 ${large} 1 ${p2.x} ${p2.y} Z`,
-          fill: sliceColor(i),
-          stroke: '#ffffff',
+          ...faceProps(i),
         })
       }
     } else {
@@ -1404,6 +1436,8 @@ function buildPieNode(
         startDeg: angle,
         sweepDeg: sweep,
         color: sliceColor(i),
+        ...(ser.pointNoFill?.[i] ? { noFill: true } : {}),
+        ...wedgeStroke(i),
       })
     }
     if (model.series[0]?.dataLabels ?? model.dataLabels) {
@@ -2466,7 +2500,7 @@ function buildScatterNode(
   const hasLine = st.startsWith('line') || st.startsWith('smooth')
   const smooth = st.startsWith('smooth')
   const defaultMarker = st !== 'line' && st !== 'smooth' && st !== 'none'
-  const lineW = Math.max(1.5, ptToPx(1.5, vp.scale))
+  const lineW = defaultLineWidthPx(model, vp.scale)
   const markerR = Math.max(2, ptToPx(3, vp.scale))
   // Bubble: largest bubble diameter = 25% of the smaller plot side × bubbleScale%; radius ∝ √size
   const maxBubbleSize = Math.max(
@@ -2510,7 +2544,7 @@ function buildScatterNode(
           x: x + r + 4,
           y: y - labelSizePx * 0.55,
           fontSizePx: labelSizePx * 0.9,
-          color: '#404040',
+          color: model.defaultTextColor ?? '#404040',
         })
       }
       if (ser.dataLabels ?? model.dataLabels) {
@@ -2520,7 +2554,7 @@ function buildScatterNode(
           x: x - measure(text, labelSizePx * 0.9) / 2,
           y: y - labelSizePx * 1.3,
           fontSizePx: labelSizePx * 0.9,
-          color: '#404040',
+          color: model.defaultTextColor ?? '#404040',
         })
       }
     })

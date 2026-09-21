@@ -2,7 +2,7 @@
  * P4 end-to-end coverage through the real PDFium wasm: style mapping,
  * list rebuild, vector-illustration rasterization and the per-page result API.
  */
-import { parseDocx } from '@hermesoffice/docx-engine'
+import { parseDocx } from '@genoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { convertPdfToDocx } from '../src'
 import {

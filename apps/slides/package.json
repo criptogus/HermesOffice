@@ -1,6 +1,6 @@
 {
-  "name": "@hermesoffice/slides",
-  "productName": "HermesOffice Slides",
+  "name": "@genoffice/slides",
+  "productName": "GenOffice Slides",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -18,15 +18,16 @@
     "dist:dir": "electron-vite build && electron-builder --dir"
   },
   "devDependencies": {
-    "@hermesoffice/agent-core": "*",
-    "@hermesoffice/ai-provider": "*",
-    "@hermesoffice/ai-search": "*",
-    "@hermesoffice/file-parse": "*",
-    "@hermesoffice/i18n": "*",
-    "@hermesoffice/pptx-engine": "*",
-    "@hermesoffice/pptx-render": "*",
-    "@hermesoffice/project-store": "*",
-    "@hermesoffice/ui": "*",
+    "@genoffice/agent-core": "*",
+    "@genoffice/ai-provider": "*",
+    "@genoffice/ai-search": "*",
+    "@genoffice/file-parse": "*",
+    "@genoffice/i18n": "*",
+    "@genoffice/pptx-engine": "*",
+    "@genoffice/pptx-ops": "*",
+    "@genoffice/pptx-render": "*",
+    "@genoffice/project-store": "*",
+    "@genoffice/ui": "*",
     "@types/opentype.js": "^1.3.8",
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.14",
@@ -43,12 +44,12 @@
     "react-konva": "^19.0.10",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   },
-  "author": "HermesOffice",
+  "author": "GenOffice",
   "build": {
-    "appId": "com.hermesoffice.slides",
-    "productName": "HermesOffice Slides",
+    "appId": "com.genoffice.slides",
+    "productName": "GenOffice Slides",
     "electronVersion": "43.3.0",
     "directories": {
       "output": "release"
@@ -87,7 +88,7 @@
     }
   },
   "dependencies": {
-    "@hermesoffice/electron-utils": "*",
+    "@genoffice/electron-utils": "*",
     "acorn": "^8.18.0",
     "harfbuzzjs": "^1.4.0",
     "pngjs": "^7.0.0",

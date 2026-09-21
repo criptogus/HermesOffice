@@ -1,5 +1,5 @@
 /**
- * @hermesoffice/pdf2docx — pure-local PDF → DOCX conversion (P1: single-column
+ * @genoffice/pdf2docx — pure-local PDF → DOCX conversion (P1: single-column
  * text + images, en/zh/ja/ko; P2: lattice tables + RTL logical-order output
  * for ar/he; P3: stream tables, multi-column sections, before_space
  * positioning chain, floating images).

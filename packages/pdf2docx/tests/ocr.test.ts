@@ -1,7 +1,7 @@
 /** Local OCR recovery for scanned pages: policy gates, char synthesis, and
  * the pipeline integration (src/ocr.ts). The engine itself is faked — the
  * real platform engines (Vision helper) are exercised by eval scripts. */
-import { parseDocx } from '@hermesoffice/docx-engine'
+import { parseDocx } from '@genoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { convertPdfToDocx } from '../src'
 import type { ExtractedPage } from '../src/extract'

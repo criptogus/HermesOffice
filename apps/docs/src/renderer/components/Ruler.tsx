@@ -1,10 +1,28 @@
 import { useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { Editor } from '@tiptap/core'
-import type { SectionSettings, TabStop } from '@hermesoffice/docx-engine'
+import type { SectionSettings, TabStop } from '@genoffice/docx-engine'
 import { t, type StringKey } from '../i18n/locale'
 
 const twipsToPx = (twips: number) => (twips / 1440) * 96
+
+/** A `clear` stop cancels an inherited stop — it marks no position, so the
+    ruler renders nothing for it (write-back still carries it). Exported for tests. */
+export function isRenderableTabStop(stop: TabStop): boolean {
+  return stop.val !== 'clear'
+}
+
+/** A ruler edit makes the whole set direct (Word writes style-inherited stops
+    out too). An inherited stop the user removed or moved needs a `clear` at its
+    old position, or the style chain puts it back on reopen. Exported for tests. */
+export function directTabStops(original: TabStop[], edited: TabStop[]): TabStop[] {
+  const clears = original
+    .filter((s) => s.inherited && !edited.some((e) => e.pos === s.pos))
+    .map((s): TabStop => ({ pos: s.pos, val: 'clear' }))
+  return [...edited.map(({ inherited: _inherited, ...s }) => s), ...clears].sort(
+    (a, b) => a.pos - b.pos,
+  )
+}
 
 /** Horizontal ruler above the page: inch numbers, gray margin zones, tab stops. */
 export function Ruler({
@@ -28,7 +46,7 @@ export function Ruler({
 
   // Tab stop type cycling (Word: click ruler button to cycle L/C/R/Decimal/Bar)
   const [nextTabType, setNextTabType] = useState<TabStop['val']>('left')
-  const TAB_TYPE_CYCLE: TabStop['val'][] = ['left', 'center', 'right', 'decimal']
+  const TAB_TYPE_CYCLE: TabStop['val'][] = ['left', 'center', 'right', 'decimal', 'bar']
   const TAB_TYPE_LABELS: Record<string, string> = {
     left: 'L',
     center: '⊥',
@@ -42,7 +60,7 @@ export function Ruler({
     right: 'appTabRight',
     decimal: 'appTabDecimal',
     bar: 'appTabBar',
-    clear: 'appTabBar',
+    clear: 'appTabClear',
   }
 
   // Get current tab stops from focused paragraph. rel stops mirror w:ptab
@@ -67,8 +85,10 @@ export function Ruler({
   }
 
   const { stops, relStops } = currentTabStops()
-  const withRel = (edited: TabStop[]): TabStop[] | null =>
-    edited.length > 0 || relStops.length > 0 ? [...edited, ...relStops] : null
+  const withRel = (edited: TabStop[]): TabStop[] | null => {
+    const direct = directTabStops(stops, edited)
+    return direct.length > 0 || relStops.length > 0 ? [...direct, ...relStops] : null
+  }
 
   // Drag state
   const dragRef = useRef<{ stopIndex: number; startX: number; origPos: number } | null>(null)
@@ -130,9 +150,9 @@ export function Ruler({
     document.addEventListener('mouseup', onMouseUp)
   }
 
-  // Default tab stop markers (light gray) when no custom stops defined
+  // Default tab stop markers (light gray) when no custom stops mark a position
   const defaultStops: number[] = []
-  if (stops.length === 0) {
+  if (!stops.some(isRenderableTabStop)) {
     const contentWidth = section.pageWidth - section.marginLeft - section.marginRight
     for (let pos = DEFAULT_TAB_TWIPS; pos < contentWidth; pos += DEFAULT_TAB_TWIPS) {
       defaultStops.push(section.marginLeft + pos)
@@ -172,24 +192,29 @@ export function Ruler({
         />
       ))}
 
-      {/* Custom tab stops (interactive) */}
-      {stops.map((stop, i) => (
-        <span
-          key={`${stop.pos}-${i}`}
-          data-ruler-stop={i}
-          className={`ruler-tab ruler-tab-${stop.val}`}
-          style={{ left: twipsToPx(stop.pos) }}
-          data-tip={
-            t('appTabStopTitle', {
-              type: t(TAB_TYPE_NAME_KEYS[stop.val]),
-              pos: Math.round((stop.pos / 144) * 10) / 10,
-            }) + (stop.leader ? t('appTabLeader', { leader: stop.leader }) : '')
-          }
-          onMouseDown={(e) => handleTabMouseDown(e, i)}
-        >
-          {TAB_TYPE_LABELS[stop.val]}
-        </span>
-      ))}
+      {/* Custom tab stops (interactive). A `clear` stop cancels inherited
+          stops at its position — it places no mark, so it renders nothing
+          (returning null keeps data-ruler-stop indexes aligned with `stops`
+          for drag handling) while write-back still preserves it. */}
+      {stops.map((stop, i) =>
+        !isRenderableTabStop(stop) ? null : (
+          <span
+            key={`${stop.pos}-${i}`}
+            data-ruler-stop={i}
+            className={`ruler-tab ruler-tab-${stop.val}`}
+            style={{ left: twipsToPx(stop.pos) }}
+            data-tip={
+              t('appTabStopTitle', {
+                type: t(TAB_TYPE_NAME_KEYS[stop.val]),
+                pos: Math.round((stop.pos / 144) * 10) / 10,
+              }) + (stop.leader ? t('appTabLeader', { leader: stop.leader }) : '')
+            }
+            onMouseDown={(e) => handleTabMouseDown(e, i)}
+          >
+            {TAB_TYPE_LABELS[stop.val]}
+          </span>
+        ),
+      )}
     </div>
   )
 }

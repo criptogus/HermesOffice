@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { HeuristicMetrics, OpentypeMetrics, type OpentypeFontLike } from '../src/metrics'
+import {
+  HeuristicMetrics,
+  OpentypeMetrics,
+  type FontMetricsProvider,
+  type OpentypeFontLike,
+  type RunStyle,
+} from '../src/metrics'
 import { DEFAULT_INSETS_EMU, layoutText } from '../src/text-layout'
 import { makeViewport } from '../src/coords'
-import { DEFAULT_BODY_INSETS, type Paragraph, type TextBody } from '@hermesoffice/pptx-engine'
+import { DEFAULT_BODY_INSETS, type Paragraph, type TextBody } from '@genoffice/pptx-engine'
 
 const vp = makeViewport({ cx: 9525 * 1000, cy: 9525 * 1000 }, 1000) // scale 1
 
@@ -928,6 +934,25 @@ describe('vertical text (bodyPr vert) column layout', () => {
   const layoutV = (b: TextBody, w = 200, h = 300) =>
     layoutText({ body: b, boxWidthPx: w, boxHeightPx: h, metrics: m, vp })
 
+  it('numbered paragraphs keep their scheme on the bullet glyph run (ribbon highlight / toggle)', () => {
+    const layout = layoutV(
+      body({
+        vert: 'eaVert',
+        paragraphs: [
+          {
+            runs: [{ text: '\u7e26', fontSize: 18 }],
+            bullet: { type: 'number', numType: 'romanUcPeriod' },
+            marL: 342900,
+            indent: -342900,
+          },
+        ],
+      }),
+    )
+    const b = layout.lines[0]!.runs.find((r) => r.isBullet)!
+    expect(b.text).toBe('I.')
+    expect(b.numType).toBe('romanUcPeriod')
+  })
+
   it('eaVert: two CJK paragraphs → two columns, right-to-left, chars flow downward within a column, all inside the box', () => {
     const layout = layoutV(
       body({
@@ -1242,9 +1267,11 @@ describe('buAutoNum startAt', () => {
     indent: -457200,
   })
 
-  it('starts the sequence at startAt and continues from there', () => {
+  it('starts the sequence at startAt; a following paragraph without startAt restarts at 1 (PowerPoint probe)', () => {
     const layout = layoutText({
-      body: body({ paragraphs: [para('first', 3), para('second')] as any }),
+      body: body({
+        paragraphs: [para('first', 3), para('second', 3), para('third')] as any,
+      }),
       boxWidthPx: 800,
       boxHeightPx: 200,
       metrics: m,
@@ -1254,7 +1281,11 @@ describe('buAutoNum startAt', () => {
       .map((l) => l.runs.find((r: any) => r.isBullet))
       .filter(Boolean)
       .map((r: any) => r.text)
-    expect(bullets).toEqual(['3.', '4.'])
+    expect(bullets).toEqual(['3.', '4.', '1.'])
+    const runs = layout.lines
+      .map((l) => l.runs.find((r: any) => r.isBullet))
+      .filter(Boolean) as any[]
+    expect(runs.map((r) => r.startAt)).toEqual([3, 3, undefined])
   })
 
   it('defaults to 1 without startAt', () => {
@@ -1496,5 +1527,445 @@ describe('kerning threshold (rPr kern)', () => {
       vp,
     })
     expect(l2.lines[0]!.runs[0]!.kerningOff).toBeUndefined()
+  })
+})
+
+describe('paragraph marR / tab stops / dash & wide-space wrapping', () => {
+  const m = new HeuristicMetrics()
+  const lay = (paragraphs: Paragraph[], boxWidthPx = 200) =>
+    layoutText({ body: body({ paragraphs }), boxWidthPx, boxHeightPx: 400, metrics: m, vp })
+
+  it('marR narrows the wrap width from the right', () => {
+    const p: Paragraph = { runs: [{ text: '一二三四五六七八', fontSize: 18 }] } // 8 × 24px
+    expect(lay([p]).lines).toHaveLength(1)
+    // marR = 100px → avail 100px → 4 chars per line
+    const wrapped = lay([{ ...p, marR: 952500 }]).lines
+    expect(wrapped).toHaveLength(2)
+    expect(wrapped[0]!.runs[0]!.x).toBe(0) // LTR: marR only narrows, the left edge stays
+  })
+
+  it('tab advances to the next custom stop, then to the default grid', () => {
+    const runs = [
+      { text: 'ab', fontSize: 18 },
+      { text: '\t', fontSize: 18 },
+      { text: 'cd', fontSize: 18 },
+    ]
+    const stopped = lay([{ runs, tabStops: [{ pos: 952500 }] }], 400).lines[0]!
+    expect(stopped.runs.find((r) => r.text === 'cd')!.x).toBeCloseTo(100, 0)
+    // No custom stop → the 1" (96px) default grid
+    const grid = lay([{ runs }], 400).lines[0]!
+    expect(grid.runs.find((r) => r.text === 'cd')!.x).toBeCloseTo(96, 0)
+  })
+
+  it('breaks after a dash instead of mid-word', () => {
+    const p: Paragraph = { runs: [{ text: 'Cloud–Edge', fontSize: 18 }] }
+    const lines = lay([p], 100).lines
+    expect(lines).toHaveLength(2)
+    expect(lines[0]!.runs.map((r) => r.text).join('')).toBe('Cloud–')
+    expect(lines[1]!.runs.map((r) => r.text).join('')).toBe('Edge')
+  })
+
+  it('ideographic spaces at a wrap point are swallowed, recorded verbatim, and never indent the next line', () => {
+    const p: Paragraph = { runs: [{ text: '一二三四　　五六七八', fontSize: 18 }] }
+    const lines = lay([p], 100).lines
+    expect(lines).toHaveLength(2)
+    expect(lines[0]!.trailingSpace).toBe(true)
+    expect(lines[0]!.trailingText).toBe('　　')
+    expect(lines[1]!.runs[0]!.x).toBe(0)
+    expect(lines[1]!.runs.map((r) => r.text).join('')).toBe('五六七八')
+  })
+})
+
+it('first-line tabs land on inset-absolute stops despite a first-line indent', () => {
+  const m = new HeuristicMetrics()
+  const lines = layoutText({
+    body: body({
+      paragraphs: [
+        {
+          runs: [
+            { text: 'ab', fontSize: 18 },
+            { text: '\t', fontSize: 18 },
+            { text: 'cd', fontSize: 18 },
+          ],
+          indent: 190500, // 20px first-line indent
+          tabStops: [{ pos: 952500 }], // 100px from the inset edge
+        },
+      ],
+    }),
+    boxWidthPx: 400,
+    boxHeightPx: 100,
+    metrics: m,
+    vp,
+  }).lines
+  // drawn x = line-local x + first-line shift; the stop is absolute, so 'cd' sits at 100px
+  expect(lines[0]!.runs.find((r) => r.text === 'cd')!.x).toBeCloseTo(100, 0)
+})
+
+it('a positive first-line indent consumes first-line wrap budget (hanging widens it)', () => {
+  const m = new HeuristicMetrics()
+  const lay = (indent?: number) =>
+    layoutText({
+      body: body({
+        paragraphs: [
+          {
+            runs: [{ text: '一二三四五六七八', fontSize: 18 }],
+            ...(indent != null ? { indent } : {}),
+          },
+        ],
+      }),
+      boxWidthPx: 100,
+      boxHeightPx: 400,
+      metrics: m,
+      vp,
+    }).lines
+  // 24px/char, 100px box: no indent → 4 chars on line 1
+  expect(lay()[0]!.runs.length).toBe(4)
+  // 20px first-line indent → 80px budget → 3 chars, drawn starting at 20px
+  const indented = lay(190500)
+  expect(indented[0]!.runs.length).toBe(3)
+  expect(indented[0]!.runs[0]!.x).toBeCloseTo(20, 0)
+  expect(indented[1]!.runs[0]!.x).toBe(0)
+})
+
+it('anchorCtr centers the text block bounding box horizontally (alignment stays within)', () => {
+  const m = new HeuristicMetrics()
+  const lay = (anchorCtr?: boolean) =>
+    layoutText({
+      body: body({
+        paragraphs: [
+          { runs: [{ text: '一二三四', fontSize: 18 }] }, // 96px
+          { runs: [{ text: '一二', fontSize: 18 }] }, // 48px
+        ],
+        ...(anchorCtr ? { anchorCtr } : {}),
+      }),
+      boxWidthPx: 200,
+      boxHeightPx: 200,
+      metrics: m,
+      vp,
+    }).lines
+  expect(lay()[0]!.runs[0]!.x).toBe(0)
+  const centered = lay(true)
+  // block width 96 → dx = (200-96)/2 = 52; the narrower line keeps its left alignment within the block
+  expect(centered[0]!.runs[0]!.x).toBeCloseTo(52, 0)
+  expect(centered[1]!.runs[0]!.x).toBeCloseTo(52, 0)
+})
+
+it('enclosed alphanumerics measure full-width in the missing-glyph fallback', () => {
+  const m = new HeuristicMetrics()
+  const style = { fontFamily: 'Century Gothic', fontSizePx: 100, bold: false, italic: false }
+  // ⑤ falls back to a CJK font at draw time; measuring it narrow overlaps the next run
+  expect(m.measure('⑤', style)).toBeCloseTo(100, 0)
+})
+
+describe('Symbol-font bullets', () => {
+  const bulletOf = (paragraphs: Paragraph[]) =>
+    layoutText({
+      body: body({ paragraphs }),
+      boxWidthPx: 400,
+      boxHeightPx: 300,
+      metrics: new HeuristicMetrics(),
+      vp,
+    }).lines[0]!.runs.find((r) => r.isBullet)!
+
+  it('maps <a:buFont Symbol> PUA/byte bullet codes through the Symbol table (U+F0B7 → •)', () => {
+    // a real deck: every level-1 bullet drew as a tofu box because the PUA code stayed raw
+    const pua = bulletOf([
+      {
+        runs: [{ text: 'item', fontSize: 14 }],
+        bullet: { type: 'char', char: '', font: 'Symbol' },
+      },
+    ])
+    expect(pua.text).toBe('•')
+    expect(pua.fontFamily).toBe('Symbol')
+    const raw = bulletOf([
+      {
+        runs: [{ text: 'item', fontSize: 14 }],
+        bullet: { type: 'char', char: '·', font: 'Symbol' },
+      },
+    ])
+    expect(raw.text).toBe('•')
+  })
+
+  it('leaves Wingdings bullets in the F0xx range and plain-font bullets untouched', () => {
+    const wd = bulletOf([
+      {
+        runs: [{ text: 'item', fontSize: 14 }],
+        bullet: { type: 'char', char: '§', font: 'Wingdings' },
+      },
+    ])
+    expect(wd.text).toBe('')
+    const plain = bulletOf([
+      {
+        runs: [{ text: 'item', fontSize: 14 }],
+        bullet: { type: 'char', char: '', font: 'Arial' },
+      },
+    ])
+    expect(plain.text).toBe('')
+  })
+})
+
+describe('mixed-script runs', () => {
+  it('Latin tokens of a CJK-bucket run draw with the run latinFamily, wide chars keep the ea face', () => {
+    const { lines } = layoutText({
+      body: body({
+        paragraphs: [
+          {
+            runs: [
+              {
+                text: 'ISO 45001 안전 관리',
+                fontSize: 14,
+                fontFamily: 'Malgun Gothic',
+                latinFamily: 'NanumSquareEB',
+                fontScriptHint: 'ko',
+              },
+            ],
+          },
+        ],
+      }),
+      boxWidthPx: 600,
+      boxHeightPx: 200,
+      metrics: new HeuristicMetrics(),
+      vp,
+    })
+    const runs = lines.flatMap((l) => l.runs)
+    const fam = (t: string) => runs.find((r) => r.text.includes(t))?.fontFamily
+    expect(fam('ISO')).toBe('NanumSquareEB')
+    expect(fam('45001')).toBe('NanumSquareEB')
+    expect(fam('안')).toBe('Malgun Gothic')
+    expect(fam('관')).toBe('Malgun Gothic')
+  })
+
+  it('non-Latin narrow scripts and halfwidth kana keep the bucket face', () => {
+    const { lines } = layoutText({
+      body: body({
+        paragraphs: [
+          {
+            runs: [
+              {
+                text: 'ｶﾅ שלום مرحبا AB 漢',
+                fontSize: 14,
+                fontFamily: 'Yu Gothic',
+                latinFamily: 'Arial',
+                fontScriptHint: 'ja',
+              },
+            ],
+          },
+        ],
+      }),
+      boxWidthPx: 600,
+      boxHeightPx: 200,
+      metrics: new HeuristicMetrics(),
+      vp,
+    })
+    const runs = lines.flatMap((l) => l.runs)
+    const fam = (t: string) => runs.find((r) => r.text.includes(t))?.fontFamily
+    expect(fam('ｶ')).toBe('Yu Gothic')
+    expect(fam('שלום')).toBe('Yu Gothic')
+    expect(fam('مرحبا')).toBe('Yu Gothic')
+    expect(fam('AB')).toBe('Arial')
+    expect(fam('漢')).toBe('Yu Gothic')
+  })
+})
+
+describe('latinOnly substitution hint', () => {
+  const seen: RunStyle[] = []
+  const recording: FontMetricsProvider = {
+    ...new HeuristicMetrics(),
+    measure: (text, style) => {
+      seen.push(style)
+      return new HeuristicMetrics().measure(text, style)
+    },
+    metrics: (style) => new HeuristicMetrics().metrics(style),
+  }
+  const lay = (runs: Paragraph['runs']) => {
+    seen.length = 0
+    layoutText({
+      body: body({ paragraphs: [{ runs }] }),
+      boxWidthPx: 600,
+      boxHeightPx: 200,
+      metrics: recording,
+      vp,
+    })
+    return seen
+  }
+  it('a Latin-only run in a CJK-named face measures with latinOnly, a CJK run does not', () => {
+    const latin = lay([{ text: 'ISO 45001', fontSize: 14, fontFamily: 'NanumSquareExtraBold' }])
+    expect(latin.length).toBeGreaterThan(0)
+    expect(latin.every((s) => s.latinOnly === true)).toBe(true)
+    const kr = lay([
+      { text: '안전 관리', fontSize: 14, fontFamily: 'NanumSquareExtraBold', fontScriptHint: 'ko' },
+    ])
+    expect(kr.some((s) => s.latinOnly)).toBe(false)
+  })
+  it('Latin tokens of a CJK-bucket run with one face for both slots still go latinOnly', () => {
+    const styles = lay([
+      { text: 'ISO 45001 안전', fontSize: 14, fontFamily: 'Noto Sans KR', fontScriptHint: 'ko' },
+    ])
+    expect(
+      styles.some(
+        (s) => s.fontFamily === 'Noto Sans KR' && s.latinOnly === true && s.substScript == null,
+      ),
+    ).toBe(true)
+    expect(styles.some((s) => s.fontFamily === 'Noto Sans KR' && s.substScript === 'ko')).toBe(true)
+  })
+  it('a Latin-only run keeps its declared-charset hint on every token', () => {
+    const styles = lay([
+      { text: 'ISO 45001', fontSize: 14, fontFamily: 'LG Smart', fontScriptHint: 'ko' },
+    ])
+    expect(styles.length).toBeGreaterThan(0)
+    expect(styles.every((s) => s.substScript === 'ko' && s.latinOnly === true)).toBe(true)
+  })
+  it('a halfwidth-kana run still splits its Latin tokens off', () => {
+    const styles = lay([
+      { text: 'ｶﾞｽ 123', fontSize: 14, fontFamily: 'Noto Sans JP', fontScriptHint: 'ja' },
+    ])
+    expect(styles.some((s) => s.latinOnly === true && s.substScript == null)).toBe(true)
+    expect(styles.some((s) => s.substScript === 'ja')).toBe(true)
+  })
+
+  it('Latin tokens of a mixed run carry latinOnly with the latin family, wide tokens do not', () => {
+    const styles = lay([
+      {
+        text: 'ISO 안전',
+        fontSize: 14,
+        fontFamily: 'Malgun Gothic',
+        latinFamily: 'NanumSquareEB',
+        fontScriptHint: 'ko',
+      },
+    ])
+    expect(
+      styles.some(
+        (s) => s.fontFamily === 'NanumSquareEB' && s.latinOnly === true && s.substScript == null,
+      ),
+    ).toBe(true)
+    expect(
+      styles.some(
+        (s) => s.fontFamily === 'Malgun Gothic' && !s.latinOnly && s.substScript === 'ko',
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('bullet parity (PowerPoint)', () => {
+  const m = new HeuristicMetrics()
+  const lay = (paragraphs: Paragraph[], media?: (ref: string) => string | undefined) =>
+    layoutText({
+      body: body({ paragraphs: paragraphs as Paragraph[] }),
+      boxWidthPx: 800,
+      boxHeightPx: 600,
+      metrics: m,
+      vp,
+      media,
+    })
+  const bulletsOf = (l: ReturnType<typeof lay>) =>
+    l.lines.filter((ln) => ln.paraStart).map((ln) => ln.runs.find((r) => r.isBullet))
+  const num = (text: string, level = 0, numType = 'arabicPeriod'): Paragraph =>
+    ({
+      runs: [{ text, fontSize: 18 }],
+      ...(level ? { level } : {}),
+      marL: 342900 * (level + 1),
+      indent: -342900,
+      bullet: { type: 'number', numType },
+    }) as Paragraph
+
+  it('nested numbering keeps one counter per level; the outer list continues after a sublist', () => {
+    const l = lay([
+      num('one'),
+      num('two'),
+      num('a', 1, 'alphaLcPeriod'),
+      num('b', 1, 'alphaLcPeriod'),
+      num('i', 2, 'romanLcPeriod'),
+      num('c', 1, 'alphaLcPeriod'),
+      num('three'),
+      num('a again', 1, 'alphaLcPeriod'),
+    ])
+    expect(bulletsOf(l).map((b) => b!.text)).toEqual([
+      '1.',
+      '2.',
+      'a.',
+      'b.',
+      'i.',
+      'c.',
+      '3.',
+      'a.',
+    ])
+  })
+
+  it('an unnumbered text paragraph restarts its level; empty paragraphs change nothing', () => {
+    const l = lay([
+      num('one'),
+      { runs: [{ text: '', fontSize: 18 }], bullet: { type: 'number' } } as Paragraph,
+      num('two'),
+      { runs: [{ text: 'plain', fontSize: 18 }], bullet: { type: 'none' } } as Paragraph,
+      num('one again'),
+    ])
+    expect(bulletsOf(l).map((b) => b?.text)).toEqual(['1.', undefined, '2.', undefined, '1.'])
+  })
+
+  it('a scheme change or a differing startAt (1 when absent) restarts the level', () => {
+    const withStart = (text: string, startAt: number): Paragraph =>
+      ({ ...num(text), bullet: { type: 'number', numType: 'arabicPeriod', startAt } }) as Paragraph
+    const l = lay([
+      num('one'),
+      num('two'),
+      num('A', 0, 'alphaUcPeriod'),
+      num('B', 0, 'alphaUcPeriod'),
+      withStart('seven', 7),
+      withStart('eight', 7),
+      num('one again'),
+      withStart('seven again', 7),
+    ])
+    expect(bulletsOf(l).map((b) => b!.text)).toEqual([
+      '1.',
+      '2.',
+      'A.',
+      'B.',
+      '7.',
+      '8.',
+      '1.',
+      '7.',
+    ])
+  })
+
+  it('buSzPts sizes the glyph in absolute points, buSzPct relative to the first run', () => {
+    const l = lay([
+      {
+        runs: [{ text: 'x', fontSize: 18 }],
+        marL: 342900,
+        indent: -342900,
+        bullet: { type: 'char', char: '•', sizePt: 36 },
+      } as Paragraph,
+      {
+        runs: [{ text: 'x', fontSize: 18 }],
+        marL: 342900,
+        indent: -342900,
+        bullet: { type: 'char', char: '•', sizePct: 50 },
+      } as Paragraph,
+    ])
+    const [a, b] = bulletsOf(l)
+    expect(a!.fontSizePx).toBeCloseTo(48, 3) // 36pt at scale 1 (96/72)
+    expect(b!.fontSizePx).toBeCloseTo(12, 3)
+  })
+
+  it('picture bullet: image run on the baseline, cap-height tall; missing media falls back to the dot', () => {
+    const para = {
+      runs: [{ text: 'x', fontSize: 18 }],
+      marL: 342900,
+      indent: -342900,
+      bullet: { type: 'blip', mediaRef: 'ppt/media/image1.png', blipEmbedId: 'rId6' },
+    } as Paragraph
+    const withMedia = lay([para], (ref) =>
+      ref === 'ppt/media/image1.png' ? 'data:image/png;base64,AA' : undefined,
+    )
+    const b = bulletsOf(withMedia)[0]!
+    expect(b.image).toBe('data:image/png;base64,AA')
+    expect(b.text).toBe('')
+    expect(b.ascentPx).toBeCloseTo(24 * 0.75, 3) // 18pt text at scale 1, 1:1 image
+    expect(b.widthPx).toBeCloseTo(b.ascentPx!, 3)
+    const textRun = withMedia.lines[0]!.runs.find((r) => !r.isBullet)!
+    expect(textRun.x).toBeGreaterThanOrEqual(b.x + b.widthPx)
+    const noMedia = bulletsOf(lay([para]))[0]!
+    expect(noMedia.image).toBeUndefined()
+    expect(noMedia.text).toBe('•')
   })
 })

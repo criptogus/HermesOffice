@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { IconEnter, IconSend, IconStop } from './icons'
+import { useAiPanelPrefs } from './ai-panel-prefs-store'
 
 // Keep in sync with the CSS `max-height` on `.ai-input-box textarea` (7 lines à 24px)
 const MAX_TEXTAREA_HEIGHT = 168
@@ -31,6 +32,7 @@ export function AiComposer({
   onSend,
   onStop,
   onPasteFiles,
+  onPasteText,
 }: {
   readonly value: string
   readonly busy: boolean
@@ -59,10 +61,13 @@ export function AiComposer({
   readonly onStop: () => void
   /** clipboard files pasted into the textarea (screenshots, copied files); text paste stays native */
   readonly onPasteFiles?: ((files: File[]) => void) | undefined
+  /** first look at pasted text; return true to consume it (e.g. a base64 image turned into an attachment) */
+  readonly onPasteText?: ((text: string) => boolean) | undefined
 }): React.JSX.Element {
   const innerRef = useRef<HTMLTextAreaElement | null>(null)
   const ref = textareaRef ?? innerRef
   const canSend = value.trim().length > 0 && !busy
+  const { spellcheck } = useAiPanelPrefs()
 
   // auto-grow up to ~6 lines; empty clears the inline height outright so the
   // CSS min-height governs (a hidden-at-measure pass can leave a stale value).
@@ -86,6 +91,8 @@ export function AiComposer({
         placeholder={placeholder}
         aria-label={ariaLabel}
         rows={1}
+        dir="auto"
+        spellCheck={spellcheck}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -97,11 +104,15 @@ export function AiComposer({
           }
         }}
         onPaste={(e) => {
-          if (!onPasteFiles) return
           const files = Array.from(e.clipboardData.files)
-          if (files.length === 0) return
-          e.preventDefault()
-          onPasteFiles(files)
+          if (files.length > 0) {
+            if (!onPasteFiles) return
+            e.preventDefault()
+            onPasteFiles(files)
+            return
+          }
+          const text = e.clipboardData.getData('text/plain')
+          if (text && onPasteText?.(text)) e.preventDefault()
         }}
       />
       <div className="ai-input-footer">

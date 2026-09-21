@@ -4,7 +4,7 @@
  * w:suppressAutoHyphens even though settings.xml enables autoHyphenation).
  */
 import { describe, expect, it } from 'vitest'
-import type { DocDefaults, ParsedDocFull, StyleInfo } from '@hermesoffice/docx-engine'
+import type { DocDefaults, ParsedDocFull, StyleInfo } from '@genoffice/docx-engine'
 import { docStyleCss } from '../src/renderer/doc-style-css'
 
 ;(globalThis as { CSS?: unknown }).CSS ??= { escape: (s: string) => s }
@@ -88,12 +88,14 @@ describe('autoHyphenation CSS', () => {
             styleId: 'NoHyph',
             name: 'NoHyph',
             type: 'paragraph',
+            isDefault: true,
             display: { suppressAutoHyphens: true },
           } as StyleInfo,
           {
             styleId: 'ReHyph',
             name: 'ReHyph',
             type: 'paragraph',
+            isDefault: true,
             display: { suppressAutoHyphens: false },
           } as StyleInfo,
         ],
@@ -111,6 +113,7 @@ describe('autoHyphenation CSS', () => {
             styleId: 'NoHyph',
             name: 'NoHyph',
             type: 'paragraph',
+            isDefault: true,
             display: { suppressAutoHyphens: true },
           } as StyleInfo,
         ],

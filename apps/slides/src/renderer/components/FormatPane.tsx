@@ -5,9 +5,9 @@
  * inputs via key.
  */
 import React, { useEffect, useRef, useState } from 'react'
-import type { PictureRenderNode, RenderNode, ShapeRenderNode } from '@hermesoffice/pptx-render'
+import type { PictureRenderNode, RenderNode, ShapeRenderNode } from '@genoffice/pptx-render'
 import type { GradientFillSpec, SetEffectsPatch } from '../../shared/ipc'
-import { Dropdown, useDismissablePopover } from '@hermesoffice/ui'
+import { Dropdown, useDismissablePopover } from '@genoffice/ui'
 import { useI18n } from '../i18n/locale'
 import { pathGradientCanvas } from '../konva-adapter'
 import { ColorWell } from './ColorWell'

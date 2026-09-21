@@ -25,6 +25,10 @@ export interface RunStyle {
   /** CJK substitution script for a missing fontFamily (from run altLang/lang or the
    *  bucket @charset, PowerPoint semantics); overrides name-based classification */
   substScript?: 'ja' | 'ko' | 'sc' | 'tc'
+  /** The text has no CJK characters: a missing family substitutes as western even when
+   *  its name looks CJK (PowerPoint picks the substitute per character script — prod_026's
+   *  "ISO 45001" in a missing NanumSquare face sets in Calibri, not Malgun) */
+  latinOnly?: boolean
 }
 
 export interface FontMetrics {
@@ -125,6 +129,8 @@ function charAdvanceEm(code: number): number {
   // substitutes a CJK font where these draw full-width. Over-estimating only widens
   // a gap; under-estimating makes bullet glyphs overlap the text they precede.
   if ((code >= 0x25a0 && code <= 0x25ff) || code === 0x203b) return 1.0
+  // Enclosed alphanumerics (① … ⑸ … ⓩ): same ambiguous-width fallback story as above
+  if (code >= 0x2460 && code <= 0x24ff) return 1.0
   // narrow characters
   if ("iIlj.,:;'!|".includes(String.fromCharCode(code))) return 0.28
   if (' ftr'.includes(String.fromCharCode(code))) return 0.32

@@ -145,4 +145,52 @@ describe('style keys', () => {
     expect(out).toEqual(['', bold, bold, ''])
     expect(colorsToRuns(out)).toEqual([{ start: 1, end: 3, color: bold }])
   })
+
+  it('ignores non-numeric, non-finite, and non-positive sizes', () => {
+    expect(decodeStyle('x|y|oops||')).toEqual({ font: 'y' })
+    expect(decodeStyle('x|y|Infinity||')).toEqual({ font: 'y' })
+    expect(decodeStyle('x|y|0||')).toEqual({ font: 'y' })
+    expect(decodeStyle('x|y|-3||')).toEqual({ font: 'y' })
+    expect(decodeStyle('x|y|12.5||')).toEqual({ font: 'y', size: 12.5 })
+  })
+
+  it('ignores non-hex colors and non-0/1 toggles', () => {
+    expect(decodeStyle('#d32f2f|arial|12|1|0')).toEqual({
+      color: '#d32f2f',
+      font: 'arial',
+      size: 12,
+      bold: true,
+      italic: false,
+    })
+    expect(decodeStyle('red|arial|12||')).toEqual({ font: 'arial', size: 12 })
+    expect(decodeStyle('x|a|b|2|x')).toEqual({ font: 'a' })
+    expect(decodeStyle('#d32f2f|a|b|||extra|more')).toEqual({ color: '#d32f2f', font: 'a' })
+  })
+
+  it('rejects field-separator fonts so style keys cannot shift fields', () => {
+    // a '|' inside font would split into extra fields on the next decode;
+    // the write path refuses it and decode only accepts separator-free ids
+    expect(decodeStyle('||12||')).toEqual({ size: 12 })
+    expect(patchStyle('', { font: 'a|b' })).toBe('')
+    expect(decodeStyle(patchStyle('', { font: 'arial' }))).toEqual({ font: 'arial' })
+  })
+
+  it('encodeStyle drops invalid fields instead of storing them', () => {
+    expect(encodeStyle({ font: 'a|b' })).toBe('')
+    expect(encodeStyle({ size: Number.NaN })).toBe('')
+    expect(encodeStyle({ size: Number.POSITIVE_INFINITY })).toBe('')
+    expect(encodeStyle({ color: 'red', font: 'arial' })).toBe(encodeStyle({ font: 'arial' }))
+    expect(decodeStyle(encodeStyle({ font: 'a|b', size: 14 }))).toEqual({ size: 14 })
+  })
+
+  it('rejects non-decimal, padded, and out-of-range sizes', () => {
+    expect(decodeStyle('x|arial|1e308||')).toEqual({ font: 'arial' })
+    expect(decodeStyle('x|arial|0x10||')).toEqual({ font: 'arial' })
+    expect(decodeStyle('x|arial| 12 ||')).toEqual({ font: 'arial', size: 12 })
+    expect(decodeStyle('x|arial|1001||')).toEqual({ font: 'arial' })
+    expect(decodeStyle('x|arial|1000||')).toEqual({ font: 'arial', size: 1000 })
+    expect(patchStyle('', { size: 1e308 })).toBe('')
+    expect(patchStyle('', { size: -4 })).toBe('')
+    expect(decodeStyle(patchStyle('', { size: 14 }))).toEqual({ size: 14 })
+  })
 })

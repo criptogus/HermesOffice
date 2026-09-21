@@ -8,7 +8,7 @@ const KEY = 'slides:recent-colors'
 const MAX = 10
 
 const normalize = (hex: string): string | null => {
-  const m = /^#?([0-9a-f]{6})/i.exec(hex.trim())
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
   return m ? `#${m[1]!.toUpperCase()}` : null
 }
 
@@ -16,7 +16,11 @@ export function getRecentColors(): string[] {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]')
     if (!Array.isArray(raw)) return []
-    return raw.map((h) => normalize(String(h))).filter((h): h is string => h != null)
+    // Enforce the push invariant on read too: legacy/corrupt stores may hold
+    // duplicates or more than MAX entries, which would overflow the swatch row
+    // until the next push self-heals it.
+    const colors = raw.map((h) => normalize(String(h))).filter((h): h is string => h != null)
+    return [...new Set(colors)].slice(0, MAX)
   } catch {
     return []
   }

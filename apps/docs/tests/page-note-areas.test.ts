@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { NoteInfo } from '@hermesoffice/docx-engine'
+import type { NoteInfo } from '@genoffice/docx-engine'
 import { PageEndnotes, PageFootnotes } from '../src/renderer/components/PageNoteAreas'
 import { endnotesAnchorY } from '../src/renderer/pagination'
 
@@ -38,6 +38,22 @@ describe('PageEndnotes — canvas endnote area (Word parity)', () => {
     const sups = Array.from(container.querySelectorAll('.page-note sup'), (s) => s.textContent)
     expect(sups).toEqual(['i', 'ii'])
     expect(container.textContent).toContain('first')
+    unmount()
+  })
+
+  it('omits the numeral for notes without a self-reference mark run (Word probe: empty endnotes keep their line but show no number)', () => {
+    const { container, unmount } = render(
+      createElement(PageEndnotes, {
+        notes: [{ id: '1', text: '', noRefMark: true }, note('2', 'second')],
+        top: null,
+        onEdit: () => {},
+        onDelete: () => {},
+      }),
+    )
+    const rows = Array.from(container.querySelectorAll('.page-note'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0].querySelector('sup')).toBeNull()
+    expect(rows[1].querySelector('sup')?.textContent).toBe('ii')
     unmount()
   })
 
@@ -146,6 +162,23 @@ describe('endnotesAnchorY — flow-end anchor for the endnote area', () => {
     const pm = document.createElement('div')
     pm.append(child({ bottom: 10, height: 0 }))
     expect(endnotesAnchorY(pm, 0, 1)).toBeNull()
+  })
+})
+
+describe('note areas: engine numbering', () => {
+  it('markers follow the supplied numbers (body order / numStart) instead of list position', () => {
+    const { container, unmount } = render(
+      createElement(PageFootnotes, {
+        notes: [note('a', 'first'), note('b', 'second')],
+        skipIds: new Set<string>(),
+        numberOf: (n) => (n.id === 'a' ? 6 : 5),
+        onEdit: () => {},
+        onDelete: () => {},
+      }),
+    )
+    const sups = Array.from(container.querySelectorAll('.page-note sup'), (s) => s.textContent)
+    expect(sups).toEqual(['6', '5'])
+    unmount()
   })
 })
 

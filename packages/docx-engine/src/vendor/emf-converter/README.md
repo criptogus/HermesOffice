@@ -5,7 +5,7 @@ Upstream: emf-converter 2.0.2 (Apache-2.0) — https://github.com/ChristopherVR/
 `index.mjs` / `index.d.mts` are the published npm dist files, plus local WMF fixes
 (marked below); wrapper-level changes still go in `src/metafile.ts`.
 
-Local modifications to `index.mjs` (2026-08, HermesOffice):
+Local modifications to `index.mjs` (2026-08, GenOffice):
 - LOGFONT16 FaceName read at offset +18 (upstream read +14, landing in the
   precision/quality bytes, so every WMF font family came out empty)
 - Font escapement parsed and applied (rotated text), TA_* text alignment honored
@@ -37,3 +37,29 @@ Local modifications to `index.mjs` (2026-08, HermesOffice):
   bounds-tight canvas got stretched to the frame's aspect by the display box
   (e.g. OLE preview text filling a third of a page-wide frame drew giant and
   deformed); matching frames keep the established bounds mapping
+- LOGFONTW FaceName read at offset +32 (upstream read +28, landing in the
+  OutPrecision/ClipPrecision/Quality/PitchAndFamily bytes — GDI+-generated EMFs
+  set those non-zero, prefixing the family with control chars; the invalid CSS
+  ident made `ctx.font` assignment fail silently and text drew at the default
+  10px); mapFontFamily now also strips control chars and quotes non-generic
+  families so a corrupt facename can never drop the font size again
+- EmfPlusBitmap BitmapDataType compared against the MS-EMFPLUS values (Pixel = 0,
+  Compressed = 1; upstream tested 1/2, so no EMF+ image object ever decoded and
+  every EmfPlusDrawImage painted nothing — e.g. a PowerPoint master background
+  wrapped as EMF+ rendered as a blank white page)
+- EMR_CREATEDIBPATTERNBRUSHPT / EMR_CREATEMONOBRUSH implemented as repeating canvas
+  patterns (upstream left them unhandled, so the previously selected solid brush
+  painted the PATCOPY blits — Excel OLE previews drew their dotted cell borders as
+  solid lines)
+- Font strings carry a `sans-serif` generic fallback after the (quoted) facename; an
+  unknown facename otherwise fell to the browser default serif, so CJK Office text in
+  EMF previews (Meiryo UI, MS PGothic) drew in Mincho/Song
+- EMR_EXTTEXTOUTW horizontal alignment tests the TA_CENTER/TA_RIGHT bit pair as a
+  value (upstream tested `& 2` after `& 6`, so TA_CENTER (6) fell through to
+  right-aligned and an OLE icon's centered caption lost its leading characters)
+- EMF+ ObjectType constants follow MS-EMFPLUS 2.1.1.22 (Region = 4,
+  ImageAttributes = 8; upstream had the two swapped) and a region object with
+  RegionNodeCount 0 (a single leaf node) parses. Office chart pictures clip the
+  plot with SetClipRect and widen the clip back with SetClipRegion; the region
+  never resolved, so titles, legends and axis labels outside the plot area
+  vanished

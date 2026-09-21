@@ -4,7 +4,7 @@
  * current content instead of a snapshot taken at annotation time.
  */
 import React, { useState } from 'react'
-import type { RenderSlide } from '@hermesoffice/pptx-render'
+import type { RenderSlide } from '@genoffice/pptx-render'
 import { useI18n } from '../i18n/locale'
 import {
   describeNode,

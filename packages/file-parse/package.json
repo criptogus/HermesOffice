@@ -1,5 +1,5 @@
 {
-  "name": "@hermesoffice/file-parse",
+  "name": "@genoffice/file-parse",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -14,7 +14,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@hermesoffice/docx-engine": "*",
+    "@genoffice/docx-engine": "*",
     "cfb": "^1.2.2",
     "fast-xml-parser": "^5.3.4",
     "jszip": "^3.10.1",
@@ -25,6 +25,6 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   }
 }

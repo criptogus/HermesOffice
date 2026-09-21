@@ -1,3 +1,4 @@
+import type { AiPanelPrefs } from '@genoffice/ui'
 /**
  * slides main-process <-> renderer IPC contract (Phase 3: open/save/edit, AI not included yet).
  *
@@ -7,18 +8,39 @@
  * renderer sends edit intents (text/geometry changes) back to the main process, which applies
  * them to the model and rebuilds the RenderSlide.
  */
-import type { RenderSlide } from '@hermesoffice/pptx-render'
-import type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
+import type { RenderSlide } from '@genoffice/pptx-render'
+import type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
 import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@hermesoffice/ai-provider'
+} from '@genoffice/ai-provider'
 
-export type { SlideComment, SectionInfo } from '@hermesoffice/pptx-engine'
+import type {
+  EditRun,
+  EditParagraph,
+  ScriptBoxOp,
+  ScriptStylePatch,
+  ScriptEditOp,
+  ApplyEditScriptOp,
+  LinkTargetOp,
+} from '@genoffice/pptx-ops'
 
-// Canonical definitions of AI-related types live in @hermesoffice/ai-provider / @hermesoffice/agent-core (shared with docs)
+// edit payload types moved to the op package; re-exported so IPC consumers keep one import site
+export type {
+  EditRun,
+  EditParagraph,
+  ScriptBoxOp,
+  ScriptStylePatch,
+  ScriptEditOp,
+  ApplyEditScriptOp,
+  LinkTargetOp,
+}
+
+export type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
+
+// Canonical definitions of AI-related types live in @genoffice/ai-provider / @genoffice/agent-core (shared with docs)
 export type {
   AiProviderConfig,
   AiProviderId,
@@ -27,11 +49,17 @@ export type {
   AiStreamChunk,
   AiStreamRequest,
   GenSparkAccountStatus,
-} from '@hermesoffice/ai-provider'
-export { AI_PROVIDERS } from '@hermesoffice/ai-provider'
-export type { AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
+} from '@genoffice/ai-provider'
+export { AI_PROVIDERS } from '@genoffice/ai-provider/browser'
+export type { AgentToolCall, AgentToolDef } from '@genoffice/agent-core'
 
 export type UiTheme = 'light' | 'dark' | 'system'
+
+/** shell-wide AutoSave default; updatedAt is 0 until the user has ever set it */
+export interface AutoSaveDefault {
+  on: boolean
+  updatedAt: number
+}
 
 /** Effects patch for setEffects (mirrors pptx-engine's EffectsPatch): null clears an
  * effect, undefined leaves it untouched. Distances/radii in EMU (12700 per pt),
@@ -121,79 +149,6 @@ export interface DesktopFilesApi {
   getPathForFile(file: File): string
 }
 
-/** One rich-text run (sent by the editor, with independent formatting). */
-export interface EditRun {
-  text: string
-  bold?: boolean
-  italic?: boolean
-  underline?: boolean
-  fontSize?: number
-  fontFamily?: string
-  color?: string
-  /** Strikethrough (DOM-authoritative boolean, like bold/italic/underline) */
-  strike?: boolean
-  /** Super/subscript baseline % (positive = superscript; 0 = none, used to disable explicitly) */
-  baseline?: number
-  /** Text outline (for WordArt), width in EMU */
-  outline?: { color: string; widthEmu: number }
-  /** Dynamic field (slidenum / datetime1…); text is the cached value */
-  field?: string
-  /** Source model run index (index into the original paragraph's runs); the main process uses it to backtrack unedited format fields */
-  srcRun?: number
-  /** Run hyperlink. undefined = keep the original run's link (programmatic paths that can't
-   * express links); null = explicitly none (the editor DOM is authoritative, link removed) */
-  link?: LinkTargetOp | null
-}
-
-/** One paragraph (with alignment). */
-export interface EditParagraph {
-  runs: EditRun[]
-  align?: 'left' | 'center' | 'right' | 'justify'
-  /** Indent level 0..8 (returned after editor Tab/⇧Tab adjustment; defaults to the original paragraph's) */
-  level?: number
-  /** Source model paragraph index; the main process uses it to inherit bullet/line spacing etc. (both halves of a split share a source) */
-  srcPara?: number
-  /** Per-paragraph format explicitly changed during this edit session (absent = keep the original) */
-  bullet?: 'char' | 'number' | 'none'
-  bulletChar?: string
-  lineSpacingPct?: number
-  spaceBeforePt?: number
-  spaceAfterPt?: number
-  /** Paragraph base direction toggled during this edit session (false = explicit LTR) */
-  rtl?: boolean
-}
-
-/** One geometry primitive collected by the edit-script sandbox (px, viewport space). */
-export interface ScriptBoxOp {
-  id: string
-  x: number
-  y: number
-  w: number
-  h: number
-  rotation: number
-  /** Group child: converted to child-space EMU by the main-process shim */
-  groupId?: string
-}
-
-/** setStyle's style-override fields (pass only what changes; align is paragraph-level, the rest override per run). */
-export interface ScriptStylePatch {
-  fontSize?: number
-  color?: string
-  bold?: boolean
-  italic?: boolean
-  underline?: boolean
-  fontFamily?: string
-  align?: 'left' | 'center' | 'right'
-}
-
-/** One non-geometry primitive collected by the edit-script sandbox, in script call order. */
-export type ScriptEditOp = (
-  | { kind: 'text'; paragraphs: EditParagraph[] }
-  | { kind: 'style'; style: ScriptStylePatch }
-  | { kind: 'fill'; fill: string }
-  | { kind: 'stroke'; stroke: { color: string; widthPt: number } | null }
-) & { id: string; groupId?: string }
-
 /** A raw op transaction from the AI batch surface (ops are validated by the registry; coordinates are document-space EMU). */
 export interface ApplyTxnOp {
   ops: unknown[]
@@ -231,13 +186,6 @@ export interface AiRunFailure {
   error?: string
   tools?: string[]
   durationMs?: number
-}
-
-export interface ApplyEditScriptOp {
-  slideIndex: number
-  fitWidthPx: number
-  boxes: ScriptBoxOp[]
-  edits: ScriptEditOp[]
 }
 
 /**
@@ -280,10 +228,18 @@ export interface SetElementFontOp {
 export interface SetElementParagraphFormatOp {
   slideIndex: number
   sourceIds: string[]
-  /** 'char' bullet dot / 'number' numbered / 'none' explicitly none */
-  bullet?: 'char' | 'number' | 'none'
+  /** 'char' bullet dot / 'number' numbered / 'blip' picture / 'none' explicitly none */
+  bullet?: 'char' | 'number' | 'blip' | 'none'
   /** Custom bullet character (with bullet: 'char'; defaults to '•') */
   bulletChar?: string
+  /** <a:buFont> paired with the character (gallery presets carry Wingdings/Courier codes) */
+  bulletFont?: string
+  /** buAutoNum scheme (ST_TextAutonumberScheme) with bullet: 'number'; alone it re-schemes numbered paragraphs */
+  numType?: string
+  /** First number of the sequence; alone it only touches numbered paragraphs */
+  startAt?: number
+  /** Picture bullet source (with bullet: 'blip'); landed as a media part + slide rel */
+  bulletImage?: { base64: string; ext: string }
   /** Bullet hanging indent (EMU); alone it adjusts existing bullets' indent */
   bulletHangEmu?: number
   /** Bullet size (% of text size, 100 = same); alone it only touches bulleted paragraphs */
@@ -501,9 +457,13 @@ export type EditBackgroundOp = {
 export interface CopyElementsOp {
   slideIndex: number
   sourceIds: string[]
+  /** Renderer-generated token tying a delayed PNG export to this copy. */
+  clipboardToken?: string
+  /** The copy backs a cut: the originals are being removed, so pasting back onto the source page lands in place. */
+  cut?: boolean
 }
 
-/** Paste clipboard elements onto the given page (repeated pastes auto-cascade the offset). */
+/** Paste clipboard elements onto the given page (pastes land at the source position; occupied spots cascade the offset). */
 export interface PasteElementsOp {
   slideIndex: number
   fitWidthPx: number
@@ -982,9 +942,6 @@ export interface AddMediaBytesOp {
   name?: string
 }
 
-/** Element hyperlink target. */
-export type LinkTargetOp = { kind: 'url'; url: string } | { kind: 'slide'; slideIndex: number }
-
 export interface SetLinkOp {
   slideIndex: number
   sourceId: string
@@ -1085,6 +1042,20 @@ export interface ExportImagesResult {
   error?: string
 }
 
+/**
+ * Clickable link overlay on one exported PDF page: rect as fractions of the
+ * page box (0..1), href = URL or in-document page anchor ("#pgN"). The print
+ * window lays them over the page image as transparent <a> boxes, which
+ * printToPDF turns into PDF link annotations.
+ */
+export interface ExportPdfLink {
+  x: number
+  y: number
+  w: number
+  h: number
+  href: string
+}
+
 /** Export as PDF: the main process loads each page PNG in a hidden window then printToPDF. */
 export interface ExportPdfOp {
   /** Target pdf absolute path (chosen via pickExportPdfPath) */
@@ -1094,6 +1065,8 @@ export interface ExportPdfOp {
   /** Rendered pixel width/height of the slide page (used to compute the PDF page aspect ratio) */
   widthPx: number
   heightPx: number
+  /** Per-page clickable link overlays (element + text-run hyperlinks), same order as pngsBase64 */
+  links?: ExportPdfLink[][]
 }
 
 export interface ExportPdfResult {
@@ -1174,6 +1147,13 @@ export interface SlidesApi {
   getTheme: () => Promise<UiTheme>
   /** theme switched from the shell home page */
   onThemeChanged: (handler: (theme: UiTheme) => void) => () => void
+  /** shell-wide AutoSave default (see useAutoSavePref) */
+  getAutoSaveDefault: () => Promise<AutoSaveDefault>
+  onAutoSaveDefaultChanged: (handler: (value: AutoSaveDefault) => void) => () => void
+  /** AI panel text size + chat-input spellcheck (Settings → General in the shell) */
+  getAiPanelPrefs: () => Promise<AiPanelPrefs>
+  setAiPanelPrefs(patch: Partial<AiPanelPrefs>): Promise<AiPanelPrefs>
+  onAiPanelPrefsChanged: (handler: (prefs: AiPanelPrefs) => void) => () => void
   /** press on the shell chrome (tab strip is a sibling WebContentsView whose
    *  clicks produce no DOM event here) — dismiss open popovers */
   onChromePressed: (handler: () => void) => () => void
@@ -1207,6 +1187,10 @@ export interface SlidesApi {
   /** The user font store changed (download/local install): re-sync private FontFaces */
   onFontsChanged: (handler: () => void) => () => void
   consumePendingOpen: (fitWidthPx: number) => Promise<OpenResult | null>
+  /** Headless export mode: the PDF path this hidden renderer must export to, null in normal use */
+  consumeHeadlessExport: () => Promise<string | null>
+  /** Headless export mode: report the export outcome so the main process can quit */
+  headlessExportDone: (result: { ok: boolean; error?: string }) => void
   /** New blank presentation (single blank 16:9 page, untitled) */
   newBlank: (fitWidthPx: number) => Promise<OpenResult>
   /** Land generated pages: each pageMarkers entry is a marker (cloudpptx:<path>) redeemable for a one-slide pptx.
@@ -1231,7 +1215,7 @@ export interface SlidesApi {
       })
     | { error: string }
   >
-  /** Whether cloud single-page generation (gsk slide_generate) is available (HERMESOFFICE_CLOUD_SLIDE=1 + gsk login) */
+  /** Whether cloud single-page generation (gsk slide_generate) is available (GENOFFICE_CLOUD_SLIDE=1 + gsk login) */
   cloudGenStatus: () => Promise<{ enabled: boolean }>
   /** Cloud single-page generation: brief → one-slide pptx temp file; the marker goes into a landGeneratedPages pageMarkers slot */
   cloudGeneratePage: (op: {
@@ -1369,6 +1353,8 @@ export interface SlidesApi {
   flipElements: (op: FlipElementOp) => Promise<RenderSlide | null>
   /** Returns the full affected RenderSlide array (when applied to all pages) */
   editBackground: (op: EditBackgroundOp) => Promise<RenderSlide[] | null>
+  /** Show the system image picker and return the file's bytes (for Replace Picture); cancel returns null */
+  pickPictureFile: () => Promise<{ base64: string; ext: string } | null>
   /** Show the system image picker and insert into the current page; returns the updated page + new element id, cancel returns null, undecodable format returns the error */
   insertImage: (
     slideIndex: number,
@@ -1378,6 +1364,8 @@ export interface SlidesApi {
   >
   /** Copy elements to the in-app clipboard; returns the number actually copied */
   copyElements: (op: CopyElementsOp) => Promise<number>
+  /** Add the renderer's PNG to the matching current element copy for external applications. */
+  copyElementsImage: (clipboardToken: string, pngBase64: string) => Promise<boolean>
   /** Paste; empty clipboard or failure returns null. Note the whole page's element ids update, requiring a whole-page replace */
   pasteElements: (
     op: PasteElementsOp,
@@ -1594,7 +1582,10 @@ export interface SlidesApi {
   }>
   insertImageUrl: (op: {
     slideIndex: number
-    url: string
+    url?: string
+    /** raw base64 of a user attachment (attachment:// reference) — no network fetch */
+    base64?: string
+    ext?: string
     xPx: number
     yPx: number
     wPx: number
@@ -1605,7 +1596,10 @@ export interface SlidesApi {
   replacePictureUrl: (op: {
     slideIndex: number
     sourceId: string
-    url: string
+    url?: string
+    /** raw base64 of a user attachment (attachment:// reference) — no network fetch */
+    base64?: string
+    ext?: string
     keepSrcRect?: boolean
   }) => Promise<RenderSlide | null>
   /** gsk (Genspark) AI image generation/editing, returns the image URL (error prompts login when logged out) */
@@ -1615,6 +1609,7 @@ export interface SlidesApi {
     referenceImageUrls?: string[]
     aspectRatio?: string
     imageSize?: string
+    transparentBackground?: boolean
   }) => Promise<{ url?: string; error?: string }>
   /** gsk (Genspark) media analysis: image/audio/video content understanding, returns analysis text */
   analyzeMedia: (op: {

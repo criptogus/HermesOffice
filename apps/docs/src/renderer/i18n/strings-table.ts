@@ -1,4 +1,4 @@
-import { defineStrings } from '@hermesoffice/i18n'
+import { defineStrings } from '@genoffice/i18n'
 
 const en = {
   ribbonTableStyleOptions: 'Table Style Options',
@@ -46,6 +46,7 @@ export const tableStrings = defineStrings({
   pt: en,
   it: en,
   pl: en,
+  cs: en,
   nl: en,
   ms: en,
   he: en,

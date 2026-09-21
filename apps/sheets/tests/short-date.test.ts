@@ -6,7 +6,7 @@ import {
   setSystemShortDate,
   shortDateNumFmtId,
   shortDatePatternForSystemLocale,
-} from '../src/shared/short-date'
+} from '@genoffice/xlsx-gateway/shared/short-date'
 
 describe('shortDatePatternForSystemLocale', () => {
   it.each([
@@ -45,6 +45,7 @@ describe('shortDateNumFmtId', () => {
     try {
       setSystemShortDate('yyyy/m/d')
       expect(shortDateNumFmtId('yyyy/m/d')).toBe(14)
+      expect(shortDateNumFmtId('yyyy/m/d hh:mm')).toBe(22)
       expect(shortDateNumFmtId('yyyy/m/d h:mm')).toBe(22)
       expect(shortDateNumFmtId('yyyy/mm/dd')).toBeUndefined()
     } finally {

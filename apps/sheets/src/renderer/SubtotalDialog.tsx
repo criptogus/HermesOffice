@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Dropdown } from '@hermesoffice/ui'
+import { Dropdown } from '@genoffice/ui'
 import type { PivotField } from './PivotDialog'
 import { useI18n } from './i18n/locale'
 

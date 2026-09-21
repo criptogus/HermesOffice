@@ -6,7 +6,7 @@
  * P4. Pure geometry, fully unit-testable.
  */
 import type { Rect } from '../geometry'
-import { approxEq, intersectArea, rectArea } from '../geometry'
+import { approxEq, coversBox, intersectArea, rectArea } from '../geometry'
 import type { Fill, PageShapes, RawPath, RawSubpath, Stroke } from '../ir'
 
 /** points this close are the same coordinate when detecting rectangles/axis lines */
@@ -252,6 +252,41 @@ function clipRect(rect: Rect, clip: Rect | undefined): Rect | null {
 /** strokes this far outside the clip window are cut, not just clamped (pt) */
 const CLIP_STROKE_TOL = 0.5
 
+/** straight edges under this share of the bbox perimeter = an ellipse, not a rounded rect */
+const ELLIPSE_MAX_STRAIGHT_SHARE = 0.2
+
+/**
+ * Read a curved, filled subpath as the preset shape it was drawn as: the
+ * straight (LINETO) runs along each axis leave the corner radius as what the
+ * bbox side does not cover; an outline with (almost) no straight run is an
+ * ellipse. Slide decks draw bullets, rounded cards and pills this way, and
+ * pdf2pptx emits them as native shapes instead of dropping them.
+ */
+function curvedGeometry(
+  sub: RawSubpath,
+  box: Rect,
+): { geometry: 'roundRect' | 'ellipse'; cornerRadiusPt?: number } {
+  const w = box.x1 - box.x0
+  const h = box.y1 - box.y0
+  let straight = 0
+  let maxH = 0
+  let maxV = 0
+  for (let i = 1; i < sub.points.length; i++) {
+    if (!sub.lineTo?.[i]) continue
+    const a = sub.points[i - 1]!
+    const b = sub.points[i]!
+    const dx = Math.abs(b.x - a.x)
+    const dy = Math.abs(b.y - a.y)
+    straight += Math.hypot(dx, dy)
+    if (approxEq(a.y, b.y, AXIS_TOL)) maxH = Math.max(maxH, dx)
+    else if (approxEq(a.x, b.x, AXIS_TOL)) maxV = Math.max(maxV, dy)
+  }
+  if (straight < ELLIPSE_MAX_STRAIGHT_SHARE * 2 * (w + h)) return { geometry: 'ellipse' }
+  const half = Math.min(w, h) / 2
+  const radius = Math.min(half, (w - maxH) / 2, (h - maxV) / 2)
+  return { geometry: 'roundRect', cornerRadiusPt: Math.max(0, radius) }
+}
+
 /** fills keep the source paint order for behindDoc stacking (P16 A) */
 const zOf = (path: RawPath): { z?: number } => (path.z !== undefined ? { z: path.z } : {})
 
@@ -265,7 +300,7 @@ export function normalizeShapes(
   const curvedFills: Fill[] = []
   let ignoredPaths = 0
 
-  for (const path of paths) {
+  for (const [seq, path] of paths.entries()) {
     const strokesBefore = strokes.length
     if (!path.filled && !path.stroked) continue
     // a translucent fill is a glow/shadow/tint (P10 C): as cell shading or
@@ -294,6 +329,8 @@ export function normalizeShapes(
               color: path.fillColor,
               ...alphaOf(path),
               ...zOf(path),
+              seq,
+              ...curvedGeometry(sub, box),
             })
           }
         }
@@ -319,7 +356,9 @@ export function normalizeShapes(
           strokes.push(thin)
           continue
         }
-        if (filled) fills.push({ box: rect, color: path.fillColor, ...alphaOf(path), ...zOf(path) })
+        if (filled) {
+          fills.push({ box: rect, color: path.fillColor, ...alphaOf(path), ...zOf(path), seq })
+        }
         if (path.stroked) {
           // stroke the AUTHORED edges masked by the clip — the clip boundary
           // itself was never stroked, so edges falling outside it vanish
@@ -494,11 +533,17 @@ export function extractPageBackground(
   fills: Fill[],
   widthPt: number,
   heightPt: number,
+  /** print content box (uniform margins): a fill covering it is the wash too */
+  contentBox?: Rect | null,
 ): string | undefined {
   let color: string | undefined
+  const pageBox = { x0: 0, y0: 0, x1: widthPt, y1: heightPt }
   for (let i = fills.length - 1; i >= 0; i--) {
     const b = fills[i]!.box
-    if (b.x1 - b.x0 >= widthPt * BG_COVER_RATIO && b.y1 - b.y0 >= heightPt * BG_COVER_RATIO) {
+    if (
+      coversBox(b, pageBox, BG_COVER_RATIO) ||
+      (contentBox != null && coversBox(b, contentBox, BG_COVER_RATIO))
+    ) {
       if (color === undefined) color = fills[i]!.color
       fills.splice(i, 1)
     }
@@ -535,9 +580,14 @@ export function extractBackgroundPanels(
   charBoxes: readonly Rect[],
   widthPt: number,
   heightPt: number,
+  /** print content box: spines/banners are flush with ITS edges, not the paper's */
+  contentBox?: Rect | null,
 ): Fill[] {
   const pageArea = widthPt * heightPt
   if (pageArea <= 0) return []
+  const edge = contentBox ?? { x0: 0, y0: 0, x1: widthPt, y1: heightPt }
+  const edgeW = edge.x1 - edge.x0
+  const edgeH = edge.y1 - edge.y0
   const panels: Fill[] = []
   const isPanel = (b: Rect, color: string): boolean => {
     if (isNearWhite(color)) return false
@@ -545,11 +595,11 @@ export function extractBackgroundPanels(
     const share = area / pageArea
     if (share < PANEL_MIN_AREA_RATIO || share > PANEL_MAX_AREA_RATIO) return false
     const fullHeight =
-      b.y1 - b.y0 >= heightPt * PANEL_FULL_DIM_RATIO &&
-      (b.x0 <= PANEL_EDGE_TOL_PT || b.x1 >= widthPt - PANEL_EDGE_TOL_PT)
+      b.y1 - b.y0 >= edgeH * PANEL_FULL_DIM_RATIO &&
+      (b.x0 <= edge.x0 + PANEL_EDGE_TOL_PT || b.x1 >= edge.x1 - PANEL_EDGE_TOL_PT)
     const fullWidth =
-      b.x1 - b.x0 >= widthPt * PANEL_FULL_DIM_RATIO &&
-      (b.y0 <= PANEL_EDGE_TOL_PT || b.y1 >= heightPt - PANEL_EDGE_TOL_PT)
+      b.x1 - b.x0 >= edgeW * PANEL_FULL_DIM_RATIO &&
+      (b.y0 <= edge.y0 + PANEL_EDGE_TOL_PT || b.y1 >= edge.y1 - PANEL_EDGE_TOL_PT)
     if (!fullHeight && !fullWidth) return false
     let chars = 0
     for (const c of charBoxes) {
@@ -609,6 +659,14 @@ const CAPSULE_MIN_ASPECT = 2
 /** …and mostly occupied by its text, not a decorative swoosh with a stray label */
 const CAPSULE_MIN_TEXT_WIDTH_SHARE = 0.3
 
+// ── plates hosting lighter cards (P35) ──
+/** a hosted card must be at least this much lighter than its plate */
+const PLATE_MIN_CARD_CONTRAST = 0.3
+/** … and a real card, not a bullet (pt²) */
+const PLATE_CARD_MIN_AREA_PT2 = 600
+/** … while leaving the plate visible around it */
+const PLATE_CARD_MAX_SHARE = 0.85
+
 /** relative luminance of a RRGGBB hex, 0 (black) – 1 (white) */
 export function hexLuminance(hex: string): number {
   if (!/^[0-9a-fA-F]{6}$/.test(hex)) return 0
@@ -642,6 +700,14 @@ export function extractTextBackdrops(
     const cy = (b.y0 + b.y1) / 2
     return cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1
   }
+  // the pool as it was before any backdrop left it: hosted-card lookups must
+  // see cards that were themselves claimed earlier in the scan
+  const pool = [...fills, ...curvedFills]
+  const containsRect = (outer: Rect, inner: Rect): boolean =>
+    inner.x0 >= outer.x0 - 1 &&
+    inner.x1 <= outer.x1 + 1 &&
+    inner.y0 >= outer.y0 - 1 &&
+    inner.y1 <= outer.y1 + 1
   const qualifies = (fill: Fill, rounded = false): boolean => {
     const area = (fill.box.x1 - fill.box.x0) * (fill.box.y1 - fill.box.y0)
     // the pool paths need a real card; the capsule path (rounded only) sizes
@@ -684,6 +750,23 @@ export function extractTextBackdrops(
         lumas.sort((a, b) => a - b)
         const medianLuma = lumas[Math.floor(lumas.length / 2)]!
         if (Math.abs(medianLuma - fillLuma) >= BACKDROP_CARD_MIN_CONTRAST) return true
+      }
+      // plate hosting lighter cards (P35): a dark UI mockup / feature plate
+      // whose text sits on lighter sub-cards — the text alone never contrasts
+      // with the plate, but without it those cards vanish on the white paper
+      if (
+        fillLuma <= BACKDROP_MAX_FILL_LUMA &&
+        area >= BACKDROP_CARD_MIN_PAGE_RATIO * pageArea &&
+        pool.some(
+          (other) =>
+            other !== fill &&
+            rectArea(other.box) >= PLATE_CARD_MIN_AREA_PT2 &&
+            rectArea(other.box) <= PLATE_CARD_MAX_SHARE * area &&
+            containsRect(fill.box, other.box) &&
+            hexLuminance(other.color) - fillLuma >= PLATE_MIN_CARD_CONTRAST,
+        )
+      ) {
+        return true
       }
       // label plate (P16 I): a mid-size flat plate far taller than the short
       // label it carries (a grey "payment method" caption block) — highlight bars and

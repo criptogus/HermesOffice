@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { z } from 'zod'
 
-import { blankXlsxBuffer } from '../src/gateway/csv-import'
-import { saveWorkbookViaSidecar } from '../src/gateway/xlsx-package-io'
+import { blankXlsxBuffer } from '@genoffice/xlsx-gateway/gateway/csv-import'
+import { saveWorkbookViaSidecar } from '@genoffice/xlsx-gateway/gateway/xlsx-package-io'
 import { XlsxSidecarClient } from '../src/main/xlsx-sidecar-client'
 import { workbookRangeResultSchema } from '../src/shared/desktop-api'
 import { buildCompatibilityFixture } from './fixture-builder'
@@ -61,8 +61,8 @@ describe('XLSX Rust sidecar', () => {
         }),
       )
       expect(result.cells).toEqual([
-        { row: 0, column: 0, value: 'Old' },
-        { row: 0, column: 1, value: 10 },
+        { row: 0, column: 0, value: 'Old', styleIndex: 0 },
+        { row: 0, column: 1, value: 10, styleIndex: 0 },
       ])
     } finally {
       if (sessionId) await client.close(sessionId)
@@ -163,8 +163,8 @@ describe('XLSX Rust sidecar', () => {
         }),
       )
       expect(result.cells).toEqual([
-        { row: 0, column: 0, value: 'Shared\nBreak' },
-        { row: 0, column: 1, value: 'Inline\nBreak' },
+        { row: 0, column: 0, value: 'Shared\nBreak', styleIndex: 0 },
+        { row: 0, column: 1, value: 'Inline\nBreak', styleIndex: 0 },
       ])
     } finally {
       if (sessionId) await client.close(sessionId)
@@ -480,6 +480,7 @@ describe('XLSX Rust sidecar', () => {
           headerRowCount: 1,
           showRowStripes: true,
           showColumnStripes: false,
+          filterActive: true,
           name: 'Table1',
           columns: ['Item', 'B', 'C', 'D'],
           styleName: 'TableStyleMedium2',
@@ -568,6 +569,7 @@ describe('XLSX Rust sidecar', () => {
         formulas: ['6'],
         dxfIndex: 0,
         priority: 1,
+        stopIfTrue: true,
         ranges: [{ startRow: 1, startColumn: 0, endRow: 2, endColumn: 0 }],
       })
       expect(result.conditionalRules[1]).toMatchObject({
@@ -748,7 +750,7 @@ async function buildStructureFixture(): Promise<Buffer> {
       <autoFilter ref="A1:D4"/>
       <mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells>
       <conditionalFormatting sqref="A2:A3">
-        <cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>6</formula></cfRule>
+        <cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan" stopIfTrue="1"><formula>6</formula></cfRule>
         <cfRule type="dataBar" priority="2">
           <dataBar showValue="0"><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar>
           <extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"
@@ -798,6 +800,9 @@ async function buildStructureFixture(): Promise<Buffer> {
     `<?xml version="1.0"?>
     <table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
       id="1" name="Table1" displayName="Table1" ref="A1:D4" headerRowCount="1">
+      <autoFilter ref="A1:D4">
+        <filterColumn colId="0"><filters><filter val="x"/></filters></filterColumn>
+      </autoFilter>
       <tableColumns count="4">
         <tableColumn id="1" name="Item"/><tableColumn id="2" name="B"/>
         <tableColumn id="3" name="C"/><tableColumn id="4" name="D"/>

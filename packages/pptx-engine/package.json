@@ -1,5 +1,5 @@
 {
-  "name": "@hermesoffice/pptx-engine",
+  "name": "@genoffice/pptx-engine",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -10,6 +10,7 @@
     "./custgeom": "./src/custgeom.ts",
     "./table-grid": "./src/table-grid.ts",
     "./identity": "./src/identity.ts",
+    "./named-action": "./src/named-action.ts",
     "./background-promote": "./src/background-promote.ts"
   },
   "scripts": {
@@ -25,6 +26,6 @@
     "@types/node": "^24.10.1",
     "pptxgenjs": "^4.0.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.11"
   }
 }

@@ -1,9 +1,9 @@
 import type { Editor } from '@tiptap/core'
 import type { Node as PmNode } from '@tiptap/pm/model'
 import { isInTable, mergeCells, selectedRect, splitCell } from '@tiptap/pm/tables'
-import type { DocDefaults, Run, StyleInfo, TextboxDisplay } from '@hermesoffice/docx-engine'
+import type { DocDefaults, Run, StyleInfo, TextboxDisplay } from '@genoffice/docx-engine'
 import { getActiveSubEditor } from '../editor/active-editor'
-import { effectiveSizeHalfPoints } from '../editor/text-style-resolve'
+import { effectiveSizeHalfPoints, selectedFonts } from '../editor/text-style-resolve'
 import { textHasCjk } from '../line-metrics'
 import { cachedByDoc } from '../doc-cache'
 
@@ -63,6 +63,8 @@ export interface RibbonFormatState {
   textColor: string | null
   charStyleId: string | null
   fontSizePt: number
+  fontEastAsia: string | null
+  fontLatin: string | null
   fontFamily: string
   headingLevel: number | null
   listBullet: boolean
@@ -120,6 +122,8 @@ export const EMPTY_FORMAT_STATE: RibbonFormatState = {
   charStyleId: null,
   fontSizePt: 11,
   fontFamily: '',
+  fontEastAsia: '',
+  fontLatin: '',
   headingLevel: null,
   listBullet: false,
   listOrdered: false,
@@ -178,16 +182,17 @@ function shapeTextStateOf(
     }
   }
   const every = (has: (run: Run) => boolean): boolean => runs.every(has)
-  const firstColor = runs[0].color ?? box.textColor ?? null
+  // auto (Word's automatic colour) shows as "no colour" in the swatch
+  const colorOf = (r: Run): string | null =>
+    r.color === 'auto' ? null : (r.color ?? box.textColor ?? null)
+  const firstColor = colorOf(runs[0])
   const firstAlign = box.paras[0]?.align ?? null
   return {
     shapeHasText: true,
     shapeTextBold: every((r) => r.bold === true),
     shapeTextItalic: every((r) => r.italic === true),
     shapeTextUnderline: every((r) => r.underline === true),
-    shapeTextColor: every((r) => (r.color ?? box.textColor ?? null) === firstColor)
-      ? firstColor
-      : null,
+    shapeTextColor: every((r) => colorOf(r) === firstColor) ? firstColor : null,
     shapeTextAlign: box.paras.every((p) => (p.align ?? null) === firstAlign) ? firstAlign : null,
   }
 }
@@ -288,10 +293,11 @@ export function computeFormatState(
     strike: ed.isActive('strike'),
     vertAlign: str(textAttrs.vertAlign),
     highlight: str(textAttrs.highlight),
-    textColor: str(textAttrs.color),
+    textColor: textAttrs.color === 'auto' ? null : str(textAttrs.color),
     charStyleId: str(textAttrs.styleId),
-    fontSizePt: (effectiveSizeHalfPoints(ed, styles, docDefaults) ?? 22) / 2,
+    fontSizePt: (effectiveSizeHalfPoints(ed, styles, docDefaults) ?? 20) / 2,
     fontFamily: displayFont(),
+    ...selectedFonts(ed, styles, docDefaults),
     headingLevel: editor.isActive('docHeading')
       ? Number(editor.getAttributes('docHeading').level ?? 1)
       : null,

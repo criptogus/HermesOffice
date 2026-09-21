@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createBlankPptx, openPptx } from '@hermesoffice/pptx-engine'
+import { createBlankPptx, openPptx } from '@genoffice/pptx-engine'
 
 const storeDir = mkdtempSync(join(tmpdir(), 'font-store-'))
 const fontCdnBaseUrl = 'https://fonts.example.test/v1'
@@ -35,7 +35,7 @@ import { createHash } from 'node:crypto'
 
 beforeEach(() => {
   availability.clear()
-  vi.stubEnv('HERMESOFFICE_FONT_CDN_URL', fontCdnBaseUrl)
+  vi.stubEnv('GENOFFICE_FONT_CDN_URL', fontCdnBaseUrl)
   vi.mocked(net.fetch).mockReset()
 })
 afterEach(() => vi.unstubAllEnvs())
@@ -64,27 +64,27 @@ describe('font catalog', () => {
   })
 
   it('hides the downloadable catalog when no CDN URL is configured', () => {
-    vi.stubEnv('HERMESOFFICE_FONT_CDN_URL', '')
+    vi.stubEnv('GENOFFICE_FONT_CDN_URL', '')
     expect(listFontCatalog()).toEqual([])
   })
 
   it('extracts and validates the packaged CDN URL', () => {
     expect(
       extractFontCdnBaseUrl({
-        hermesofficeFontCdn: { baseUrl: ' https://fonts.example.test/v1/ ' },
+        genofficeFontCdn: { baseUrl: ' https://fonts.example.test/v1/ ' },
       }),
     ).toBe(fontCdnBaseUrl)
     expect(
-      extractFontCdnBaseUrl({ hermesofficeFontCdn: { baseUrl: 'http://fonts.example.test/v1' } }),
+      extractFontCdnBaseUrl({ genofficeFontCdn: { baseUrl: 'http://fonts.example.test/v1' } }),
     ).toBeNull()
     expect(
       extractFontCdnBaseUrl({
-        hermesofficeFontCdn: { baseUrl: 'https://user@fonts.example.test/v1' },
+        genofficeFontCdn: { baseUrl: 'https://user@fonts.example.test/v1' },
       }),
     ).toBeNull()
     expect(
       extractFontCdnBaseUrl({
-        hermesofficeFontCdn: { baseUrl: 'https://fonts.example.test/v1?token=secret' },
+        genofficeFontCdn: { baseUrl: 'https://fonts.example.test/v1?token=secret' },
       }),
     ).toBeNull()
   })
@@ -130,7 +130,7 @@ describe('downloadFontFamily', () => {
   })
 
   it('rejects downloads when no CDN URL is configured', async () => {
-    vi.stubEnv('HERMESOFFICE_FONT_CDN_URL', '')
+    vi.stubEnv('GENOFFICE_FONT_CDN_URL', '')
     await expect(downloadFontFamily(FONT_CATALOG[0]!.family)).rejects.toThrow(/unavailable/)
     expect(net.fetch).not.toHaveBeenCalled()
   })
@@ -171,7 +171,7 @@ describe('missingCatalogFonts', () => {
     const missing = missingCatalogFonts({ deck } as never)
     expect(missing).toEqual(['Poppins', 'Rubik'])
 
-    vi.stubEnv('HERMESOFFICE_FONT_CDN_URL', '')
+    vi.stubEnv('GENOFFICE_FONT_CDN_URL', '')
     expect(missingCatalogFonts({ deck } as never)).toEqual([])
   })
 })

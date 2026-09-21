@@ -6,8 +6,12 @@
  */
 import { ILayoutService } from '@univerjs/preset-sheets-core'
 
-import { columnLabel } from '../domain/cell-address'
-import { decodeCsvBuffer, isNumericCell, parseCsv } from '../gateway/csv-import'
+import { columnLabel } from '@genoffice/xlsx-gateway/domain/cell-address'
+import {
+  decodeCsvBuffer,
+  isNumericCell,
+  parseCsv,
+} from '@genoffice/xlsx-gateway/gateway/csv-import'
 import type { AdvancedFilterColumn, AdvancedFilterCriteria } from './AdvancedFilterDialog'
 import {
   buildLabelMatrix,
@@ -22,6 +26,7 @@ import { isSheetRemoved, journalSize, recordStructuralOp } from './edit-journal'
 import { resolveGoToRef, type GoToNameEntry } from './goto'
 import { getLang, t } from './i18n/locale'
 import { appendSymbol } from './SymbolDialog'
+import { inferContinuousRegion } from './table-actions'
 import {
   a1RangeRef,
   a1RowRangeRef,
@@ -637,10 +642,20 @@ export function handleFormatAsTable(ctx: DataToolsContext, style: string): void 
   }
   const sheetId = worksheet.getSheetId()
   if (isSheetRemoved(state.editJournal, sheetId)) return
-  const startRow = range.getRow()
-  const startColumn = range.getColumn()
-  const endRow = startRow + range.getHeight() - 1
-  const endColumn = startColumn + range.getWidth() - 1
+  let startRow = range.getRow()
+  let startColumn = range.getColumn()
+  let endRow = startRow + range.getHeight() - 1
+  let endColumn = startColumn + range.getWidth() - 1
+  // fixes #298: single-cell selection → infer continuous region (Excel CurrentRegion)
+  if (range.getHeight() === 1 && range.getWidth() === 1) {
+    const inferred = inferContinuousRegion(worksheet, startRow, startColumn)
+    if (inferred) {
+      startRow = inferred.startRow
+      startColumn = inferred.startColumn
+      endRow = inferred.endRow
+      endColumn = inferred.endColumn
+    }
+  }
   try {
     applyAiTableAdd(runtime, state, {
       op: 'add_table',

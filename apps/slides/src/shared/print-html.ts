@@ -26,10 +26,12 @@ export interface PrintDocOptions {
 /** "1,3,5-8" → 0-based slide indices (1-based input over the whole deck); null = invalid */
 export function parsePrintRange(text: string, max: number): number[] | null {
   const out = new Set<number>()
-  const parts = text.split(/[,，、;；\s]+/).filter(Boolean)
+  const tokenRe = /\d+\s*[-–—~～〜]\s*\d+|\d+/g
+  const parts = text.match(tokenRe) ?? []
   if (parts.length === 0) return null
+  if (text.replace(tokenRe, '').replace(/[,，、;；\s]/g, '') !== '') return null
   for (const part of parts) {
-    const m = /^(\d+)\s*[-–]\s*(\d+)$|^(\d+)$/.exec(part)
+    const m = /^(\d+)\s*[-–—~～〜]\s*(\d+)$|^(\d+)$/.exec(part)
     if (!m) return null
     const a = Number(m[1] ?? m[3])
     const b = Number(m[2] ?? m[3])
@@ -37,6 +39,15 @@ export function parsePrintRange(text: string, max: number): number[] | null {
     for (let i = a; i <= b; i++) out.add(i - 1)
   }
   return [...out].sort((x, y) => x - y)
+}
+
+/**
+ * Resolve the "current slide" print range. The dialog can outlive deck edits
+ * (undo/slide delete), so a stale index yields no selection instead of a
+ * crash on slides[current].hidden.
+ */
+export function currentRangeIndices(current: number, slideCount: number): number[] {
+  return Number.isInteger(current) && current >= 0 && current < slideCount ? [current] : []
 }
 
 export function printPageCount(slideCount: number, layout: PrintLayout): number {
@@ -50,27 +61,48 @@ const A4_W = 8.27
 const A4_H = 11.69
 const SLIDE_H = 7.5
 
+/**
+ * Fallback slide ratio (16:9) when layout state carries a corrupt ratio.
+ * Ratios come from slide dimensions that can be zeroed by a failed load or
+ * NaN/Infinity from a degenerate transform; emitting those into @page yields
+ * NaNin/Infinityin/0in and a broken print. Bounds [0.2, 5] keep real formats
+ * (4:3, 16:9, 16:10, portrait variants) exact while clamping absurd values.
+ */
+export const DEFAULT_PRINT_RATIO = 16 / 9
+export const MIN_PRINT_RATIO = 0.2
+export const MAX_PRINT_RATIO = 5
+
+export function normalizePrintRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio <= 0) return DEFAULT_PRINT_RATIO
+  return Math.min(Math.max(ratio, MIN_PRINT_RATIO), MAX_PRINT_RATIO)
+}
+
 export function buildPrintDocumentHtml(o: PrintDocOptions): string {
   const layout = o.layout
   const isFull = layout === 'full'
   const landscape = !isFull && o.orientation === 'landscape'
-  const slideW = Math.round(o.ratio * SLIDE_H * 1000) / 1000
+  const slideW = Math.round(normalizePrintRatio(o.ratio) * SLIDE_H * 1000) / 1000
   const pageW = isFull ? slideW : landscape ? A4_H : A4_W
   const pageH = isFull ? SLIDE_H : landscape ? A4_W : A4_H
   const perPage =
     layout === 'handout2' ? 2 : layout === 'handout3' ? 3 : layout === 'handout6' ? 6 : 1
   const esc = (x: string) =>
     x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!)
+  const escAttr = (x: string) =>
+    x.replace(
+      /[&<>"']/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+    )
 
   let body: string
   if (isFull) {
-    body = o.srcs.map((src) => `<div class="page"><img src="${src}"></div>`).join('')
+    body = o.srcs.map((src) => `<div class="page"><img src="${escAttr(src)}"></div>`).join('')
   } else if (layout === 'notes') {
     // Notes page: slide on top + notes text below
     body = o.srcs
       .map(
         (src, i) =>
-          `<div class="page notes"><img src="${src}">` +
+          `<div class="page notes"><img src="${escAttr(src)}">` +
           `<div class="note">${esc(o.notes?.[i] ?? '').replace(/\n/g, '<br>')}</div></div>`,
       )
       .join('')
@@ -82,7 +114,7 @@ export function buildPrintDocumentHtml(o: PrintDocOptions): string {
         .slice(i, i + perPage)
         .map(
           (src) =>
-            `<div class="cell"><img src="${src}">` +
+            `<div class="cell"><img src="${escAttr(src)}">` +
             (perPage === 3 ? '<div class="rules"></div>' : '') +
             '</div>',
         )

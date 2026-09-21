@@ -1,6 +1,6 @@
 /* Per-app accent (word-blue family) + markdown-only tokens.
  * Chrome tokens (surface/text/border/…, AI panel --color-*) come from
- * @hermesoffice/ui/tokens.css; nothing here may shadow those names. */
+ * @genoffice/ui/tokens.css; nothing here may shadow those names. */
 :root {
   --accent: #185abd;
   --accent-dark: #124a9e;
@@ -37,6 +37,8 @@
   --md-toast-error-bg: rgb(196 49 75 / 95%);
   --md-toast-ink: #ffffff;
   --md-toast-ok: #34c759;
+  /* diagrams are document content: white paper behind them in both themes */
+  --md-diagram-bg: #ffffff;
 }
 
 [data-theme='dark'] {
@@ -72,6 +74,7 @@
   --md-toast-error-bg: rgb(196 49 75 / 95%);
   --md-toast-ink: #ffffff;
   --md-toast-ok: #34c759;
+  --md-diagram-bg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -108,6 +111,7 @@
     --md-toast-error-bg: rgb(196 49 75 / 95%);
     --md-toast-ink: #ffffff;
     --md-toast-ok: #34c759;
+    --md-diagram-bg: #ffffff;
   }
 }
 
@@ -179,7 +183,7 @@ button {
 .editor-scroll {
   flex: 1;
   overflow-y: auto;
-  /* same canvas backdrop as the slides workspace; the doc page stays white */
+  /* same canvas backdrop as the slides workspace; .doc-page follows the theme surface */
   background: var(--canvas);
 }
 
@@ -380,7 +384,7 @@ button {
 
 /* While a popover is open the row must deliver presses (drag regions swallow
    them), so outside-press dismissal can see presses on the blank band */
-html.hermesoffice-popover-open .ribbon-tabs {
+html.genoffice-popover-open .ribbon-tabs {
   -webkit-app-region: no-drag;
 }
 
@@ -438,6 +442,12 @@ html.hermesoffice-popover-open .ribbon-tabs {
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-primary);
+}
+
+.qa-save-as {
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
 }
 
 .qa-btn svg {
@@ -621,7 +631,7 @@ html.hermesoffice-popover-open .ribbon-tabs {
   font-size: 11.5px;
 }
 
-/* block-style picker (shared @hermesoffice/ui gs-dd dropdown): same box as the
+/* block-style picker (shared @genoffice/ui gs-dd dropdown): same box as the
  * docs/slides font pickers (28px tall, 3px radius, 13px label, 7px inline
  * padding, strong border) */
 .rb-style.gs-dd {
@@ -893,7 +903,8 @@ html.hermesoffice-popover-open .ribbon-tabs {
   width: 34px;
   padding: 12px 2px;
   border: none;
-  border-right: 1px solid var(--border);
+  border-left: var(--ai-panel-border-left, 0px) solid var(--border);
+  border-right: var(--ai-panel-border-right, 1px) solid var(--border);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -913,7 +924,8 @@ html.hermesoffice-popover-open .ribbon-tabs {
   min-height: 0;
   overflow: hidden;
   /* same visible divider as the docs panel: strong border so it doesn't drown */
-  border-right: 1px solid var(--color-border-strong);
+  border-left: var(--ai-panel-border-left, 0px) solid var(--color-border-strong);
+  border-right: var(--ai-panel-border-right, 1px) solid var(--color-border-strong);
   background: var(--color-bg-page);
   font-family: var(--gs-font-sans);
   color: var(--color-text-primary);
@@ -1977,6 +1989,7 @@ html.hermesoffice-popover-open .ribbon-tabs {
 }
 
 .app-content {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -1994,6 +2007,74 @@ html.hermesoffice-popover-open .ribbon-tabs {
 .app-main .editor-scroll {
   flex: 1;
   min-width: 0;
+}
+
+/* ---- document outline sidebar (PDF bookmark parity) ---- */
+
+.md-outline {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 232px;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  padding: 8px 4px;
+  overflow-y: auto;
+}
+
+.md-outline-resizer {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 5px;
+  margin: 0 -2px 0 -3px;
+  cursor: col-resize;
+}
+
+.md-outline-resizer:hover,
+.md-outline-resizer.dragging {
+  background: var(--accent-soft);
+}
+
+.md-outline-title {
+  padding: 2px 10px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.md-outline-empty {
+  padding: 2px 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.md-outline-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.md-outline-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-right: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-outline-item:hover {
+  background: var(--hover);
 }
 
 /* ---- transient AI-change highlight ---- */
@@ -2031,7 +2112,7 @@ html.hermesoffice-popover-open .ribbon-tabs {
   opacity: 1;
 }
 
-/* language picker (shared @hermesoffice/ui gs-dd dropdown), sized like the copy
+/* language picker (shared @genoffice/ui gs-dd dropdown), sized like the copy
    button beside it */
 .md-codeblock-lang .gs-dd-btn {
   height: 22px;
@@ -2055,6 +2136,49 @@ html.hermesoffice-popover-open .ribbon-tabs {
 
 .md-codeblock-copy:hover {
   background: var(--hover);
+}
+
+/* ---- diagrams (```mermaid / ```wavedrom code blocks) ---- */
+
+/* the source stays in the DOM (ProseMirror needs its contentDOM) but is
+   visually collapsed while the caret is outside the block */
+.md-diagram-collapsed pre {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+}
+
+.md-diagram-preview {
+  margin: 0.8em 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--md-diagram-bg);
+  text-align: center;
+  cursor: text;
+}
+
+.md-diagram:not(.md-diagram-collapsed) .md-diagram-preview {
+  margin-top: 8px;
+}
+
+.md-diagram-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-diagram-error {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--md-error-border);
+  border-radius: 6px;
+  background: var(--md-error-bg);
+  color: var(--md-error);
+  font-size: 12.5px;
+  white-space: pre-wrap;
 }
 
 /* ---- floating table menu ---- */
@@ -2371,6 +2495,14 @@ div.tiptap-mathematics-render {
   background: var(--md-ai-anchor-bg);
   border-bottom: 2px dashed var(--md-ai-anchor-line);
   cursor: pointer;
+}
+
+/* state selection kept visible while the Ask-AI input owns the DOM selection;
+   translucent so it overlays run highlights (document canvas, not themed chrome) */
+.md-inactive-selection {
+  --md-inactive-selection-bg: rgb(0 0 0 / 18%);
+
+  background-color: var(--md-inactive-selection-bg);
 }
 
 /* ---- floating Ask-AI entry that follows the text selection ---- */
@@ -2766,4 +2898,10 @@ div.tiptap-mathematics-render {
 
 .app-toast.success .app-toast-icon {
   color: var(--md-toast-ok);
+}
+
+.ai-partial-card .ai-queue-hint {
+  padding: 0 10px 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }

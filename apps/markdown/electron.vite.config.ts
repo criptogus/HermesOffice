@@ -19,17 +19,13 @@ const TIPTAP_DEDUPE = [
 ]
 
 export default defineConfig({
-  // @hermesoffice/i18n and @hermesoffice/electron-utils ship as TS source — must be bundled
+  // @genoffice/i18n and @genoffice/electron-utils ship as TS source — must be bundled
   main: {
-    plugins: [
-      externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] }),
-    ],
+    plugins: [externalizeDepsPlugin({ exclude: ['@genoffice/i18n', '@genoffice/electron-utils'] })],
   },
   preload: {
     // same bundling requirement as main (see comment above)
-    plugins: [
-      externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] }),
-    ],
+    plugins: [externalizeDepsPlugin({ exclude: ['@genoffice/i18n', '@genoffice/electron-utils'] })],
   },
   renderer: {
     plugins: [react()],

@@ -17,7 +17,7 @@
  */
 import { XMLParser } from 'fast-xml-parser'
 import type { Transform, TextAlign } from './types'
-import { type Theme, resolveFontRef } from './theme'
+import { type EaScript, type Theme, eaScriptOfLang, resolveFontRef } from './theme'
 import { resolveColorNode } from './color'
 import { asXmlNode, xmlArray, type XmlNode } from './xml-utils'
 
@@ -28,7 +28,15 @@ const phParser = new XMLParser({
 })
 
 /** Default run/paragraph style for one indent level (from lstStyle's lvlNpPr/defRPr). */
+/** Fields whose inheritance source a level records (see mergeTextStyleChain). */
+export type StyleSourceField =
+  'fontSize' | 'bold' | 'italic' | 'color' | 'latinFont' | 'eaFont' | 'csFont' | 'align'
+
 export interface LevelTextStyle {
+  /** Which chain layer supplied each field (only set by mergeTextStyleChain) */
+  src?: Partial<Record<StyleSourceField, string>>
+  /** The level's unresolved latin theme ref (+mj-lt / +mn-lt), kept beside the resolved name */
+  latinFontRef?: string
   /** Font size (pt) */
   fontSize?: number
   bold?: boolean
@@ -40,17 +48,27 @@ export interface LevelTextStyle {
   shadow?: import('./types').ShadowEffect
   latinFont?: string
   eaFont?: string
+  /** The level's unresolved ea theme ref (+mj-ea / +mn-ea): a run re-resolves it with its own
+   *  script, since an empty theme <a:ea/> picks the per-script font only once the script is known */
+  eaFontRef?: string
   csFont?: string
+  /** East Asian script of the level's defRPr lang/altLang (steers empty-ea theme refs on runs without a lang of their own) */
+  eaScript?: EaScript
   align?: TextAlign
   /** Bullet default (master bodyStyle levels commonly use buChar '•') */
   bullet?: {
-    type: 'none' | 'char' | 'number'
+    type: 'none' | 'char' | 'number' | 'blip'
     char?: string
+    /** <a:buBlip> picture bullet: media zip path + blip rId (see Paragraph.bullet) */
+    mediaRef?: string
+    blipEmbedId?: string
     /** <a:buFont> typeface (symbol fonts like Wingdings) */
     font?: string
     color?: string
     /** <a:buSzPct> (%, 100 = same size as text) */
     sizePct?: number
+    /** <a:buSzPts> absolute glyph size (pt) */
+    sizePt?: number
     /** <a:buAutoNum type> (arabicPeriod/romanLcParen…) */
     numType?: string
     /** <a:buAutoNum startAt> */
@@ -72,6 +90,8 @@ export interface LevelTextStyle {
 /** Default styles for the 9 levels (index = level, 0-based). */
 export interface TextStyleLevels {
   levels: Array<LevelTextStyle | undefined>
+  /** where this layer sits in the inheritance chain, for style provenance */
+  src?: string
 }
 
 /** master <p:txStyles>: the title/body/other families. */
@@ -89,6 +109,8 @@ export interface PlaceholderGeom {
   textStyle?: TextStyleLevels
   /** Vertical anchor from this placeholder's <a:bodyPr anchor=""> */
   anchor?: 'top' | 'middle' | 'bottom'
+  /** <a:bodyPr anchorCtr> (explicit 0 recorded too: it overrides an inherited 1) */
+  anchorCtr?: boolean
   /** Explicit bodyPr inset attrs (EMU); slide bodyPr attrs missing these inherit per-attribute */
   insets?: { l?: number; t?: number; r?: number; b?: number }
   /** Raw spPr node when it carries an explicit fill (parse.ts resolves it with the part's rels) */
@@ -139,7 +161,12 @@ function parseXfrmNode(xfrmRaw: unknown): Transform | null {
  * layout/master's full XML. Collects shapes that carry <p:ph> and at least one of
  * <a:xfrm> or <a:lstStyle>.
  */
-export function parsePlaceholderMap(layoutOrMasterXml: string, theme?: Theme): PlaceholderMap {
+export function parsePlaceholderMap(
+  layoutOrMasterXml: string,
+  theme?: Theme,
+  mediaRels?: Map<string, string>,
+): PlaceholderMap {
+  const src: LstStyleSource = { mediaRels, foreignPart: true }
   const entries: PlaceholderGeom[] = []
   let doc: XmlNode
   try {
@@ -160,9 +187,12 @@ export function parsePlaceholderMap(layoutOrMasterXml: string, theme?: Theme): P
     const idx = ph['@_idx'] != null ? String(ph['@_idx']) : ''
     const spPr = asXmlNode(sp['p:spPr'])
     const transform = parseXfrmNode(spPr['a:xfrm'])
-    const textStyle = parseLstStyleLevels(asXmlNode(sp['p:txBody'])['a:lstStyle'], theme)
+    const textStyle = parseLstStyleLevels(asXmlNode(sp['p:txBody'])['a:lstStyle'], theme, src)
     const bodyPrNode = asXmlNode(asXmlNode(sp['p:txBody'])['a:bodyPr'])
     const anchor = ANCHOR_MAP[String(bodyPrNode['@_anchor'] ?? '')]
+    const anchorCtrRaw = bodyPrNode['@_anchorCtr']
+    const anchorCtr =
+      anchorCtrRaw != null ? String(anchorCtrRaw) === '1' || anchorCtrRaw === 'true' : undefined
     const insEntries = (['l', 't', 'r', 'b'] as const).flatMap((k) => {
       const v = bodyPrNode[`@_${k}Ins`]
       const n = v != null ? parseInt(String(v), 10) : NaN
@@ -174,13 +204,23 @@ export function parsePlaceholderMap(layoutOrMasterXml: string, theme?: Theme): P
     const prst = prstGeomNode['@_prst'] != null ? String(prstGeomNode['@_prst']) : undefined
     const presetGeom =
       prst && prst !== 'rect' ? { prst, avLstRaw: prstGeomNode['a:avLst'] } : undefined
-    if (!transform && !textStyle && !anchor && !insets && !hasFill && !presetGeom) continue
+    if (
+      !transform &&
+      !textStyle &&
+      !anchor &&
+      anchorCtr === undefined &&
+      !insets &&
+      !hasFill &&
+      !presetGeom
+    )
+      continue
     entries.push({
       type,
       idx,
       transform,
       ...(textStyle ? { textStyle } : {}),
       ...(anchor ? { anchor } : {}),
+      ...(anchorCtr !== undefined ? { anchorCtr } : {}),
       ...(insets ? { insets } : {}),
       ...(hasFill ? { fillSpPr: spPr } : {}),
       ...(presetGeom ? { presetGeom } : {}),
@@ -224,7 +264,18 @@ function typefaceAttr(node: unknown): string | undefined {
 }
 
 /** <a:lvlNpPr> (including defRPr) → LevelTextStyle. */
-function parseLvlPPr(pPrRaw: unknown, theme?: Theme): LevelTextStyle | undefined {
+/** Where a list style lives: only the slide part's own rIds may be written back into slide XML. */
+export interface LstStyleSource {
+  mediaRels?: Map<string, string>
+  /** Layout/master part: picture bullets resolve their image but keep no rId */
+  foreignPart?: boolean
+}
+
+function parseLvlPPr(
+  pPrRaw: unknown,
+  theme?: Theme,
+  src?: LstStyleSource,
+): LevelTextStyle | undefined {
   if (!pPrRaw || typeof pPrRaw !== 'object') return undefined
   const pPr = asXmlNode(pPrRaw)
   const out: LevelTextStyle = {}
@@ -251,6 +302,14 @@ function parseLvlPPr(pPrRaw: unknown, theme?: Theme): LevelTextStyle | undefined
     if (an['@_type'] != null) out.bullet.numType = String(an['@_type'])
     const startAt = parseInt(String(an['@_startAt']), 10)
     if (Number.isFinite(startAt) && startAt > 1) out.bullet.startAt = startAt
+  } else if (pPr['a:buBlip'] !== undefined) {
+    out.bullet = { type: 'blip' }
+    const embed = asXmlNode(asXmlNode(pPr['a:buBlip'])['a:blip'])['@_r:embed']
+    if (embed != null) {
+      if (!src?.foreignPart) out.bullet.blipEmbedId = String(embed)
+      const ref = src?.mediaRels?.get(String(embed))
+      if (ref) out.bullet.mediaRef = ref
+    }
   }
   if (out.bullet && out.bullet.type !== 'none') {
     const buFont = typefaceAttr(pPr['a:buFont'])
@@ -259,6 +318,8 @@ function parseLvlPPr(pPrRaw: unknown, theme?: Theme): LevelTextStyle | undefined
     if (buColor) out.bullet.color = buColor
     const buSz = asXmlNode(pPr['a:buSzPct'])['@_val']
     if (buSz != null) out.bullet.sizePct = (parseInt(String(buSz), 10) || 0) / 1000
+    const buSzPts = asXmlNode(pPr['a:buSzPts'])['@_val']
+    if (buSzPts != null) out.bullet.sizePt = (parseInt(String(buSzPts), 10) || 0) / 100
   }
   if (pPr['@_marL'] != null) {
     const v = parseInt(String(pPr['@_marL']), 10)
@@ -268,45 +329,68 @@ function parseLvlPPr(pPrRaw: unknown, theme?: Theme): LevelTextStyle | undefined
     const v = parseInt(String(pPr['@_indent']), 10)
     if (!Number.isNaN(v)) out.indent = v
   }
-  const defRPrRaw = pPr['a:defRPr']
-  if (defRPrRaw && typeof defRPrRaw === 'object') {
-    const defRPr = asXmlNode(defRPrRaw)
-    if (defRPr['@_sz']) out.fontSize = parseInt(String(defRPr['@_sz']), 10) / 100
-    if (defRPr['@_b'] != null) out.bold = defRPr['@_b'] === '1' || defRPr['@_b'] === 'true'
-    if (defRPr['@_i'] != null) out.italic = defRPr['@_i'] === '1' || defRPr['@_i'] === 'true'
-    if (defRPr['@_cap'] != null) out.cap = String(defRPr['@_cap'])
-    const color = resolveColorNode(defRPr['a:solidFill'], theme)
-    if (color) out.color = color
-    const shdw = asXmlNode(asXmlNode(defRPr['a:effectLst'])['a:outerShdw'])
-    const shdwColor = resolveColorNode(shdw, theme)
-    if (shdwColor) {
-      const num = (k: string) => {
-        const v = parseInt(String(shdw[k] ?? ''), 10)
-        return Number.isFinite(v) ? v : 0
-      }
-      out.shadow = {
-        color: shdwColor,
-        blurRad: num('@_blurRad'),
-        dist: num('@_dist'),
-        dirDeg: num('@_dir') / 60000,
-      }
+  Object.assign(out, parseDefRPrStyle(pPr['a:defRPr'], theme))
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * <a:defRPr> (default run properties of a lstStyle level or of a paragraph's own
+ * <a:pPr>) → the run-level subset of LevelTextStyle. Colors and theme font
+ * references are resolved for display; undefined when the node is absent or empty.
+ */
+export function parseDefRPrStyle(
+  defRPrRaw: unknown,
+  theme?: Theme,
+  phClr?: string,
+): LevelTextStyle | undefined {
+  if (!defRPrRaw || typeof defRPrRaw !== 'object') return undefined
+  const defRPr = asXmlNode(defRPrRaw)
+  const out: LevelTextStyle = {}
+  if (defRPr['@_sz']) out.fontSize = parseInt(String(defRPr['@_sz']), 10) / 100
+  if (defRPr['@_b'] != null) out.bold = defRPr['@_b'] === '1' || defRPr['@_b'] === 'true'
+  if (defRPr['@_i'] != null) out.italic = defRPr['@_i'] === '1' || defRPr['@_i'] === 'true'
+  if (defRPr['@_cap'] != null) out.cap = String(defRPr['@_cap'])
+  const color = resolveColorNode(defRPr['a:solidFill'], theme, phClr)
+  if (color) out.color = color
+  const shdw = asXmlNode(asXmlNode(defRPr['a:effectLst'])['a:outerShdw'])
+  const shdwColor = resolveColorNode(shdw, theme, phClr)
+  if (shdwColor) {
+    const num = (k: string) => {
+      const v = parseInt(String(shdw[k] ?? ''), 10)
+      return Number.isFinite(v) ? v : 0
     }
-    const latin = resolveFontRef(typefaceAttr(defRPr['a:latin']), theme)
-    if (latin) out.latinFont = latin
-    const ea = resolveFontRef(typefaceAttr(defRPr['a:ea']), theme)
-    if (ea) out.eaFont = ea
-    const cs = resolveFontRef(typefaceAttr(defRPr['a:cs']), theme)
-    if (cs) out.csFont = cs
+    out.shadow = {
+      color: shdwColor,
+      blurRad: num('@_blurRad'),
+      dist: num('@_dist'),
+      dirDeg: num('@_dir') / 60000,
+    }
   }
+  const eaScript = eaScriptOfLang(defRPr['@_altLang']) ?? eaScriptOfLang(defRPr['@_lang'])
+  if (eaScript) out.eaScript = eaScript
+  const latinAttr = typefaceAttr(defRPr['a:latin'])
+  const latin = resolveFontRef(latinAttr, theme, eaScript)
+  if (latin) out.latinFont = latin
+  if (latinAttr?.startsWith('+')) out.latinFontRef = latinAttr
+  const eaAttr = typefaceAttr(defRPr['a:ea'])
+  const ea = resolveFontRef(eaAttr, theme, eaScript)
+  if (ea) out.eaFont = ea
+  if (eaAttr?.startsWith('+')) out.eaFontRef = eaAttr
+  const cs = resolveFontRef(typefaceAttr(defRPr['a:cs']), theme, eaScript)
+  if (cs) out.csFont = cs
   return Object.keys(out).length ? out : undefined
 }
 
 /** <a:lstStyle> (or one txStyles family) → 9-level style table. */
-export function parseLstStyleLevels(lst: unknown, theme?: Theme): TextStyleLevels | undefined {
+export function parseLstStyleLevels(
+  lst: unknown,
+  theme?: Theme,
+  src?: LstStyleSource,
+): TextStyleLevels | undefined {
   if (!lst || typeof lst !== 'object') return undefined
   const l = asXmlNode(lst)
   const levels: Array<LevelTextStyle | undefined> = []
-  for (let i = 1; i <= 9; i++) levels[i - 1] = parseLvlPPr(l[`a:lvl${i}pPr`], theme)
+  for (let i = 1; i <= 9; i++) levels[i - 1] = parseLvlPPr(l[`a:lvl${i}pPr`], theme, src)
   return levels.some(Boolean) ? { levels } : undefined
 }
 
@@ -325,7 +409,12 @@ export function parseDefaultTextStyle(
 }
 
 /** master <p:txStyles> → default styles for the title/body/other families. */
-export function parseMasterTextStyles(masterXml: string, theme?: Theme): MasterTextStyles {
+export function parseMasterTextStyles(
+  masterXml: string,
+  theme?: Theme,
+  mediaRels?: Map<string, string>,
+): MasterTextStyles {
+  const src: LstStyleSource = { mediaRels, foreignPart: true }
   let doc: XmlNode
   try {
     doc = asXmlNode(phParser.parse(masterXml))
@@ -336,14 +425,14 @@ export function parseMasterTextStyles(masterXml: string, theme?: Theme): MasterT
   if (!txRaw) return {}
   const tx = asXmlNode(txRaw)
   return {
-    ...(parseLstStyleLevels(tx['p:titleStyle'], theme)
-      ? { title: parseLstStyleLevels(tx['p:titleStyle'], theme)! }
+    ...(parseLstStyleLevels(tx['p:titleStyle'], theme, src)
+      ? { title: parseLstStyleLevels(tx['p:titleStyle'], theme, src)! }
       : {}),
-    ...(parseLstStyleLevels(tx['p:bodyStyle'], theme)
-      ? { body: parseLstStyleLevels(tx['p:bodyStyle'], theme)! }
+    ...(parseLstStyleLevels(tx['p:bodyStyle'], theme, src)
+      ? { body: parseLstStyleLevels(tx['p:bodyStyle'], theme, src)! }
       : {}),
-    ...(parseLstStyleLevels(tx['p:otherStyle'], theme)
-      ? { other: parseLstStyleLevels(tx['p:otherStyle'], theme)! }
+    ...(parseLstStyleLevels(tx['p:otherStyle'], theme, src)
+      ? { other: parseLstStyleLevels(tx['p:otherStyle'], theme, src)! }
       : {}),
   }
 }
@@ -429,6 +518,33 @@ export function resolvePlaceholderAnchor(
   return findAnchorInMap(layout, type, idx) ?? findAnchorInMap(master, type, idx)
 }
 
+/** Same matching as findAnchorInMap for anchorCtr (an explicit 0 in the layout wins over a master 1). */
+function findAnchorCtrInMap(
+  map: PlaceholderMap | undefined,
+  type: string | undefined,
+  idx: string | undefined,
+): boolean | undefined {
+  if (!map || map.entries.length === 0) return undefined
+  const t = type ?? 'body'
+  const i = idx ?? ''
+  const marked = map.entries.filter((e) => e.anchorCtr !== undefined)
+  let hit = marked.find((e) => e.type === t && e.idx === i)
+  if (!hit) hit = marked.find((e) => e.type === t)
+  if (!hit && TITLE_TYPES.has(t)) hit = marked.find((e) => TITLE_TYPES.has(e.type))
+  if (!hit && BODY_TYPES.has(t)) hit = marked.find((e) => BODY_TYPES.has(e.type))
+  return hit?.anchorCtr
+}
+
+/** Resolve a placeholder's inherited anchorCtr: layout first, master as fallback. */
+export function resolvePlaceholderAnchorCtr(
+  layout: PlaceholderMap | undefined,
+  master: PlaceholderMap | undefined,
+  type: string | undefined,
+  idx: string | undefined,
+): boolean | undefined {
+  return findAnchorCtrInMap(layout, type, idx) ?? findAnchorCtrInMap(master, type, idx)
+}
+
 /**
  * Placeholder text style inheritance chain (highest priority first):
  * layout placeholder lstStyle → master placeholder lstStyle → master txStyles
@@ -443,16 +559,16 @@ export function placeholderStyleChain(
 ): TextStyleLevels[] {
   const chain: TextStyleLevels[] = []
   const fromLayout = findStyleInMap(layout, type, idx)
-  if (fromLayout) chain.push(fromLayout)
+  if (fromLayout) chain.push({ ...fromLayout, src: 'layout placeholder' })
   const fromMaster = findStyleInMap(master, type, idx)
-  if (fromMaster) chain.push(fromMaster)
+  if (fromMaster) chain.push({ ...fromMaster, src: 'master placeholder' })
   const t = type ?? 'body'
-  const family = TITLE_TYPES.has(t)
-    ? masterTx?.title
+  const [family, familySrc] = TITLE_TYPES.has(t)
+    ? [masterTx?.title, 'master titleStyle']
     : BODY_TYPES.has(t)
-      ? masterTx?.body
-      : masterTx?.other
-  if (family) chain.push(family)
+      ? [masterTx?.body, 'master bodyStyle']
+      : [masterTx?.other, 'master otherStyle']
+  if (family) chain.push({ ...family, src: familySrc })
   return chain
 }
 
@@ -466,22 +582,51 @@ export function mergeTextStyleChain(
   level: number,
 ): LevelTextStyle | undefined {
   const out: LevelTextStyle = {}
+  const src: NonNullable<LevelTextStyle['src']> = {}
   let any = false
   for (const layer of chain) {
     if (!layer) continue
     const lvl = layer.levels[level] ?? layer.levels[0]
     if (!lvl) continue
     any = true
-    if (out.fontSize == null && lvl.fontSize != null) out.fontSize = lvl.fontSize
-    if (out.bold == null && lvl.bold != null) out.bold = lvl.bold
-    if (out.italic == null && lvl.italic != null) out.italic = lvl.italic
+    const from = layer.src ?? 'inherited'
+    if (out.fontSize == null && lvl.fontSize != null) {
+      out.fontSize = lvl.fontSize
+      src.fontSize = from
+    }
+    if (out.bold == null && lvl.bold != null) {
+      out.bold = lvl.bold
+      src.bold = from
+    }
+    if (out.italic == null && lvl.italic != null) {
+      out.italic = lvl.italic
+      src.italic = from
+    }
     if (out.cap == null && lvl.cap != null) out.cap = lvl.cap
-    if (out.color == null && lvl.color != null) out.color = lvl.color
+    if (out.color == null && lvl.color != null) {
+      out.color = lvl.color
+      src.color = from
+    }
     if (out.shadow == null && lvl.shadow != null) out.shadow = lvl.shadow
-    if (out.latinFont == null && lvl.latinFont != null) out.latinFont = lvl.latinFont
-    if (out.eaFont == null && lvl.eaFont != null) out.eaFont = lvl.eaFont
-    if (out.csFont == null && lvl.csFont != null) out.csFont = lvl.csFont
-    if (out.align == null && lvl.align != null) out.align = lvl.align
+    if (out.latinFont == null && lvl.latinFont != null) {
+      out.latinFont = lvl.latinFont
+      if (lvl.latinFontRef != null) out.latinFontRef = lvl.latinFontRef
+      src.latinFont = from
+    }
+    if (out.eaFont == null && lvl.eaFont != null) {
+      out.eaFont = lvl.eaFont
+      if (lvl.eaFontRef != null) out.eaFontRef = lvl.eaFontRef
+      src.eaFont = from
+    }
+    if (out.csFont == null && lvl.csFont != null) {
+      out.csFont = lvl.csFont
+      src.csFont = from
+    }
+    if (out.eaScript == null && lvl.eaScript != null) out.eaScript = lvl.eaScript
+    if (out.align == null && lvl.align != null) {
+      out.align = lvl.align
+      src.align = from
+    }
     if (out.bullet == null && lvl.bullet != null) out.bullet = lvl.bullet
     if (out.marL == null && lvl.marL != null) out.marL = lvl.marL
     if (out.indent == null && lvl.indent != null) out.indent = lvl.indent
@@ -511,6 +656,7 @@ export function mergeTextStyleChain(
       if (lvl.spaceAfterPct != null) out.spaceAfterPct = lvl.spaceAfterPct
     }
   }
+  if (Object.keys(src).length) out.src = src
   return any ? out : undefined
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { Dropdown } from '@hermesoffice/ui'
+import { Dropdown } from '@genoffice/ui'
 
 import {
   isValidConsolidateReference,

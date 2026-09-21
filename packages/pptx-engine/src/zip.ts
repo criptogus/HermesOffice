@@ -25,6 +25,41 @@ export interface Relationship {
   targetMode?: string
 }
 
+/** Shared with the CLI's pre-open check so both layers accept the same files. */
+export const PPTX_ZIP_LIMITS = {
+  maxParts: 10000,
+  maxPartBytes: 512 * 1024 * 1024,
+  maxTotalBytes: 1.5 * 1024 * 1024 * 1024,
+} as const
+
+/** Declared sizes from the central directory, checked before any part is inflated. */
+export function assertZipWithinLimits(zip: JSZip): void {
+  const files = Object.values(zip.files).filter((f) => !f.dir)
+  if (files.length > PPTX_ZIP_LIMITS.maxParts) {
+    throw new Error(
+      `pptx rejected: ${files.length} parts exceeds the ${PPTX_ZIP_LIMITS.maxParts} limit`,
+    )
+  }
+  let total = 0
+  for (const file of files) {
+    const size =
+      (file as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0
+    if (size > PPTX_ZIP_LIMITS.maxPartBytes) {
+      throw new Error(
+        `pptx rejected: part ${file.name} declares ${size} uncompressed bytes ` +
+          `(limit ${PPTX_ZIP_LIMITS.maxPartBytes})`,
+      )
+    }
+    if (size > 0) total += size
+  }
+  if (total > PPTX_ZIP_LIMITS.maxTotalBytes) {
+    throw new Error(
+      `pptx rejected: total uncompressed size ${total} exceeds the ` +
+        `${PPTX_ZIP_LIMITS.maxTotalBytes} limit`,
+    )
+  }
+}
+
 export class PackageArchive {
   private constructor(
     private readonly zip: JSZip,
@@ -36,6 +71,7 @@ export class PackageArchive {
   static async open(bytes: Uint8Array): Promise<PackageArchive> {
     const originalHash = createHash('sha256').update(bytes).digest('hex')
     const zip = await JSZip.loadAsync(bytes)
+    assertZipWithinLimits(zip)
     const entries = new Map<string, Uint8Array>()
     const names = Object.keys(zip.files)
     for (const name of names) {
@@ -104,9 +140,15 @@ export class PackageArchive {
     // Slide size
     const szRaw = root['p:sldSz'] ?? root.sldSz
     const sz = szRaw ? asXmlNode(szRaw) : null
+    const emuOr = (raw: unknown, fallback: number): number => {
+      // A corrupt presentation.xml may carry a missing or non-numeric sldSz;
+      // without this guard parseInt yields NaN and poisons every layout.
+      const parsed = parseInt(String(raw), 10)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+    }
     const size: SlideSize = {
-      cx: sz ? parseInt(String(sz['@_cx']), 10) : 9144000,
-      cy: sz ? parseInt(String(sz['@_cy']), 10) : 6858000,
+      cx: sz ? emuOr(sz['@_cx'], 9144000) : 9144000,
+      cy: sz ? emuOr(sz['@_cy'], 6858000) : 6858000,
     }
 
     // Slide order: presentation.xml.rels maps r:id to slide parts
@@ -124,7 +166,11 @@ export class PackageArchive {
   }
 
   /** Resolve a slide's layout / master part paths (via the rels chain). */
-  resolveSlideChain(slidePath: string): { layoutPath?: string; masterPath?: string; themePath?: string } {
+  resolveSlideChain(slidePath: string): {
+    layoutPath?: string
+    masterPath?: string
+    themePath?: string
+  } {
     const slideRels = this.readRels(slidePath)
     let layoutPath: string | undefined
     for (const rel of slideRels.values()) {
@@ -133,6 +179,10 @@ export class PackageArchive {
         break
       }
     }
+    // Damaged decks ship slides without a rels part (or without the mandatory slideLayout
+    // relationship). PowerPoint refuses such files; LibreOffice renders them on the first
+    // layout of the first master, which keeps the deck's background/decorations — do the same.
+    if (!layoutPath) layoutPath = this.fallbackLayoutPath(slidePath)
     let masterPath: string | undefined
     let themePath: string | undefined
     if (layoutPath) {
@@ -154,6 +204,43 @@ export class PackageArchive {
       }
     }
     return { layoutPath, masterPath, themePath }
+  }
+
+  /**
+   * Layout for a slide that lost its slideLayout relationship: the first master's layouts in
+   * sldLayoutIdLst order, preferring the title layout for a slide carrying a ctrTitle placeholder
+   * (what the deck's own title page would have referenced), else the first layout.
+   */
+  private fallbackLayoutPath(slidePath: string): string | undefined {
+    const presXml = this.readText('ppt/presentation.xml')
+    if (!presXml) return undefined
+    const presRels = this.readRels('ppt/presentation.xml')
+    const masterRid = /<p:sldMasterId\b[^>]*\br:id="([^"]+)"/.exec(presXml)?.[1]
+    const masterRel = masterRid
+      ? presRels.get(masterRid)
+      : [...presRels.values()].find((r) => r.type.endsWith('/slideMaster'))
+    if (!masterRel) return undefined
+    const masterPath = resolveTarget('ppt/presentation.xml', masterRel.target)
+    const masterXml = this.readText(masterPath)
+    if (!masterXml) return undefined
+    const masterRels = this.readRels(masterPath)
+    const layouts: string[] = []
+    for (const m of masterXml.matchAll(/<p:sldLayoutId\b[^>]*\br:id="([^"]+)"/g)) {
+      const rel = masterRels.get(m[1]!)
+      if (rel) layouts.push(resolveTarget(masterPath, rel.target))
+    }
+    if (!layouts.length)
+      for (const rel of masterRels.values())
+        if (rel.type.endsWith('/slideLayout')) layouts.push(resolveTarget(masterPath, rel.target))
+    if (!layouts.length) return undefined
+    const wantsTitle = /<p:ph\b[^>]*\btype="ctrTitle"/.test(this.readText(slidePath) ?? '')
+    if (wantsTitle) {
+      const title = layouts.find((p) =>
+        /<p:sldLayout\b[^>]*\btype="title"/.test(this.readText(p) ?? ''),
+      )
+      if (title) return title
+    }
+    return layouts[0]
   }
 }
 

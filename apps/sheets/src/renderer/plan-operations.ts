@@ -13,9 +13,10 @@ import {
   parseAddress,
   parseRange,
   rangeCellCount,
-} from '../domain/cell-address'
-import { CHART_EDIT_TYPES, chartDataFromValues } from '../domain/chart-visual'
-import type { InMemoryWorkbookAdapter } from '../domain/in-memory-workbook'
+  type RangeBounds,
+} from '@genoffice/xlsx-gateway/domain/cell-address'
+import { CHART_EDIT_TYPES, chartDataFromValues } from '@genoffice/xlsx-gateway/domain/chart-visual'
+import type { InMemoryWorkbookAdapter } from '@genoffice/xlsx-gateway/domain/in-memory-workbook'
 import {
   convertToValuesBatchError,
   copyTargetBounds,
@@ -26,15 +27,20 @@ import {
   workbookCommandBatchSchema,
   type PrimitiveOperation,
   type WorkbookOperation,
-} from '../domain/workbook-dsl'
-import type { ApplyOutcome, ChangePlan } from '../domain/workbook.types'
-import { offsetFormulaRefs } from '../domain/formula-shift'
-import { qualifierMatches, shiftFormulaText, StructuralShiftError } from '../gateway/xlsx-structure'
+} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+import type { ApplyOutcome, ChangePlan } from '@genoffice/xlsx-gateway/domain/workbook.types'
+import { offsetFormulaRefs } from '@genoffice/xlsx-gateway/domain/formula-shift'
+import {
+  qualifierMatches,
+  shiftCellArea,
+  shiftFormulaText,
+  StructuralShiftError,
+} from '@genoffice/xlsx-gateway/gateway/xlsx-structure'
 import { MAX_PATCH_ENTRY_BYTES } from '../shared/desktop-api'
 import { isSheetRemoved } from './edit-journal'
 import { cellKey, parseFormulaReferences } from './formula-closure'
 import { fillFormulaCostError, quadraticFormulaError, type FormulaCostSheet } from './formula-cost'
-import { t } from './i18n/locale'
+import { t, type StringKey } from './i18n/locale'
 import { buildLazyChangePlan } from './lazy-plan'
 import {
   lazyCellEditable,
@@ -384,7 +390,7 @@ export function proposeOperations(
           // sheet-scoped defined names; catching it here keeps the failure
           // out of the apply-ok-save-fail gap. The sidecar flag covers
           // hidden and _xlnm.* built-ins the modeled definedNames omit
-          // (bugbot); the scan remains as the older-sidecar fallback.
+          // entirely; the scan remains as the older-sidecar fallback.
           const fileIndex = state.file.sheets.findIndex((sheet) => sheet.id === operation.sheetId)
           const scopedNames =
             sheetMeta?.hasScopedDefinedNames ??
@@ -960,10 +966,24 @@ const SHEET_PART_EXEMPT_OPS = new Set([
  * facade commands these ops dispatch: checked at propose time and re-checked
  * at apply time so a gated op fails with a model-facing error instead of the
  * tool reporting success on a cancelled command. */
+/** A gate refusal: the model-facing reason plus, where the ribbon shows the
+ * same refusal today, its localized status-bar string. */
+export interface GateFailure {
+  readonly reason: string
+  readonly messageKey?: StringKey
+}
+
 export function lazyGateError(
   state: LazyWorkbookState,
   operation: WorkbookOperation | PrimitiveOperation,
 ): string | null {
+  return lazyGateFailure(state, operation)?.reason ?? null
+}
+
+export function lazyGateFailure(
+  state: LazyWorkbookState,
+  operation: WorkbookOperation | PrimitiveOperation,
+): GateFailure | null {
   const sheetId =
     'sheetId' in operation && typeof operation.sheetId === 'string' ? operation.sheetId : undefined
   if (sheetId === undefined) return null
@@ -973,7 +993,7 @@ export function lazyGateError(
   // a save that must fail. Workbook-level ops (rename/move/hide/delete a
   // sheet) only rewrite workbook.xml and stay allowed. add_pivot reads
   // `sheetId` and bakes its output onto `targetSheetId` — gate that one on
-  // the write target (bugbot).
+  // the write target.
   const writeSheetId = operation.op === 'add_pivot' ? (operation.targetSheetId ?? sheetId) : sheetId
   if (
     !state.editJournal.sheets.added.has(writeSheetId) &&
@@ -981,34 +1001,60 @@ export function lazyGateError(
   ) {
     const sheetMeta = state.file.sheets.find((sheet) => sheet.id === writeSheetId)
     if (sheetMeta !== undefined && (sheetMeta.sourceXmlBytes ?? 0) > MAX_PATCH_ENTRY_BYTES) {
-      return (
-        `Sheet "${sheetMeta.name}" is read-only this session: its worksheet XML is ` +
-        `${Math.round((sheetMeta.sourceXmlBytes ?? 0) / 1024 / 1024)}MB uncompressed, above the ` +
-        `${Math.round(MAX_PATCH_ENTRY_BYTES / 1024 / 1024)}MB save limit, so edits there can never be saved. ` +
-        'Write results to another sheet instead — copy_range (with filterColumn/filterValues to ' +
-        'extract rows) and aggregate_range both read it fine.'
-      )
+      return {
+        reason:
+          `Sheet "${sheetMeta.name}" is read-only this session: its worksheet XML is ` +
+          `${Math.round((sheetMeta.sourceXmlBytes ?? 0) / 1024 / 1024)}MB uncompressed, above the ` +
+          `${Math.round(MAX_PATCH_ENTRY_BYTES / 1024 / 1024)}MB save limit, so edits there can never be saved. ` +
+          'Write results to another sheet instead — copy_range (with filterColumn/filterValues to ' +
+          'extract rows) and aggregate_range both read it fine.',
+      }
     }
   }
   if (PIVOT_GATED_OPS.has(operation.op)) {
     const sheetMeta = state.file.sheets.find((sheet) => sheet.id === sheetId)
     if (sheetMeta && sheetMeta.pivotRanges.length > 0) {
-      return (
-        `Sheet "${sheetMeta.name}" contains a PivotTable — row/column inserts, deletions, and merges ` +
-        'are blocked there because a shift would desync the baked pivot output. ' +
-        'Make the change on a sheet without pivot tables.'
-      )
+      return {
+        reason:
+          `Sheet "${sheetMeta.name}" contains a PivotTable — row/column inserts, deletions, and merges ` +
+          'are blocked there because a shift would desync the baked pivot output. ' +
+          'Make the change on a sheet without pivot tables.',
+        messageKey: 'appPivotSheetNoStructural',
+      }
+    }
+    if (operation.op === 'merge_cells') {
+      // The save gateway refuses this (shiftTablePart); fail before the merge
+      // is journaled, or every later edit is held hostage by an unsavable one.
+      const table = tableOverlapping(state, sheetId, parseRange(operation.range))
+      if (table !== null) {
+        return {
+          reason:
+            `Merging cells over table "${table}" is not supported. ` +
+            'Merge outside the table range, or convert the table to a plain range first.',
+          messageKey: 'appMergeOverTable',
+        }
+      }
     }
     return null
   }
   if (FILTER_GATED_OPS.has(operation.op)) {
     if (!isAddedSheet && (!state.formulaMode || !state.flags.preloadComplete)) {
       return state.formulaMode
-        ? 'Filter changes need the workbook fully loaded — it is still loading; retry after loading completes.'
-        : 'Filter changes need the fully-loaded mode — this workbook is too large and streams partially, so filters cannot be edited.'
+        ? {
+            reason:
+              'Filter changes need the workbook fully loaded — it is still loading; retry after loading completes.',
+            messageKey: 'appFullLoadRunning',
+          }
+        : {
+            reason:
+              'Filter changes need the fully-loaded mode — this workbook is too large and streams partially, so filters cannot be edited.',
+          }
     }
     if (state.filterOrigins.get(sheetId)?.origin === 'table') {
-      return "This sheet's auto-filter belongs to a table — table filters cannot be edited yet."
+      return {
+        reason: "This sheet's auto-filter belongs to a table — table filters cannot be edited yet.",
+        messageKey: 'appTableFilterNoEdit',
+      }
     }
     return null
   }
@@ -1017,7 +1063,45 @@ export function lazyGateError(
     !isAddedSheet &&
     !state.appliedDvSheets.has(sheetId)
   ) {
-    return "This sheet's data-validation rules are still being indexed — retry after workbook indexing completes."
+    return {
+      reason:
+        "This sheet's data-validation rules are still being indexed — retry after workbook indexing completes.",
+      messageKey: 'appSheetStillIndexing',
+    }
+  }
+  return null
+}
+
+/// Name of the first table (file or added this session) whose range
+/// intersects `bounds` on the sheet, or null. File tables move through the
+/// journaled structural ops by the same rule shiftTablePart applies at save
+/// (not fileRangeToScreenRange, which drops rows inserted inside the table);
+/// session-added tables are recorded in current coordinates already.
+function tableOverlapping(
+  state: LazyWorkbookState,
+  sheetId: string,
+  bounds: RangeBounds,
+): string | null {
+  const overlaps = (area: RangeBounds): boolean =>
+    bounds.startRow <= area.endRow &&
+    bounds.endRow >= area.startRow &&
+    bounds.startColumn <= area.endColumn &&
+    bounds.endColumn >= area.startColumn
+  const sheetMeta = state.file.sheets.find((sheet) => sheet.id === sheetId)
+  const ops = state.editJournal.structuralOps.get(sheetId) ?? []
+  for (const table of sheetMeta?.tables ?? []) {
+    let area: RangeBounds | null
+    try {
+      area = shiftCellArea(table.range, ops)
+    } catch (error) {
+      // a torn table already dooms the save; refusing here keeps the gate honest
+      if (error instanceof StructuralShiftError) return table.name ?? '(unnamed)'
+      throw error
+    }
+    if (area !== null && overlaps(area)) return table.name ?? '(unnamed)'
+  }
+  for (const table of state.editJournal.tableAdds) {
+    if (table.sheetId === sheetId && overlaps(table.area)) return table.name
   }
   return null
 }
@@ -1127,7 +1211,7 @@ export function collectStreamedFormulaPrecedents(
  * copy's own write rectangle are pinned like any other precedent: the copied
  * cells are plain journal cells otherwise, and viewport eviction would wipe
  * the ones outside the current window, leaving in-block formulas computing
- * against blanks while still looking live (bugbot).
+ * against blanks while still looking live.
  */
 export function carryCopyFormulasPlan(
   state: LazyWorkbookState,
@@ -1275,7 +1359,7 @@ export async function structuralDeleteFormulaError(
       for (const cell of result.cells) {
         if (!cell.formula) continue
         // Only a CONTENT overwrite supersedes the file's formula text — a
-        // style-only journal entry leaves the formula in force (bugbot).
+        // style-only journal entry leaves the formula in force.
         const entry = journalCells?.get(`${cell.row}:${cell.column}`)
         if (entry && (entry.hasValue || entry.formula)) continue
         texts.push(cell.formula)
@@ -1316,7 +1400,7 @@ export function structuralDeleteFormulaErrorSync(
 ): string | null {
   // Session structural ops only invalidate the STREAMED path's texts (the
   // harvested index is in file coordinates); the full-load model already
-  // reflects them, so formulaMode keeps checking (bugbot).
+  // reflects them, so formulaMode keeps checking.
   const structuralShifted = [...state.editJournal.structuralOps.values()].some(
     (ops) => ops.length > 0,
   )

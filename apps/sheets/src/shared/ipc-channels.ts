@@ -36,8 +36,21 @@ export const MAX_CSV_EXPORT_CHARS = 64_000_000
 export const MAX_CREATE_DOCUMENT_TITLE_CHARS = 200
 export const MAX_CREATE_DOCUMENT_CONTENT_CHARS = 2_000_000
 
+/// One PDF-export header/footer template (shared by the zod schema and the
+/// preload validator). `&G` pictures ride along as base64 data URLs — the
+/// sidecar skips pictures over 2 MiB, so three slots fit under this cap.
+export const MAX_PDF_TEMPLATE_CHARS = 12_000_000
+
+/// VML shape id of a header/footer picture slot: left/center/right ×
+/// header/footer, with an EVEN or FIRST suffix for the page variants.
+export const HEADER_FOOTER_PICTURE_POSITION = /^[LCR][HF](EVEN|FIRST)?$/
+
 export const IPC_CHANNELS = {
   selectWorkbook: 'workbook:select',
+  /** Multi-file picker + sidecar sessions for merging into the current workbook */
+  selectWorkbooksForMerge: 'workbook:select-for-merge',
+  /** Open explicit paths (chat attachments) as merge-source sessions — no dialog */
+  openWorkbooksForMerge: 'workbook:open-for-merge',
   readWorkbookRange: 'workbook:read-range',
   readWorkbookFormulas: 'workbook:read-formulas',
   recalcWorkbook: 'workbook:recalc',
@@ -61,6 +74,7 @@ export const IPC_CHANNELS = {
   closeSaveRequest: 'workbook:close-save-request',
   closeSaveResult: 'workbook:close-save-result',
   exportPdf: 'workbook:export-pdf',
+  printWorkbook: 'workbook:print',
   exportCsv: 'workbook:export-csv',
   csvSaveConfirm: 'workbook:csv-save-confirm',
   /** AI create_document: new standalone file in the default folder (no dialog) */
@@ -79,6 +93,11 @@ export const IPC_CHANNELS = {
   aiFetchImage: 'ai:fetch-image',
   // sheets: prefix — slides' ai:generate-image only registers once a slides view exists
   aiGenerateImage: 'sheets:ai-generate-image',
+  // MCP visible-grid bridge: shell pushes one command, the renderer that owns
+  // the Univer workbook executes it with the built-in AI's executors
+  mcpCommand: 'sheets:mcp-command',
+  mcpResult: 'sheets:mcp-result',
+  mcpReady: 'sheets:mcp-ready',
   // Chat attachments (sheets: prefix — docs already registers global files:* in
   // the shell; avoids collisions)
   captureScreenSources: 'sheets:capture-screen-sources',

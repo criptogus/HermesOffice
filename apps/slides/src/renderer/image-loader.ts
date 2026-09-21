@@ -4,16 +4,36 @@
  * until the last one settled). Loaded/in-flight urls are tracked across calls
  * so re-collecting urls after an edit never reloads or discards progress.
  */
-import { metafileToDataUrl } from '@hermesoffice/docx-engine/metafile'
+import { metafileToDataUrl } from '@genoffice/docx-engine/metafile'
 
 export type ApplyImages = (entries: ReadonlyArray<readonly [string, HTMLImageElement]>) => void
 
 /** EMF/WMF data URLs: browsers cannot decode metafiles — rasterize to PNG first (keyed by the original url). */
 const METAFILE_RE = /^data:(image\/x-(?:emf|wmf)|image\/(?:emf|wmf));base64,/
 
+/**
+ * Metafile text draws through canvas fonts, so the Office-private FontFaces (DFonts/cloud/
+ * embedded, registered by doc-fonts.ts after the deck settles) must be in place first — an
+ * EMF rasterized before that keeps its fallback face forever (Excel OLE previews in
+ * Meiryo UI came out in the browser's default sans). `false` = a sync is in flight.
+ */
+function waitForDocFonts(timeoutMs = 4000): Promise<void> {
+  if (typeof window === 'undefined' || window.__genofficeDocFontsSynced !== false)
+    return Promise.resolve()
+  return new Promise((resolve) => {
+    const started = Date.now()
+    const tick = () => {
+      if (window.__genofficeDocFontsSynced !== false || Date.now() - started >= timeoutMs) resolve()
+      else setTimeout(tick, 50)
+    }
+    setTimeout(tick, 50)
+  })
+}
+
 async function rasterizeMetafile(url: string): Promise<string | null> {
   const m = METAFILE_RE.exec(url)
   if (!m) return null
+  await waitForDocFonts()
   const b64 = url.slice(url.indexOf(',') + 1)
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
@@ -41,6 +61,10 @@ export function createImageLoader(apply: ApplyImages, batchSize = 16, delayMs = 
   }
 
   return {
+    /** urls still decoding — 0 means every image the deck asked for has settled */
+    pending(): number {
+      return loading.size
+    },
     load(urls: Iterable<string>) {
       for (const u of urls) {
         if (loaded.has(u) || loading.has(u)) continue

@@ -9,28 +9,41 @@ const here = dirname(fileURLToPath(import.meta.url))
 // avoids bundling stale implementations when node_modules links point elsewhere)
 const workspaceAlias = {
   // Subpath before the bare name: string aliases are prefix replacements
-  '@hermesoffice/pptx-engine/table-grid': resolve(
+  '@genoffice/pptx-engine/table-grid': resolve(
     here,
     '../../packages/pptx-engine/src/table-grid.ts',
   ),
-  '@hermesoffice/pptx-engine/identity': resolve(here, '../../packages/pptx-engine/src/identity.ts'),
-  '@hermesoffice/pptx-engine/custgeom': resolve(here, '../../packages/pptx-engine/src/custgeom.ts'),
-  '@hermesoffice/pptx-engine/background-promote': resolve(
+  '@genoffice/pptx-engine/identity': resolve(here, '../../packages/pptx-engine/src/identity.ts'),
+  '@genoffice/pptx-engine/named-action': resolve(
+    here,
+    '../../packages/pptx-engine/src/named-action.ts',
+  ),
+  '@genoffice/pptx-engine/custgeom': resolve(here, '../../packages/pptx-engine/src/custgeom.ts'),
+  '@genoffice/pptx-engine/background-promote': resolve(
     here,
     '../../packages/pptx-engine/src/background-promote.ts',
   ),
-  '@hermesoffice/pptx-engine': resolve(here, '../../packages/pptx-engine/src/index.ts'),
-  '@hermesoffice/pptx-render/preset-geometry': resolve(
+  '@genoffice/pptx-engine': resolve(here, '../../packages/pptx-engine/src/index.ts'),
+  '@genoffice/pptx-ops/op-docs': resolve(here, '../../packages/pptx-ops/src/op-docs.ts'),
+  '@genoffice/pptx-ops/font-size': resolve(here, '../../packages/pptx-ops/src/font-size.ts'),
+  '@genoffice/pptx-ops': resolve(here, '../../packages/pptx-ops/src/index.ts'),
+  '@genoffice/pptx-render/preset-geometry': resolve(
     here,
     '../../packages/pptx-render/src/preset-geometry.ts',
   ),
-  '@hermesoffice/pptx-render': resolve(here, '../../packages/pptx-render/src/index.ts'),
+  '@genoffice/pptx-render': resolve(here, '../../packages/pptx-render/src/index.ts'),
+  '@genoffice/pipelines/slides/layout-audit': resolve(
+    here,
+    '../../packages/pipelines/src/slides/layout-audit.ts',
+  ),
+  '@genoffice/pipelines/slides': resolve(here, '../../packages/pipelines/src/slides/index.ts'),
   // Metafile (EMF/WMF) rasterizer shared with the docs engine (renderer-only: needs canvas)
-  '@hermesoffice/docx-engine/metafile': resolve(here, '../../packages/docx-engine/src/metafile.ts'),
+  '@genoffice/docx-engine/metafile': resolve(here, '../../packages/docx-engine/src/metafile.ts'),
+  '@genoffice/docx-engine/math': resolve(here, '../../packages/docx-engine/src/math.ts'),
 }
 
 export default defineConfig({
-  // Main process/preload must bundle @hermesoffice/* sources (they are pulled in as TS
+  // Main process/preload must bundle @genoffice/* sources (they are pulled in as TS
   // source with extensionless relative imports; externalizing them under Node
   // yields ERR_MODULE_NOT_FOUND).
   main: {
@@ -39,11 +52,13 @@ export default defineConfig({
     plugins: [
       externalizeDepsPlugin({
         exclude: [
-          '@hermesoffice/pptx-engine',
-          '@hermesoffice/pptx-render',
-          '@hermesoffice/ai-search',
-          '@hermesoffice/file-parse',
-          '@hermesoffice/electron-utils',
+          '@genoffice/pptx-engine',
+          '@genoffice/pptx-ops',
+          '@genoffice/pptx-render',
+          '@genoffice/pipelines',
+          '@genoffice/ai-search',
+          '@genoffice/file-parse',
+          '@genoffice/electron-utils',
           'opentype.js',
         ],
       }),
@@ -51,7 +66,7 @@ export default defineConfig({
   },
   preload: {
     // electron-utils ships raw TS source — must be bundled, not left external
-    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/electron-utils'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['@genoffice/electron-utils'] })],
   },
   renderer: {
     resolve: { alias: workspaceAlias },

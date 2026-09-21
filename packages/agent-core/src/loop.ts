@@ -67,12 +67,6 @@ export interface AgentLoopOptions<TSnapshot = unknown> {
   formatUserMessage?(instruction: string, context: string): string
   /** appended to the system prompt each turn (e.g. reply-language directive following the UI language) */
   systemSuffix?(): string
-  /**
-   * Fork: stable per-document session id forwarded with each stream request
-   * (X-Hermes-Session-Id) so the local Hermes gateway keeps one session per doc.
-   * A getter is evaluated at request time so re-opened panels reuse the id (fix 70374e0).
-   */
-  sessionId?: string | (() => string | undefined)
 }
 
 const COMPACT_MAX_BYTES = 256 * 1024
@@ -107,6 +101,13 @@ const MAX_ALL_ERROR_TURNS = 8
  * retrying here keeps one gateway hiccup from killing a long multi-tool run.
  */
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000, 3_000]
+/**
+ * A stream that closed while a tool's arguments were still streaming (buffered
+ * server-side, cut by a gateway idle timeout) never delivered a tool call, so
+ * history is untouched and one replay is safe; it is billed, hence one attempt.
+ */
+const TOOL_ARGS_DROP_MARK = 'while sending tool arguments'
+const TOOL_ARGS_DROP_RETRIES = 1
 
 const TURN_LIMIT_NOTE =
   '[System] The tool-call turn limit for this request has been reached; no more tools may be called this turn. ' +
@@ -120,6 +121,18 @@ const TURN_LIMIT_NOTE =
  * Exported so apps can substitute a localized / tool-derived summary in the UI.
  */
 export const COMPLETED_VIA_TOOLS_TEXT = '(completed tool actions; no text reply)'
+
+/**
+ * Models default to their training-cutoff year without this (e.g. web searches
+ * for "... 2024"). Leads the system prompt and spells out the year: measured
+ * against claude-opus-4-7 with the docs prompt, the date alone (front or tail)
+ * still produced cutoff-year searches in 6/6 runs; naming the year fixed all.
+ */
+export function runtimePreamble(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  return `Today's date is ${date}; the current year is ${now.getFullYear()}.\n\n`
+}
 
 const SUMMARIZE_SYSTEM =
   'You are a conversation compressor. Compress this editing session between the user and the AI assistant into a concise summary so later turns can continue with context. ' +
@@ -189,11 +202,6 @@ export class AgentLoop<TSnapshot = unknown> {
   private readonly options: AgentLoopOptions<TSnapshot>
   private history: AgentMessage[] = []
   private handle: AgentStreamHandle | null = null
-  /** Fork: stable per-document session id, resolved from a getter at request time (fix 70374e0). */
-  private get sessionId(): string | undefined {
-    const s = this.options.sessionId
-    return typeof s === 'function' ? s() : s
-  }
   private running = false
   private cancelled = false
   private turns = 0
@@ -523,14 +531,14 @@ export class AgentLoop<TSnapshot = unknown> {
     this.turnStopReason = null
     // Some transports emit an extra onDone after cancel — this turn may finalize only once
     let settled = false
-    // Fork: resolve the per-document session id once per turn (fix 70374e0)
-    const turnSessionId = this.sessionId
     this.handle = this.options.transport.stream(
       {
-        system: this.options.skill.systemPrompt + (this.options.systemSuffix?.() ?? ''),
+        system:
+          runtimePreamble() +
+          this.options.skill.systemPrompt +
+          (this.options.systemSuffix?.() ?? ''),
         messages: [...this.history],
         tools: this.finalizing ? [] : this.options.skill.tools,
-        ...(turnSessionId !== undefined ? { sessionId: turnSessionId } : {}),
       },
       {
         onDelta: (text) => {
@@ -558,17 +566,22 @@ export class AgentLoop<TSnapshot = unknown> {
         onError: (error) => {
           if (generation !== this.generation || settled) return
           settled = true
-          const delay = EMPTY_STREAM_RETRY_DELAYS_MS[retriesUsed]
-          // The no-partial-output guard keeps the retry idempotent (an empty
-          // stream never emits deltas, but a mislabeled error must not replay
-          // a turn whose text/tool calls the UI already saw)
-          if (
-            delay !== undefined &&
+          // The no-partial-output guard keeps the empty-stream retry idempotent (an
+          // empty stream never emits deltas, but a mislabeled error must not replay
+          // a turn whose text/tool calls the UI already saw). A dropped tool-argument
+          // stream may have shown text first; that text is simply re-rendered.
+          const emptyDelay = EMPTY_STREAM_RETRY_DELAYS_MS[retriesUsed]
+          const retryEmpty =
+            emptyDelay !== undefined &&
             error.includes('(empty stream)') &&
-            !this.cancelled &&
             !this.turnText &&
             this.toolCalls.length === 0
-          ) {
+          const retryDrop =
+            retriesUsed < TOOL_ARGS_DROP_RETRIES &&
+            error.includes(TOOL_ARGS_DROP_MARK) &&
+            this.toolCalls.length === 0
+          const delay = retryEmpty ? emptyDelay : EMPTY_STREAM_RETRY_DELAYS_MS[0]
+          if ((retryEmpty || retryDrop) && !this.cancelled) {
             setTimeout(() => {
               if (generation !== this.generation) return
               // Stopped during the backoff window: finalize like a normal cancel
@@ -637,7 +650,7 @@ export class AgentLoop<TSnapshot = unknown> {
       // prompt: Anthropic rejects empty content arrays, Gemini rejects empty
       // parts, and OpenAI-compatible routes send content:null with no tool_calls —
       // all of which make follow-up turns fail or return empty again (see
-      // hermesoffice#12 / #22: first prompt works, second shows "no summary").
+      // genoffice#12 / #22: first prompt works, second shows "no summary").
       // Same normalization as restore(), applied unconditionally: cancelled and
       // read-only empty turns poison follow-ups just the same. onDone still
       // reports the raw turn text so app UIs keep their localized fallbacks

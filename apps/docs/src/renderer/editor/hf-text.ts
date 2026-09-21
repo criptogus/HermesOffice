@@ -11,7 +11,7 @@ import {
   type HeaderFooter,
   type HfParagraph,
   type Run,
-} from '@hermesoffice/docx-engine'
+} from '@genoffice/docx-engine'
 
 export const PAGE_TOKEN = '{PAGE}'
 export const TOTAL_TOKEN = '{NUMPAGES}'

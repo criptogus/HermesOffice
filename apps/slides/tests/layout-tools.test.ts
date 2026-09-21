@@ -5,9 +5,9 @@
  *  - execute_layout_script tool chain: script -> one applyEditScript transaction -> audit report back
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { RenderSlide, RenderNode, ShapeRenderNode, PlacedBox } from '@hermesoffice/pptx-render'
+import type { RenderSlide, RenderNode, ShapeRenderNode, PlacedBox } from '@genoffice/pptx-render'
 import { runLayoutScript, type LayoutScriptElement } from '../src/renderer/ai/layout-script'
-import { auditSlideLayout } from '../src/renderer/ai/layout-audit'
+import { auditSlideLayout } from '@genoffice/pipelines/slides/layout-audit'
 import { createSlidesSkill, type DeckAccess } from '../src/renderer/ai/slides-skill'
 
 const box = (x: number, y: number, w: number, h: number, rot = 0): PlacedBox => ({
@@ -195,6 +195,18 @@ describe('auditSlideLayout', () => {
     const slide = slideOf([textNode('t1', box(80, 60, 200, 100), 'x'.repeat(20))])
     const issues = auditSlideLayout(slide)
     expect(issues.some((s) => s.includes('Text overflow (width)') && s.includes('64px'))).toBe(true)
+  })
+
+  it('does not flag width overflow on vertical text (vert mixes run axes)', () => {
+    // A vertical text body keeps horizontal layout convention in its lines,
+    // so run.x/widthPx describe the pre-rotation advance — comparing them
+    // against innerW false-positives on every vertical box. The audit must
+    // skip the width check when vert is set.
+    const node = textNode('t1', box(80, 60, 160, 640), 'x'.repeat(30))
+    node.text!.vert = 'eaVert'
+    const slide = slideOf([node])
+    const issues = auditSlideLayout(slide)
+    expect(issues.some((s) => s.includes('Text overflow (width)'))).toBe(false)
   })
 
   it('decoration layers and large background blocks are excluded', () => {

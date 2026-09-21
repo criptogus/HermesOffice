@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   AI_PROVIDERS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  MAX_MAX_OUTPUT_TOKENS,
+  MIN_MAX_OUTPUT_TOKENS,
   activeProvider,
+  clampMaxOutputTokens,
   cloudToolsEnabled,
   defaultAiSettings,
+  maxOutputTokensOf,
   resolveAiSettings,
 } from '../src/providers'
 import type { AiProviderId } from '../src/types'
@@ -11,15 +16,14 @@ import type { AiProviderId } from '../src/types'
 describe('defaultAiSettings', () => {
   it('gives every provider its default model and an empty key by default', () => {
     const settings = defaultAiSettings()
-    // Fork: Hermes is the default provider (local gateway), not genspark.
-    expect(settings.provider).toBe('hermes')
+    expect(settings.provider).toBe('genspark')
     for (const meta of AI_PROVIDERS) {
       expect(settings.providers[meta.id].apiKey).toBe('')
       expect(settings.providers[meta.id].model).toBe(meta.defaultModel)
     }
-    // Fork: providers with a canonical local gateway get their default baseUrl (hermes).
     expect(settings.providers.custom.baseUrl).toBe('')
-    expect(settings.providers.hermes.baseUrl).toBe('http://127.0.0.1:8642/v1')
+    expect(settings.providers.codex.cliPath).toBe('')
+    expect(settings.providers.codex.model).toBe('')
     expect(settings.providers.anthropic.baseUrl).toBeUndefined()
   })
 
@@ -31,13 +35,50 @@ describe('defaultAiSettings', () => {
 })
 
 describe('provider model catalog', () => {
-  it('offers DeepSeek Vision Exp only through the direct BYOK provider', () => {
+  it('offers DeepSeek V4.1 Flash directly and drops the retired Vision Exp id', () => {
     const genspark = AI_PROVIDERS.find((provider) => provider.id === 'genspark')!
     const deepseek = AI_PROVIDERS.find((provider) => provider.id === 'deepseek')!
 
-    expect(deepseek.models).toContain('deepseek-v4-flash-vision-exp')
+    expect(deepseek.models).toContain('deepseek-flash')
+    expect(deepseek.models).not.toContain('deepseek-v4-flash')
+    expect(deepseek.models).not.toContain('deepseek-v4-flash-vision-exp')
     expect(genspark.models).not.toContain('deep-seek-v4-flash')
     expect(genspark.models).not.toContain('deep-seek-v4-flash-vision-exp-openrouter')
+  })
+
+  it('serves DeepSeek V4.1 Flash through the Genspark proxy under its hyphenated pool id', () => {
+    const genspark = AI_PROVIDERS.find((provider) => provider.id === 'genspark')!
+    expect(genspark.models).toContain('deep-seek-v4.1-flash')
+    expect(genspark.models).not.toContain('deep-seek-v4-pro')
+  })
+
+  it('keeps Responses-only models out of the OpenCode tiers (no such protocol yet)', () => {
+    for (const id of ['opencode-zen', 'opencode-go'] as const) {
+      const meta = AI_PROVIDERS.find((provider) => provider.id === id)!
+      expect(meta.models).toContain(meta.defaultModel)
+      expect(meta.needsBaseUrl).toBeUndefined()
+      for (const model of meta.models) {
+        expect(model).not.toMatch(/^(gpt-|grok-|muse-spark-)/)
+      }
+    }
+  })
+
+  it('seeds Requesty with managed policy ids (short names, no vendor prefix)', () => {
+    const requesty = AI_PROVIDERS.find((provider) => provider.id === 'requesty')!
+    expect(requesty.models).toContain(requesty.defaultModel)
+    expect(requesty.needsBaseUrl).toBeUndefined()
+    for (const model of requesty.models) {
+      expect(model).not.toContain('/')
+    }
+  })
+
+  it('seeds Opper with pool ids (bare names, no vendor prefix)', () => {
+    const opper = AI_PROVIDERS.find((provider) => provider.id === 'opper')!
+    expect(opper.models).toContain(opper.defaultModel)
+    expect(opper.needsBaseUrl).toBeUndefined()
+    for (const model of opper.models) {
+      expect(model).not.toContain('/')
+    }
   })
 })
 
@@ -96,7 +137,39 @@ describe('resolveAiSettings', () => {
       },
       defaultAiSettings(),
     )
-    expect(resolved.providers.deepseek).toEqual({ apiKey: 'sk-user', model: 'deepseek-v4-flash' })
+    expect(resolved.providers.deepseek).toEqual({ apiKey: 'sk-user', model: 'deepseek-flash' })
+  })
+
+  it('rewrites the retired V4 Flash id and the Genspark pool spelling to deepseek-flash', () => {
+    for (const model of ['deepseek-v4-flash', 'deep-seek-v4.1-flash']) {
+      const resolved = resolveAiSettings(
+        { providers: { deepseek: { apiKey: 'sk-user', model } } as never },
+        defaultAiSettings(),
+      )
+      expect(resolved.providers.deepseek.model).toBe('deepseek-flash')
+    }
+  })
+
+  it('rewrites genspark model ids the proxy no longer serves', () => {
+    const resolved = resolveAiSettings(
+      {
+        providers: {
+          genspark: { apiKey: '', model: 'gemini-3.7-flash' },
+        } as never,
+      },
+      defaultAiSettings(),
+    )
+    expect(resolved.providers.genspark.model).toBe('claude-opus-4-7')
+
+    const gpt = resolveAiSettings(
+      {
+        providers: {
+          genspark: { apiKey: '', model: 'gpt-5.6' },
+        } as never,
+      },
+      defaultAiSettings(),
+    )
+    expect(gpt.providers.genspark.model).toBe('gpt-5.6-terra')
   })
 
   it('leaves a still-supported model id alone', () => {
@@ -115,24 +188,87 @@ describe('resolveAiSettings', () => {
     const resolved = resolveAiSettings(
       {
         providers: {
-          deepseek: { apiKey: ' sk-user\n', model: 'deepseek-v4-pro' },
-          custom: { apiKey: 'k', model: 'm', baseUrl: ' http://localhost:1234/v1 ' },
+          deepseek: { apiKey: ' sk-user\n', model: ' deepseek-v4-pro ' },
+          custom: { apiKey: 'k', model: ' m ', baseUrl: ' http://localhost:1234/v1 ' },
         } as never,
       },
       defaultAiSettings(),
     )
     expect(resolved.providers.deepseek.apiKey).toBe('sk-user')
+    expect(resolved.providers.deepseek.model).toBe('deepseek-v4-pro')
     expect(resolved.providers.deepseek.baseUrl).toBeUndefined()
+    expect(resolved.providers.custom.model).toBe('m')
     expect(resolved.providers.custom.baseUrl).toBe('http://localhost:1234/v1')
+  })
+
+  it('still remaps retired model ids padded with whitespace', () => {
+    const resolved = resolveAiSettings(
+      {
+        providers: {
+          deepseek: { apiKey: 'sk-user', model: ' deepseek-reasoner ' },
+        } as never,
+      },
+      defaultAiSettings(),
+    )
+    expect(resolved.providers.deepseek.model).toBe('deepseek-flash')
   })
 
   it('trims the legacy single-endpoint key and base URL too', () => {
     const resolved = resolveAiSettings(
-      { apiKey: ' legacy-key ', baseUrl: ' https://legacy.example.com/v1 ' },
+      {
+        apiKey: ' legacy-key ',
+        model: ' legacy-model ',
+        baseUrl: ' https://legacy.example.com/v1 ',
+      },
       defaultAiSettings(),
     )
     expect(resolved.providers.custom.apiKey).toBe('legacy-key')
+    expect(resolved.providers.custom.model).toBe('legacy-model')
     expect(resolved.providers.custom.baseUrl).toBe('https://legacy.example.com/v1')
+  })
+
+  it('carries a stored output cap and clamps a hand-edited one', () => {
+    // a multi-provider file (the legacy single-endpoint shape returns defaults wholesale)
+    const stored = { providers: {} as never }
+    expect(
+      resolveAiSettings({ ...stored, maxOutputTokens: 32768 }, defaultAiSettings()).maxOutputTokens,
+    ).toBe(32768)
+    // a settings file edited by hand must not forward an absurd budget to the endpoint
+    expect(
+      resolveAiSettings({ ...stored, maxOutputTokens: 1 }, defaultAiSettings()).maxOutputTokens,
+    ).toBe(MIN_MAX_OUTPUT_TOKENS)
+    expect(
+      resolveAiSettings({ ...stored, maxOutputTokens: 1e9 }, defaultAiSettings()).maxOutputTokens,
+    ).toBe(MAX_MAX_OUTPUT_TOKENS)
+    // absent stays absent: pre-existing settings files keep the default behaviour
+    expect('maxOutputTokens' in resolveAiSettings(stored, defaultAiSettings())).toBe(false)
+  })
+})
+
+describe('maxOutputTokensOf', () => {
+  it('falls back to the default when the setting is absent or unusable', () => {
+    expect(maxOutputTokensOf({})).toBe(DEFAULT_MAX_OUTPUT_TOKENS)
+    expect(maxOutputTokensOf(undefined)).toBe(DEFAULT_MAX_OUTPUT_TOKENS)
+    expect(maxOutputTokensOf({ maxOutputTokens: Number.NaN })).toBe(DEFAULT_MAX_OUTPUT_TOKENS)
+    expect(maxOutputTokensOf({ maxOutputTokens: '8192' as unknown as number })).toBe(
+      DEFAULT_MAX_OUTPUT_TOKENS,
+    )
+  })
+
+  it('honors a stored cap inside the bounds', () => {
+    expect(maxOutputTokensOf({ maxOutputTokens: 16384 })).toBe(16384)
+    expect(maxOutputTokensOf({ maxOutputTokens: 3.7 })).toBe(MIN_MAX_OUTPUT_TOKENS)
+    expect(maxOutputTokensOf({ maxOutputTokens: 20000 })).toBe(20000)
+  })
+})
+
+describe('clampMaxOutputTokens', () => {
+  it('floors, bounds and defaults whatever the settings field or the input box held', () => {
+    expect(clampMaxOutputTokens(16384.9)).toBe(16384)
+    expect(clampMaxOutputTokens(0)).toBe(MIN_MAX_OUTPUT_TOKENS)
+    expect(clampMaxOutputTokens(5e6)).toBe(MAX_MAX_OUTPUT_TOKENS)
+    expect(clampMaxOutputTokens(Number.POSITIVE_INFINITY)).toBe(DEFAULT_MAX_OUTPUT_TOKENS)
+    expect(clampMaxOutputTokens(undefined)).toBe(DEFAULT_MAX_OUTPUT_TOKENS)
   })
 })
 
@@ -156,6 +292,48 @@ describe('activeProvider', () => {
     expect(activeProvider(settings)).toBe('genspark') // custom's default model is empty
     settings.providers.custom.model = 'my-model'
     expect(activeProvider(settings)).toBe('custom')
+  })
+
+  it('allows keyless custom endpoints for local servers', () => {
+    const settings = defaultAiSettings()
+    settings.provider = 'custom'
+    settings.providers.custom.apiKey = ''
+    settings.providers.custom.baseUrl = 'http://localhost:11434/v1'
+    settings.providers.custom.model = 'llama3'
+    expect(activeProvider(settings)).toBe('custom')
+  })
+
+  it('auto-discovers Codex without an API key and preserves an optional override', () => {
+    const settings = defaultAiSettings()
+    settings.provider = 'codex'
+    expect(activeProvider(settings)).toBe('codex')
+    settings.providers.codex.cliPath = ' C:\\Tools\\codex.exe '
+    expect(activeProvider(settings)).toBe('codex')
+
+    const resolved = resolveAiSettings(
+      { providers: { codex: settings.providers.codex } as never },
+      defaultAiSettings(),
+    )
+    expect(resolved.providers.codex.cliPath).toBe('C:\\Tools\\codex.exe')
+    expect(resolved.providers.codex.apiKey).toBe('')
+  })
+
+  it('treats whitespace-only keys, URLs, and models as unconfigured', () => {
+    const settings = defaultAiSettings()
+    settings.provider = 'kimi'
+    settings.providers.kimi.apiKey = '   '
+    expect(activeProvider(settings)).toBe('genspark')
+    settings.providers.kimi.apiKey = 'sk-user'
+    settings.providers.kimi.model = '  '
+    expect(activeProvider(settings)).toBe('genspark')
+    settings.providers.kimi.model = 'kimi-k2'
+    expect(activeProvider(settings)).toBe('kimi')
+
+    const custom = defaultAiSettings()
+    custom.provider = 'custom'
+    custom.providers.custom.baseUrl = '   '
+    custom.providers.custom.model = 'my-model'
+    expect(activeProvider(custom)).toBe('genspark')
   })
 
   it('falls back to genspark for unknown ids from a hand-edited settings file', () => {

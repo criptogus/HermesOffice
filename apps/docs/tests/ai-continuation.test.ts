@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_MAX_TURNS } from '@hermesoffice/agent-core'
+import { DEFAULT_MAX_TURNS } from '@genoffice/agent-core'
 import { DOCS_CONTINUE_INSTRUCTION } from '../src/renderer/ai/continuation'
 
 describe('Docs AI continuation', () => {

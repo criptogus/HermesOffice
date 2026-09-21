@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Block, GeneratedBlock, SectionInfo, TableModel } from '@hermesoffice/docx-engine'
+import type { Block, GeneratedBlock, SectionInfo, TableModel } from '@genoffice/docx-engine'
 import {
   blocksToPmDoc,
   capTableRowHeights,
@@ -10,6 +10,7 @@ import {
   signatureOfBlock,
   signatureOfGenerated,
   tableModelToPmNode,
+  textboxParaSignature,
   type PmNode,
 } from '../src/renderer/editor/convert'
 
@@ -38,6 +39,32 @@ describe('inlineToRuns hard break after atomic runs', () => {
   })
 })
 
+describe('Zotero field conversion', () => {
+  it('preserves one field id and its cross-paragraph boundaries', () => {
+    const instruction = 'ADDIN ZOTERO_BIBL {} CSL_BIBLIOGRAPHY'
+    const parts = ['begin', 'inside', 'end'] as const
+    const inline = parts.map(
+      (part, index) =>
+        runsToInline([
+          {
+            text: `Reference ${index + 1}`,
+            instrField: instruction,
+            zoteroFieldId: 17,
+            zoteroFieldPart: part,
+          },
+        ])[0],
+    )
+
+    const marks = inline.map((node) => node.marks?.find((mark) => mark.type === 'instrField'))
+    expect(marks.map((mark) => mark?.attrs?.fieldId)).toEqual([17, 17, 17])
+    expect(marks.map((mark) => mark?.attrs?.fieldPart)).toEqual(parts)
+
+    const runs = inline.map((node) => inlineToRuns([node])[0])
+    expect(runs.map((run) => run.zoteroFieldId)).toEqual([17, 17, 17])
+    expect(runs.map((run) => run.zoteroFieldPart)).toEqual(parts)
+  })
+})
+
 describe('runsToInline image runs', () => {
   it('keeps sibling w:t text on a run that also carries a drawing', () => {
     const runs = [
@@ -61,15 +88,35 @@ describe('runsToInline image runs', () => {
           wrap: null,
           offsetXEmu: null,
           offsetYEmu: null,
+          relV: null,
           wrapDistTopEmu: null,
           wrapDistBottomEmu: null,
           wrapDistLeftEmu: null,
           wrapDistRightEmu: null,
           border: null,
           lineCenterV: false,
+          rotDeg: null,
+          flipH: false,
+          flipV: false,
+          rule: null,
+          rawRPr: null,
         },
       },
     ])
+  })
+
+  it('round-trips a textbox image run without changing its signature', () => {
+    const para = {
+      runs: [
+        { text: 'tick ' },
+        { text: '', image: { dataUrl: 'data:image/png;base64,QUJD', xml: '<w:drawing/>' } },
+      ],
+    }
+    const roundtripped = { runs: inlineToRuns(runsToInline(para.runs)) }
+    expect(textboxParaSignature(roundtripped)).toBe(textboxParaSignature(para))
+    // deleting the image must surface as a change even when the text is intact
+    const dropped = { runs: [{ text: 'tick ' }] }
+    expect(textboxParaSignature(dropped)).not.toBe(textboxParaSignature(para))
   })
 
   it('emits only the image atom for a text-less drawing run', () => {
@@ -87,12 +134,18 @@ describe('runsToInline image runs', () => {
           wrap: null,
           offsetXEmu: null,
           offsetYEmu: null,
+          relV: null,
           wrapDistTopEmu: null,
           wrapDistBottomEmu: null,
           wrapDistLeftEmu: null,
           wrapDistRightEmu: null,
           border: null,
           lineCenterV: false,
+          rotDeg: null,
+          flipH: false,
+          flipV: false,
+          rule: null,
+          rawRPr: null,
         },
       },
     ])
@@ -281,6 +334,81 @@ describe('oversize floating tables (w:tblpPr) lose the float', () => {
     const model: TableModel = { rows: [row], rowHeightsTwips: [20000], floatSide: 'left' }
     expect(tableModelToPmNode(model).attrs!.tblFloat).toBeNull()
   })
+
+  it('a text-anchored float at least as wide as the text column flows inline', () => {
+    const model: TableModel = {
+      rows: [row, row],
+      colWidthsTwips: [6000, 6000],
+      floatSide: 'left',
+      floatPos: { xTwips: 300, yTwips: 0, horzAnchor: 'page', vertAnchor: 'text' },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10210, 10069, 11910)
+    expect(node.attrs!.tblFloat).toBeNull()
+    expect(node.attrs!.tblFloatSuppressed).toBe(true)
+  })
+
+  it('a single-row text-anchored float leaving under 1in beside it flows inline', () => {
+    const model: TableModel = {
+      rows: [row],
+      colWidthsTwips: [9074],
+      floatSide: 'left',
+      floatPos: {
+        xTwips: 0,
+        yTwips: -27,
+        horzAnchor: 'margin',
+        vertAnchor: 'text',
+        distanceTwips: { left: 180, right: 180 },
+      },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10390, 10390, 11910)
+    expect(node.attrs!.tblFloat).toBeNull()
+    expect(node.attrs!.tblFloatSuppressed).toBe(true)
+  })
+
+  it('a text-anchored float with at least 1in beside it keeps floating', () => {
+    const model: TableModel = {
+      rows: [row, row],
+      colWidthsTwips: [8700],
+      floatSide: 'left',
+      floatPos: { xTwips: 0, yTwips: 0, horzAnchor: 'margin', vertAnchor: 'text' },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10390, 10390, 11910)
+    expect(node.attrs!.tblFloat).toBe('left')
+    expect(node.attrs!.tblFloatSuppressed).toBe(false)
+  })
+
+  it('a page-anchored full-width float keeps floating', () => {
+    const model: TableModel = {
+      rows: [row, row],
+      colWidthsTwips: [6000, 6000],
+      floatSide: 'left',
+      floatPos: { xTwips: 300, yTwips: 400, horzAnchor: 'page', vertAnchor: 'page' },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10210, 10069, 11910)
+    expect(node.attrs!.tblFloat).toBe('left')
+  })
+
+  it('a full-width float positioned mid-page keeps its clamped-float rendering', () => {
+    const model: TableModel = {
+      rows: [row, row],
+      colWidthsTwips: [6000, 6000],
+      floatSide: 'left',
+      floatPos: { xTwips: 4000, yTwips: 200, horzAnchor: 'page', vertAnchor: 'text' },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10210, 10069, 11910)
+    expect(node.attrs!.tblFloat).toBe('left')
+  })
+
+  it('a narrow text-anchored float keeps floating', () => {
+    const model: TableModel = {
+      rows: [row, row],
+      colWidthsTwips: [3000],
+      floatSide: 'right',
+      floatPos: { xTwips: 300, yTwips: 0, horzAnchor: 'margin', vertAnchor: 'text' },
+    }
+    const node = tableModelToPmNode(model, null, null, null, 10210, 10069, 11910)
+    expect(node.attrs!.tblFloat).toBe('right')
+  })
 })
 
 describe('run character shading (w:shd) mark mapping', () => {
@@ -308,13 +436,14 @@ describe('paragraph border color/width round trip', () => {
     rawPPr:
       '<w:pPr><w:pBdr><w:bottom w:val="single" w:sz="18" w:space="1" w:color="4472C4"/></w:pBdr></w:pPr>',
     runs: [{ text: 'x' }],
-    format: { borders: 'b', borderLines: { b: { color: '4472C4', szPt: 2.25 } } },
+    // the parser keeps a declared positive w:space as spacePt (an omitted/0 one stays undeclared)
+    format: { borders: 'b', borderLines: { b: { color: '4472C4', szPt: 2.25, spacePt: 1 } } },
   }
 
   it('borderLines survive PM attrs and do not dirty the block', () => {
     const doc = blocksToPmDoc([block])
     expect(doc.content?.[0].attrs?.borderLines).toBe(
-      JSON.stringify({ b: { color: '4472C4', szPt: 2.25 } }),
+      JSON.stringify({ b: { color: '4472C4', szPt: 2.25, spacePt: 1 } }),
     )
     const plan = pmDocToSavePlan(doc, [block])
     expect(plan.changedCount).toBe(0)
@@ -330,7 +459,9 @@ describe('paragraph border color/width round trip', () => {
     const plan = pmDocToSavePlan(doc, [block])
     const saved = plan.saveBlocks[0]
     if (saved.kind !== 'generated') throw new Error(`expected generated, got ${saved.kind}`)
-    expect(saved.block.format?.borderLines).toEqual({ b: { color: '4472C4', szPt: 2.25 } })
+    expect(saved.block.format?.borderLines).toEqual({
+      b: { color: '4472C4', szPt: 2.25, spacePt: 1 },
+    })
     expect(saved.block.rawPPr).toContain(
       '<w:bottom w:val="single" w:sz="18" w:space="1" w:color="4472C4"/>',
     )

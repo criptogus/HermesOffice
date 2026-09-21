@@ -20,7 +20,7 @@ export type PdfViewState = {
 
 type StoredEntry = PdfViewState & { at: number }
 
-export const VIEW_STATE_KEY = 'hermesoffice-pdf-view-state'
+export const VIEW_STATE_KEY = 'genoffice-pdf-view-state'
 export const MAX_VIEW_ENTRIES = 100
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
@@ -116,4 +116,44 @@ export function captureViewState(args: {
     scale,
     fitMode,
   }
+}
+
+/** Row under a document point, page-content offset inside it at scale 1, and the fixed
+ *  margin/gap remainder that never scales. `rowHeights` are at scale 1. */
+export type ZoomAnchor = { rowIdx: number; content: number; fixed: number }
+
+export function captureZoomAnchor(args: {
+  y: number
+  rowHeights: number[]
+  gap: number
+  scale: number
+}): ZoomAnchor | null {
+  const { y, rowHeights, gap, scale } = args
+  if (rowHeights.length === 0 || scale <= 0) return null
+  let top = gap
+  let rowIdx = 0
+  let rowTop = top
+  for (let i = 0; i < rowHeights.length; i++) {
+    if (top <= y) {
+      rowIdx = i
+      rowTop = top
+    } else break
+    top += rowHeights[i]! * scale + gap
+  }
+  const within = y - rowTop
+  const content = Math.min(Math.max(within, 0), rowHeights[rowIdx]! * scale)
+  return { rowIdx, content: content / scale, fixed: within - content }
+}
+
+/** Document-space y of a captured anchor once the rows are laid out at `scale`. */
+export function zoomAnchorY(
+  anchor: ZoomAnchor,
+  rowHeights: number[],
+  gap: number,
+  scale: number,
+): number {
+  let top = gap
+  for (let i = 0; i < anchor.rowIdx && i < rowHeights.length; i++)
+    top += rowHeights[i]! * scale + gap
+  return top + anchor.content * scale + anchor.fixed
 }

@@ -51,7 +51,15 @@ const TOOL_FIELD_MAX_CHARS = 16_000
  * JSONL line and be replayed into the model context when the file reopens.
  */
 const TEXT_MAX_CHARS = 32_000
+/** Max stored characters of a scope excerpt */
+const SCOPE_TEXT_MAX_CHARS = 400
 const TEXT_TRUNCATED_MARK = '\n\n[truncated]'
+/**
+ * Max opening messages buffered in memory per chat before the first
+ * assistant message materializes the file. Without a cap, thousands of
+ * pre-first-reply user messages accumulate unboundedly in the map.
+ */
+export const MAX_PENDING_OPENING_MESSAGES = 200
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -59,6 +67,45 @@ function nowIso(): string {
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+
+// Default number of chat messages returned by loadChat when limit is missing or not finite
+const DEFAULT_CHAT_LIMIT = 200
+// Upper bound for loadChat limit to avoid unbounded reads
+const MAX_CHAT_LIMIT = 10_000
+/** Max project name chars: prevents MB names bloating index.json/project.json. */
+export const MAX_PROJECT_NAME_CHARS = 128
+/** Default timeline entries; upper bound avoids loading every chat fully. */
+const DEFAULT_TIMELINE_LIMIT = 20
+const MAX_TIMELINE_LIMIT = 1_000
+
+function normalizeTimelineLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return DEFAULT_TIMELINE_LIMIT
+  const floored = Math.floor(limit)
+  if (floored < 1) return 1
+  if (floored > MAX_TIMELINE_LIMIT) return MAX_TIMELINE_LIMIT
+  return floored
+}
+
+// Allowlist for project and chat ids (fail-closed: rejects traversal and separators)
+const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
+// Throws a descriptive Error when an id could escape the store directory
+function assertSafeId(value: string, kind: 'projectId' | 'chatId'): void {
+  if (typeof value !== 'string' || !SAFE_ID_PATTERN.test(value)) {
+    throw new Error(
+      `Invalid ${kind} "${value}": must be non-empty and match ${String(SAFE_ID_PATTERN)} (rejects "..", "/" and backslash)`,
+    )
+  }
+}
+
+// Clamps limit to a finite integer in 1..MAX_CHAT_LIMIT (non-finite falls back to default)
+function normalizeChatLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return DEFAULT_CHAT_LIMIT
+  const floored = Math.floor(limit)
+  if (floored < 1) return 1
+  if (floored > MAX_CHAT_LIMIT) return MAX_CHAT_LIMIT
+  return floored
 }
 
 function readJson<T>(filePath: string): T | null {
@@ -96,6 +143,7 @@ export class ProjectStore {
   }
 
   private projectDir(projectId: string): string {
+    assertSafeId(projectId, 'projectId')
     return join(this.baseDir, projectId)
   }
 
@@ -108,6 +156,7 @@ export class ProjectStore {
   }
 
   private chatPath(projectId: string, chatId: string): string {
+    assertSafeId(chatId, 'chatId')
     return join(this.chatsDir(projectId), `${chatId}.jsonl`)
   }
 
@@ -281,6 +330,9 @@ export class ProjectStore {
 
   /** Flushes buffered opening messages to disk (materialized before rebind: once the file is saved, the opening messages should be kept). */
   private flushPending(projectId: string, chatId: string): void {
+    // Validate before any IO so traversal ids throw instead of being swallowed below
+    assertSafeId(projectId, 'projectId')
+    assertSafeId(chatId, 'chatId')
     const key = this.seqKey(projectId, chatId)
     const buf = this.pendingFirstWrite.get(key)
     this.pendingFirstWrite.delete(key)
@@ -305,6 +357,9 @@ export class ProjectStore {
     chatId: string,
     msg: Omit<ChatMessage, 'seq' | 'ts'> & { ts?: string },
   ): void {
+    // Validate ids before the IO try block so traversal attempts throw fail-closed
+    assertSafeId(projectId, 'projectId')
+    assertSafeId(chatId, 'chatId')
     try {
       const seq = this.nextSeq(projectId, chatId)
       const ts = msg.ts ?? nowIso()
@@ -323,11 +378,28 @@ export class ProjectStore {
         }))
       }
       if (msg.attachments !== undefined) record.attachments = msg.attachments
+      if (msg.scope !== undefined) {
+        record.scope = {
+          label: msg.scope.label,
+          ...(msg.scope.text !== undefined
+            ? { text: msg.scope.text.slice(0, SCOPE_TEXT_MAX_CHARS) }
+            : {}),
+        }
+      }
 
       const key = this.seqKey(projectId, chatId)
       if (msg.role !== 'assistant' && !existsSync(this.chatPath(projectId, chatId))) {
         const buf = this.pendingFirstWrite.get(key) ?? []
         buf.push(record)
+        // Bound the in-memory buffer: overflow materializes the file early
+        // instead of dropping user messages.
+        if (buf.length >= MAX_PENDING_OPENING_MESSAGES) {
+          ensureDir(this.chatsDir(projectId))
+          this.pendingFirstWrite.delete(key)
+          const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
+          appendFileSync(this.chatPath(projectId, chatId), lines, 'utf8')
+          return
+        }
         this.pendingFirstWrite.set(key, buf)
         return
       }
@@ -345,7 +417,12 @@ export class ProjectStore {
    * Reads the most recent `limit` messages (in ascending seq order).
    * A bad JSONL line is skipped without crashing.
    */
-  loadChat(projectId: string, chatId: string, limit = 200): ChatMessage[] {
+  loadChat(projectId: string, chatId: string, limit = DEFAULT_CHAT_LIMIT): ChatMessage[] {
+    // Validate ids fail-closed before touching the filesystem
+    assertSafeId(projectId, 'projectId')
+    assertSafeId(chatId, 'chatId')
+    // Clamp limit so 0 no longer returns all messages via slice(-0)
+    const safeLimit = normalizeChatLimit(limit)
     const pending = this.pendingFirstWrite.get(this.seqKey(projectId, chatId)) ?? []
     const filePath = this.chatPath(projectId, chatId)
     const messages: ChatMessage[] = [...pending]
@@ -368,9 +445,9 @@ export class ProjectStore {
           }
         }
       }
-      // Sort by seq and take the most recent `limit` entries
+      // Sort by seq and take the most recent entries (safeLimit is always >= 1)
       messages.sort((a, b) => a.seq - b.seq)
-      return messages.slice(-limit)
+      return messages.slice(-safeLimit)
     } catch {
       return messages
     }
@@ -515,7 +592,7 @@ export class ProjectStore {
 
   /**
    * Lists files that currently exist for a project. Stored paths are historical
-   * records and may outlive files deleted or moved outside HermesOffice.
+   * records and may outlive files deleted or moved outside GenOffice.
    */
   listProjectFiles(projectId: string): string[] {
     const proj = this.readProject(projectId)
@@ -531,6 +608,11 @@ export class ProjectStore {
   createProject(name: string): ProjectData {
     const trimmed = name.trim()
     if (!trimmed) throw new Error('Project name cannot be empty')
+    if (trimmed.length > MAX_PROJECT_NAME_CHARS) {
+      throw new Error(
+        `Project name too long: ${trimmed.length} chars (max ${MAX_PROJECT_NAME_CHARS})`,
+      )
+    }
     const now = nowIso()
     // Generate a stable yet unique id
     const hash = createHash('sha256')
@@ -561,6 +643,11 @@ export class ProjectStore {
     if (id === 'default') throw new Error('The default project cannot be renamed')
     const trimmed = name.trim()
     if (!trimmed) throw new Error('Project name cannot be empty')
+    if (trimmed.length > MAX_PROJECT_NAME_CHARS) {
+      throw new Error(
+        `Project name too long: ${trimmed.length} chars (max ${MAX_PROJECT_NAME_CHARS})`,
+      )
+    }
     const now = nowIso()
     const proj = this.readProject(id)
     if (!proj) throw new Error(`Project does not exist: ${id}`)
@@ -689,6 +776,7 @@ export class ProjectStore {
    * (reverse-looked-up from fileMap by chatId), role, and preview text.
    */
   getProjectTimeline(projectId: string, limit = 20): TimelineEntry[] {
+    const boundedLimit = normalizeTimelineLimit(limit)
     const index = this.readIndex()
     // Build the reverse chatId → filePath map (files in this project only); mapping wins, old data falls back to the path hash
     const chatToFile = new Map<string, string>()
@@ -723,6 +811,6 @@ export class ProjectStore {
       if (b.ts < a.ts) return -1
       return b.seq - a.seq
     })
-    return entries.slice(0, limit)
+    return entries.slice(0, boundedLimit)
   }
 }

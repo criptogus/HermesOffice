@@ -1,17 +1,26 @@
 import { createRoot } from 'react-dom/client'
-import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { htmlLang, type Lang } from '@genoffice/i18n'
 import { App } from './App'
 import { LocaleProvider, setModuleLang } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
-import '@hermesoffice/ui/tokens.css'
-import '@hermesoffice/ui/screentip.css'
-import '@hermesoffice/ui/color-picker.css'
-import '@hermesoffice/ui/dropdown.css'
+import '@genoffice/ui/tokens.css'
+import '@genoffice/ui/screentip.css'
+import '@genoffice/ui/color-picker.css'
+import '@genoffice/ui/dropdown.css'
+import '@genoffice/ui/ribbon-collapse.css'
+import '@genoffice/ui/markdown.css'
+import '@genoffice/ui/ai-panel-prefs.css'
+import '@genoffice/ui/ai-scope-quote.css'
+import '@genoffice/ui/image-viewer.css'
 import './styles.css'
 import './fonts/fonts.css'
-import { installScreenTips } from '@hermesoffice/ui'
+import { applyAiPanelPrefs, installScreenTips } from '@genoffice/ui'
+import { setAltChunkHtmlConverter } from '@genoffice/docx-engine'
 
 installScreenTips()
+if (window.desktop?.convertAltChunkHtml) {
+  setAltChunkHtmlConverter((html) => window.desktop.convertAltChunkHtml(html))
+}
 
 function applyTheme(theme: UiTheme): void {
   if (theme === 'system') document.documentElement.removeAttribute('data-theme')
@@ -35,6 +44,11 @@ async function bootstrap(): Promise<void> {
   document.documentElement.lang = htmlLang(lang)
   applyTheme(theme)
   window.desktop?.onThemeChanged(applyTheme)
+  void window.desktop
+    ?.getAiPanelPrefs?.()
+    .then(applyAiPanelPrefs)
+    .catch(() => {})
+  window.desktop?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   createRoot(document.getElementById('root')!).render(
     <LocaleProvider initial={lang}>
       <App />

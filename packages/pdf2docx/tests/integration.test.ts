@@ -2,7 +2,7 @@
  * End-to-end conversion through the real PDFium wasm: fixture PDF (generated
  * on the fly) → convertPdfToDocx → docx-engine parseDocx assertions.
  */
-import { parseDocx } from '@hermesoffice/docx-engine'
+import { parseDocx } from '@genoffice/docx-engine'
 import { describe, expect, it } from 'vitest'
 import { convertPdfToDocx } from '../src'
 import {
@@ -191,7 +191,7 @@ describe('integration: columns (P3, pdf-lib fixture)', () => {
     expect(result.warnings).toEqual([])
     const parsed = await parseDocx(result.docx)
 
-    const { readSectionSettings } = await import('@hermesoffice/docx-engine')
+    const { readSectionSettings } = await import('@genoffice/docx-engine')
     const settings = readSectionSettings(parsed)
     expect(settings.columns).toBe(2)
 

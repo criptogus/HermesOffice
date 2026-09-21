@@ -1,4 +1,4 @@
-import type { RenderNode } from '@hermesoffice/pptx-render'
+import type { RenderNode } from '@genoffice/pptx-render'
 
 /** 'mixed' = multi-select spanning pictures/groups: only selection-wide commands (outline) apply */
 export type ContextElementType =
@@ -29,4 +29,14 @@ export function contextTabForElement(type: ContextElementType): ContextTab | nul
   if (type === 'picture' || type === 'mixed') return 'pictureFormat'
   if (type === 'shape' || type === 'textShape') return 'shapeFormat'
   return null
+}
+
+/**
+ * Tab the ribbon jumps to on selection. PowerPoint only reveals Shape Format for
+ * shapes and text boxes (Home stays active so text formatting is one click
+ * away); pictures/tables/charts still switch to their dedicated tools.
+ */
+export function autoContextTabForElement(type: ContextElementType): ContextTab | null {
+  const tab = contextTabForElement(type)
+  return tab === 'shapeFormat' ? null : tab
 }

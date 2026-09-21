@@ -1,4 +1,4 @@
-/* Shared chrome/AI-panel tokens come from @hermesoffice/ui/tokens.css (imported
+/* Shared chrome/AI-panel tokens come from @genoffice/ui/tokens.css (imported
  * before this file in main.tsx); only pdf-specific values live here. */
 :root {
   --accent: #c43e1c;
@@ -31,6 +31,9 @@
   /* annotation ink previews match MARKUP_COLORS in annotations.ts */
   --pdf-ink-underline: #2b66ff;
   --pdf-ink-strike: #db3830;
+  --pdf-redaction-stripe-dark: rgba(0, 0, 0, 0.72);
+  --pdf-redaction-stripe-light: rgba(58, 58, 58, 0.78);
+  --pdf-redaction-border: #d93333;
   --pdf-form-border: rgb(60 120 216 / 55%);
   --pdf-form-bg: rgb(235 243 255 / 55%);
   --pdf-form-text: #222;
@@ -299,7 +302,7 @@ button {
   overflow-x: scroll;
   overflow-y: hidden;
   /* Slim visible scrollbar so mouse users can reach overflowed groups
-     (genspark-ai/hermesoffice#55). Its 5px lane is carved out of the bottom
+     (genspark-ai/genoffice#55). Its 5px lane is carved out of the bottom
      padding, keeping the 80px band and the content area unchanged; Chromium
      paints a thumb only while the row actually overflows. */
   padding-bottom: 1px;
@@ -903,7 +906,7 @@ button {
   color: transparent;
 }
 
-/* Choice widget: shared dropdown (@hermesoffice/ui gs-dd) sized to the AcroForm
+/* Choice widget: shared dropdown (@genoffice/ui gs-dd) sized to the AcroForm
  * rect — the wrapper carries the absolute position, the trigger the field look */
 .pdf-form-select {
   position: absolute;
@@ -1114,15 +1117,38 @@ button {
 /* ── Outline sidebar ── */
 
 .pdf-outline-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 8px 4px;
+}
+
+.pdf-outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 0 4px 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pdf-outline-header .rb-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pdf-outline {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .pdf-outline-item {
+  flex-shrink: 0;
   display: block;
   width: 100%;
   border: none;
@@ -1141,6 +1167,13 @@ button {
 
 .pdf-outline-item:hover {
   background: var(--hover);
+}
+
+.pdf-outline-note {
+  flex-shrink: 0;
+  padding: 2px 8px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 /* ── Encrypted document password ── */
@@ -1534,6 +1567,28 @@ button {
   z-index: 4;
   pointer-events: none;
   overflow: visible;
+}
+
+.pdf-redaction-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  overflow: visible;
+}
+
+.pdf-redaction-mark {
+  position: absolute;
+  box-sizing: border-box;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--pdf-redaction-stripe-dark),
+    var(--pdf-redaction-stripe-dark) 7px,
+    var(--pdf-redaction-stripe-light) 7px,
+    var(--pdf-redaction-stripe-light) 14px
+  );
+  border: 2px solid var(--pdf-redaction-border);
+  pointer-events: none;
 }
 
 /* With a tool active, take over the pointer and disable text selection so dragging doesn't select text */
@@ -2058,7 +2113,7 @@ button {
   font-size: 12px;
 }
 
-/* Font picker: shared dropdown (@hermesoffice/ui gs-dd) sized to the 22px bar row */
+/* Font picker: shared dropdown (@genoffice/ui gs-dd) sized to the 22px bar row */
 .pdf-textedit-fontsel {
   max-width: 130px;
 }
@@ -2310,7 +2365,7 @@ button {
   min-width: 0;
 }
 
-/* Shared dropdown (@hermesoffice/ui gs-dd) in modal field rows: matches the
+/* Shared dropdown (@genoffice/ui gs-dd) in modal field rows: matches the
  * .pdf-modal-input frame (28px, radius 4, 13px) */
 .pdf-field .pdf-modal-dd {
   flex: 1;
@@ -2392,7 +2447,7 @@ button {
   z-index: 8;
 }
 
-/* Positioning-only wrapper: the shared @hermesoffice/ui .gcp-palette inside
+/* Positioning-only wrapper: the shared @genoffice/ui .gcp-palette inside
    draws the panel chrome (background, border, radius, shadow). */
 .pdf-color-popover {
   position: absolute;
@@ -3167,7 +3222,14 @@ button {
 }
 
 @media print {
-  .app {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+  }
+
+  /* Hide the full-height editor root so it cannot reserve a blank sheet. */
+  #root {
     display: none !important;
   }
 
@@ -3178,7 +3240,13 @@ button {
   .pdf-print-root img {
     display: block;
     width: 100%;
-    page-break-after: always;
+    /* Print viewport units use the printable area, including chosen margins. */
+    max-height: 100vh;
+    object-fit: contain;
+  }
+
+  .pdf-print-root img + img {
+    break-before: page;
   }
 }
 
@@ -3230,7 +3298,8 @@ button {
   width: 34px;
   padding: 12px 2px;
   border: none;
-  border-right: 1px solid var(--border);
+  border-left: var(--ai-panel-border-left, 0px) solid var(--border);
+  border-right: var(--ai-panel-border-right, 1px) solid var(--border);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -3249,7 +3318,8 @@ button {
   flex-shrink: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  border-left: var(--ai-panel-border-left, 0px) solid var(--border);
+  border-right: var(--ai-panel-border-right, 1px) solid var(--border);
   background: var(--surface);
   font-family: var(--gs-font-sans);
   color: var(--color-text-primary);
@@ -4046,6 +4116,39 @@ button {
 
 .ai-retry-btn:hover {
   background: var(--pdf-error-bg-hover);
+}
+
+/* File-operation confirmation card: ends the stream while the run waits for the user */
+.ai-confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  background: var(--color-bg-subtle);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+}
+
+.ai-confirm-title {
+  font-weight: 600;
+}
+
+.ai-confirm-detail {
+  color: var(--color-text-secondary);
+}
+
+.ai-confirm-warning {
+  color: var(--danger);
+}
+
+.ai-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* ================= status bar (unified chrome shared with docs/sheets/slides) ================= */

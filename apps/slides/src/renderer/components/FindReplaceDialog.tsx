@@ -31,7 +31,7 @@ function layoutText(text?: RenderTextLayout): string {
       .filter((r) => !r.isBullet)
       .map((r) => r.text)
       .join('')
-    if (l.trailingSpace) out += ' '
+    if (l.trailingSpace) out += l.trailingText ?? ' '
   })
   return out
 }
@@ -134,7 +134,12 @@ export function FindReplaceDialog({
     <div className="find-panel" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
       <div className="find-panel-head">
         <span>{t('paneFrTitle')}</span>
-        <button className="find-panel-close" onClick={onClose} data-tip="Esc" aria-label="Esc">
+        <button
+          className="find-panel-close"
+          onClick={onClose}
+          data-tip="Esc"
+          aria-label={t('paneCsdClose')}
+        >
           ×
         </button>
       </div>

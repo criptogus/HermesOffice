@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseChartXml } from '../src/chart'
 import { buildChartSpaceXml } from '../src/chart-insert'
+import { addChart, addElement, createBlankPptx, openPptx, savePptx } from '../src/index'
 
 const LINE_CHART = `<?xml version="1.0"?><c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea><c:layout/>
 <c:lineChart><c:ser>
@@ -106,6 +107,22 @@ describe('parseChartXml', () => {
     expect(m.series[0]!.pointColors?.[0]).toBe('#AA0000')
     expect(m.series[0]!.pointColors?.[1]).toBeUndefined()
     expect(m.series[0]!.pointColors?.[2]).toBe('#0000AA')
+  })
+
+  it('parses outline-only pie points: c:dPt noFill + per-point a:ln', () => {
+    const PIE = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
+<c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/>
+  <c:dPt><c:idx val="0"/><c:spPr><a:noFill/><a:ln w="19050"><a:solidFill><a:srgbClr val="AA0000"/></a:solidFill></a:ln></c:spPr></c:dPt>
+  <c:dPt><c:idx val="1"/><c:spPr><a:solidFill><a:srgbClr val="0000AA"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr></c:dPt>
+  <c:val><c:numRef><c:f>y</c:f><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`
+    const s = parseChartXml(PIE)!.series[0]!
+    expect(s.pointNoFill).toEqual([true])
+    expect(s.pointLines?.[0]).toEqual({ color: '#AA0000', widthPt: 1.5 })
+    expect(s.pointColors?.[1]).toBe('#0000AA')
+    expect(s.pointLines?.[1]).toEqual({ color: null })
+    expect(s.pointNoFill?.[1]).toBeUndefined()
+    expect(s.pointLines?.[2]).toBeUndefined()
   })
 
   it('parses pie explosion: series-level c:explosion and per-point c:dPt overrides', () => {
@@ -594,6 +611,122 @@ describe('date axis and stacked area', () => {
     expect(m.categories).toEqual(['1/5/2002', '1/6/2002'])
   })
 
+  const withDateSystem = (flag: string) => AREA.replace('<c:chart>', `${flag}<c:chart>`)
+
+  it.each([
+    '<c:date1904 val="1"/>',
+    '<c:date1904 val="true"/>',
+    '<c:date1904 val="True"/>',
+    '<c:date1904 val="on"/>',
+    "<c:date1904 val='1'/>",
+    '<c:date1904/>',
+  ])('uses the 1904 date system for %s', (flag) => {
+    const m = parseChartXml(withDateSystem(flag))!
+    expect(m.categories).toEqual(['1/6/2006', '1/7/2006'])
+    expect(m.series[0]!.values).toEqual([1, 2])
+  })
+
+  it.each([
+    '',
+    '<c:date1904 val="0"/>',
+    '<c:date1904 val="false"/>',
+    '<c:date1904 val="False"/>',
+    '<c:date1904 val="off"/>',
+  ])('preserves the 1900 date system for %s', (flag) => {
+    expect(parseChartXml(withDateSystem(flag))!.categories).toEqual(['1/5/2002', '1/6/2002'])
+  })
+
+  it.each([
+    ['0', '1', 'm/d/yyyy', ['1/1/1904', '1/2/1904']],
+    ['59', '60', 'yyyy-mm-dd', ['1904-02-29', '1904-03-01']],
+    ['24107', '24108', 'dd-mmm-yy', ['01-Jan-70', '02-Jan-70']],
+  ])('formats 1904 serials %s and %s with %s', (first, second, format, expected) => {
+    const xml = withDateSystem('<c:date1904 val="1"/>')
+      .replace('37261', first)
+      .replace('37262', second)
+      .replace('m/d/yyyy', format)
+    expect(parseChartXml(xml)!.categories).toEqual(expected)
+  })
+
+  it.each([
+    'barChart',
+    'bar3DChart',
+    'lineChart',
+    'line3DChart',
+    'areaChart',
+    'area3DChart',
+    'pieChart',
+    'pie3DChart',
+    'doughnutChart',
+    'radarChart',
+    'stockChart',
+  ])('uses the chart date system for %s categories', (plot) => {
+    const xml = withDateSystem('<c:date1904 val="true"/>').replaceAll('c:areaChart', `c:${plot}`)
+    expect(parseChartXml(xml)!.categories).toEqual(['1/6/2006', '1/7/2006'])
+  })
+
+  it('uses the chart date system when a combo gets categories from a later plot', () => {
+    const xml = withDateSystem('<c:date1904/>').replace(
+      '<c:areaChart>',
+      '<c:barChart><c:ser><c:idx val="1"/><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart><c:areaChart>',
+    )
+    const m = parseChartXml(xml)!
+    expect(m.categories).toEqual(['1/6/2006', '1/7/2006'])
+    expect(m.series.map((s) => s.plotKind)).toEqual(['bar', 'area'])
+    expect(m.series.map((s) => s.values)).toEqual([
+      [3, 4],
+      [1, 2],
+    ])
+  })
+
+  it('leaves non-date numeric and string categories unchanged', () => {
+    const numeric = withDateSystem('<c:date1904/>').replace('m/d/yyyy', '0.00')
+    expect(parseChartXml(numeric)!.categories).toEqual(['37261', '37262'])
+    const strings = LINE_CHART.replace('<c:chart>', '<c:date1904/><c:chart>')
+    expect(parseChartXml(strings)).toEqual(parseChartXml(LINE_CHART))
+  })
+
+  it('preserves sparse category indices and nonnumeric cached values', () => {
+    const xml = withDateSystem('<c:date1904/>').replace(
+      '<c:ptCount val="2"/><c:pt idx="0"><c:v>37261</c:v></c:pt><c:pt idx="1"><c:v>37262</c:v></c:pt>',
+      '<c:ptCount val="4"/><c:pt idx="3"><c:v>#N/A</c:v></c:pt><c:pt idx="1"><c:v>37261</c:v></c:pt>',
+    )
+    expect(parseChartXml(xml)!.categories).toEqual(['', '1/6/2006', '', '#N/A'])
+  })
+
+  it.each(['<c:date1904 val="1"/>', '<c:date1904/>'])(
+    'preserves chart bytes and formatted dates through no-op and edited saves with %s',
+    async (flag) => {
+      const opened = await openPptx(await createBlankPptx())
+      const offset = { x: 914400, y: 914400, cx: 6096000, cy: 3657600 }
+      addChart(opened, 0, {
+        kind: 'area',
+        categories: ['A', 'B'],
+        series: [{ name: 'S', values: [1, 2] }],
+        offset,
+      })
+      const staged = await openPptx(await savePptx(opened))
+      const chartPart = [...staged.archive.entries.keys()].find((p) =>
+        /^ppt\/charts\/chart\d+\.xml$/.test(p),
+      )!
+      const chartBytes = new TextEncoder().encode(withDateSystem(flag))
+      staged.archive.entries.set(chartPart, chartBytes)
+      const reopened = await openPptx(await savePptx(staged))
+      const chart = reopened.deck.slides[0]!.elements.find((e) => e.type === 'chart')!
+      expect(chart.chart.categories).toEqual(['1/6/2006', '1/7/2006'])
+      const frameXml = chart.anchor.originalXml
+
+      const noOp = await openPptx(await savePptx(reopened))
+      expect(noOp.archive.readBytes(chartPart)).toEqual(chartBytes)
+      addElement(noOp.deck.slides[0]!, { kind: 'rect', offset: { ...offset, y: 5000000 } })
+      const saved = await openPptx(await savePptx(noOp))
+      expect(saved.archive.readBytes(chartPart)).toEqual(chartBytes)
+      const savedChart = saved.deck.slides[0]!.elements.find((e) => e.type === 'chart')!
+      expect(savedChart.anchor.originalXml).toBe(frameXml)
+      expect(savedChart.chart.categories).toEqual(['1/6/2006', '1/7/2006'])
+    },
+  )
+
   it('area charts carry their grouping; c:dateAx parses as the category axis', () => {
     const m = parseChartXml(AREA)!
     expect(m.grouping).toBe('stacked')
@@ -842,5 +975,147 @@ describe('category tick skips', () => {
     const m = parseChartXml(xml)!
     expect(m.catAxis?.tickLblSkip).toBe(192)
     expect(m.catAxis?.tickMarkSkip).toBe(192)
+  })
+})
+
+describe('buildChartSpaceXml colorScheme / holeSizePct (genpptx parity)', () => {
+  const BASE2 = {
+    kind: 'bar' as const,
+    categories: ['A', 'B'],
+    series: [
+      { name: 'S1', values: [1, 2] },
+      { name: 'S2', values: [3, 4] },
+    ],
+    offset: { x: 0, y: 0, cx: 100, cy: 100 },
+  }
+
+  it('per-series spPr lands at the schema position (after c:tx, before c:cat) and round-trips', () => {
+    const xml = buildChartSpaceXml({ ...BASE2, colorScheme: ['#C00000', '#00B050'] })
+    expect(xml).toMatch(
+      /<c:ser><c:idx val="0"\/><c:order val="0"\/><c:tx>.*?<\/c:tx><c:spPr><a:solidFill><a:srgbClr val="C00000"\/><\/a:solidFill><\/c:spPr><c:cat>/s,
+    )
+    const m = parseChartXml(xml)!
+    expect(m.series.map((s) => s.color)).toEqual(['#C00000', '#00B050'])
+  })
+
+  it('colors cycle over the series when the scheme is shorter', () => {
+    const xml = buildChartSpaceXml({ ...BASE2, colorScheme: ['#112233'] })
+    const m = parseChartXml(xml)!
+    expect(m.series.map((s) => s.color)).toEqual(['#112233', '#112233'])
+  })
+
+  it('combo chart: the line series gets a stroke color, not a fill', () => {
+    const xml = buildChartSpaceXml({
+      ...BASE2,
+      kind: 'comboBarLine',
+      colorScheme: ['#C00000', '#0070C0'],
+    })
+    expect(xml).toMatch(
+      /<c:lineChart>.*?<c:spPr><a:ln w="28575"><a:solidFill><a:srgbClr val="0070C0"\/><\/a:solidFill><\/a:ln><\/c:spPr>/s,
+    )
+  })
+
+  it('doughnut holeSizePct is written and round-trips (clamped to 1..90)', () => {
+    const opts = { ...BASE2, kind: 'doughnut' as const }
+    expect(buildChartSpaceXml({ ...opts, holeSizePct: 72 })).toContain('<c:holeSize val="72"/>')
+    expect(buildChartSpaceXml(opts)).toContain('<c:holeSize val="50"/>')
+    expect(buildChartSpaceXml({ ...opts, holeSizePct: 400 })).toContain('<c:holeSize val="90"/>')
+    const m = parseChartXml(buildChartSpaceXml({ ...opts, holeSizePct: 72 }))!
+    expect(m.holePct).toBe(72)
+  })
+})
+
+describe('colorScheme on line-family kinds (Bugbot: fill-only spPr keeps theme line colors)', () => {
+  it('plain line chart series get stroke colors, not fills', () => {
+    const xml = buildChartSpaceXml({
+      kind: 'line',
+      categories: ['A', 'B'],
+      series: [{ name: 'S1', values: [1, 2] }],
+      offset: { x: 0, y: 0, cx: 100, cy: 100 },
+      colorScheme: ['#FF00FF'],
+    })
+    expect(xml).toContain('<c:spPr><a:ln w="28575"><a:solidFill><a:srgbClr val="FF00FF"/>')
+    expect(xml).not.toMatch(/<c:spPr><a:solidFill>/)
+  })
+
+  it('scatter and radar are line-family too', () => {
+    for (const kind of ['scatter', 'radar'] as const) {
+      const xml = buildChartSpaceXml({
+        kind,
+        categories: ['1', '2'],
+        series: [{ name: 'S', values: [3, 4] }],
+        offset: { x: 0, y: 0, cx: 100, cy: 100 },
+        colorScheme: ['#123456'],
+      })
+      expect(xml, kind).toContain('<a:ln w="28575"><a:solidFill><a:srgbClr val="123456"/>')
+    }
+  })
+})
+
+describe('legacy <c:style> dark row + literal data + automatic markers', () => {
+  const SER = (idx: number, extra = '') =>
+    `<c:ser><c:idx val="${idx}"/><c:tx><c:v>S${idx}</c:v></c:tx>${extra}
+  <c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>Day 1</c:v></c:pt><c:pt idx="1"><c:v>Day 2</c:v></c:pt></c:strLit></c:cat>
+  <c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:val></c:ser>`
+  const wrap = (style: string, sers: string, plotMarker = '<c:marker val="1"/>', tail = '') =>
+    `<c:chartSpace xmlns:c="c" xmlns:a="a">${style}<c:chart><c:plotArea>
+<c:lineChart><c:grouping val="standard"/>${sers}${plotMarker}</c:lineChart>
+</c:plotArea><c:legend><c:legendPos val="r"/></c:legend></c:chart>${tail}</c:chartSpace>`
+
+  it('style 42: black chart area, #404040 plot area, white default text', () => {
+    const m = parseChartXml(wrap('<c:style val="42"/>', SER(0)))!
+    expect(m.bgFill).toEqual({ type: 'solid', color: '#000000' })
+    expect(m.plotFill).toEqual({ type: 'solid', color: '#404040' })
+    expect(m.defaultTextColor).toBe('#FFFFFF')
+  })
+
+  it('style 42 defers to an explicit chartSpace noFill and txPr color', () => {
+    const tail =
+      '<c:spPr><a:noFill/></c:spPr><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr>'
+    const m = parseChartXml(wrap('<c:style val="42"/>', SER(0), '<c:marker val="1"/>', tail))!
+    expect(m.bgFill).toBeUndefined()
+    expect(m.defaultTextColor).toBe('#FF0000')
+  })
+
+  it('styles outside 41-48 keep the transparent chart area and no default text color', () => {
+    for (const st of ['<c:style val="2"/>', '<c:style val="34"/>', '']) {
+      const m = parseChartXml(wrap(st, SER(0)))!
+      expect(m.bgFill).toBeUndefined()
+      expect(m.plotFill).toBeUndefined()
+      expect(m.defaultTextColor).toBeUndefined()
+    }
+  })
+
+  it('chartSpace txPr color is read without a legacy style', () => {
+    const tail =
+      '<c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1200"><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr>'
+    const m = parseChartXml(wrap('', SER(0), '<c:marker val="1"/>', tail))!
+    expect(m.defaultTextColor).toBe('#112233')
+    expect(m.defaultTextPt).toBe(12)
+  })
+
+  it('literal series names (c:tx/c:v) and categories (c:strLit) parse', () => {
+    const m = parseChartXml(wrap('', SER(0) + SER(1)))!
+    expect(m.series.map((s) => s.name)).toEqual(['S0', 'S1'])
+    expect(m.categories).toEqual(['Day 1', 'Day 2'])
+    expect(m.legendPos).toBe('r')
+  })
+
+  it('plot-level <c:marker val="1"/> gives markers to series without an explicit symbol', () => {
+    const sers =
+      SER(0) +
+      SER(
+        1,
+        '<c:marker><c:spPr><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></c:spPr></c:marker>',
+      ) +
+      SER(2, '<c:marker><c:symbol val="none"/></c:marker>') +
+      SER(3, '<c:marker><c:symbol val="square"/></c:marker>')
+    const m = parseChartXml(wrap('', sers))!
+    expect(m.series.map((s) => s.marker)).toEqual([true, true, false, true])
+  })
+
+  it('no plot-level marker (or val=0): series without a symbol draw no markers', () => {
+    expect(parseChartXml(wrap('', SER(0), ''))!.series[0]!.marker).toBe(false)
+    expect(parseChartXml(wrap('', SER(0), '<c:marker val="0"/>'))!.series[0]!.marker).toBe(false)
   })
 })

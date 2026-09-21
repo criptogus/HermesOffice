@@ -1,20 +1,28 @@
 import type { Editor, JSONContent } from '@tiptap/core'
 import type { Node as PmNode } from '@tiptap/pm/model'
-import type { AgentToolCall, AgentToolDef, ToolExecution } from '@hermesoffice/agent-core'
-import { markAiRange, markAiRanges } from '../editor/aiHighlight'
-import { stripLegacyFencedDivs } from '../markdown/docText'
+import type { AgentToolCall, AgentToolDef, ToolExecution } from '@genoffice/agent-core'
+import {
+  OP_SPECS,
+  blockIndexRange,
+  buildOpsGuide,
+  isBlankDoc,
+  parseMarkdownToNodes,
+  runOps,
+  usesBlockIndexes,
+  validateOps,
+  type FrontmatterAccess,
+  type MdOp,
+} from '../editor/ops'
 import { t } from '../i18n/locale'
+import {
+  DraftLanding,
+  type AiDocWriter,
+  type DocWriteResult,
+  type WritePosition,
+} from './doc-writer'
 
-/** GFM marks the AI may apply to matched text (style_matches) */
-const STYLABLE_MARKS = ['bold', 'italic', 'strike', 'code'] as const
-type StylableMark = (typeof STYLABLE_MARKS)[number]
-
-/** raw-text access to the YAML properties block (inner text, no --- fences) */
-export interface FrontmatterAccess {
-  read(): string
-  /** replace the whole inner YAML; empty string removes the block */
-  write(inner: string): void
-}
+export type { FrontmatterAccess } from '../editor/ops'
+export { blockIndexRange } from '../editor/ops'
 
 const CONTEXT_MAX_CHARS = 8000
 const PREVIEW_CHARS = 60
@@ -65,29 +73,6 @@ function selectionMarkdown(editor: Editor): string {
   if (from === to) return ''
   const text = editor.state.doc.textBetween(from, to, '\n')
   return text.length > SELECTION_MAX_CHARS ? `${text.slice(0, SELECTION_MAX_CHARS)}…` : text
-}
-
-/** top-level block index range covered by [from, to] (shared with the edit queue) */
-export function blockIndexRange(
-  doc: PmNode,
-  from: number,
-  to: number,
-): { startIndex: number; endIndex: number } {
-  let startIndex = -1
-  let endIndex = -1
-  let index = 0
-  doc.forEach((node, offset) => {
-    if (offset + node.nodeSize > from && offset < to) {
-      if (startIndex === -1) startIndex = index
-      endIndex = index
-    }
-    index++
-  })
-  if (startIndex === -1) {
-    startIndex = doc.childCount - 1
-    endIndex = startIndex
-  }
-  return { startIndex, endIndex }
 }
 
 /** Per-turn context: numbered block skeleton + selection, same shape as the docs agent */
@@ -151,73 +136,49 @@ export const AGENT_TOOLS: AgentToolDef[] = [
     },
   },
   {
-    name: 'insert_content',
-    description:
-      'Insert new markdown content after a top-level block. Use afterIndex -1 to insert at the very beginning of the document. On a blank document this replaces the empty paragraph.',
+    name: 'apply_ops',
+    description: `Edit the document with a batch of ops — the same operations the editor's own toolbar performs. Ops run in order and stop at the first failure; the result lists what each op did.\n\n${buildOpsGuide()}`,
     inputSchema: {
       type: 'object',
       properties: {
+        ops: {
+          type: 'array',
+          description: 'Ordered list of op objects (see the op catalogue)',
+          items: { type: 'object' },
+        },
+      },
+      required: ['ops'],
+    },
+  },
+  {
+    name: 'write_document',
+    description:
+      '[For long new content: a whole document, a chapter, a full report, article or translation] Hands the writing to the system writer, which streams markdown straight into the document while the user watches; you never write the text yourself. Give a concrete plan (title, section outline with the key points of each, tone, target length) and put every fact, figure, name and quote the text must use into context — the writer sees only the plan and context, not the conversation. Omit afterIndex on a blank document; on a document with content, pass afterIndex to insert after that block, or replaceDocument=true when the user asked to rewrite everything. Short additions (a paragraph or two) use apply_ops insertContent instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plan: {
+          type: 'string',
+          description: 'title, section outline with key points per section, tone, target length',
+        },
+        title: { type: 'string', description: 'document/chapter title, when there is one' },
+        context: {
+          type: 'string',
+          description:
+            'reference material: facts, figures, quotes, sources gathered from the conversation and web_search',
+        },
         afterIndex: {
           type: 'integer',
-          description: '0-based block index to insert after; -1 = document start',
+          description:
+            'insert after this block index (-1 = document start); omitted = whole document',
         },
-        markdown: { type: 'string', description: 'Markdown content to insert' },
-      },
-      required: ['afterIndex', 'markdown'],
-    },
-  },
-  {
-    name: 'replace_blocks',
-    description:
-      'Replace a range of top-level blocks (inclusive) with new markdown content. Use this for rewrites, formatting changes and deletions (empty markdown deletes the range).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        startIndex: { type: 'integer', description: '0-based index of the first block' },
-        endIndex: { type: 'integer', description: '0-based index of the last block (inclusive)' },
-        markdown: { type: 'string', description: 'Replacement markdown; empty string deletes' },
-      },
-      required: ['startIndex', 'endIndex', 'markdown'],
-    },
-  },
-  {
-    name: 'replace_text',
-    description:
-      'Replace every occurrence of an exact text within one block, keeping the block structure and the surrounding formatting. Prefer this over replace_blocks for small in-place fixes (a word, a number, a phrase). The match is plain text (no markdown syntax) and never crosses paragraph or table-cell boundaries.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        blockIndex: { type: 'integer', description: '0-based index of the block to edit' },
-        find: { type: 'string', description: 'Exact text to find (case-sensitive plain text)' },
-        replace: { type: 'string', description: 'Replacement plain text; empty string deletes' },
-      },
-      required: ['blockIndex', 'find', 'replace'],
-    },
-  },
-  {
-    name: 'style_matches',
-    description:
-      'Apply or remove an inline style on every occurrence of an exact text within a block range — character-level formatting like bolding each "TODO". The match is plain text and never crosses paragraph or table-cell boundaries.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        find: { type: 'string', description: 'Exact text to find (case-sensitive plain text)' },
-        style: {
-          type: 'string',
-          enum: [...STYLABLE_MARKS],
-          description: 'Inline style to toggle on the matches',
-        },
-        remove: { type: 'boolean', description: 'true removes the style instead of applying it' },
-        startIndex: {
-          type: 'integer',
-          description: '0-based index of the first block to search; defaults to 0',
-        },
-        endIndex: {
-          type: 'integer',
-          description: '0-based index of the last block (inclusive); defaults to the last block',
+        replaceDocument: {
+          type: 'boolean',
+          description:
+            'true replaces all existing content (only when the user asked for a rewrite)',
         },
       },
-      required: ['find', 'style'],
+      required: ['plan'],
     },
   },
   {
@@ -254,7 +215,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
   {
     name: 'generate_image',
     description:
-      'Generate an illustration with AI from a text prompt and insert it into the document after a top-level block. For illustration/diagram-style art that image_search cannot find, or when the user asks to generate/draw a picture. Requires Genspark login with cloud tools enabled, and the document must have been saved to disk at least once.',
+      'Generate an illustration with AI from a text prompt and insert it into the document after a top-level block. For illustration/diagram-style art that image_search cannot find, or when the user asks to generate/draw a picture. The document must have been saved to disk at least once.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -279,20 +240,8 @@ export const AGENT_TOOLS: AgentToolDef[] = [
   {
     name: 'read_frontmatter',
     description:
-      'Read the document properties: the raw YAML frontmatter block at the top of the file (title, tags, date, …), without the --- fences.',
+      'Read the document properties: the raw YAML frontmatter block at the top of the file (title, tags, date, …), without the --- fences. Write it back with the setFrontmatter op.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-  },
-  {
-    name: 'set_frontmatter',
-    description:
-      'Replace the whole YAML frontmatter block. Read it first and keep the keys you are not changing. Pass the inner YAML only (no --- fences); an empty string removes the block. The text is stored verbatim — emit valid YAML.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        yaml: { type: 'string', description: 'Full inner YAML text; empty string removes' },
-      },
-      required: ['yaml'],
-    },
   },
 ]
 
@@ -308,92 +257,34 @@ function clampIndex(value: unknown, max: number): number | null {
   return n
 }
 
-/** Byte offsets of each top-level block: [startPos, endPos] in the current doc */
-function blockRange(doc: PmNode, from: number, to: number): { from: number; to: number } {
-  let pos = 0
-  let start = 0
-  let end = 0
-  for (let i = 0; i <= to; i++) {
-    const child = doc.child(i)
-    if (i === from) start = pos
-    pos += child.nodeSize
-    if (i === to) end = pos
+/** Activity-chip label: the op's own label when exactly one op ran, else the count */
+function opsSummary(ops: MdOp[], applied: number): string {
+  if (ops.length === 1 && applied === 1) return t(OP_SPECS[ops[0]!.op].labelKey)
+  return t('aiToolApplyOpsDone', { n: applied })
+}
+
+function applyOps(editor: Editor, input: unknown, fm?: FrontmatterAccess): ToolExecution {
+  const label = t('aiToolApplyOps')
+  const parsed = validateOps(input)
+  if ('error' in parsed) return fail(parsed.error, label)
+  if (usesBlockIndexes(parsed.ops) && editedExternally(editor)) return fail(STALE_DOC_ERROR, label)
+  const r = runOps(editor, parsed.ops, { source: 'ai', frontmatter: fm })
+  const lines = r.results.map((res, i) =>
+    res.ok
+      ? `ops[${i}] ${parsed.ops[i]!.op}: ${res.message}`
+      : `ops[${i}] ${parsed.ops[i]!.op} FAILED: ${res.error}`,
+  )
+  const skipped = parsed.ops.length - r.results.length
+  if (skipped > 0) lines.push(`${skipped} later op(s) were not executed.`)
+  if (r.blocksChanged) lines.push(INDEX_CHANGE_NOTICE)
+  if (r.applied > 0) markDocSeen(editor)
+  const failed = r.applied < parsed.ops.length
+  return {
+    output: lines.join('\n'),
+    isError: failed || undefined,
+    mutated: r.applied > 0,
+    summary: opsSummary(parsed.ops, r.applied),
   }
-  return { from: start, to: end }
-}
-
-function parseMarkdownToNodes(editor: Editor, markdown: string): PmNode[] {
-  // model output guard: `:::` fenced divs are not GFM and would land as
-  // literal text — strip the fences and keep the body (same as file open).
-  // Raw HTML needs no guard: parse runs it through the schema, so semantic
-  // tags degrade to their GFM equivalents (<b>→bold, <img>→image) and
-  // anything the schema cannot represent loses its styling, keeping text.
-  const json = editor.markdown?.parse(stripLegacyFencedDivs(markdown))
-  const content = json?.content ?? []
-  return content.map((c) => editor.schema.nodeFromJSON(c))
-}
-
-/** exactly one empty paragraph — a lone image/math/table with no text is content, not blank */
-function isBlankDoc(doc: PmNode): boolean {
-  if (doc.childCount !== 1) return doc.childCount === 0
-  const first = doc.firstChild!
-  if (first.type.name !== 'paragraph') return false
-  let hasLeaf = false
-  first.descendants((node) => {
-    if (!node.isText) hasLeaf = true
-    return !hasLeaf
-  })
-  return !hasLeaf && first.textContent.trim() === ''
-}
-
-// ── plain-text matching inside blocks (replace_text / style_matches) ──
-
-/** flattened text of [from, to) with a PM position per character; -1 marks
- *  atom placeholders and block seams so a match can never cross them */
-function textIndexOf(doc: PmNode, from: number, to: number): { text: string; pos: number[] } {
-  let text = ''
-  const pos: number[] = []
-  doc.nodesBetween(from, to, (node, p) => {
-    if (node.isText && node.text) {
-      const start = Math.max(from, p)
-      const end = Math.min(to, p + node.text.length)
-      for (let i = start; i < end; i++) {
-        text += node.text[i - p]
-        pos.push(i)
-      }
-    } else if (node.isLeaf) {
-      text += ' '
-      pos.push(-1)
-    } else if (node.isBlock && text.length > 0 && !text.endsWith('\n')) {
-      text += '\n'
-      pos.push(-1)
-    }
-    return true
-  })
-  return { text, pos }
-}
-
-const MAX_MATCHES = 200
-
-/** non-overlapping PM ranges of every plain-text occurrence of `find` */
-function findMatches(
-  index: { text: string; pos: number[] },
-  find: string,
-): Array<{ from: number; to: number }> {
-  const ranges: Array<{ from: number; to: number }> = []
-  let at = index.text.indexOf(find)
-  while (at !== -1 && ranges.length < MAX_MATCHES) {
-    const first = index.pos[at]!
-    const last = index.pos[at + find.length - 1]!
-    // contiguous inline text only (no atoms or block seams inside the match)
-    let contiguous = first !== -1 && last - first === find.length - 1
-    for (let i = at; contiguous && i < at + find.length; i++) {
-      if (index.pos[i] === -1) contiguous = false
-    }
-    if (contiguous) ranges.push({ from: first, to: last + 1 })
-    at = index.text.indexOf(find, at + find.length)
-  }
-  return ranges
 }
 
 // ── image insertion (insert_image / generate_image) ──
@@ -443,28 +334,18 @@ async function insertImageFromUrl(
   // downloads can take long: user edits made meanwhile must keep the freshness
   // baseline stale, so only our own insertion may mark the doc seen
   const userEditedDuringFetch = editedExternally(editor)
-  const doc = editor.state.doc
-  const maxIndex = doc.childCount - 1
+  const maxIndex = editor.state.doc.childCount - 1
   // typeof guard: Number(null) is 0, which would silently mean "after block 0"
   const afterRaw = input.afterIndex
   const after =
     typeof afterRaw === 'number' && Number.isInteger(afterRaw)
       ? Math.min(Math.max(afterRaw, -1), maxIndex)
       : maxIndex
-  const node = editor.schema.nodes.image!.create({
-    src: rel,
-    alt: String(input.alt ?? '').trim() || null,
+  const r = runOps(editor, [{ op: 'insertImage', after, src: rel, alt: String(input.alt ?? '') }], {
+    source: 'ai',
   })
-  let tr = editor.state.tr
-  if (isBlankDoc(doc)) {
-    tr = tr.replaceWith(0, doc.content.size, node)
-    tr = markAiRange(tr, 0, tr.doc.content.size)
-  } else {
-    const pos = after === -1 ? 0 : blockRange(doc, after, after).to
-    tr = tr.insert(pos, node)
-    tr = markAiRange(tr, pos, pos + node.nodeSize)
-  }
-  editor.view.dispatch(tr)
+  const res = r.results[0]!
+  if (!res.ok) return fail(res.error, labels.fail)
   if (!userEditedDuringFetch) markDocSeen(editor)
   return {
     output: `Inserted the image (saved as ${rel}). ${INDEX_CHANGE_NOTICE}`,
@@ -473,16 +354,100 @@ async function insertImageFromUrl(
   }
 }
 
+async function writeDocument(
+  editor: Editor,
+  call: AgentToolCall,
+  signal: AbortSignal | undefined,
+  writer: AiDocWriter | undefined,
+): Promise<ToolExecution> {
+  const label = t('aiToolWriteDoc')
+  const plan = String(call.input.plan ?? '').trim()
+  if (!plan) return fail('plan must not be empty', label)
+  if (!writer) return fail('document writing is not available here', label)
+  if (editedExternally(editor)) return fail(STALE_DOC_ERROR, label)
+  const doc = editor.state.doc
+  const afterRaw = call.input.afterIndex
+  let position: WritePosition
+  if (afterRaw !== undefined && afterRaw !== null) {
+    if (!Number.isInteger(afterRaw) || Number(afterRaw) < -1 || Number(afterRaw) >= doc.childCount)
+      return fail(`afterIndex out of range; the document has ${doc.childCount} blocks.`, label)
+    position = { kind: 'after', index: Number(afterRaw) }
+  } else if (isBlankDoc(doc) || call.input.replaceDocument === true) {
+    position = { kind: 'whole' }
+  } else {
+    return fail(
+      'the document is not blank: pass afterIndex to insert the new content after a block, or replaceDocument=true when the user asked to rewrite the whole document',
+      label,
+    )
+  }
+  const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v))
+  const draft = new DraftLanding(editor, position)
+  let result: DocWriteResult
+  let rendered: string | null
+  try {
+    result = await writer.write(
+      { plan, title: str(call.input.title), context: str(call.input.context) },
+      (markdown) => draft.update(markdown),
+      signal,
+    )
+  } finally {
+    rendered = draft.finish()
+  }
+  if (editor.isDestroyed) return fail('the document was closed', label)
+  if (!result.ok || !result.markdown?.trim()) {
+    return fail(
+      `The writer produced nothing (${result.error ?? 'no output'}); the document is unchanged. Tell the user briefly and offer to try again.`,
+      t('aiToolWriteDocFailed'),
+    )
+  }
+  // a kept partial whose tail no longer parses lands what the user saw rendered
+  let parses: boolean
+  try {
+    parses = parseMarkdownToNodes(editor, result.markdown).length > 0
+  } catch {
+    parses = false
+  }
+  const markdown = !parses && result.truncated && rendered ? rendered : result.markdown
+  // an explicit rewrite replaces everything; text the user typed into a formerly blank
+  // document while the draft streamed is kept, the content goes into the draft's slot
+  const op: MdOp =
+    position.kind === 'whole' &&
+    !isBlankDoc(editor.state.doc) &&
+    call.input.replaceDocument === true
+      ? {
+          op: 'replaceBlocks',
+          target: { start: 0, end: editor.state.doc.childCount - 1 },
+          markdown,
+        }
+      : { op: 'insertContent', after: draft.indexBefore(), markdown }
+  const r = runOps(editor, [op], { source: 'ai' })
+  const res = r.results[0]!
+  if (!res.ok) return fail(res.error, t('aiToolWriteDocFailed'))
+  markDocSeen(editor)
+  const note = result.truncated
+    ? ' The stream ended early, so the content is INCOMPLETE (the user chose to keep it): the tail is missing. Say so and offer to finish the missing sections with write_document (afterIndex at the end) or apply_ops insertContent.'
+    : ''
+  return {
+    output: `Content written by the system (${result.markdown.length} chars). ${res.message} ${INDEX_CHANGE_NOTICE}${note}\nReply with one or two sentences describing what was written; do not paste the content.`,
+    mutated: true,
+    summary: result.truncated ? t('aiToolWriteDocPartial') : label,
+  }
+}
+
 export function executeTool(
   editor: Editor,
   call: AgentToolCall,
   signal?: AbortSignal,
   fm?: FrontmatterAccess,
+  writer?: AiDocWriter,
 ): ToolExecution | Promise<ToolExecution> {
   const doc = editor.state.doc
   const maxIndex = doc.childCount - 1
 
   switch (call.name) {
+    case 'write_document':
+      return writeDocument(editor, call, signal, writer)
+
     case 'read_frontmatter': {
       if (!fm) return fail('frontmatter is not available', t('aiToolReadFm'))
       const inner = fm.read()
@@ -490,17 +455,6 @@ export function executeTool(
         output: inner || '(the document has no frontmatter)',
         mutated: false,
         summary: t('aiToolReadFm'),
-      }
-    }
-
-    case 'set_frontmatter': {
-      if (!fm) return fail('frontmatter is not available', t('aiToolSetFm'))
-      const inner = String(call.input.yaml ?? '')
-      fm.write(inner.trim() ? inner.replace(/\n+$/, '') : '')
-      return {
-        output: inner.trim() ? 'Frontmatter updated.' : 'Frontmatter removed.',
-        mutated: true,
-        summary: t('aiToolSetFm'),
       }
     }
 
@@ -536,178 +490,8 @@ export function executeTool(
       }
     }
 
-    case 'insert_content': {
-      if (editedExternally(editor)) return fail(STALE_DOC_ERROR, t('aiToolInsert'))
-      const markdown = String(call.input.markdown ?? '')
-      if (!markdown.trim()) return fail('markdown must not be empty', t('aiToolInsert'))
-      const after = Number(call.input.afterIndex)
-      if (!Number.isInteger(after) || after < -1 || after > maxIndex) {
-        return fail(
-          `afterIndex out of range; the document has ${doc.childCount} blocks.`,
-          t('aiToolInsert'),
-        )
-      }
-      let nodes: PmNode[]
-      try {
-        nodes = parseMarkdownToNodes(editor, markdown)
-      } catch (err) {
-        return fail(
-          `markdown parse failed: ${err instanceof Error ? err.message : String(err)}`,
-          t('aiToolInsert'),
-        )
-      }
-      if (nodes.length === 0) return fail('markdown parsed to no content', t('aiToolInsert'))
-
-      let tr = editor.state.tr
-      if (isBlankDoc(doc)) {
-        tr = tr.replaceWith(0, doc.content.size, nodes)
-        tr = markAiRange(tr, 0, tr.doc.content.size)
-      } else {
-        const pos = after === -1 ? 0 : blockRange(doc, after, after).to
-        const insertedSize = nodes.reduce((s, n) => s + n.nodeSize, 0)
-        tr = tr.insert(pos, nodes)
-        tr = markAiRange(tr, pos, pos + insertedSize)
-      }
-      editor.view.dispatch(tr)
-      markDocSeen(editor)
-      return {
-        output: `Inserted ${nodes.length} block(s). ${INDEX_CHANGE_NOTICE}`,
-        mutated: true,
-        summary: t('aiToolInsertDone', { n: nodes.length }),
-      }
-    }
-
-    case 'replace_blocks': {
-      if (editedExternally(editor)) return fail(STALE_DOC_ERROR, t('aiToolReplace'))
-      const start = clampIndex(call.input.startIndex, maxIndex)
-      const end = clampIndex(call.input.endIndex, maxIndex)
-      if (start === null || end === null || start > end) {
-        return fail(
-          `Invalid block range; the document has ${doc.childCount} blocks.`,
-          t('aiToolReplace'),
-        )
-      }
-      const markdown = String(call.input.markdown ?? '')
-      let nodes: PmNode[]
-      try {
-        nodes = parseMarkdownToNodes(editor, markdown)
-      } catch (err) {
-        return fail(
-          `markdown parse failed: ${err instanceof Error ? err.message : String(err)}`,
-          t('aiToolReplace'),
-        )
-      }
-      const { from, to } = blockRange(doc, start, end)
-      let tr = editor.state.tr
-      if (nodes.length === 0) {
-        // deleting every block is not allowed by the schema — leave one empty paragraph
-        if (start === 0 && end === maxIndex) {
-          tr = tr.replaceWith(from, to, editor.schema.nodes.paragraph!.create())
-        } else {
-          tr = tr.delete(from, to)
-        }
-      } else {
-        const insertedSize = nodes.reduce((s, n) => s + n.nodeSize, 0)
-        tr = tr.replaceWith(from, to, nodes)
-        tr = markAiRange(tr, from, from + insertedSize)
-      }
-      editor.view.dispatch(tr)
-      markDocSeen(editor)
-      return {
-        output: `Replaced blocks ${start}-${end} with ${nodes.length} block(s). ${INDEX_CHANGE_NOTICE}`,
-        mutated: true,
-        summary: t('aiToolReplaceDone', { n: end - start + 1 }),
-      }
-    }
-
-    case 'replace_text': {
-      if (editedExternally(editor)) return fail(STALE_DOC_ERROR, t('aiToolReplaceText'))
-      const blockIndex = clampIndex(call.input.blockIndex, maxIndex)
-      if (blockIndex === null) {
-        return fail(
-          `blockIndex out of range; the document has ${doc.childCount} blocks.`,
-          t('aiToolReplaceText'),
-        )
-      }
-      const find = String(call.input.find ?? '')
-      if (!find) return fail('find must not be empty', t('aiToolReplaceText'))
-      const replace = String(call.input.replace ?? '')
-      const { from, to } = blockRange(doc, blockIndex, blockIndex)
-      const matches = findMatches(textIndexOf(doc, from, to), find)
-      if (matches.length === 0) {
-        return fail(
-          `"${find}" was not found in block ${blockIndex}. The match is exact plain text (check spacing and punctuation); read the block with read_blocks to see its current text.`,
-          t('aiToolReplaceText'),
-        )
-      }
-      let tr = editor.state.tr
-      // bottom-up so earlier matches keep their positions while editing
-      for (let i = matches.length - 1; i >= 0; i--) {
-        const m = matches[i]!
-        if (replace) tr = tr.insertText(replace, m.from, m.to)
-        else tr = tr.delete(m.from, m.to)
-      }
-      if (replace) {
-        // final highlight positions: each match shifts by the deltas of the matches before it
-        const delta = replace.length - find.length
-        tr = markAiRanges(
-          tr,
-          matches.map((m, i) => ({
-            from: m.from + delta * i,
-            to: m.from + delta * i + replace.length,
-          })),
-        )
-      }
-      editor.view.dispatch(tr)
-      markDocSeen(editor)
-      return {
-        output: `Replaced ${matches.length} occurrence(s) in block ${blockIndex}.`,
-        mutated: true,
-        summary: t('aiToolReplaceTextDone', { n: matches.length }),
-      }
-    }
-
-    case 'style_matches': {
-      if (editedExternally(editor)) return fail(STALE_DOC_ERROR, t('aiToolStyleText'))
-      const find = String(call.input.find ?? '')
-      if (!find) return fail('find must not be empty', t('aiToolStyleText'))
-      const style = String(call.input.style ?? '') as StylableMark
-      const markType = STYLABLE_MARKS.includes(style) ? editor.schema.marks[style] : undefined
-      if (!markType) {
-        return fail(`style must be one of: ${STYLABLE_MARKS.join(', ')}`, t('aiToolStyleText'))
-      }
-      const start = clampIndex(call.input.startIndex ?? 0, maxIndex)
-      const end = clampIndex(call.input.endIndex ?? maxIndex, maxIndex)
-      if (start === null || end === null || start > end) {
-        return fail(
-          `Invalid block range; the document has ${doc.childCount} blocks.`,
-          t('aiToolStyleText'),
-        )
-      }
-      const { from, to } = blockRange(doc, start, end)
-      const matches = findMatches(textIndexOf(doc, from, to), find)
-      if (matches.length === 0) {
-        return fail(
-          `"${find}" was not found in blocks ${start}-${end}. The match is exact plain text; read the range with read_blocks to see its current text.`,
-          t('aiToolStyleText'),
-        )
-      }
-      const remove = call.input.remove === true
-      let tr = editor.state.tr
-      for (const m of matches) {
-        tr = remove
-          ? tr.removeMark(m.from, m.to, markType)
-          : tr.addMark(m.from, m.to, markType.create())
-      }
-      tr = markAiRanges(tr, matches)
-      editor.view.dispatch(tr)
-      markDocSeen(editor)
-      return {
-        output: `${remove ? 'Removed' : 'Applied'} ${style} on ${matches.length} match(es) in blocks ${start}-${end}.`,
-        mutated: true,
-        summary: t('aiToolStyleTextDone', { n: matches.length }),
-      }
-    }
+    case 'apply_ops':
+      return applyOps(editor, call.input.ops, fm)
 
     case 'image_search': {
       const query = String(call.input.query ?? '').trim()

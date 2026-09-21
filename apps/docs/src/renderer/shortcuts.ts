@@ -11,7 +11,7 @@
  * the two platforms genuinely use different keys (macOS eats ⌘H / ⌘M / ⌘Q for
  * Hide / Minimize / Quit, and Word itself differs on a few chords).
  */
-import { macShortcutsToWin, platformShortcuts } from '@hermesoffice/i18n'
+import { macShortcutsToWin, platformShortcuts } from '@genoffice/i18n'
 import type { StringKey } from './i18n/locale'
 
 export type ShortcutGroupId = 'file' | 'edit' | 'text' | 'para' | 'insert' | 'review' | 'view'

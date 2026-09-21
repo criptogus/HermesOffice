@@ -5,8 +5,13 @@ import {
   structuralOpLabel,
   workbookCommandBatchSchema,
   workbookOperationSchema,
-} from '../src/domain/workbook-dsl'
-import { columnIndex, columnLabel, parseRange, rangeCellCount } from '../src/domain/cell-address'
+} from '@genoffice/xlsx-gateway/domain/workbook-dsl'
+import {
+  columnIndex,
+  columnLabel,
+  parseRange,
+  rangeCellCount,
+} from '@genoffice/xlsx-gateway/domain/cell-address'
 
 describe('cell-address helpers', () => {
   it('round-trips column labels', () => {
@@ -607,6 +612,23 @@ describe('find_replace expansion', () => {
       reader({ A1: 'apple', A2: 'apple pie' }),
     )
     expect(wholeOps).toEqual([{ op: 'set_cell', sheetId: 's', address: 'A1', value: 'pear' }])
+  })
+
+  it('wholeCell ignores surrounding spaces like the find dialog', () => {
+    const ops = expandToPrimitiveOps(
+      [
+        {
+          op: 'find_replace',
+          sheetId: 's',
+          range: 'A1:A2',
+          find: 'apple',
+          replace: 'pear',
+          wholeCell: true,
+        },
+      ],
+      reader({ A1: '  apple  ', A2: 'apple pie' }),
+    )
+    expect(ops).toEqual([{ op: 'set_cell', sheetId: 's', address: 'A1', value: 'pear' }])
   })
 
   it('keeps a literal $ in the replacement and skips formula cells', () => {
