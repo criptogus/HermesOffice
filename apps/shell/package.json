@@ -14,9 +14,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "electron-vite build && electron .",
-    "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:win": "electron-vite build && electron-builder --win",
-    "dist:linux": "electron-vite build && electron-builder --linux"
+    "dist:mac": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --mac",
+    "dist:win": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --win",
+    "dist:linux": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --linux"
   },
   "devDependencies": {
     "@hermesoffice/agent-core": "*",

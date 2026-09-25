@@ -70,6 +70,9 @@ const includeMacX64 = process.env.HERMESOFFICE_MAC_X64 === '1'
 // exits 0 on a missing extraResources source, so without this check the
 // installer would silently ship without the Chromium license.
 for (const rel of [
+  // written by tools/write-build-info.mjs, which every dist:* script runs before
+  // electron-builder — a bundle without it can never be installed by the updater
+  'build/build-info.json',
   '../../node_modules/@genspark/cli',
   '../../node_modules/@genspark/cli/node_modules/commander',
   '../../node_modules/ws',
@@ -223,6 +226,16 @@ const config = {
   },
   files: ['out/**'],
   extraResources: [
+    // build-info.json — the commit/version the bundle was built from, written
+    // by tools/write-build-info.mjs (run from the dist:* scripts, right before
+    // electron-builder). The GitHub-main updater reads it at runtime to decide
+    // whether an update exists, and tools/hermesoffice-update.mjs REFUSES to
+    // install a bundle without it — dropping this entry silently breaks the
+    // update path for every installed app.
+    {
+      from: 'build/build-info.json',
+      to: 'build-info.json',
+    },
     {
       from: 'build/THIRD-PARTY-NOTICES.txt',
       to: 'THIRD-PARTY-NOTICES.txt',
