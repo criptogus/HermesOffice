@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -134,6 +142,46 @@ test('prepare resolves npm outside the minimal PATH (fake sh reports it)', () =>
     })
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(readFileSync(marker, 'utf8'), 'called')
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('build hands the rust toolchain to npm (cargo lives in ~/.cargo/bin)', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  try {
+    const bin = join(temp, 'bin')
+    const src = join(temp, 'src')
+    const stage = join(temp, 'stage')
+    const seenPath = join(temp, 'npm-path.txt')
+    const app = join(src, 'apps', 'shell', 'release', 'mac-arm64', 'HermesOffice.app')
+    mkdirSync(bin, { recursive: true })
+    mkdirSync(join(src, '.git'), { recursive: true })
+    makeMinimalBundle(app)
+    // fake npm: records the PATH it was spawned with, then reports success.
+    // `cargo` is deliberately not reachable through this PATH — dist:mac
+    // compiles the sheets sidecar with cargo, which lives in ~/.cargo/bin.
+    executable(join(bin, 'npm'), `printf '%s' "$PATH" > "${seenPath}"`)
+    const result = spawnSync(process.execPath, [HELPER, 'build'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, // LaunchServices' minimal PATH + the fake npm
+        HERMESOFFICE_SOURCE_DIR: src,
+        HERMESOFFICE_STAGE_DIR: stage,
+      },
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const childPath = readFileSync(seenPath, 'utf8').split(':')
+    assert.ok(
+      childPath.includes(join(homedir(), '.cargo', 'bin')),
+      `cargo dir missing: ${childPath.join(':')}`,
+    )
+    assert.equal(childPath[0], bin, `caller PATH must win: ${childPath.join(':')}`)
+    assert.ok(childPath.includes('/usr/bin'), `system PATH dropped: ${childPath.join(':')}`)
+    assert.ok(
+      existsSync(join(stage, 'HermesOffice.app', 'Contents', 'Resources', 'build-info.json')),
+    )
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }
