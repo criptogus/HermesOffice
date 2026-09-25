@@ -14,6 +14,8 @@ electron-builder.env
 /scripts/drivers/driver.*.mjs
 /probe*.mjs
 /apps/shell/build/THIRD-PARTY-NOTICES.txt
+# generated per build by tools/write-build-info.mjs (commit/version stamp)
+/apps/shell/build/build-info.json
 /example/
 /.task/
 /docs-archive/
