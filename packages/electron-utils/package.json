@@ -7,7 +7,8 @@
   "description": "Shared helpers for the Electron main processes (no Electron dependency, pure TS)",
   "exports": {
     ".": "./src/index.ts",
-    "./drop-open": "./src/drop-open.ts"
+    "./drop-open": "./src/drop-open.ts",
+    "./github-menu": "./src/github-menu.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -38,6 +38,7 @@ import { createI18n, isLang, normalizeLang, setUiLang, type Lang } from '@hermes
 import {
   DEFAULT_SAVE_DIR_KEY,
   DROP_OPEN_CHANNEL,
+  GITHUB_REPO_SLUG,
   GITHUB_REPO_URL,
   appMenuLabels,
   contextMenuLabels,
@@ -435,7 +436,7 @@ let cachedGithubStars: number | null = null
 async function fetchGithubStars(): Promise<number | null> {
   if (cachedGithubStars !== null) return cachedGithubStars
   try {
-    const response = await fetch('https://api.github.com/repos/genspark-ai/hermesoffice', {
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO_SLUG}`, {
       headers: { Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(5000),
     })

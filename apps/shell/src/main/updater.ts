@@ -5,6 +5,7 @@ import type { BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateInfo } from 'electron-updater'
 import { createI18n, getUiLang, htmlLang } from '@hermesoffice/i18n'
+import { GITHUB_REPO_URL } from '@hermesoffice/electron-utils'
 import type { UpdateChannel, UpdateUiState, UpdateUiStrings } from '../shared/update-api'
 import {
   closeUpdateWindow,
@@ -328,7 +329,7 @@ const MANUAL_FALLBACK_AFTER = 2
 // and signing track, so a stable/legacy-track user could land on the wrong
 // build. Preferred is the CDN installer derived from the user's own update
 // feed (see manualDownloadUrlFor), which matches channel, track, and arch.
-const DOWNLOAD_PAGE_URL = 'https://github.com/genspark-ai/hermesoffice/releases/latest'
+const DOWNLOAD_PAGE_URL = `${GITHUB_REPO_URL}/releases/latest`
 
 /// Trusted HTTPS base URL baked into resources/app-update.yml. Manual download
 /// links are always rebuilt from this base rather than trusting URLs supplied

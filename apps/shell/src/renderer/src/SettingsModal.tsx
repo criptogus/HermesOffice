@@ -690,8 +690,8 @@ export function SettingsModal({
                   label={t('setGithub')}
                   value={
                     githubStars === null
-                      ? 'github.com/genspark-ai/hermesoffice'
-                      : `github.com/genspark-ai/hermesoffice · ★ ${formatStars(githubStars)}`
+                      ? window.aiOffice.repoLabel
+                      : `${window.aiOffice.repoLabel} · ★ ${formatStars(githubStars)}`
                   }
                   action={
                     <button

@@ -411,7 +411,7 @@ describe('manual download fallback', () => {
     const actions = await failTwiceIntoManual(macFiles)
     actions.onOpenDownload()
     expect(openExternal).toHaveBeenCalledWith(
-      'https://github.com/genspark-ai/hermesoffice/releases/latest',
+      'https://github.com/criptogus/HermesOffice/releases/latest',
     )
   })
 
@@ -422,7 +422,7 @@ describe('manual download fallback', () => {
     ])
     actions.onOpenDownload()
     expect(openExternal).toHaveBeenCalledWith(
-      'https://github.com/genspark-ai/hermesoffice/releases/latest',
+      'https://github.com/criptogus/HermesOffice/releases/latest',
     )
   })
 })

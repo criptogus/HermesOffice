@@ -137,6 +137,8 @@ export interface HomeApi {
   openCreditUsage(): Promise<void>
   /** open the public GitHub repository in the default browser */
   openGitHubRepo(): Promise<void>
+  /** owner/repo slug of the public repository — label text, no round-trip */
+  readonly repoLabel: string
   /** current stargazer count of the public repo (null while offline / rate-limited) */
   githubStars(): Promise<number | null>
   /** whether the one-time "star us" prompt should show now (show:true also counts as shown);
