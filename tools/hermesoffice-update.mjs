@@ -69,6 +69,44 @@ function npmBin() {
   )
 }
 
+/**
+ * Dirs that hold the build toolchain when the helper runs with the minimal PATH
+ * LaunchServices hands to apps (`/usr/bin:/bin`). npm needs node, and
+ * `npm run dist:mac` compiles the sheets sidecar with cargo — the rustup
+ * toolchain lives in `~/.cargo/bin`, so without it the build dies with
+ * "cargo: command not found" and the UI reports a bogus network error.
+ */
+const TOOLCHAIN_DIRS = [
+  join(homedir(), '.cargo', 'bin'),
+  join(homedir(), '.hermes', 'node', 'bin'),
+  join(homedir(), '.homebrew', 'bin'),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+]
+
+/** Always present, whatever PATH the caller had (the build shells out to cp/ditto/git). */
+const SYSTEM_PATH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
+
+/**
+ * PATH for the build tools: the caller's PATH first (the app and the tests rely
+ * on their own npm winning), then the toolchain dirs LaunchServices does not
+ * provide — `~/.cargo/bin` is where rustup puts cargo, and `npm run dist:mac`
+ * compiles the sheets sidecar with it (without it the build dies with
+ * "cargo: command not found" and the UI reports a bogus network error).
+ */
+function toolchainPath(base) {
+  const seen = new Set()
+  const out = []
+  const caller = (base ?? process.env.PATH ?? '').split(':')
+  for (const dir of [...caller, ...TOOLCHAIN_DIRS, ...SYSTEM_PATH_DIRS]) {
+    if (dir && !seen.has(dir)) {
+      seen.add(dir)
+      out.push(dir)
+    }
+  }
+  return out.join(':')
+}
+
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts })
   if (r.status !== 0) {
@@ -198,7 +236,7 @@ function cmdPrepare() {
   run(npm, ['ci', '--no-audit', '--no-fund'], {
     cwd: SOURCE_DIR,
     timeout: 600_000,
-    env: { ...process.env, PATH: `${dirname(npm)}:${process.env.PATH || ''}` },
+    env: { ...process.env, PATH: toolchainPath(`${dirname(npm)}:${process.env.PATH || ''}`) },
   })
   progress(35, 'deps ready')
 }
@@ -215,7 +253,11 @@ function cmdBuild() {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) progress(40, 'retrying build (attempt 2)')
     try {
-      run('npm', ['run', 'dist:mac'], { cwd: SOURCE_DIR, timeout: 900_000 })
+      run('npm', ['run', 'dist:mac'], {
+        cwd: SOURCE_DIR,
+        timeout: 900_000,
+        env: { ...process.env, PATH: toolchainPath() },
+      })
       buildError = null
       break
     } catch (err) {

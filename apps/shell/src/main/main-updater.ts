@@ -33,6 +33,7 @@ const FIRST_CHECK_DELAY_MS = 15_000
 const RECHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 // dirs where npm commonly lives outside the minimal LaunchServices PATH
 const EXTRA_PATH_DIRS = [
+  join(homedir(), '.cargo', 'bin'),
   join(homedir(), '.hermes', 'node', 'bin'),
   join(homedir(), '.homebrew', 'bin'),
   '/opt/homebrew/bin',
