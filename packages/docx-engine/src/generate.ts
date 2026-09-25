@@ -502,18 +502,50 @@ function patchCellXml(tcXml: string, paras: readonly CellParaPatch[]): string | 
 /** cell paragraph texts carry tabs/breaks as control chars (extractRuns encoding);
  *  they must go back as real elements, not literal characters inside w:t */
 function cellRunContentXml(text: string): string {
-  const CONTROL: Record<string, string> = {
-    '\t': '<w:tab/>',
-    '\n': '<w:br/>',
-    '\f': '<w:br w:type="page"/>',
-    '\v': '<w:br w:type="column"/>',
+  return runContentSegments(text)
+}
+
+/** The control characters the model holds for non-text run content, and the OOXML
+ *  element each must become. A literal tab/break written inside w:t renders as nothing. */
+const CONTROL_ELEMENTS: Record<string, string> = {
+  '\t': '<w:tab/>',
+  '\n': '<w:br/>',
+  '\f': '<w:br w:type="page"/>',
+  '\v': '<w:br w:type="column"/>',
+}
+
+/**
+ * Model text as run-content XML segments (no <w:r> wrapper): control characters become
+ * real elements (<w:tab/>, <w:br/>), the rest goes into <w:t xml:space="preserve">.
+ * Every writer that turns model text back into OOXML goes through here — a control
+ * character emitted literally inside w:t is silently dropped by Word, and a round trip
+ * of an untouched paragraph no longer matches the original bytes (undo reset, scroll jump).
+ */
+export function runContentSegments(text: string, textTag: 'w:t' | 'w:delText' = 'w:t'): string {
+  const segments: string[] = []
+  let buffer = ''
+  const flush = () => {
+    if (buffer !== '') {
+      segments.push(`<${textTag} xml:space="preserve">${escapeXmlText(buffer)}</${textTag}>`)
+      buffer = ''
+    }
   }
-  return text
-    .split(/([\t\n\f\v])/)
-    .map((seg) =>
-      seg === '' ? '' : (CONTROL[seg] ?? `<w:t xml:space="preserve">${escapeXmlText(seg)}</w:t>`),
-    )
-    .join('')
+  for (const ch of text) {
+    const element = CONTROL_ELEMENTS[ch]
+    if (element) {
+      flush()
+      segments.push(element)
+    } else {
+      buffer += ch
+    }
+  }
+  flush()
+  return segments.join('')
+}
+
+/** One plain-text run (no formatting): the same segments wrapped in a bare <w:r>. */
+export function textRunXml(text: string): string {
+  return `<w:r>${runContentSegments(text)}</w:r>`
 }
 
 /** one cell paragraph: control-char text (legacy first-run-rPr rebuild), rich runs, or null = keep the original paragraph bytes */
@@ -3135,32 +3167,6 @@ function generateRunXml(run: Run, insideLink: boolean): string {
 
   // Translate embedded control characters back to OOXML elements.
   // Deleted runs carry their text in w:delText instead of w:t.
-  const textTag = run.del ? 'w:delText' : 'w:t'
-  const segments: string[] = []
-  let buffer = ''
-  const flush = () => {
-    if (buffer !== '') {
-      segments.push(`<${textTag} xml:space="preserve">${escapeXmlText(buffer)}</${textTag}>`)
-      buffer = ''
-    }
-  }
-  for (const ch of run.text) {
-    if (ch === '\t') {
-      flush()
-      segments.push('<w:tab/>')
-    } else if (ch === '\n') {
-      flush()
-      segments.push('<w:br/>')
-    } else if (ch === '\f') {
-      flush()
-      segments.push('<w:br w:type="page"/>')
-    } else if (ch === '\v') {
-      flush()
-      segments.push('<w:br w:type="column"/>')
-    } else {
-      buffer += ch
-    }
-  }
-  flush()
-  return `<w:r>${rPr}${segments.join('')}</w:r>`
+  const textTag: 'w:t' | 'w:delText' = run.del ? 'w:delText' : 'w:t'
+  return `<w:r>${rPr}${runContentSegments(run.text, textTag)}</w:r>`
 }

@@ -159,6 +159,11 @@ function patchOneParagraph(paraXml: string, newText: string, skipLeading: boolea
   const changeStart = lead + prefix
   const changeEnd = lead + oldText.length - suffix
   const replacement = newText.slice(prefix, newText.length - suffix)
+  // This path's plain-text model is the concatenated w:t content: it cannot see (and so
+  // cannot verify) a tab or line break. Writing one literally inside w:t would be dropped
+  // by Word and would break the caller's self-check — decline, and let the caller rebuild
+  // the entry, which emits <w:tab/> / <w:br/> as real elements.
+  if (/[\t\n\f\v]/.test(replacement)) return null
 
   // Find the w:t intersecting the changed range; for pure insertion (changeStart ===
   // changeEnd), take the slice covering that point
