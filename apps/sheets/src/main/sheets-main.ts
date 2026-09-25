@@ -3044,13 +3044,22 @@ export function registerSheetsAiIpc(): void {
       send({ requestId, type: 'ping' })
     }
     try {
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
-        signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        onActivity: ping,
-      })
+      await streamForProvider(
+        provider,
+        config,
+        system,
+        messages,
+        tools,
+        maxTokens,
+        {
+          signal: controller.signal,
+          onDelta: (text) => send({ requestId, type: 'delta', text }),
+          onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
+          onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+          onActivity: ping,
+        },
+        request.sessionId,
+      )
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {

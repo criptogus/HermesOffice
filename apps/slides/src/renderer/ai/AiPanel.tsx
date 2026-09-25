@@ -1316,6 +1316,8 @@ export function AiPanel({
     loopRef.current = new AgentLoop({
       transport: createElectronTransport(() => settingsRef.current),
       systemSuffix: aiLangDirective,
+      // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per deck
+      sessionId: () => chatRefIds.current?.chatId,
       skill: composeSkills('slides+files', '', [
         createSlidesSkill(access),
         createFilesSkill(availableAttachments, (path) => readAttachmentPathsRef.current.add(path)),
