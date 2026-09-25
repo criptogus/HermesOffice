@@ -187,6 +187,56 @@ test('build hands the rust toolchain to npm (cargo lives in ~/.cargo/bin)', () =
   }
 })
 
+test('install survives a stale .update-old it cannot delete', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  const backup = join(temp, 'Applications', 'HermesOffice.app.update-old')
+  try {
+    const bin = join(temp, 'bin')
+    const stage = join(temp, 'stage')
+    const stagedApp = join(stage, 'HermesOffice.app')
+    const appPath = join(temp, 'Applications', 'HermesOffice.app')
+
+    makeMinimalBundle(stagedApp)
+    writeFileSync(
+      join(stagedApp, 'Contents', 'Resources', 'build-info.json'),
+      JSON.stringify({ commit: 'new-commit' }),
+    )
+    makeMinimalBundle(appPath)
+    // Residue of an update that died mid-cleanup, made undeletable (no write bit
+    // on the directory) — the update must still swap and relaunch instead of
+    // aborting with ENOTEMPTY *after* the bundle was already replaced.
+    mkdirSync(join(backup, 'Contents'), { recursive: true })
+    writeFileSync(join(backup, 'Contents', 'leftover.txt'), 'x')
+    chmodSync(backup, 0o500)
+    mkdirSync(bin, { recursive: true })
+    executable(join(bin, 'pgrep'), 'exit 1')
+    executable(join(bin, 'sleep'), 'exit 0')
+    executable(join(bin, 'codesign'), 'exit 0')
+    executable(join(bin, 'open'), 'exit 0')
+
+    const result = spawnSync(process.execPath, [HELPER, 'install'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin`,
+        HERMESOFFICE_STAGE_DIR: stage,
+        HERMESOFFICE_APP_PATH: appPath,
+      },
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const info = JSON.parse(
+      readFileSync(join(appPath, 'Contents', 'Resources', 'build-info.json'), 'utf8'),
+    )
+    assert.equal(info.commit, 'new-commit', 'swap must land even with a stuck backup')
+  } finally {
+    try {
+      chmodSync(backup, 0o700)
+    } catch {}
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test('prepare clones with a full working tree (no --no-checkout)', () => {
   // Regression: the clone used --no-checkout, so the helper script itself
   // (spawned from inside the checkout) did not exist and every first download

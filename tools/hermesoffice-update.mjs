@@ -107,6 +107,17 @@ function toolchainPath(base) {
   return out.join(':')
 }
 
+/** Delete that must never abort the caller — used for the bundle backups around
+ * the swap, where the new bundle is already in place and a leftover is
+ * harmless. A residue from a previous update is exactly what wedges the swap. */
+function removeQuietly(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch (err) {
+    console.error(`cleanup of ${dir} failed (ignored): ${err.message}`)
+  }
+}
+
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts })
   if (r.status !== 0) {
@@ -369,16 +380,31 @@ function cmdInstall() {
   verifyBundle(fresh)
   run('codesign', ['--force', '--deep', '--sign', '-', fresh], { timeout: 120_000 })
 
-  rmSync(backup, { recursive: true, force: true })
-  renameSync(APP_PATH, backup)
+  // A previous update can leave a partial backup behind (a recursive delete that
+  // died mid-way — e.g. LaunchServices touching the bundle). Clear it first: the
+  // rename below then has somewhere to go. Best-effort, because a residue we
+  // cannot delete (permissions) must not abort an install.
+  removeQuietly(backup)
+  let parked = backup
+  try {
+    renameSync(APP_PATH, parked)
+  } catch (err) {
+    // Occupied (ENOTEMPTY) or permission-blocked (EACCES) backup: park the
+    // outgoing bundle under a unique name instead of failing the update.
+    if (err.code !== 'ENOTEMPTY' && err.code !== 'EACCES') throw err
+    parked = `${backup}.${Date.now()}`
+    renameSync(APP_PATH, parked)
+  }
   try {
     renameSync(fresh, APP_PATH)
   } catch (err) {
     // restore the previous bundle rather than leaving no app at all
-    renameSync(backup, APP_PATH)
+    renameSync(parked, APP_PATH)
     throw err
   }
-  rmSync(backup, { recursive: true, force: true })
+  // The swap is DONE: from here on nothing may abort, or the app stays closed
+  // with the new bundle in place (the user sees an error and no app).
+  removeQuietly(parked)
 
   progress(100, 'relaunching')
   // This helper itself runs through the packaged Electron binary with
