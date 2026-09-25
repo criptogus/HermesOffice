@@ -3,6 +3,9 @@ import type { IpcRendererEvent } from 'electron'
 import { AI_PROVIDERS, getProviderAdapter } from '@hermesoffice/ai-provider'
 import type { AiSettings } from '@hermesoffice/ai-provider'
 import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
+// subpath, never the barrel: the barrel drags node:*-importing main-process
+// helpers into the preload bundle and the bridge dies (window.aiOffice undefined)
+import { GITHUB_REPO_SLUG } from '@hermesoffice/electron-utils/github-menu'
 import type {
   AccountLoginEvent,
   AccountStatus,
@@ -207,6 +210,8 @@ const homeApi: HomeApi = {
   async openGitHubRepo() {
     await ipcRenderer.invoke(HOME_CHANNELS.openGitHubRepo)
   },
+  // static value, not a round-trip: the label must never drift from the link
+  repoLabel: GITHUB_REPO_SLUG,
   async githubStars() {
     const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.githubStars)
     return typeof result === 'number' && Number.isFinite(result) ? result : null

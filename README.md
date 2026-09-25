@@ -2,11 +2,11 @@
 
 **The world's first full-featured open-source AI Office suite.**
 
-[![License: Apache-2.0](https://img.shields.io/github/license/genspark-ai/hermesoffice)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/genspark-ai/hermesoffice)](https://github.com/genspark-ai/hermesoffice/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/genspark-ai/hermesoffice/total)](https://github.com/genspark-ai/hermesoffice/releases)
+[![License: Apache-2.0](https://img.shields.io/github/license/criptogus/HermesOffice)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/criptogus/HermesOffice)](https://github.com/criptogus/HermesOffice/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/criptogus/HermesOffice/total)](https://github.com/criptogus/HermesOffice/releases)
 
-[Website](https://hermesoffice.ai/) · [Download](https://github.com/genspark-ai/hermesoffice/releases/latest) · [Privacy](PRIVACY.md) · [Demo](https://www.youtube.com/watch?v=B2pLdMX95v4)
+[Download](https://github.com/criptogus/HermesOffice/releases/latest) · [Privacy](PRIVACY.md) · [Demo](https://www.youtube.com/watch?v=B2pLdMX95v4)
 
 HermesOffice is a free, open-source alternative to Microsoft Office for macOS,
 Windows, and Linux, built around AI editing as a first-class workflow rather
@@ -39,17 +39,23 @@ layer.
 
 ## Download
 
-| Platform                             | Requirements                                          | Download                                                                               |
-| ------------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **macOS** — Apple Silicon (arm64)    | macOS 11+                                             | [Latest `.dmg` (arm64)](https://github.com/genspark-ai/hermesoffice/releases/latest)   |
-| **macOS** — Intel (x64)              | macOS 11+                                             | [Latest `.dmg` (x64)](https://github.com/genspark-ai/hermesoffice/releases/latest)     |
-| **Windows** (x64)                    | Windows 10+                                           | [Latest `.exe` installer](https://github.com/genspark-ai/hermesoffice/releases/latest) |
-| **Linux** — Debian / Ubuntu          | x86_64, glibc 2.34+ (Ubuntu 22.04 or newer)           | [Latest `.deb`](https://github.com/genspark-ai/hermesoffice/releases/latest)           |
-| **Linux** — Fedora / RHEL / openSUSE | x86_64, glibc 2.34+ (Fedora 35+, RHEL 9+, Leap 15.6+) | [Latest `.rpm`](https://github.com/genspark-ai/hermesoffice/releases/latest)           |
-| **Linux** — other distributions      | x86_64, glibc 2.34+, FUSE 2                           | [Latest `.AppImage`](https://github.com/genspark-ai/hermesoffice/releases/latest)      |
+**macOS · Apple Silicon — [download the latest `.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg)**
+One click, always the newest build. That link never changes — it is also the one to share or put on a page.
 
-All builds come from `main`; the macOS and Windows installers are signed.
-Older versions are on the [Releases](https://github.com/genspark-ai/hermesoffice/releases) page.
+| Platform                             | Requirements                | Download                                                                                                                                                                                                      |
+| ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS** — Apple Silicon (arm64)    | macOS 11+                   | [`.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg) · [`.zip`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64-mac.zip) |
+| **macOS** — Intel (x64)              | macOS 11+                   | [build from source](#development) — no published artifact yet                                                                                                                                                 |
+| **Windows** (x64)                    | Windows 10+                 | [build from source](#development) — no published artifact yet                                                                                                                                                 |
+| **Linux** — Debian / Ubuntu          | x86_64, glibc 2.34+         | [build from source](#development) — no published artifact yet                                                                                                                                                 |
+| **Linux** — Fedora / RHEL / openSUSE | x86_64, glibc 2.34+         | [build from source](#development) — no published artifact yet                                                                                                                                                 |
+| **Linux** — other distributions      | x86_64, glibc 2.34+, FUSE 2 | [build from source](#development) — no published artifact yet                                                                                                                                                 |
+
+Builds come from `main`. The macOS bundle is **ad-hoc signed, not notarized** (there is no
+Apple Developer ID behind it yet), so the first launch needs one confirmation: right-click
+the app → **Open**, or allow it under **System Settings → Privacy & Security**.
+
+Older versions are on the [Releases](https://github.com/criptogus/HermesOffice/releases) page.
 
 ### Installing on Linux
 
