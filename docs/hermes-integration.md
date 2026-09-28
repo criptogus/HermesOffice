@@ -41,10 +41,17 @@ hermes gateway restart
 curl http://127.0.0.1:8642/health   # {"status":"ok",...}
 ```
 
-HermesOffice does not start the gateway by itself — it assumes a local gateway
-is available (same machine, loopback). If the gateway is offline, the AI panel
-reports a connection error; start the gateway and try again. On launch, the
-app offers to start the gateway when it is offline (consent-gated).
+HermesOffice does not start the gateway by itself at install time — it assumes a
+local gateway is available (same machine, loopback). If the gateway is offline,
+the AI panel reports a connection error; on launch, the app offers to start the
+gateway for you (consent-gated dialog: start now / not now / don't ask again,
+with an "always start automatically" checkbox that persists your answer in
+`userData/hermes-launcher.json`). The offer only appears when the `hermes`
+provider points at a **local** gateway — with a remote base URL a dead
+`127.0.0.1` is expected, so nothing is offered. Two environment overrides exist
+for labs and for a gateway that lives elsewhere: `HERMES_CLI` (path to the
+`hermes` binary) and `HERMES_GATEWAY_HEALTH_URL` (probe target, default
+`http://127.0.0.1:8642/health`).
 
 ## Getting started (from zero)
 
@@ -108,6 +115,7 @@ start the gateway for you (consent-gated).
 | `packages/ai-provider/src/chat.ts`                                   | `chatForProvider` case `hermes` (one-shot)                       |
 | `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forced `genspark` → `hermes`                            |
 | `apps/shell/src/main/hermes-ai-settings.ts`                          | Startup seed of the hermes key from `~/.hermes/.env`             |
+| `apps/shell/src/main/hermes-launcher.ts`                             | Consent-gated startup offer to start an offline local gateway    |
 | `apps/docs/src/renderer/ai/AiPanel.tsx`                              | Genspark sign-in only for `genspark` provider                    |
 
 When syncing with upstream, these are the only areas that can conflict — the
@@ -123,4 +131,5 @@ reintroduced into the code.
 - [x] Per-document session continuity (`X-Hermes-Session-Id` header, stable sha256 of filePath)
 - [x] Document tools exposed to the agent — skills published in `hermes/skills/` (see `hermes/README.md`)
 - [x] Optional launcher that offers to start the gateway on app launch (consent-gated)
+- [x] Launcher wired into startup (issue #75) — only offered for a local gateway
 - [x] Startup seed of the gateway key from `~/.hermes/.env` (no manual paste on a fresh install)

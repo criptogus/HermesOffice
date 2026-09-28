@@ -69,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  delete process.env.HERMES_GATEWAY_HEALTH_URL
 })
 
 describe('ensureHermesGateway', () => {
@@ -77,6 +78,19 @@ describe('ensureHermesGateway', () => {
     await expect(run()).resolves.toBe('healthy')
     expect(showMessageBox).not.toHaveBeenCalled()
     expect(spawned).toHaveLength(0)
+  })
+
+  it('probes the local API server health endpoint by default', async () => {
+    healthResponses = [true]
+    await expect(run()).resolves.toBe('healthy')
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8642/health', expect.anything())
+  })
+
+  it('probes HERMES_GATEWAY_HEALTH_URL when the environment overrides it', async () => {
+    process.env.HERMES_GATEWAY_HEALTH_URL = 'http://127.0.0.1:9999/health'
+    healthResponses = [true]
+    await expect(run()).resolves.toBe('healthy')
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:9999/health', expect.anything())
   })
 
   it('gives up quietly when no hermes CLI is on the host', async () => {
@@ -144,5 +158,39 @@ describe('ensureHermesGateway', () => {
     writeFileSync(join(userData, 'hermes-launcher.json'), '{not json')
     showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: false })
     await expect(run()).resolves.toBe('declined')
+  })
+})
+
+describe('shouldOfferLocalGateway', () => {
+  async function load() {
+    return import('../src/main/hermes-launcher')
+  }
+
+  it('offers for a local or absent base URL and refuses remote ones', async () => {
+    const { isLocalGatewayUrl } = await load()
+    expect(isLocalGatewayUrl(undefined)).toBe(true)
+    expect(isLocalGatewayUrl('  ')).toBe(true)
+    expect(isLocalGatewayUrl('http://127.0.0.1:8642/v1')).toBe(true)
+    expect(isLocalGatewayUrl('http://localhost:8642/v1')).toBe(true)
+    expect(isLocalGatewayUrl('http://[::1]:8642/v1')).toBe(true)
+    expect(isLocalGatewayUrl('https://gateway.example.com/v1')).toBe(false)
+    expect(isLocalGatewayUrl('not a url')).toBe(false)
+  })
+
+  it('reads the configured provider: quiet for a remote gateway, offer otherwise', async () => {
+    const { shouldOfferLocalGateway } = await load()
+    // no ai-settings.json yet → the fork's local default
+    expect(shouldOfferLocalGateway()).toBe(true)
+
+    const setBaseUrl = (baseUrl: string) =>
+      writeFileSync(
+        join(userData, 'ai-settings.json'),
+        JSON.stringify({ provider: 'hermes', providers: { hermes: { apiKey: 'k', baseUrl } } }),
+      )
+
+    setBaseUrl('https://api.example.com/v1')
+    expect(shouldOfferLocalGateway()).toBe(false)
+    setBaseUrl('http://127.0.0.1:8642/v1')
+    expect(shouldOfferLocalGateway()).toBe(true)
   })
 })
