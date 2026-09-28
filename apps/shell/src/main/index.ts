@@ -53,6 +53,11 @@ import {
 import { readAppSettings, writeAppSetting, writeAppSettings } from './app-settings'
 import { seedHermesAiSettings } from './hermes-ai-settings'
 import {
+  ensureHermesGateway,
+  shouldOfferLocalGateway,
+  type LauncherStrings,
+} from './hermes-launcher'
+import {
   ANALYTICS_ENABLED_KEY,
   analyticsEnabledFrom,
   createAnalytics,
@@ -541,6 +546,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '文件已损坏或不是有效的 PDF，无法转换。',
     dlgPickSaveDir: '选择默认保存位置',
     errSaveDirUnusable: '所选文件夹不可写，无法用作默认保存位置',
+    gwStartTitle: 'Hermes 网关离线',
+    gwStartBody:
+      'HermesOffice 的 AI 依赖本地 Hermes 网关，而它没有在 127.0.0.1:8642 响应。现在启动吗？',
+    gwStartNow: '启动网关',
+    gwStartNotNow: '暂不',
+    gwStartNever: '不再询问',
+    gwStartAlways: '以后自动启动',
+    gwStartFailed: 'Hermes 网关未能就绪。请在终端运行：hermes gateway start',
   },
   en: {
     menuFile: 'File',
@@ -639,6 +652,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Choose Default Save Location',
     errSaveDirUnusable:
       'The selected folder is not writable and cannot be used as the default save location',
+    gwStartTitle: 'Hermes Gateway Offline',
+    gwStartBody:
+      'HermesOffice AI runs on the local Hermes gateway, which is not answering on 127.0.0.1:8642. Start it now?',
+    gwStartNow: 'Start Gateway',
+    gwStartNotNow: 'Not Now',
+    gwStartNever: "Don't Ask Again",
+    gwStartAlways: 'Always start it automatically',
+    gwStartFailed:
+      'The Hermes gateway did not become ready. Start it from a terminal with: hermes gateway start',
   },
   ja: {
     menuFile: 'ファイル',
@@ -737,6 +759,15 @@ const tMain = createI18n({
     dlgPickSaveDir: '既定の保存先を選択',
     errSaveDirUnusable:
       '選択したフォルダーは書き込みできないため、既定の保存先として使用できません',
+    gwStartTitle: 'Hermes ゲートウェイがオフラインです',
+    gwStartBody:
+      'HermesOffice の AI はローカルの Hermes ゲートウェイで動作しますが、127.0.0.1:8642 に応答していません。今すぐ起動しますか？',
+    gwStartNow: 'ゲートウェイを起動',
+    gwStartNotNow: '後で',
+    gwStartNever: '今後表示しない',
+    gwStartAlways: '次回から自動で起動する',
+    gwStartFailed:
+      'Hermes ゲートウェイが起動しませんでした。ターミナルで実行してください: hermes gateway start',
   },
   ko: {
     menuFile: '파일',
@@ -834,6 +865,15 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '파일이 손상되었거나 유효한 PDF가 아니어서 변환할 수 없습니다.',
     dlgPickSaveDir: '기본 저장 위치 선택',
     errSaveDirUnusable: '선택한 폴더에 쓸 수 없어 기본 저장 위치로 사용할 수 없습니다',
+    gwStartTitle: 'Hermes 게이트웨이 오프라인',
+    gwStartBody:
+      'HermesOffice의 AI는 로컬 Hermes 게이트웨이에서 실행되며, 127.0.0.1:8642에서 응답하지 않습니다. 지금 시작할까요?',
+    gwStartNow: '게이트웨이 시작',
+    gwStartNotNow: '나중에',
+    gwStartNever: '다시 묻지 않기',
+    gwStartAlways: '다음부터 자동으로 시작',
+    gwStartFailed:
+      'Hermes 게이트웨이가 준비되지 않았습니다. 터미널에서 실행하세요: hermes gateway start',
   },
   fr: {
     menuFile: 'Fichier',
@@ -933,6 +973,15 @@ const tMain = createI18n({
     dlgPickSaveDir: "Choisir l'emplacement d'enregistrement par défaut",
     errSaveDirUnusable:
       "Le dossier sélectionné n'est pas accessible en écriture et ne peut pas servir d'emplacement d'enregistrement par défaut",
+    gwStartTitle: 'Passerelle Hermes hors ligne',
+    gwStartBody:
+      "L'IA de HermesOffice fonctionne sur la passerelle Hermes locale, qui ne répond pas sur 127.0.0.1:8642. La démarrer maintenant ?",
+    gwStartNow: 'Démarrer la passerelle',
+    gwStartNotNow: 'Plus tard',
+    gwStartNever: 'Ne plus demander',
+    gwStartAlways: 'Toujours démarrer automatiquement',
+    gwStartFailed:
+      'La passerelle Hermes n’a pas démarré. Lancez-la depuis un terminal : hermes gateway start',
   },
   de: {
     menuFile: 'Datei',
@@ -1032,6 +1081,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Standard-Speicherort auswählen',
     errSaveDirUnusable:
       'Der ausgewählte Ordner ist nicht beschreibbar und kann nicht als Standard-Speicherort verwendet werden',
+    gwStartTitle: 'Hermes-Gateway offline',
+    gwStartBody:
+      'Die KI von HermesOffice läuft über das lokale Hermes-Gateway, das unter 127.0.0.1:8642 nicht antwortet. Jetzt starten?',
+    gwStartNow: 'Gateway starten',
+    gwStartNotNow: 'Jetzt nicht',
+    gwStartNever: 'Nicht mehr fragen',
+    gwStartAlways: 'Immer automatisch starten',
+    gwStartFailed:
+      'Das Hermes-Gateway wurde nicht bereit. Starten Sie es im Terminal mit: hermes gateway start',
   },
   es: {
     menuFile: 'Archivo',
@@ -1131,6 +1189,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Elegir ubicación de guardado predeterminada',
     errSaveDirUnusable:
       'La carpeta seleccionada no admite escritura y no puede usarse como ubicación de guardado predeterminada',
+    gwStartTitle: 'Gateway de Hermes sin conexión',
+    gwStartBody:
+      'La IA de HermesOffice funciona con el gateway local de Hermes, que no responde en 127.0.0.1:8642. ¿Iniciarlo ahora?',
+    gwStartNow: 'Iniciar gateway',
+    gwStartNotNow: 'Ahora no',
+    gwStartNever: 'No volver a preguntar',
+    gwStartAlways: 'Iniciar siempre automáticamente',
+    gwStartFailed:
+      'El gateway de Hermes no quedó listo. Inícialo en la terminal con: hermes gateway start',
   },
   th: {
     menuFile: 'ไฟล์',
@@ -1225,6 +1292,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: 'ไฟล์เสียหายหรือไม่ใช่ PDF ที่ถูกต้อง จึงไม่สามารถแปลงได้',
     dlgPickSaveDir: 'เลือกตำแหน่งบันทึกเริ่มต้น',
     errSaveDirUnusable: 'โฟลเดอร์ที่เลือกไม่สามารถเขียนได้ จึงใช้เป็นตำแหน่งบันทึกเริ่มต้นไม่ได้',
+    gwStartTitle: 'Hermes Gateway ออฟไลน์',
+    gwStartBody:
+      'AI ของ HermesOffice ทำงานผ่าน Hermes Gateway ในเครื่อง ซึ่งไม่ตอบสนองที่ 127.0.0.1:8642 ต้องการเริ่มตอนนี้หรือไม่',
+    gwStartNow: 'เริ่ม Gateway',
+    gwStartNotNow: 'ไว้ก่อน',
+    gwStartNever: 'ไม่ต้องถามอีก',
+    gwStartAlways: 'เริ่มอัตโนมัติทุกครั้ง',
+    gwStartFailed: 'Hermes Gateway ไม่พร้อมใช้งาน กรุณาเริ่มจากเทอร์มินัล: hermes gateway start',
   },
   id: {
     menuFile: 'File',
@@ -1324,6 +1399,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Pilih Lokasi Penyimpanan Default',
     errSaveDirUnusable:
       'Folder yang dipilih tidak dapat ditulis dan tidak bisa digunakan sebagai lokasi penyimpanan default',
+    gwStartTitle: 'Gateway Hermes Offline',
+    gwStartBody:
+      'AI HermesOffice berjalan di gateway Hermes lokal, yang tidak merespons di 127.0.0.1:8642. Mulai sekarang?',
+    gwStartNow: 'Mulai Gateway',
+    gwStartNotNow: 'Nanti saja',
+    gwStartNever: 'Jangan tanya lagi',
+    gwStartAlways: 'Selalu mulai otomatis',
+    gwStartFailed: 'Gateway Hermes tidak siap. Jalankan dari terminal: hermes gateway start',
   },
   ru: {
     menuFile: 'Файл',
@@ -1423,6 +1506,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Выбрать папку сохранения по умолчанию',
     errSaveDirUnusable:
       'Выбранная папка недоступна для записи и не может использоваться как папка сохранения по умолчанию',
+    gwStartTitle: 'Шлюз Hermes недоступен',
+    gwStartBody:
+      'ИИ HermesOffice работает через локальный шлюз Hermes, который не отвечает на 127.0.0.1:8642. Запустить его сейчас?',
+    gwStartNow: 'Запустить шлюз',
+    gwStartNotNow: 'Не сейчас',
+    gwStartNever: 'Больше не спрашивать',
+    gwStartAlways: 'Всегда запускать автоматически',
+    gwStartFailed: 'Шлюз Hermes не запустился. Запустите его в терминале: hermes gateway start',
   },
   ar: {
     menuFile: 'ملف',
@@ -1517,6 +1608,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: 'الملف تالف أو ليس ملف PDF صالحًا ولا يمكن تحويله.',
     dlgPickSaveDir: 'اختيار موقع الحفظ الافتراضي',
     errSaveDirUnusable: 'المجلد المحدد غير قابل للكتابة ولا يمكن استخدامه كموقع حفظ افتراضي',
+    gwStartTitle: 'بوابة Hermes غير متصلة',
+    gwStartBody:
+      'يعمل ذكاء HermesOffice عبر بوابة Hermes المحلية، وهي لا تستجيب على 127.0.0.1:8642. هل تريد تشغيلها الآن؟',
+    gwStartNow: 'تشغيل البوابة',
+    gwStartNotNow: 'ليس الآن',
+    gwStartNever: 'عدم السؤال مجددًا',
+    gwStartAlways: 'التشغيل تلقائيًا دائمًا',
+    gwStartFailed: 'لم تصبح بوابة Hermes جاهزة. شغّلها من الطرفية: hermes gateway start',
   },
   pt: {
     menuFile: 'Arquivo',
@@ -1616,6 +1715,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Escolher local de salvamento padrão',
     errSaveDirUnusable:
       'A pasta selecionada não permite gravação e não pode ser usada como local de salvamento padrão',
+    gwStartTitle: 'Gateway do Hermes offline',
+    gwStartBody:
+      'A IA do HermesOffice roda no gateway local do Hermes, que não responde em 127.0.0.1:8642. Quer iniciá-lo agora?',
+    gwStartNow: 'Iniciar gateway',
+    gwStartNotNow: 'Agora não',
+    gwStartNever: 'Não perguntar mais',
+    gwStartAlways: 'Sempre iniciar automaticamente',
+    gwStartFailed:
+      'O gateway do Hermes não ficou pronto. Inicie pelo terminal com: hermes gateway start',
   },
   it: {
     menuFile: 'File',
@@ -1715,6 +1823,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Scegli la posizione di salvataggio predefinita',
     errSaveDirUnusable:
       'La cartella selezionata non è scrivibile e non può essere usata come posizione di salvataggio predefinita',
+    gwStartTitle: 'Gateway Hermes offline',
+    gwStartBody:
+      "L'IA di HermesOffice funziona sul gateway Hermes locale, che non risponde su 127.0.0.1:8642. Avviarlo ora?",
+    gwStartNow: 'Avvia gateway',
+    gwStartNotNow: 'Non ora',
+    gwStartNever: 'Non chiedere più',
+    gwStartAlways: 'Avvia sempre automaticamente',
+    gwStartFailed:
+      'Il gateway Hermes non è pronto. Avvialo dal terminale con: hermes gateway start',
   },
   pl: {
     menuFile: 'Plik',
@@ -1814,6 +1931,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Wybierz domyślną lokalizację zapisu',
     errSaveDirUnusable:
       'Wybrany folder nie pozwala na zapis i nie może być domyślną lokalizacją zapisu',
+    gwStartTitle: 'Brama Hermes offline',
+    gwStartBody:
+      'Sztuczna inteligencja HermesOffice działa przez lokalną bramę Hermes, która nie odpowiada pod 127.0.0.1:8642. Uruchomić ją teraz?',
+    gwStartNow: 'Uruchom bramę',
+    gwStartNotNow: 'Nie teraz',
+    gwStartNever: 'Nie pytaj ponownie',
+    gwStartAlways: 'Zawsze uruchamiaj automatycznie',
+    gwStartFailed:
+      'Brama Hermes nie stała się gotowa. Uruchom ją w terminalu: hermes gateway start',
   },
   nl: {
     menuFile: 'Bestand',
@@ -1913,6 +2039,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Standaard opslaglocatie kiezen',
     errSaveDirUnusable:
       'De geselecteerde map is niet beschrijfbaar en kan niet als standaard opslaglocatie worden gebruikt',
+    gwStartTitle: 'Hermes-gateway offline',
+    gwStartBody:
+      'De AI van HermesOffice draait op de lokale Hermes-gateway, die niet reageert op 127.0.0.1:8642. Nu starten?',
+    gwStartNow: 'Gateway starten',
+    gwStartNotNow: 'Niet nu',
+    gwStartNever: 'Niet meer vragen',
+    gwStartAlways: 'Altijd automatisch starten',
+    gwStartFailed:
+      'De Hermes-gateway werd niet gereed. Start hem in de terminal met: hermes gateway start',
   },
   ms: {
     menuFile: 'Fail',
@@ -2011,6 +2146,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Pilih Lokasi Simpanan Lalai',
     errSaveDirUnusable:
       'Folder yang dipilih tidak boleh ditulis dan tidak dapat digunakan sebagai lokasi simpanan lalai',
+    gwStartTitle: 'Gateway Hermes Luar Talian',
+    gwStartBody:
+      'AI HermesOffice berjalan pada gateway Hermes tempatan, yang tidak bertindak balas pada 127.0.0.1:8642. Mulakannya sekarang?',
+    gwStartNow: 'Mulakan Gateway',
+    gwStartNotNow: 'Bukan sekarang',
+    gwStartNever: 'Jangan tanya lagi',
+    gwStartAlways: 'Sentiasa mulakan automatik',
+    gwStartFailed:
+      'Gateway Hermes tidak menjadi sedia. Mulakannya dari terminal: hermes gateway start',
   },
   he: {
     menuFile: 'קובץ',
@@ -2104,6 +2248,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'בחירת מיקום שמירה כברירת מחדל',
     errSaveDirUnusable:
       'התיקייה שנבחרה אינה ניתנת לכתיבה ולא ניתן להשתמש בה כמיקום שמירה כברירת מחדל',
+    gwStartTitle: 'שער Hermes לא מחובר',
+    gwStartBody:
+      'הבינה המלאכותית של HermesOffice פועלת דרך שער Hermes המקומי, שאינו מגיב בכתובת 127.0.0.1:8642. להפעיל אותו עכשיו?',
+    gwStartNow: 'הפעל את השער',
+    gwStartNotNow: 'לא עכשיו',
+    gwStartNever: 'אל תשאל שוב',
+    gwStartAlways: 'הפעל תמיד אוטומטית',
+    gwStartFailed: 'שער Hermes לא הפך לזמין. הפעל אותו מהטרמינל: hermes gateway start',
   },
   hi: {
     menuFile: 'फ़ाइल',
@@ -2203,6 +2355,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'डिफ़ॉल्ट सहेजने का स्थान चुनें',
     errSaveDirUnusable:
       'चयनित फ़ोल्डर में लिखा नहीं जा सकता, इसलिए इसे डिफ़ॉल्ट सहेजने के स्थान के रूप में उपयोग नहीं किया जा सकता',
+    gwStartTitle: 'Hermes गेटवे ऑफ़लाइन',
+    gwStartBody:
+      'HermesOffice का AI स्थानीय Hermes गेटवे पर चलता है, जो 127.0.0.1:8642 पर जवाब नहीं दे रहा। इसे अभी शुरू करें?',
+    gwStartNow: 'गेटवे शुरू करें',
+    gwStartNotNow: 'अभी नहीं',
+    gwStartNever: 'दोबारा न पूछें',
+    gwStartAlways: 'हमेशा स्वतः शुरू करें',
+    gwStartFailed: 'Hermes गेटवे तैयार नहीं हुआ। टर्मिनल से शुरू करें: hermes gateway start',
   },
   'zh-TW': {
     menuFile: '檔案',
@@ -2292,11 +2452,30 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '檔案已損壞或不是有效的 PDF，無法轉換。',
     dlgPickSaveDir: '選擇預設儲存位置',
     errSaveDirUnusable: '所選資料夾無法寫入，無法作為預設儲存位置',
+    gwStartTitle: 'Hermes 閘道離線',
+    gwStartBody:
+      'HermesOffice 的 AI 依賴本機 Hermes 閘道，而它沒有在 127.0.0.1:8642 回應。現在啟動嗎？',
+    gwStartNow: '啟動閘道',
+    gwStartNotNow: '暫不',
+    gwStartNever: '不再詢問',
+    gwStartAlways: '以後自動啟動',
+    gwStartFailed: 'Hermes 閘道未能就緒。請在終端機執行：hermes gateway start',
   },
 })
 
 const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[2]) =>
   tMain(currentLang(), key, params)
+
+/** Dialog strings for the consent-gated gateway launcher (issue #7) */
+const gatewayStartupStrings = (): LauncherStrings => ({
+  title: tm('gwStartTitle'),
+  body: tm('gwStartBody'),
+  start: tm('gwStartNow'),
+  notNow: tm('gwStartNotNow'),
+  never: tm('gwStartNever'),
+  always: tm('gwStartAlways'),
+  failed: tm('gwStartFailed'),
+})
 
 // ---- the shell window + its tab manager (recreated if the user closes it on macOS) ----
 
@@ -4247,6 +4426,14 @@ app.whenReady().then(async () => {
 
   if (!pendingLaunchPath || !openDocumentPath(pendingLaunchPath)) tabManager?.openHomeTab()
   pendingLaunchPath = null
+
+  // The gateway may be offline when the shell starts, and then every AI panel
+  // fails with a connection error: offer to start it. Consent-gated (the dialog
+  // remembers "always"/"never"), skipped when the hermes provider points at a
+  // non-local gateway, and fire-and-forget so a dialog can never delay startup.
+  if (shouldOfferLocalGateway()) {
+    void ensureHermesGateway(() => shellWindow, gatewayStartupStrings())
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createShellWindow()

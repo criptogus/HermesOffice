@@ -1,11 +1,16 @@
 /**
- * Optional Hermes gateway launcher (fork layer, issue #7).
+ * Optional Hermes gateway launcher (fork layer, issue #7; wired into startup
+ * by issue #75).
  *
  * On shell startup, if the local gateway does not answer /health and a
  * `hermes` CLI is present on the host, offer to start it — strictly with
  * consent: a native dialog with an "always start automatically" checkbox,
  * persisted in userData/hermes-launcher.json. Nothing is bundled and no
  * daemon is spawned without the user saying yes at least once.
+ *
+ * HERMES_CLI overrides the CLI lookup; HERMES_GATEWAY_HEALTH_URL overrides the
+ * probe target (labs, or a gateway listening on another port). The offer is
+ * skipped when the hermes provider points at a non-local gateway.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -14,6 +19,7 @@ import { app, dialog, type BrowserWindow } from 'electron'
 import { hermesHealthUrl } from '@hermesoffice/ai-provider'
 
 const SETTINGS_FILE = () => join(app.getPath('userData'), 'hermes-launcher.json')
+const AI_SETTINGS_FILE = () => join(app.getPath('userData'), 'ai-settings.json')
 const HEALTH_TIMEOUT_MS = 2000
 const START_POLL_INTERVAL_MS = 1000
 const START_POLL_ATTEMPTS = 20
@@ -41,14 +47,49 @@ function writeSettings(s: LauncherSettings): void {
   }
 }
 
+/** Probe target: the app's own local API server unless overridden */
+function gatewayHealthUrl(): string {
+  return process.env.HERMES_GATEWAY_HEALTH_URL?.trim() || hermesHealthUrl('')
+}
+
 async function gatewayHealthy(): Promise<boolean> {
   try {
-    const response = await fetch(hermesHealthUrl(''), {
+    const response = await fetch(gatewayHealthUrl(), {
       signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
     })
     return response.ok
   } catch {
     return false
+  }
+}
+
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
+
+/**
+ * Only a local gateway can be started by this app. When the hermes provider is
+ * pointed at another host, a dead 127.0.0.1 is expected and the prompt would be
+ * noise; an absent or unparsable URL means the fork's local default.
+ */
+export function isLocalGatewayUrl(baseUrl: string | undefined): boolean {
+  if (!baseUrl?.trim()) return true
+  try {
+    // URL.hostname keeps the brackets of an IPv6 literal ('[::1]')
+    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '')
+    return LOCAL_HOSTS.has(host)
+  } catch {
+    return false
+  }
+}
+
+/** Whether startup should offer to start a local gateway (reads ai-settings.json live) */
+export function shouldOfferLocalGateway(): boolean {
+  try {
+    const raw = readFileSync(AI_SETTINGS_FILE(), 'utf-8')
+    const settings = JSON.parse(raw) as { providers?: { hermes?: { baseUrl?: string } } }
+    return isLocalGatewayUrl(settings.providers?.hermes?.baseUrl)
+  } catch {
+    // no settings file yet (or unreadable): the local gateway is the default
+    return true
   }
 }
 
