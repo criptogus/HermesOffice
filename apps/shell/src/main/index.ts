@@ -51,6 +51,7 @@ import {
   windowMenuTemplate,
 } from '@hermesoffice/electron-utils'
 import { readAppSettings, writeAppSetting, writeAppSettings } from './app-settings'
+import { seedHermesAiSettings } from './hermes-ai-settings'
 import {
   ANALYTICS_ENABLED_KEY,
   analyticsEnabledFrom,
@@ -4233,6 +4234,11 @@ app.whenReady().then(async () => {
   initAnalytics()
   analytics.track('app_launch')
   startSheetsCaptureServer()
+  // A fresh install has no ai-settings.json, and every AI panel would then
+  // report a missing key until the user pasted one by hand: fill the hermes
+  // slot from the local gateway's ~/.hermes/.env before the first renderer can
+  // ask for settings. Best effort — startup never depends on it.
+  seedHermesAiSettings(app.getPath('userData'))
   createShellWindow()
   // deferred to ready: labels need currentLang(), which reads app.getLocale()
   installBackToHomeItems()

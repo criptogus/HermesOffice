@@ -78,11 +78,15 @@ A complete first run, from a machine without Hermes to an agent-assisted edit.
    curl http://127.0.0.1:8642/health   # → {"status":"ok",...}
    ```
 
-5. **Launch HermesOffice and enter the key once.** On first use the AI panel
-   asks for an API key — paste the same `API_SERVER_KEY` value. It is stored
-   in the app's `ai-settings.json` (never in the repo). If you skip it, the
-   panel replies with `Nenhuma chave de API configurada` — that is the app's
-   way of saying "no API key set", not a Hermes error.
+5. **Launch HermesOffice.** The app fills the key in itself: on startup the
+   shell reads `API_SERVER_KEY` from `~/.hermes/.env` and writes it to the
+   `hermes` provider slot in the app's `ai-settings.json` (0600, never in the
+   repo). Nothing to paste on a machine that already has the gateway key. If
+   the key is missing or differs, open **Settings → AI model → Hermes**, paste
+   the `API_SERVER_KEY` value and save — the provider slot is only seeded while
+   its key is empty, so an explicitly configured key is never overwritten. If
+   you skip both, the panel replies with `Nenhuma chave de API configurada` —
+   that is the app's way of saying "no API key set", not a Hermes error.
 6. **First agent edit.** Open a `.docx`, open the AI panel and ask something
    concrete, e.g. _"rewrite the first paragraph more concisely"_. The agent
    streams a response; accepted edits go through the app's block-patch
@@ -103,6 +107,7 @@ start the gateway for you (consent-gated).
 | `packages/ai-provider/src/stream.ts`                                 | `streamForProvider` case `hermes` (OpenAI-compatible)            |
 | `packages/ai-provider/src/chat.ts`                                   | `chatForProvider` case `hermes` (one-shot)                       |
 | `apps/{docs,sheets}/src/main/*.ts`, `apps/slides/src/main/ai-ipc.ts` | Provider forced `genspark` → `hermes`                            |
+| `apps/shell/src/main/hermes-ai-settings.ts`                          | Startup seed of the hermes key from `~/.hermes/.env`             |
 | `apps/docs/src/renderer/ai/AiPanel.tsx`                              | Genspark sign-in only for `genspark` provider                    |
 
 When syncing with upstream, these are the only areas that can conflict — the
@@ -118,3 +123,4 @@ reintroduced into the code.
 - [x] Per-document session continuity (`X-Hermes-Session-Id` header, stable sha256 of filePath)
 - [x] Document tools exposed to the agent — skills published in `hermes/skills/` (see `hermes/README.md`)
 - [x] Optional launcher that offers to start the gateway on app launch (consent-gated)
+- [x] Startup seed of the gateway key from `~/.hermes/.env` (no manual paste on a fresh install)
