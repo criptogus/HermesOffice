@@ -51,7 +51,10 @@ const IMPLICIT = ['electron']
  */
 function extraResourceSeeds() {
   // the electron-builder config lives in its own cjs module (not package.json
-  // "build") so the publish URL can be injected from the environment
+  // "build") so the publish URL can be injected from the environment.
+  // Requiring it needs apps/shell/build/build-info.json to be present — its
+  // extraResources guard throws without it — so the dist:* scripts run
+  // tools/write-build-info.mjs BEFORE this script (a fresh checkout has none).
   const build = require(join(ROOT, 'apps/shell/electron-builder.cjs'))
   const entries = [build.extraResources, build.mac?.extraResources, build.win?.extraResources]
   const names = []

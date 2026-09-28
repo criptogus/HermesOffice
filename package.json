@@ -35,9 +35,9 @@
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "notices": "node tools/gen-third-party-notices.mjs",
     "licenses": "node tools/check-licenses.mjs",
-    "dist:mac": "npm run notices && npm run build:all && npm run native:build:universal -w @hermesoffice/sheets && npm run dist:mac -w @hermesoffice/shell",
-    "dist:win": "npm run notices && npm run build:all && npm run dist:win -w @hermesoffice/shell",
-    "dist:linux": "npm run notices && npm run build:all && npm run dist:linux -w @hermesoffice/shell"
+    "dist:mac": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run native:build:universal -w @hermesoffice/sheets && npm run dist:mac -w @hermesoffice/shell",
+    "dist:win": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run dist:win -w @hermesoffice/shell",
+    "dist:linux": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run dist:linux -w @hermesoffice/shell"
   },
   "dependencies": {
     "ws": "^8.21.1"
