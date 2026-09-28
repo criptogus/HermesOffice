@@ -319,6 +319,8 @@ export function AiPanel({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
+      // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per PDF
+      sessionId: () => chatIdsRef.current?.chatId,
       events: {
         onText: (text) => {
           setPhase('replying')

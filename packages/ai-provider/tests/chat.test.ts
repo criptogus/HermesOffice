@@ -146,3 +146,47 @@ describe('chatForProvider', () => {
     expect(result).toEqual({ ok: false, error: 'AI returned an empty response' })
   })
 })
+
+// Regression tests for #17. chatForProvider shares the header logic with
+// streamForProvider (a sessionId becomes X-Hermes-Session-Id on the
+// openai-compatible route); the upstream syncs (672e5d8, then #58) dropped the
+// app-layer wiring and the tests that pinned the header, so pin the chat path too.
+describe('chatForProvider: X-Hermes-Session-Id', () => {
+  const okReply = () => jsonResponse({ choices: [{ message: { content: 'ok' } }] })
+  const headersOf = (fetchMock: ReturnType<typeof vi.fn>, call: number) =>
+    fetchMock.mock.calls[call]![1].headers as Record<string, string>
+
+  it('sends the same X-Hermes-Session-Id on every request for one document (#17)', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => okReply())
+    vi.stubGlobal('fetch', fetchMock)
+    const sessionId = 'doc-abc123'
+    for (let i = 0; i < 2; i++) {
+      const result = await chatForProvider(
+        'openai',
+        { apiKey: 'k', model: 'gpt-4.1-mini' },
+        'sys',
+        `question ${i + 1}`,
+        new AbortController().signal,
+        sessionId,
+      )
+      expect(result).toEqual({ ok: true, content: 'ok' })
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(headersOf(fetchMock, 0)['X-Hermes-Session-Id']).toBe(sessionId)
+    expect(headersOf(fetchMock, 1)['X-Hermes-Session-Id']).toBe(sessionId)
+  })
+
+  it('omits X-Hermes-Session-Id when no sessionId is provided (#17)', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => okReply())
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await chatForProvider(
+      'openai',
+      { apiKey: 'k', model: 'gpt-4.1-mini' },
+      'sys',
+      'question',
+    )
+    expect(result).toEqual({ ok: true, content: 'ok' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect('X-Hermes-Session-Id' in headersOf(fetchMock, 0)).toBe(false)
+  })
+})
