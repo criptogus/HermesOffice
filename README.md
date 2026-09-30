@@ -82,6 +82,16 @@ chmod +x HermesOffice-<version>.AppImage
 ./HermesOffice-<version>.AppImage
 ```
 
+## Screenshots
+
+| Docs                               | Sheets                                 |
+| ---------------------------------- | -------------------------------------- |
+| ![Docs](docs/screenshots/docs.png) | ![Sheets](docs/screenshots/sheets.png) |
+
+| Slides                                 | PDF                              |
+| -------------------------------------- | -------------------------------- |
+| ![Slides](docs/screenshots/slides.png) | ![PDF](docs/screenshots/pdf.png) |
+
 ## Apps
 
 | App             | Product                   | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
