@@ -90,6 +90,41 @@ describe('provider registry', () => {
     }
   })
 
+  it('publishes MiniMax model metadata and regional endpoints', () => {
+    const minimax = AI_PROVIDERS.find((provider) => provider.id === 'minimax')!
+    expect(minimax.modelMetadata).toEqual({
+      'MiniMax-M3': {
+        contextWindow: 1_000_000,
+        pricingUsdPerMillionTokens: { input: 0.6, output: 2.4, cacheRead: 0.12 },
+        inputModalities: ['text', 'image', 'video'],
+        thinkingModes: ['adaptive', 'disabled'],
+      },
+      'MiniMax-M2.7': {
+        contextWindow: 204_800,
+        pricingUsdPerMillionTokens: {
+          input: 0.3,
+          output: 1.2,
+          cacheRead: 0.06,
+          cacheWrite: 0.375,
+        },
+        inputModalities: ['text'],
+        thinkingModes: ['always_on'],
+      },
+    })
+    expect(minimax.endpoints).toEqual([
+      {
+        region: 'global_en',
+        openaiBaseUrl: 'https://api.minimax.io/v1',
+        anthropicBaseUrl: 'https://api.minimax.io/anthropic',
+      },
+      {
+        region: 'cn_zh',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        anthropicBaseUrl: 'https://api.minimaxi.com/anthropic',
+      },
+    ])
+  })
+
   it('marks Kimi as fixed-sampling (K3 rejects any temperature but 1)', () => {
     expect(AI_PROVIDER_ADAPTERS.kimi.resolveEndpoint(config('kimi-k3'))).toEqual({
       protocol: 'openai-compatible',

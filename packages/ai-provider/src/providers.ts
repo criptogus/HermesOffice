@@ -146,6 +146,37 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
     models: ['MiniMax-M3', 'MiniMax-M2.7'],
     defaultModel: 'MiniMax-M3',
     keyPlaceholder: 'eyJ...',
+    modelMetadata: {
+      'MiniMax-M3': {
+        contextWindow: 1_000_000,
+        pricingUsdPerMillionTokens: { input: 0.6, output: 2.4, cacheRead: 0.12 },
+        inputModalities: ['text', 'image', 'video'],
+        thinkingModes: ['adaptive', 'disabled'],
+      },
+      'MiniMax-M2.7': {
+        contextWindow: 204_800,
+        pricingUsdPerMillionTokens: {
+          input: 0.3,
+          output: 1.2,
+          cacheRead: 0.06,
+          cacheWrite: 0.375,
+        },
+        inputModalities: ['text'],
+        thinkingModes: ['always_on'],
+      },
+    },
+    endpoints: [
+      {
+        region: 'global_en',
+        openaiBaseUrl: 'https://api.minimax.io/v1',
+        anthropicBaseUrl: 'https://api.minimax.io/anthropic',
+      },
+      {
+        region: 'cn_zh',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        anthropicBaseUrl: 'https://api.minimaxi.com/anthropic',
+      },
+    ],
   },
   {
     id: 'xai',
