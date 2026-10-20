@@ -50,6 +50,9 @@ export interface AiProviderMeta {
 
 export interface AiModelMetadata {
   contextWindow: number
+  maxOutputTokens?: number
+  /** Qualifications for the listed base rates, such as input-length and priority tiers. */
+  pricingNotes?: string
   pricingUsdPerMillionTokens: {
     input: number
     output: number
