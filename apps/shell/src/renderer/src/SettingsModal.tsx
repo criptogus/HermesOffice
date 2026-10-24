@@ -1123,7 +1123,7 @@ export function SettingsModal({
               <>
                 <h3 className="set-pane-title">{t('setSecAccount')}</h3>
                 <Field label={t('setEmail')} value={loggedIn ? email : t('setNotLoggedIn')} />
-                {loggedIn && (
+                {loggedIn && status?.creditBalance !== undefined && (
                   <Field
                     label={t('credits')}
                     value={
@@ -1346,8 +1346,8 @@ export function SettingsModal({
                   label={t('setGithub')}
                   value={
                     githubStars === null
-                      ? 'github.com/criptogus/HermesOffice'
-                      : `github.com/criptogus/HermesOffice · ★ ${formatStars(githubStars)}`
+                      ? window.aiOffice.repoLabel
+                      : `${window.aiOffice.repoLabel} · ★ ${formatStars(githubStars)}`
                   }
                   action={
                     <button

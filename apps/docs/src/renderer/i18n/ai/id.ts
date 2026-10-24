@@ -8,7 +8,7 @@ export const id = {
   aiStarterPolishAll: 'Perhalus seluruh dokumen agar nadanya lebih profesional',
   aiStarterContinue: 'Lanjutkan menulis dari bagian akhir dokumen',
   aiStarterFillTemplate: 'Temukan dan isi placeholder di dokumen ini',
-  aiGskLoginBtn: 'Masuk ke Hermes',
+  aiGskLoginBtn: 'Masuk ke Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'Buka asisten AI',
   aiSummarizeBtn: 'Ringkasan AI',
@@ -114,7 +114,7 @@ export const id = {
   aiNetworkError:
     'Masalah jaringan: tidak dapat terhubung ke layanan AI. Periksa koneksi Anda lalu coba lagi',
   aiCreditsExhausted:
-    'Kredit Hermes Anda telah habis. Isi ulang di hermesoffice.local/pricing lalu coba lagi',
+    'Kredit Genspark Anda telah habis. Isi ulang di genspark.ai/pricing lalu coba lagi',
   aiSumReadAttachment: 'Baca lampiran',
   aiSumImageAttachment: 'Lampiran gambar {name}',
   aiSumRead: 'Baca {name}',

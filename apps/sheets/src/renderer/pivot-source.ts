@@ -1,6 +1,9 @@
 import type { LazyWorkbookState, UniverWorksheet } from './univer-state'
 import { inferContinuousRegion, type TableRegion } from './table-actions'
-import { shiftCellArea, StructuralShiftError } from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
+import {
+  shiftCellArea,
+  StructuralShiftError,
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-structure'
 
 /// Infer only from a complete model: unloaded cells look like blank boundaries.
 /// Explicit selections are always authoritative, including single-row ranges.

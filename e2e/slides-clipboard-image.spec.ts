@@ -26,7 +26,7 @@ test('Slides copy provides an OS image while internal paste stays editable and s
       resolve('apps/slides'),
       pptx,
     ],
-    env: { ...env, GENOFFICE_USER_DATA: join(dir, 'user-data'), GENOFFICE_LANG: 'en' },
+    env: { ...env, HERMESOFFICE_USER_DATA: join(dir, 'user-data'), HERMESOFFICE_LANG: 'en' },
   })
   try {
     const page = await app.firstWindow()

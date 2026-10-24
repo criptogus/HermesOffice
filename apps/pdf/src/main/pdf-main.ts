@@ -1,3 +1,4 @@
+import { registerPdfAiIpc } from './ai-ipc'
 import {
   constants,
   copyFileSync,
@@ -1563,6 +1564,7 @@ export function startPdfStandalone(): void {
   void app.whenReady().then(() => {
     installRendererProtocol({ pdf: join(__dirname, '../renderer') })
     registerPdfIpc()
+    registerPdfAiIpc()
     const win = new BrowserWindow({
       width: 1200,
       height: 850,

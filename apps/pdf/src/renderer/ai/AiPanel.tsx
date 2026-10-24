@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { AgentLoop } from '@hermesoffice/agent-core'
 import { imageGenerationAvailable, type AiSettings } from '@hermesoffice/ai-provider/browser'
-import { AiComposer, AiScopeQuote, AiTypingIndicator, type AiScopeQuoteData } from '@hermesoffice/ui'
+import {
+  AiComposer,
+  AiScopeQuote,
+  AiTypingIndicator,
+  type AiScopeQuoteData,
+} from '@hermesoffice/ui'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
 import { Markdown } from '@hermesoffice/ui'
 import sendEnterOn from '../assets/send-enter-on.png'
@@ -382,6 +387,8 @@ export function AiPanel({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
+      // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per PDF
+      sessionId: () => chatIdsRef.current?.chatId,
       events: {
         onText: (text) => {
           setPhase('replying')
@@ -1003,7 +1010,7 @@ function IconCollapse(): ReactElement {
   )
 }
 
-/** Hermes brand mark (rounded-square sparkle badge), inline so it renders
+/** Hermes brand mark (rounded-square H badge), inline so it renders
  * crisply at device resolution instead of going through <img> rasterization */
 export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element {
   return (

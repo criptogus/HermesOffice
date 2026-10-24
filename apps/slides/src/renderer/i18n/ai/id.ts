@@ -17,7 +17,7 @@ export const id = {
   aiQcPageSkipped: 'Halaman {n}: pemeriksaan tata letak otomatis dilewati',
   aiQcStopped: 'Pemeriksaan tata letak dihentikan',
   aiQcCapped: '{count} halaman lagi tidak diperiksa (batas per proses)',
-  aiGskLoginBtn: 'Masuk ke Hermes',
+  aiGskLoginBtn: 'Masuk ke Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'Buka asisten AI',
   aiFactCheckBtn: 'Cek Fakta AI',
@@ -115,7 +115,7 @@ export const id = {
   aiErrNetwork:
     'Masalah jaringan: tidak dapat terhubung ke layanan AI. Periksa koneksi Anda lalu coba lagi',
   aiCreditsExhausted:
-    'Kredit Hermes Anda telah habis. Isi ulang di hermesoffice.local/pricing lalu coba lagi',
+    'Kredit Genspark Anda telah habis. Isi ulang di genspark.ai/pricing lalu coba lagi',
   aiErrRequestFailed: 'Gagal mengirim permintaan: {msg}',
   aiErrGenerateFailed: 'Pembuatan gagal',
   aiErrRegenFailed: 'Gagal membuat ulang halaman',

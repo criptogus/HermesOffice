@@ -4,7 +4,12 @@ import { access, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { AgentImage, AgentMessage, AgentToolCall, AgentToolDef } from '@hermesoffice/agent-core'
+import type {
+  AgentImage,
+  AgentMessage,
+  AgentToolCall,
+  AgentToolDef,
+} from '@hermesoffice/agent-core'
 import type { AiChatResponse, AiProviderConfig, CodexModelCatalog } from './types'
 import { parseToolInput, type StreamCallbacks } from './protocols/shared'
 import { createStreamWatchdog } from './watchdog'

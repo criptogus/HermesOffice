@@ -8,7 +8,7 @@ export const nl = {
   aiStarterPolishAll: 'Werk het hele document bij naar een professionelere toon',
   aiStarterContinue: 'Schrijf verder waar het document ophoudt',
   aiStarterFillTemplate: 'Zoek en vul de tijdelijke aanduidingen in het document in',
-  aiGskLoginBtn: 'Aanmelden bij Hermes',
+  aiGskLoginBtn: 'Aanmelden bij Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'AI-assistent openen',
   aiSummarizeBtn: 'AI-samenvatting',
@@ -116,7 +116,7 @@ export const nl = {
   aiNetworkError:
     'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
   aiCreditsExhausted:
-    'Je Hermes-credits zijn op. Waardeer op via hermesoffice.local/pricing en probeer het opnieuw',
+    'Je Genspark-credits zijn op. Waardeer op via genspark.ai/pricing en probeer het opnieuw',
   aiSumReadAttachment: 'Bijlage lezen',
   aiSumImageAttachment: 'Afbeeldingsbijlage {name}',
   aiSumRead: '{name} lezen',

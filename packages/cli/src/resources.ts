@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
- * Two layouts: packaged (Resources/cli/genoffice.cjs next to Resources/wasm,
+ * Two layouts: packaged (Resources/cli/hermesoffice.cjs next to Resources/wasm,
  * Resources/native, Resources/ocr — see apps/shell/electron-builder.cjs) and
  * the dev checkout (packages/cli/{src,dist} inside the monorepo).
  */
@@ -45,7 +45,7 @@ export function repoRoot(): string | null {
 }
 
 export function pdfiumWasmPath(): string {
-  if (process.env.GENOFFICE_PDFIUM_WASM) return process.env.GENOFFICE_PDFIUM_WASM
+  if (process.env.HERMESOFFICE_PDFIUM_WASM) return process.env.HERMESOFFICE_PDFIUM_WASM
   const packaged = packagedResourcesDir()
   if (packaged) return join(packaged, 'wasm', 'pdfium.wasm')
   const root = repoRoot()
@@ -54,7 +54,7 @@ export function pdfiumWasmPath(): string {
       return createRequire(join(root, 'package.json')).resolve('@embedpdf/pdfium/pdfium.wasm')
     } catch {}
   }
-  throw new Error('pdfium.wasm not found (set GENOFFICE_PDFIUM_WASM)')
+  throw new Error('pdfium.wasm not found (set HERMESOFFICE_PDFIUM_WASM)')
 }
 
 export function xlsxSidecarPath(): string | null {
@@ -97,7 +97,7 @@ export interface AppLaunch {
 
 /** How to start the GenOffice GUI: the app binary that hosts this CLI, an installed app, or the dev checkout. */
 export function appLaunch(env: NodeJS.ProcessEnv = process.env): AppLaunch | null {
-  if (env.GENOFFICE_APP_BIN) return { command: env.GENOFFICE_APP_BIN, args: [] }
+  if (env.HERMESOFFICE_APP_BIN) return { command: env.HERMESOFFICE_APP_BIN, args: [] }
   if (packagedResourcesDir() && process.versions.electron) {
     return { command: process.execPath, args: [] }
   }
@@ -116,16 +116,18 @@ function installedAppBinaries(env: NodeJS.ProcessEnv): string[] {
   switch (process.platform) {
     case 'darwin':
       return [
-        '/Applications/GenOffice.app/Contents/MacOS/GenOffice',
-        join(homedir(), 'Applications/GenOffice.app/Contents/MacOS/GenOffice'),
+        '/Applications/HermesOffice.app/Contents/MacOS/GenOffice',
+        join(homedir(), 'Applications/HermesOffice.app/Contents/MacOS/GenOffice'),
       ]
     case 'win32':
       return [
-        env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'GenOffice', 'GenOffice.exe') : '',
-        env.ProgramFiles ? join(env.ProgramFiles, 'GenOffice', 'GenOffice.exe') : '',
+        env.LOCALAPPDATA
+          ? join(env.LOCALAPPDATA, 'Programs', 'HermesOffice', 'HermesOffice.exe')
+          : '',
+        env.ProgramFiles ? join(env.ProgramFiles, 'HermesOffice', 'HermesOffice.exe') : '',
       ].filter(Boolean)
     default:
-      return ['/opt/GenOffice/genoffice', '/usr/bin/genoffice']
+      return ['/opt/HermesOffice/hermesoffice', '/usr/bin/hermesoffice']
   }
 }
 

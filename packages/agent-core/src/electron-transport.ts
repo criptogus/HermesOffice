@@ -133,13 +133,11 @@ export function createIpcTransport<S>(options: IpcTransportOptions<S>): AgentTra
         Promise.resolve(
           options.start({
             requestId,
-            sessionId,
+            sessionId: request.sessionId ?? sessionId,
             settings: options.getSettings(),
             system: request.system,
             messages: request.messages,
             tools: request.tools,
-            // Fork: propagate the per-document session id so the gateway keeps continuity (fix 70374e0)
-            ...(request.sessionId ? { sessionId: request.sessionId } : {}),
           }),
         ).catch((err: unknown) => {
           fail(err instanceof Error ? err.message : options.unknownErrorText())

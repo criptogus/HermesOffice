@@ -1,6 +1,11 @@
 import { aiPanelWidthAtPointer, AiPanelSideButton } from '@hermesoffice/ui'
 import React, { useEffect, useRef, useState } from 'react'
-import { AiComposer, AiScopeQuote, AiTypingIndicator, type AiScopeQuoteData } from '@hermesoffice/ui'
+import {
+  AiComposer,
+  AiScopeQuote,
+  AiTypingIndicator,
+  type AiScopeQuoteData,
+} from '@hermesoffice/ui'
 import { HermesMark } from '../ribbon-icons'
 import type { ChangePlan } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import { ATTACHMENT_IMAGE_EXTS, type AttachmentMeta } from '../../shared/desktop-api'

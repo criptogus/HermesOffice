@@ -4,16 +4,16 @@ import { join } from 'node:path'
 import { realizedPath } from './fs'
 import { CliError, EXIT } from './result'
 
-/** The shell's Electron userData directory, located without Electron (GENOFFICE_USER_DATA overrides). */
+/** The shell's Electron userData directory, located without Electron (HERMESOFFICE_USER_DATA overrides). */
 export function genofficeUserDataDir(env: NodeJS.ProcessEnv): string {
-  if (env.GENOFFICE_USER_DATA) return env.GENOFFICE_USER_DATA
+  if (env.HERMESOFFICE_USER_DATA) return env.HERMESOFFICE_USER_DATA
   const base =
     process.platform === 'darwin'
       ? join(homedir(), 'Library', 'Application Support')
       : process.platform === 'win32'
         ? env.APPDATA || join(homedir(), 'AppData', 'Roaming')
         : env.XDG_CONFIG_HOME || join(homedir(), '.config')
-  return join(base, 'GenOffice')
+  return join(base, 'HermesOffice')
 }
 
 export interface GuiOpenDocuments {
@@ -28,8 +28,8 @@ export interface GuiOpenDocuments {
  */
 export function guiOpenDocuments(env: NodeJS.ProcessEnv): GuiOpenDocuments | null {
   // a checkout's shell keeps its userData in "<name> Dev" beside the packaged one
-  const dirs = env.GENOFFICE_USER_DATA
-    ? [env.GENOFFICE_USER_DATA]
+  const dirs = env.HERMESOFFICE_USER_DATA
+    ? [env.HERMESOFFICE_USER_DATA]
     : [genofficeUserDataDir(env), `${genofficeUserDataDir(env)} Dev`]
   for (const dir of dirs) {
     const path = join(dir, 'open-documents.json')

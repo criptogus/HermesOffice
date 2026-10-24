@@ -81,7 +81,6 @@ import {
   isAiOverloadedError,
   chatForProvider,
   defaultAiSettings,
-  activeProvider,
   testMediaProvider,
   type AiMediaProviderConfig,
   type AiMediaProviderId,
@@ -98,7 +97,10 @@ import {
   type GenSparkAccountStatus,
   type LegacyAiSettings,
 } from '@hermesoffice/ai-provider'
-import { listCodexModels, shutdownCodexAppServers } from '@hermesoffice/ai-provider/codex-app-server'
+import {
+  listCodexModels,
+  shutdownCodexAppServers,
+} from '@hermesoffice/ai-provider/codex-app-server'
 import {
   ensureGenofficeLogin,
   gskApiKey,
@@ -2472,7 +2474,7 @@ function allowPdfWrite(wcId: number, filePath: string): void {
 // Fidelity-harness escape hatch: headless runs have no save dialog to authorize
 // paths, so an explicitly configured directory (set only by our test scripts)
 // is treated as pre-authorized for PDF export.
-const testExportDir = process.env.GENOFFICE_TEST_EXPORT_DIR || null
+const testExportDir = process.env.HERMESOFFICE_TEST_EXPORT_DIR || null
 
 function canPdfWrite(wcId: number, filePath: string): boolean {
   if (testExportDir && filePath.startsWith(testExportDir + '/')) return true
@@ -2956,17 +2958,25 @@ export function registerAiIpc(): void {
     }
     try {
       let stopReason: string | undefined
-      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
-        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-        signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        onActivity: ping,
-        onStopReason: (reason) => {
-          stopReason = reason
+      await streamForProvider(
+        provider,
+        config,
+        system,
+        messages,
+        tools,
+        maxTokens,
+        {
+          signal: controller.signal,
+          onDelta: (text) => send({ requestId, type: 'delta', text }),
+          onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
+          onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+          onActivity: ping,
+          onStopReason: (reason) => {
+            stopReason = reason
+          },
         },
-      })
+        request.sessionId,
+      )
       send({ requestId, type: 'done', stopReason })
     } catch (err) {
       if (controller.signal.aborted) {
@@ -3023,7 +3033,7 @@ export function registerAiIpc(): void {
   // media understanding (pictures in the document, attachments, local files): BYOK media
   // provider when one is configured, otherwise the Genspark CLI behind its login gate.
   ipcMain.handle(
-    'ai:analyze-media',
+    'docs:analyze-media',
     async (_event, op: { mediaUrls: string[]; requirements: string }) => {
       const mediaUrls = (op.mediaUrls ?? []).map(String).filter(Boolean)
       // a picture opened lazily from a large docx is only addressable by its main-process
@@ -3031,9 +3041,7 @@ export function registerAiIpc(): void {
       const resolved: string[] = []
       for (const url of mediaUrls) {
         const lazy = await readLazyMedia(url).catch(() => null)
-        resolved.push(
-          lazy ? `data:${lazy.mime};base64,${lazy.body.toString('base64')}` : url,
-        )
+        resolved.push(lazy ? `data:${lazy.mime};base64,${lazy.body.toString('base64')}` : url)
       }
       return analyzeMediaTool(SETTINGS_PATH(), {
         mediaUrls: resolved,
@@ -4944,7 +4952,7 @@ export function startDocsStandalone(): void {
 
   app.whenReady().then(() => {
     installRendererProtocol({ docs: join(__dirname, '../renderer') })
-    setUiLang(normalizeLang(process.env.GENOFFICE_LANG ?? app.getLocale()))
+    setUiLang(normalizeLang(process.env.HERMESOFFICE_LANG ?? app.getLocale()))
     // packaged builds get the Dock icon from icon.icns; dev shows Electron's default
     if (isDev && process.platform === 'darwin') {
       app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))

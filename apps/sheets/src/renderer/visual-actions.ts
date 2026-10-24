@@ -3,13 +3,20 @@
  * the App component passes a VisualActionContext built fresh per call so
  * refs and state never go stale.
  */
-import { columnLabel, parseAddress, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import {
+  columnLabel,
+  parseAddress,
+  parseRange,
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import {
   hasNumericYearAxis,
   recommendCharts,
   type ChartRecommendations,
 } from '@hermesoffice/xlsx-gateway/domain/chart-recommend'
-import { buildChartVisual, chartDataFromValues } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
+import {
+  buildChartVisual,
+  chartDataFromValues,
+} from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import type { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import { buildPivotChartData } from '@hermesoffice/xlsx-gateway/domain/pivot-chart'
 import type {

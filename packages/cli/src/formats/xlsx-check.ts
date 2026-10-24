@@ -1,6 +1,9 @@
 import { parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { splitSheetRef } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
-import { parseRelationships, parseSheetElements } from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
+import {
+  parseRelationships,
+  parseSheetElements,
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
 import {
   FORMULA_REFERENCE_PATTERN,
   qualifierMatches,

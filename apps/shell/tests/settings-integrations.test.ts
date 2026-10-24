@@ -197,7 +197,10 @@ describe('Settings → Integrations', () => {
     )
     expect(JSON.parse(mcpConfigJson(win))).toEqual({ mcpServers: { hermesoffice: win } })
     expect(
-      mcpClaudeCommand({ command: '/Applications/Hermes Office.app/cli/hermesoffice', args: ['mcp'] }),
+      mcpClaudeCommand({
+        command: '/Applications/Hermes Office.app/cli/hermesoffice',
+        args: ['mcp'],
+      }),
     ).toBe(
       'claude mcp add --transport stdio hermesoffice -- "/Applications/Hermes Office.app/cli/hermesoffice" mcp',
     )

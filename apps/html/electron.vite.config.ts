@@ -4,10 +4,14 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 export default defineConfig({
   // @hermesoffice/i18n and @hermesoffice/electron-utils ship as TS source — must be bundled
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] }),
+    ],
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@hermesoffice/i18n', '@hermesoffice/electron-utils'] }),
+    ],
   },
   renderer: {
     plugins: [react()],

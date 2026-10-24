@@ -23,7 +23,7 @@ export const mcpCommand: CommandDef = {
       name: 'token',
       value: 'secret',
       description:
-        'with --http, require this bearer token on every request (default: $GENOFFICE_MCP_TOKEN, else none)',
+        'with --http, require this bearer token on every request (default: $HERMESOFFICE_MCP_TOKEN, else none)',
     },
   ],
   async run(args, ctx) {
@@ -47,7 +47,7 @@ export const mcpCommand: CommandDef = {
       log: ctx.log,
       port,
       host: flagString(args, 'host'),
-      token: flagString(args, 'token') ?? (ctx.env.GENOFFICE_MCP_TOKEN?.trim() || undefined),
+      token: flagString(args, 'token') ?? (ctx.env.HERMESOFFICE_MCP_TOKEN?.trim() || undefined),
     })
     return { summary: 'mcp server stopped' }
   },

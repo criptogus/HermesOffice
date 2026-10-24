@@ -1,5 +1,9 @@
 import { elementDurableId, openPptx, slideDurableId } from '@hermesoffice/pptx-engine'
-import { buildRenderSlide, EMU_PER_PX_96, type FontMetricsProvider } from '@hermesoffice/pptx-render'
+import {
+  buildRenderSlide,
+  EMU_PER_PX_96,
+  type FontMetricsProvider,
+} from '@hermesoffice/pptx-render'
 import { auditSlideFindings, type AuditFinding } from './layout-audit'
 
 export interface DeckAuditPage {

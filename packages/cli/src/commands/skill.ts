@@ -233,7 +233,9 @@ function row(target: AgentTarget | null, detected: boolean, state: SkillInstallS
     agent: target?.id ?? null,
     label: target?.label ?? state.path,
     detected,
-    skills_dir: target?.skillsDir ?? state.path.replace(new RegExp(`[\\\\/]${SKILL_NAME}[\\\\/]SKILL\\.md$`), ''),
+    skills_dir:
+      target?.skillsDir ??
+      state.path.replace(new RegExp(`[\\\\/]${SKILL_NAME}[\\\\/]SKILL\\.md$`), ''),
     status: state.status,
     installed_version: state.installedVersion ?? null,
     up_to_date: state.status === 'installed' || state.status === 'newer',
@@ -242,7 +244,7 @@ function row(target: AgentTarget | null, detected: boolean, state: SkillInstallS
 
 /** test seam: the home the agent dotfolders are probed under */
 function home(env: NodeJS.ProcessEnv): string {
-  return env.GENOFFICE_HOME || homedir()
+  return env.HERMESOFFICE_HOME || homedir()
 }
 
 function skillFile(): string {

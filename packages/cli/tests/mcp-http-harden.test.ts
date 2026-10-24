@@ -20,7 +20,7 @@ describe('mcp http hardening', () => {
       host: '127.0.0.1',
       token: TOKEN,
       cwd: tempDir(),
-      env: { ...process.env, GENOFFICE_AUDIT_LOG: 'off', GENOFFICE_ALLOWED_ROOTS: '' },
+      env: { ...process.env, HERMESOFFICE_AUDIT_LOG: 'off', HERMESOFFICE_ALLOWED_ROOTS: '' },
       log: () => {},
       registry: defaultRegistry(),
     })
@@ -54,9 +54,9 @@ describe('mcp http hardening', () => {
       cwd: tempDir(),
       env: {
         ...process.env,
-        GENOFFICE_AUDIT_LOG: 'off',
-        GENOFFICE_ALLOWED_ROOTS: '',
-        GENOFFICE_TRUST_PROXY_HEADERS: '1',
+        HERMESOFFICE_AUDIT_LOG: 'off',
+        HERMESOFFICE_ALLOWED_ROOTS: '',
+        HERMESOFFICE_TRUST_PROXY_HEADERS: '1',
       },
       log: () => {},
       registry: defaultRegistry(),

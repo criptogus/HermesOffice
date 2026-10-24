@@ -51,11 +51,11 @@ export function disposeContext(ctx: McpContext): void {
   rmSync(ctx.scratchDir, { recursive: true, force: true })
 }
 
-/** GENOFFICE_ALLOWED_ROOTS stays in force for the caller's paths; the server's own scratch dir is added so inline ops can be read. */
+/** HERMESOFFICE_ALLOWED_ROOTS stays in force for the caller's paths; the server's own scratch dir is added so inline ops can be read. */
 function allowScratch(env: NodeJS.ProcessEnv, scratchDir: string): NodeJS.ProcessEnv {
-  const roots = env.GENOFFICE_ALLOWED_ROOTS
+  const roots = env.HERMESOFFICE_ALLOWED_ROOTS
   if (roots === undefined || roots.trim() === '') return env
-  return { ...env, GENOFFICE_ALLOWED_ROOTS: `${roots}${delimiter}${scratchDir}` }
+  return { ...env, HERMESOFFICE_ALLOWED_ROOTS: `${roots}${delimiter}${scratchDir}` }
 }
 
 /** One command, as `genoffice <argv> --json` would run it, with the JSON envelope parsed back. */

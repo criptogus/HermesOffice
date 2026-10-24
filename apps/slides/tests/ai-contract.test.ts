@@ -142,10 +142,7 @@ describe('input validation precedes IPC', () => {
     ['read_slide', {}],
     ['execute_slide_script', { code: 'log(els.length)' }],
     ['insert_web_image', { url: 'https://example.com/x.png', x: 0, y: 0, w: 10, h: 10 }],
-    [
-      'replace_image',
-      { sourceId: 'el1', url: 'https://example.com/x.png' },
-    ],
+    ['replace_image', { sourceId: 'el1', url: 'https://example.com/x.png' }],
     ['edit_chart', { sourceId: 'c1' }],
     ['regenerate_slide', { marker: 'm1' }],
   ] as const

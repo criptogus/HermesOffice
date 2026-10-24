@@ -2319,12 +2319,12 @@ export const aiChatRequestSchema = z
 export const aiStreamRequestSchema = z
   .object({
     requestId: z.string().min(1),
-    sessionId: z.string().uuid().optional(),
     settings: aiSettingsInputSchema,
     system: z.string(),
     messages: z.array(agentMessageSchema).max(MAX_AI_MESSAGES),
     tools: z.array(agentToolDefSchema).max(MAX_AI_TOOLS).optional(),
     maxTokens: z.number().int().positive().optional(),
+    sessionId: z.string().min(1).max(256).optional(),
   })
   .strict()
 

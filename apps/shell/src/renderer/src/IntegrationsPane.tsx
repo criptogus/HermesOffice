@@ -43,8 +43,8 @@ export interface McpLaunch {
 
 /**
  * How an MCP client starts `hermesoffice mcp`. Clients spawn without a shell, so on Windows
- * neither genoffice.cmd nor cmd /c is safe (a path with a space splits); the snippet does
- * what genoffice.cmd does: the app binary as Node on the bundled CLI. Elsewhere it is the
+ * neither hermesoffice.cmd nor cmd /c is safe (a path with a space splits); the snippet does
+ * what hermesoffice.cmd does: the app binary as Node on the bundled CLI. Elsewhere it is the
  * bare name once it is on the PATH, else the launcher itself.
  */
 export function mcpLaunch(cli: { status: string; launcherDir: string }): McpLaunch {
@@ -56,7 +56,10 @@ export function mcpLaunch(cli: { status: string; launcherDir: string }): McpLaun
       env: { ELECTRON_RUN_AS_NODE: '1' },
     }
   }
-  return { command: cli.status === 'present' ? 'hermesoffice' : `${dir}/hermesoffice`, args: ['mcp'] }
+  return {
+    command: cli.status === 'present' ? 'hermesoffice' : `${dir}/hermesoffice`,
+    args: ['mcp'],
+  }
 }
 
 const shellWord = (w: string) => (/\s/.test(w) ? `"${w}"` : w)

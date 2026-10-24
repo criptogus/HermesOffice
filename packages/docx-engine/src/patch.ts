@@ -5,6 +5,7 @@ import {
   inlineRunsXml,
   mergePPrFormat,
   splitXmlChildren,
+  textRunXml,
 } from './generate'
 import {
   NOTE_CONTENT_TYPE,
@@ -79,7 +80,7 @@ import {
   watermarkParagraphXml,
   type Watermark,
 } from './watermark'
-import { escapeXmlAttr, escapeXmlText } from './xml-utils'
+import { escapeXmlAttr } from './xml-utils'
 import {
   CUSTOM_PROPERTIES_CONTENT_TYPE,
   CUSTOM_PROPERTIES_PATH,
@@ -1479,8 +1480,9 @@ function headerFooterPartXml(
   originalXml: string | null = null,
 ): string {
   const root = kind === 'header' ? 'w:hdr' : 'w:ftr'
-  const textRun = (t: string) =>
-    t ? `<w:r><w:t xml:space="preserve">${escapeXmlText(t)}</w:t></w:r>` : ''
+  // plain header/footer text: control chars (a tab between title/subtitle, a soft break)
+  // must come back as <w:tab/> / <w:br/>, never as literal characters inside w:t
+  const textRun = (t: string) => (t ? textRunXml(t) : '')
   const pageField =
     '<w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
     '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>' +
@@ -1643,7 +1645,10 @@ function buildCommentsXml(comments: CommentInfo[], originalXml: string | null): 
           // The last paragraph carries w14:paraId (the commentsExtended link key)
           const pid =
             i === lines.length - 1 && c.paraId ? ` w14:paraId="${escapeXmlAttr(c.paraId)}"` : ''
-          return `<w:p${pid}><w:r><w:t xml:space="preserve">${escapeXmlText(line)}</w:t></w:r></w:p>`
+          // control chars in a comment line (a pasted tab, a soft break) must come back
+          // as <w:tab/> / <w:br/>: a literal one inside w:t renders as nothing
+          const para = line ? textRunXml(line) : '<w:r><w:t xml:space="preserve"></w:t></w:r>'
+          return `<w:p${pid}>${para}</w:p>`
         })
         .join('')
       return `<w:comment ${attrs}>${paras}</w:comment>`

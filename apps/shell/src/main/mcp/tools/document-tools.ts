@@ -227,7 +227,7 @@ export function createDocumentTools(deps: DocToolDeps, host: SessionHost): McpTo
         "generate, and the editor's full open/save/export format matrix per family.",
       inputSchema: {},
       handler: () => ({
-        name: 'GenOffice',
+        name: 'HermesOffice',
         version: deps.version,
         defaultSaveDir: deps.defaultSaveDir(),
         // Every format listed here is written by a headless create/read tool, and

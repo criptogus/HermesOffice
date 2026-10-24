@@ -43,6 +43,7 @@ import { createI18n, isLang, normalizeLang, setUiLang, type Lang } from '@hermes
 import {
   DEFAULT_SAVE_DIR_KEY,
   DROP_OPEN_CHANNEL,
+  GITHUB_REPO_SLUG,
   GITHUB_REPO_URL,
   appMenuLabels,
   contextMenuLabels,
@@ -70,6 +71,12 @@ import { startControlServer, type ControlServer } from './control-server'
 import { controlHandler } from './control-handlers'
 import { installCliLinkBestEffort } from './cli-link'
 import { registerIntegrationsIpc } from './integrations-ipc'
+import { seedHermesAiSettings } from './hermes-ai-settings'
+import {
+  ensureHermesGateway,
+  shouldOfferLocalGateway,
+  type LauncherStrings,
+} from './hermes-launcher'
 import {
   ANALYTICS_ENABLED_KEY,
   analyticsEnabledFrom,
@@ -98,13 +105,7 @@ import {
   syncCloudProjects,
 } from './cloud-projects'
 import { handleDroppedFiles } from './dropped-files'
-import {
-  hermesofficeLogout as genofficeLogout,
-  gskLoginInfo,
-  loadGenofficeAuth,
-  setGskProxyUrl,
-  startGenofficeLogin,
-} from '@hermesoffice/ai-search'
+import { hermesofficeLogout as genofficeLogout, setGskProxyUrl } from '@hermesoffice/ai-search'
 
 import {
   buildDocsMenu,
@@ -283,7 +284,8 @@ import {
 } from './folder-tree'
 import { runHeadlessExport, type HeadlessExporters } from './headless-export'
 import { TabManager } from './tab-manager'
-import { applyUpdateChannel, checkForUpdatesNow, initAutoUpdater } from './updater'
+import { applyUpdateChannel, checkForUpdatesNow } from './updater'
+import { initAppUpdater } from './update-startup'
 import { isUpdateChannel, type UpdateChannel } from '../shared/update-api'
 
 /**
@@ -298,12 +300,12 @@ import { isUpdateChannel, type UpdateChannel } from '../shared/update-api'
 // ANY unpacked run (`npm run shell`, `npm run dev`, `npx electron .`) must not
 // share the installed app's userData or single-instance lock — otherwise a dev
 // run silently quits and forwards its argv to the running installed GenOffice.
-// GENOFFICE_USER_DATA: test drivers point this at a scratch dir so an
+// HERMESOFFICE_USER_DATA: test drivers point this at a scratch dir so an
 // automated instance can run alongside the dev instance (separate lock).
 if (!app.isPackaged)
   app.setPath(
     'userData',
-    process.env.GENOFFICE_USER_DATA ?? join(app.getPath('appData'), 'GenOffice Dev'),
+    process.env.HERMESOFFICE_USER_DATA ?? join(app.getPath('appData'), 'HermesOffice Dev'),
   )
 
 /**
@@ -398,7 +400,7 @@ registerPrivilegedSchemes()
 
 // ---- UI language ----
 // Persisted in userData/app-settings.json so the editor modules can read the
-// same file when they pick up i18n later. GENOFFICE_LANG overrides for tests.
+// same file when they pick up i18n later. HERMESOFFICE_LANG overrides for tests.
 
 const APP_SETTINGS_PATH = () => join(app.getPath('userData'), 'app-settings.json')
 const OPEN_DOCUMENTS_PATH = () => join(app.getPath('userData'), OPEN_DOCUMENTS_FILE)
@@ -412,8 +414,8 @@ let uiLang: Lang | null = null
 
 function currentLang(): Lang {
   if (uiLang) return uiLang
-  if (process.env.GENOFFICE_LANG) {
-    uiLang = normalizeLang(process.env.GENOFFICE_LANG)
+  if (process.env.HERMESOFFICE_LANG) {
+    uiLang = normalizeLang(process.env.HERMESOFFICE_LANG)
     setUiLang(uiLang)
     return uiLang
   }
@@ -601,7 +603,7 @@ let cachedGithubStars: number | null = null
 async function fetchGithubStars(): Promise<number | null> {
   if (cachedGithubStars !== null) return cachedGithubStars
   try {
-    const response = await fetch('https://api.github.com/repos/genspark-ai/genoffice', {
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO_SLUG}`, {
       headers: { Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(5000),
     })
@@ -698,6 +700,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '文件已损坏或不是有效的 PDF，无法转换。',
     dlgPickSaveDir: '选择默认保存位置',
     errSaveDirUnusable: '所选文件夹不可写，无法用作默认保存位置',
+    gwStartTitle: 'Hermes 网关离线',
+    gwStartBody:
+      'HermesOffice 的 AI 依赖本地 Hermes 网关，而它没有在 127.0.0.1:8642 响应。现在启动吗？',
+    gwStartNow: '启动网关',
+    gwStartNotNow: '暂不',
+    gwStartNever: '不再询问',
+    gwStartAlways: '以后自动启动',
+    gwStartFailed: 'Hermes 网关未能就绪。请在终端运行：hermes gateway start',
   },
   en: {
     menuFile: 'File',
@@ -788,6 +798,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Choose Default Save Location',
     errSaveDirUnusable:
       'The selected folder is not writable and cannot be used as the default save location',
+    gwStartTitle: 'Hermes Gateway Offline',
+    gwStartBody:
+      'HermesOffice AI runs on the local Hermes gateway, which is not answering on 127.0.0.1:8642. Start it now?',
+    gwStartNow: 'Start Gateway',
+    gwStartNotNow: 'Not Now',
+    gwStartNever: "Don't Ask Again",
+    gwStartAlways: 'Always start it automatically',
+    gwStartFailed:
+      'The Hermes gateway did not become ready. Start it from a terminal with: hermes gateway start',
   },
   ja: {
     menuFile: 'ファイル',
@@ -878,6 +897,15 @@ const tMain = createI18n({
     dlgPickSaveDir: '既定の保存先を選択',
     errSaveDirUnusable:
       '選択したフォルダーは書き込みできないため、既定の保存先として使用できません',
+    gwStartTitle: 'Hermes ゲートウェイがオフラインです',
+    gwStartBody:
+      'HermesOffice の AI はローカルの Hermes ゲートウェイで動作しますが、127.0.0.1:8642 に応答していません。今すぐ起動しますか？',
+    gwStartNow: 'ゲートウェイを起動',
+    gwStartNotNow: '後で',
+    gwStartNever: '今後表示しない',
+    gwStartAlways: '次回から自動で起動する',
+    gwStartFailed:
+      'Hermes ゲートウェイが起動しませんでした。ターミナルで実行してください: hermes gateway start',
   },
   ko: {
     menuFile: '파일',
@@ -967,6 +995,15 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '파일이 손상되었거나 유효한 PDF가 아니어서 변환할 수 없습니다.',
     dlgPickSaveDir: '기본 저장 위치 선택',
     errSaveDirUnusable: '선택한 폴더에 쓸 수 없어 기본 저장 위치로 사용할 수 없습니다',
+    gwStartTitle: 'Hermes 게이트웨이 오프라인',
+    gwStartBody:
+      'HermesOffice의 AI는 로컬 Hermes 게이트웨이에서 실행되며, 127.0.0.1:8642에서 응답하지 않습니다. 지금 시작할까요?',
+    gwStartNow: '게이트웨이 시작',
+    gwStartNotNow: '나중에',
+    gwStartNever: '다시 묻지 않기',
+    gwStartAlways: '다음부터 자동으로 시작',
+    gwStartFailed:
+      'Hermes 게이트웨이가 준비되지 않았습니다. 터미널에서 실행하세요: hermes gateway start',
   },
   fr: {
     menuFile: 'Fichier',
@@ -1058,6 +1095,15 @@ const tMain = createI18n({
     dlgPickSaveDir: "Choisir l'emplacement d'enregistrement par défaut",
     errSaveDirUnusable:
       "Le dossier sélectionné n'est pas accessible en écriture et ne peut pas servir d'emplacement d'enregistrement par défaut",
+    gwStartTitle: 'Passerelle Hermes hors ligne',
+    gwStartBody:
+      "L'IA de HermesOffice fonctionne sur la passerelle Hermes locale, qui ne répond pas sur 127.0.0.1:8642. La démarrer maintenant ?",
+    gwStartNow: 'Démarrer la passerelle',
+    gwStartNotNow: 'Plus tard',
+    gwStartNever: 'Ne plus demander',
+    gwStartAlways: 'Toujours démarrer automatiquement',
+    gwStartFailed:
+      'La passerelle Hermes n’a pas démarré. Lancez-la depuis un terminal : hermes gateway start',
   },
   de: {
     menuFile: 'Datei',
@@ -1149,6 +1195,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Standard-Speicherort auswählen',
     errSaveDirUnusable:
       'Der ausgewählte Ordner ist nicht beschreibbar und kann nicht als Standard-Speicherort verwendet werden',
+    gwStartTitle: 'Hermes-Gateway offline',
+    gwStartBody:
+      'Die KI von HermesOffice läuft über das lokale Hermes-Gateway, das unter 127.0.0.1:8642 nicht antwortet. Jetzt starten?',
+    gwStartNow: 'Gateway starten',
+    gwStartNotNow: 'Jetzt nicht',
+    gwStartNever: 'Nicht mehr fragen',
+    gwStartAlways: 'Immer automatisch starten',
+    gwStartFailed:
+      'Das Hermes-Gateway wurde nicht bereit. Starten Sie es im Terminal mit: hermes gateway start',
   },
   es: {
     menuFile: 'Archivo',
@@ -1240,6 +1295,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Elegir ubicación de guardado predeterminada',
     errSaveDirUnusable:
       'La carpeta seleccionada no admite escritura y no puede usarse como ubicación de guardado predeterminada',
+    gwStartTitle: 'Gateway de Hermes sin conexión',
+    gwStartBody:
+      'La IA de HermesOffice funciona con el gateway local de Hermes, que no responde en 127.0.0.1:8642. ¿Iniciarlo ahora?',
+    gwStartNow: 'Iniciar gateway',
+    gwStartNotNow: 'Ahora no',
+    gwStartNever: 'No volver a preguntar',
+    gwStartAlways: 'Iniciar siempre automáticamente',
+    gwStartFailed:
+      'El gateway de Hermes no quedó listo. Inícialo en la terminal con: hermes gateway start',
   },
   th: {
     menuFile: 'ไฟล์',
@@ -1327,6 +1391,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: 'ไฟล์เสียหายหรือไม่ใช่ PDF ที่ถูกต้อง จึงไม่สามารถแปลงได้',
     dlgPickSaveDir: 'เลือกตำแหน่งบันทึกเริ่มต้น',
     errSaveDirUnusable: 'โฟลเดอร์ที่เลือกไม่สามารถเขียนได้ จึงใช้เป็นตำแหน่งบันทึกเริ่มต้นไม่ได้',
+    gwStartTitle: 'Hermes Gateway ออฟไลน์',
+    gwStartBody:
+      'AI ของ HermesOffice ทำงานผ่าน Hermes Gateway ในเครื่อง ซึ่งไม่ตอบสนองที่ 127.0.0.1:8642 ต้องการเริ่มตอนนี้หรือไม่',
+    gwStartNow: 'เริ่ม Gateway',
+    gwStartNotNow: 'ไว้ก่อน',
+    gwStartNever: 'ไม่ต้องถามอีก',
+    gwStartAlways: 'เริ่มอัตโนมัติทุกครั้ง',
+    gwStartFailed: 'Hermes Gateway ไม่พร้อมใช้งาน กรุณาเริ่มจากเทอร์มินัล: hermes gateway start',
   },
   id: {
     menuFile: 'File',
@@ -1418,6 +1490,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Pilih Lokasi Penyimpanan Default',
     errSaveDirUnusable:
       'Folder yang dipilih tidak dapat ditulis dan tidak bisa digunakan sebagai lokasi penyimpanan default',
+    gwStartTitle: 'Gateway Hermes Offline',
+    gwStartBody:
+      'AI HermesOffice berjalan di gateway Hermes lokal, yang tidak merespons di 127.0.0.1:8642. Mulai sekarang?',
+    gwStartNow: 'Mulai Gateway',
+    gwStartNotNow: 'Nanti saja',
+    gwStartNever: 'Jangan tanya lagi',
+    gwStartAlways: 'Selalu mulai otomatis',
+    gwStartFailed: 'Gateway Hermes tidak siap. Jalankan dari terminal: hermes gateway start',
   },
   ru: {
     menuFile: 'Файл',
@@ -1509,6 +1589,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Выбрать папку сохранения по умолчанию',
     errSaveDirUnusable:
       'Выбранная папка недоступна для записи и не может использоваться как папка сохранения по умолчанию',
+    gwStartTitle: 'Шлюз Hermes недоступен',
+    gwStartBody:
+      'ИИ HermesOffice работает через локальный шлюз Hermes, который не отвечает на 127.0.0.1:8642. Запустить его сейчас?',
+    gwStartNow: 'Запустить шлюз',
+    gwStartNotNow: 'Не сейчас',
+    gwStartNever: 'Больше не спрашивать',
+    gwStartAlways: 'Всегда запускать автоматически',
+    gwStartFailed: 'Шлюз Hermes не запустился. Запустите его в терминале: hermes gateway start',
   },
   ar: {
     menuFile: 'ملف',
@@ -1596,6 +1684,14 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: 'الملف تالف أو ليس ملف PDF صالحًا ولا يمكن تحويله.',
     dlgPickSaveDir: 'اختيار موقع الحفظ الافتراضي',
     errSaveDirUnusable: 'المجلد المحدد غير قابل للكتابة ولا يمكن استخدامه كموقع حفظ افتراضي',
+    gwStartTitle: 'بوابة Hermes غير متصلة',
+    gwStartBody:
+      'يعمل ذكاء HermesOffice عبر بوابة Hermes المحلية، وهي لا تستجيب على 127.0.0.1:8642. هل تريد تشغيلها الآن؟',
+    gwStartNow: 'تشغيل البوابة',
+    gwStartNotNow: 'ليس الآن',
+    gwStartNever: 'عدم السؤال مجددًا',
+    gwStartAlways: 'التشغيل تلقائيًا دائمًا',
+    gwStartFailed: 'لم تصبح بوابة Hermes جاهزة. شغّلها من الطرفية: hermes gateway start',
   },
   pt: {
     menuFile: 'Arquivo',
@@ -1687,6 +1783,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Escolher local de salvamento padrão',
     errSaveDirUnusable:
       'A pasta selecionada não permite gravação e não pode ser usada como local de salvamento padrão',
+    gwStartTitle: 'Gateway do Hermes offline',
+    gwStartBody:
+      'A IA do HermesOffice roda no gateway local do Hermes, que não responde em 127.0.0.1:8642. Quer iniciá-lo agora?',
+    gwStartNow: 'Iniciar gateway',
+    gwStartNotNow: 'Agora não',
+    gwStartNever: 'Não perguntar mais',
+    gwStartAlways: 'Sempre iniciar automaticamente',
+    gwStartFailed:
+      'O gateway do Hermes não ficou pronto. Inicie pelo terminal com: hermes gateway start',
   },
   it: {
     menuFile: 'File',
@@ -1778,6 +1883,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Scegli la posizione di salvataggio predefinita',
     errSaveDirUnusable:
       'La cartella selezionata non è scrivibile e non può essere usata come posizione di salvataggio predefinita',
+    gwStartTitle: 'Gateway Hermes offline',
+    gwStartBody:
+      "L'IA di HermesOffice funziona sul gateway Hermes locale, che non risponde su 127.0.0.1:8642. Avviarlo ora?",
+    gwStartNow: 'Avvia gateway',
+    gwStartNotNow: 'Non ora',
+    gwStartNever: 'Non chiedere più',
+    gwStartAlways: 'Avvia sempre automaticamente',
+    gwStartFailed:
+      'Il gateway Hermes non è pronto. Avvialo dal terminale con: hermes gateway start',
   },
   pl: {
     menuFile: 'Plik',
@@ -1869,8 +1983,25 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Wybierz domyślną lokalizację zapisu',
     errSaveDirUnusable:
       'Wybrany folder nie pozwala na zapis i nie może być domyślną lokalizacją zapisu',
+    gwStartTitle: 'Brama Hermes offline',
+    gwStartBody:
+      'Sztuczna inteligencja HermesOffice działa przez lokalną bramę Hermes, która nie odpowiada pod 127.0.0.1:8642. Uruchomić ją teraz?',
+    gwStartNow: 'Uruchom bramę',
+    gwStartNotNow: 'Nie teraz',
+    gwStartNever: 'Nie pytaj ponownie',
+    gwStartAlways: 'Zawsze uruchamiaj automatycznie',
+    gwStartFailed:
+      'Brama Hermes nie stała się gotowa. Uruchom ją w terminalu: hermes gateway start',
   },
   cs: {
+    gwStartTitle: 'Brána Hermes je offline',
+    gwStartBody:
+      'HermesOffice používá místní bránu Hermes, která neodpovídá na 127.0.0.1:8642. Spustit ji nyní?',
+    gwStartNow: 'Spustit bránu',
+    gwStartNotNow: 'Nyní ne',
+    gwStartNever: 'Znovu se neptat',
+    gwStartAlways: 'Vždy spouštět automaticky',
+    gwStartFailed: 'Brána Hermes není připravena. Spusťte ji v terminálu: hermes gateway start',
     menuFile: 'Soubor',
     menuSectionNew: 'Nový',
     menuNewDoc: 'AI Docs',
@@ -2049,6 +2180,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Standaard opslaglocatie kiezen',
     errSaveDirUnusable:
       'De geselecteerde map is niet beschrijfbaar en kan niet als standaard opslaglocatie worden gebruikt',
+    gwStartTitle: 'Hermes-gateway offline',
+    gwStartBody:
+      'De AI van HermesOffice draait op de lokale Hermes-gateway, die niet reageert op 127.0.0.1:8642. Nu starten?',
+    gwStartNow: 'Gateway starten',
+    gwStartNotNow: 'Niet nu',
+    gwStartNever: 'Niet meer vragen',
+    gwStartAlways: 'Altijd automatisch starten',
+    gwStartFailed:
+      'De Hermes-gateway werd niet gereed. Start hem in de terminal met: hermes gateway start',
   },
   ms: {
     menuFile: 'Fail',
@@ -2139,6 +2279,15 @@ const tMain = createI18n({
     dlgPickSaveDir: 'Pilih Lokasi Simpanan Lalai',
     errSaveDirUnusable:
       'Folder yang dipilih tidak boleh ditulis dan tidak dapat digunakan sebagai lokasi simpanan lalai',
+    gwStartTitle: 'Gateway Hermes Luar Talian',
+    gwStartBody:
+      'AI HermesOffice berjalan pada gateway Hermes tempatan, yang tidak bertindak balas pada 127.0.0.1:8642. Mulakannya sekarang?',
+    gwStartNow: 'Mulakan Gateway',
+    gwStartNotNow: 'Bukan sekarang',
+    gwStartNever: 'Jangan tanya lagi',
+    gwStartAlways: 'Sentiasa mulakan automatik',
+    gwStartFailed:
+      'Gateway Hermes tidak menjadi sedia. Mulakannya dari terminal: hermes gateway start',
   },
   he: {
     menuFile: 'קובץ',
@@ -2227,6 +2376,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'בחירת מיקום שמירה כברירת מחדל',
     errSaveDirUnusable:
       'התיקייה שנבחרה אינה ניתנת לכתיבה ולא ניתן להשתמש בה כמיקום שמירה כברירת מחדל',
+    gwStartTitle: 'שער Hermes לא מחובר',
+    gwStartBody:
+      'הבינה המלאכותית של HermesOffice פועלת דרך שער Hermes המקומי, שאינו מגיב בכתובת 127.0.0.1:8642. להפעיל אותו עכשיו?',
+    gwStartNow: 'הפעל את השער',
+    gwStartNotNow: 'לא עכשיו',
+    gwStartNever: 'אל תשאל שוב',
+    gwStartAlways: 'הפעל תמיד אוטומטית',
+    gwStartFailed: 'שער Hermes לא הפך לזמין. הפעל אותו מהטרמינל: hermes gateway start',
   },
   hi: {
     menuFile: 'फ़ाइल',
@@ -2318,6 +2475,14 @@ const tMain = createI18n({
     dlgPickSaveDir: 'डिफ़ॉल्ट सहेजने का स्थान चुनें',
     errSaveDirUnusable:
       'चयनित फ़ोल्डर में लिखा नहीं जा सकता, इसलिए इसे डिफ़ॉल्ट सहेजने के स्थान के रूप में उपयोग नहीं किया जा सकता',
+    gwStartTitle: 'Hermes गेटवे ऑफ़लाइन',
+    gwStartBody:
+      'HermesOffice का AI स्थानीय Hermes गेटवे पर चलता है, जो 127.0.0.1:8642 पर जवाब नहीं दे रहा। इसे अभी शुरू करें?',
+    gwStartNow: 'गेटवे शुरू करें',
+    gwStartNotNow: 'अभी नहीं',
+    gwStartNever: 'दोबारा न पूछें',
+    gwStartAlways: 'हमेशा स्वतः शुरू करें',
+    gwStartFailed: 'Hermes गेटवे तैयार नहीं हुआ। टर्मिनल से शुरू करें: hermes gateway start',
   },
   'zh-TW': {
     menuFile: '檔案',
@@ -2400,11 +2565,30 @@ const tMain = createI18n({
     pdfDocxLocalCorruptDetail: '檔案已損壞或不是有效的 PDF，無法轉換。',
     dlgPickSaveDir: '選擇預設儲存位置',
     errSaveDirUnusable: '所選資料夾無法寫入，無法作為預設儲存位置',
+    gwStartTitle: 'Hermes 閘道離線',
+    gwStartBody:
+      'HermesOffice 的 AI 依賴本機 Hermes 閘道，而它沒有在 127.0.0.1:8642 回應。現在啟動嗎？',
+    gwStartNow: '啟動閘道',
+    gwStartNotNow: '暫不',
+    gwStartNever: '不再詢問',
+    gwStartAlways: '以後自動啟動',
+    gwStartFailed: 'Hermes 閘道未能就緒。請在終端機執行：hermes gateway start',
   },
 })
 
 const tm = (key: Parameters<typeof tMain>[1], params?: Parameters<typeof tMain>[2]) =>
   tMain(currentLang(), key, params)
+
+/** Dialog strings for the consent-gated gateway launcher (issue #7) */
+const gatewayStartupStrings = (): LauncherStrings => ({
+  title: tm('gwStartTitle'),
+  body: tm('gwStartBody'),
+  start: tm('gwStartNow'),
+  notNow: tm('gwStartNotNow'),
+  never: tm('gwStartNever'),
+  always: tm('gwStartAlways'),
+  failed: tm('gwStartFailed'),
+})
 
 // ---- the shell window + its tab manager (recreated if the user closes it on macOS) ----
 
@@ -2569,7 +2753,7 @@ function createShellWindow(): void {
     height: 900,
     minWidth: 720,
     minHeight: 550,
-    title: 'GenOffice',
+    title: 'HermesOffice',
     // vibrancy: editor modules punch translucent regions (e.g. the slides
     // thumbnail pane) through to the desktop
     ...(process.platform === 'darwin'
@@ -3014,7 +3198,7 @@ function newDocTab(): void {
 
 /** MCP: open a blank docs tab and return its webContents id, for the visible-editor bridge */
 function openBlankDocsTabForMcp(): number {
-  if (!tabManager) throw new Error('GenOffice is not ready')
+  if (!tabManager) throw new Error('HermesOffice is not ready')
   const tabId = tabManager.openDocsTab(undefined, { newBlank: true })
   const view = tabManager.docsTabs().find((t) => t.id === tabId)
   if (!view) throw new Error('the new document tab could not be opened')
@@ -3031,7 +3215,7 @@ function openBlankDocsTabForMcp(): number {
  * marking is skipped, the file name is the agent's business.
  */
 async function openBlankSheetsTabForMcp(): Promise<number> {
-  if (!tabManager) throw new Error('GenOffice is not ready')
+  if (!tabManager) throw new Error('HermesOffice is not ready')
   const filePath = uniquePathIn(defaultSaveDir(), `${tm('untitledSheet')}.xlsx`)
   writeFileSync(filePath, await blankXlsxBuffer())
   const tabId = tabManager.openSheetsTab(filePath)
@@ -3102,7 +3286,7 @@ function abandonBlankTabForMcp(
 
 /** MCP: open a blank slides tab and return its webContents id, for the visible-deck bridge */
 function openBlankSlidesTabForMcp(): number {
-  if (!tabManager) throw new Error('GenOffice is not ready')
+  if (!tabManager) throw new Error('HermesOffice is not ready')
   const tabId = tabManager.openSlidesTab()
   const view = tabManager.slidesTabs().find((t) => t.id === tabId)
   if (!view) throw new Error('the new presentation tab could not be opened')
@@ -3197,43 +3381,43 @@ function statEntries(paths: string[]): RecentEntry[] {
 }
 
 function registerHomeIpc(): void {
-  // signed-in means GenOffice's own device-code login; the shared gsk CLI key
-  // is only a silent fallback, deliberately not shown here to nudge users onto our key
+  // The Home connection indicator reflects the local Hermes gateway.
   ipcMain.handle(HOME_CHANNELS.accountStatus, async () => {
-    if (!loadGenofficeAuth()) return { loggedIn: false }
-    await proxyBootstrap
-    const info = await gskLoginInfo()
-    return info
-      ? { loggedIn: true, email: info.email, creditBalance: info.creditBalance }
-      : { loggedIn: true }
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 1500)
+      const resp = await fetch('http://127.0.0.1:8642/health', { signal: ctrl.signal })
+      clearTimeout(t)
+      if (resp.ok) {
+        const json = await resp.json().catch(() => null)
+        return { loggedIn: true, email: `Hermes ${json?.version ?? ''}`.trim() }
+      }
+      return { loggedIn: false }
+    } catch {
+      return { loggedIn: false }
+    }
   })
 
   // login progress is streamed to the requesting renderer; the auth URL is
   // kept main-side so the "open manually" rescue never opens a renderer-supplied URL
-  let pendingLoginUrl = ''
+  const pendingLoginUrl = ''
   ipcMain.handle(HOME_CHANNELS.accountLogin, async (event) => {
-    analytics.track('login_click')
+    // Check the local gateway instead of starting browser authentication.
     const sender = event.sender
-    pendingLoginUrl = ''
-    await proxyBootstrap
     const send = (payload: AccountLoginEvent) => {
       if (!sender.isDestroyed()) sender.send(HOME_CHANNELS.accountLoginEvent, payload)
     }
-    // open the browser on the first url event only; later events refresh the rescue URL
-    let opened = false
-    const launched = startGenofficeLogin((progress) => {
-      if (progress.url) {
-        pendingLoginUrl = progress.url
-        if (!opened) {
-          opened = true
-          void shell.openExternal(progress.url)
-        }
-      }
-      if (progress.phase === 'success') analytics.track('login_success')
-      send(progress)
-    })
-    if (launched) send({ phase: 'launched' })
-    return launched
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 1500)
+      const resp = await fetch('http://127.0.0.1:8642/health', { signal: ctrl.signal })
+      clearTimeout(t)
+      send({ phase: resp.ok ? 'success' : 'error', url: '' })
+      return resp.ok
+    } catch {
+      send({ phase: 'error', url: '' })
+      return false
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
@@ -3717,8 +3901,9 @@ function registerHomeIpc(): void {
     const state = readStarPrompt()
     const docOpens = state.docOpens ?? 0
     // dev preview of the card without waiting out the value thresholds
-    // (same pattern as GENOFFICE_FAKE_UPDATE); nothing is recorded
-    if (!app.isPackaged && process.env.GENOFFICE_FORCE_STAR_PROMPT) return { show: true, docOpens }
+    // (same pattern as HERMESOFFICE_FAKE_UPDATE); nothing is recorded
+    if (!app.isPackaged && process.env.HERMESOFFICE_FORCE_STAR_PROMPT)
+      return { show: true, docOpens }
     const grant = (): StarPromptShow => {
       writeStarPrompt(withShown(state, now))
       starPromptSessionGrant = { show: true, docOpens }
@@ -4696,8 +4881,7 @@ function installDockMenu(): void {
 // Prefer proxy env vars (terminal launch); a packaged app launched from Finder inherits no shell
 // env vars, so fall back to the system HTTP proxy. The renderer uses Chromium's system proxy and
 // is unaffected. Same bootstrap as slides-main startSlidesStandalone.
-// awaited by login IPC so the first status probe / login click cannot race the proxy resolution
-let proxyBootstrap: Promise<void> = Promise.resolve()
+// Initialize provider networking independently of local gateway health checks.
 
 async function installMainProcessProxy(): Promise<void> {
   let proxyUrl = [
@@ -4890,7 +5074,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  proxyBootstrap = installMainProcessProxy()
+  void installMainProcessProxy()
   app.setAccessibilitySupportEnabled(true)
   // Settle the shared uiLang from saved settings BEFORE any tab renderer can
   // ask 'app:get-language': the editor handlers return the i18n module's
@@ -5012,12 +5196,17 @@ app.whenReady().then(async () => {
   void startMcpFromSettings(currentMcpSettings()).catch((error) => {
     console.error('[mcp] failed to start on boot:', error)
   })
+  // A fresh install has no ai-settings.json, and every AI panel would then
+  // report a missing key until the user pasted one by hand: fill the hermes
+  // slot from the local gateway's ~/.hermes/.env before the first renderer can
+  // ask for settings. Best effort — startup never depends on it.
+  seedHermesAiSettings(app.getPath('userData'))
   createShellWindow()
   // deferred to ready: labels need currentLang(), which reads app.getLocale()
   installBackToHomeItems()
   installDockMenu()
   setUpdateCheckInvoker(() => void checkForUpdatesNow())
-  initAutoUpdater(() => shellWindow, currentUpdateChannel())
+  initAppUpdater(() => shellWindow, currentUpdateChannel())
 
   if (!pendingLaunchPath || !openDocumentPath(pendingLaunchPath)) tabManager?.openHomeTab()
   pendingLaunchPath = null
@@ -5036,6 +5225,13 @@ app.whenReady().then(async () => {
     },
     (err: unknown) => console.warn('[control] not listening:', err),
   )
+  // The gateway may be offline when the shell starts, and then every AI panel
+  // fails with a connection error: offer to start it. Consent-gated (the dialog
+  // remembers "always"/"never"), skipped when the hermes provider points at a
+  // non-local gateway, and fire-and-forget so a dialog can never delay startup.
+  if (shouldOfferLocalGateway()) {
+    void ensureHermesGateway(() => shellWindow, gatewayStartupStrings())
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createShellWindow()

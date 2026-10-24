@@ -61,7 +61,10 @@ import {
 } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { splitSheetRef, type CellBounds } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
-import { normalizeStyleColor, resolveStyleColor } from '@hermesoffice/xlsx-gateway/domain/style-color'
+import {
+  normalizeStyleColor,
+  resolveStyleColor,
+} from '@hermesoffice/xlsx-gateway/domain/style-color'
 import { WORST_FIRST_ICON_SETS } from '@hermesoffice/xlsx-gateway/gateway/xlsx-cf'
 import type {
   CellFormatState,
@@ -117,7 +120,10 @@ import {
 import { isPlainArithmeticFormula } from './formula-cached-fallback'
 import { degradeQuadraticFormulaCells } from './formula-cost'
 import { extractFunctionNames } from './formula-functions'
-import { DEFAULT_SHORT_DATE, setSystemShortDate } from '@hermesoffice/xlsx-gateway/shared/short-date'
+import {
+  DEFAULT_SHORT_DATE,
+  setSystemShortDate,
+} from '@hermesoffice/xlsx-gateway/shared/short-date'
 import { getWorkbookMdw, setWorkbookMdw } from './app-constants'
 import { excelRowPitchPx } from './autofit-line-pitch'
 import {

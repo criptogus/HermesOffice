@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
 // the preload exposes window.__genofficeDebug only under this env var
-process.env.GENOFFICE_DEBUG_HOOKS = '1'
+process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 /**
  * Regression for "typed a count into the right-click insert-N-columns box,

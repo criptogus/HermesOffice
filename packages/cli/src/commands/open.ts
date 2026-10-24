@@ -74,7 +74,7 @@ export const openCommand: CommandDef = {
 async function spawnApp(path: string, ctx: CommandContext): Promise<string> {
   const launch = appLaunch(ctx.env)
   if (!launch) {
-    throw new CliError(EXIT.app, 'GenOffice app not found', { hint: 'set GENOFFICE_APP_BIN' })
+    throw new CliError(EXIT.app, 'GenOffice app not found', { hint: 'set HERMESOFFICE_APP_BIN' })
   }
   const env = { ...ctx.env }
   delete env.ELECTRON_RUN_AS_NODE

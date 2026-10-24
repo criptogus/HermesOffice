@@ -1215,7 +1215,7 @@ export interface SlidesApi {
       })
     | { error: string }
   >
-  /** Whether cloud single-page generation (gsk slide_generate) is available (GENOFFICE_CLOUD_SLIDE=1 + gsk login) */
+  /** Whether cloud single-page generation (gsk slide_generate) is available (HERMESOFFICE_CLOUD_SLIDE=1 + gsk login) */
   cloudGenStatus: () => Promise<{ enabled: boolean }>
   /** Cloud single-page generation: brief → one-slide pptx temp file; the marker goes into a landGeneratedPages pageMarkers slot */
   cloudGeneratePage: (op: {

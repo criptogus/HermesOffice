@@ -33,11 +33,11 @@ import {
 } from './result'
 import { didYouMean } from './suggest'
 
-declare const __GENOFFICE_VERSION__: string | undefined
+declare const __HERMESOFFICE_VERSION__: string | undefined
 
 /** The @hermesoffice/cli package version: inlined by build.mjs, read from disk when running from source. */
 export const VERSION: string =
-  typeof __GENOFFICE_VERSION__ === 'string' ? __GENOFFICE_VERSION__ : devVersion()
+  typeof __HERMESOFFICE_VERSION__ === 'string' ? __HERMESOFFICE_VERSION__ : devVersion()
 
 function devVersion(): string {
   try {

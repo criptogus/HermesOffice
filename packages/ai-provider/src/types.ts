@@ -53,6 +53,31 @@ export interface AiProviderMeta {
   needsCliPath?: boolean
   /** Canonical default when needsBaseUrl is set (e.g. local Hermes gateway). */
   defaultBaseUrl?: string
+  /** Descriptive vendor model capabilities and pricing; not enforced by request guards. */
+  modelMetadata?: Record<string, AiModelMetadata>
+  /** Regional endpoints published by the provider. */
+  endpoints?: AiProviderEndpoint[]
+}
+
+export interface AiModelMetadata {
+  contextWindow: number
+  maxOutputTokens?: number
+  /** Qualifications for the listed base rates, such as input-length and priority tiers. */
+  pricingNotes?: string
+  pricingUsdPerMillionTokens: {
+    input: number
+    output: number
+    cacheRead?: number
+    cacheWrite?: number
+  }
+  inputModalities: Array<'text' | 'image' | 'video' | 'audio'>
+  thinkingModes: string[]
+}
+
+export interface AiProviderEndpoint {
+  region: string
+  openaiBaseUrl: string
+  anthropicBaseUrl: string
 }
 
 /** Image generation / media analysis backends (separate from the chat provider) */

@@ -28,7 +28,7 @@ export interface IntegrationsDeps {
   settingsPath: () => string
   /** the shell window dialogs attach to */
   window: () => BrowserWindow | null
-  /** directory holding hermesoffice / genoffice.cmd and, packaged, skills/hermesoffice/SKILL.md */
+  /** directory holding hermesoffice / hermesoffice.cmd and, packaged, skills/hermesoffice/SKILL.md */
   cliDir: string
   /** skills/hermesoffice/SKILL.md (repo file in dev, Resources/cli/skills/... packaged) */
   skillPath: string
@@ -47,7 +47,10 @@ export function registerIntegrationsIpc(deps: IntegrationsDeps): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.status, (): IntegrationsStatus => {
     const skill = bundled()
     const l = ledger()
-    const launcher = join(deps.cliDir, process.platform === 'win32' ? 'genoffice.cmd' : 'hermesoffice')
+    const launcher = join(
+      deps.cliDir,
+      process.platform === 'win32' ? 'hermesoffice.cmd' : 'hermesoffice',
+    )
     return {
       cli: {
         ...inspectCliLink({ launcher }),

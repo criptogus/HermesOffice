@@ -1,7 +1,7 @@
 // Copies the runtime dependencies the bundle leaves external (jsdom and its
 // tree) into dist/node_modules, mirroring their layout under the checkout's
 // node_modules so nested versions keep resolving. The packaged app ships the
-// result beside genoffice.cjs (Resources/cli/node_modules); src/dom.ts resolves
+// result beside hermesoffice.cjs (Resources/cli/node_modules); src/dom.ts resolves
 // jsdom from there.
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'

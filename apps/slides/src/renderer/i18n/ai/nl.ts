@@ -17,7 +17,7 @@ export const nl = {
   aiQcPageSkipped: 'Pagina {n}: automatische lay-outcontrole overgeslagen',
   aiQcStopped: 'Lay-outcontrole gestopt',
   aiQcCapped: 'Nog {count} pagina(’s) niet gecontroleerd (limiet per run)',
-  aiGskLoginBtn: 'Aanmelden bij Hermes',
+  aiGskLoginBtn: 'Aanmelden bij Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'AI-assistent openen',
   aiFactCheckBtn: 'AI-factcheck',
@@ -116,7 +116,7 @@ export const nl = {
   aiErrNetwork:
     'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
   aiCreditsExhausted:
-    'Je Hermes-credits zijn op. Waardeer op via hermesoffice.local/pricing en probeer het opnieuw',
+    'Je Genspark-credits zijn op. Waardeer op via genspark.ai/pricing en probeer het opnieuw',
   aiErrRequestFailed: 'Verzenden van verzoek mislukt: {msg}',
   aiErrGenerateFailed: 'Genereren mislukt',
   aiErrRegenFailed: 'Dia opnieuw genereren mislukt',

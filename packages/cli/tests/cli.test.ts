@@ -115,7 +115,7 @@ describe('genoffice cli', () => {
 
   it('open fails with exit code 4 when no app binary is available', async () => {
     const r = await run(['open', DOCX, '--json'], {
-      env: { GENOFFICE_APP_BIN: '/nonexistent/GenOffice' },
+      env: { HERMESOFFICE_APP_BIN: '/nonexistent/GenOffice' },
     })
     expect(r.code).toBe(4)
   })

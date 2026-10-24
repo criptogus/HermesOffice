@@ -216,7 +216,7 @@ export interface GatewayBuildInput {
 
 const MAX_SPARKLINES_PER_OP = 200
 
-const NOTE_AUTHOR = 'GenOffice'
+const NOTE_AUTHOR = 'HermesOffice'
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 type FilterDraft = { range: RangeBounds; columns: Map<number, string[]>; cleared: boolean }

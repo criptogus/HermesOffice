@@ -13,6 +13,7 @@ export async function chatForProvider(
   system: string,
   user: string,
   signal?: AbortSignal,
+  sessionId?: string,
 ): Promise<AiChatResponse> {
   // non-streaming: the server generates the full answer before the headers arrive,
   // so the connect phase gets the long budget; the body read then gets the idle budget
@@ -41,6 +42,7 @@ export async function chatForProvider(
         return chatOpenAiCompatible(wd, endpoint.baseUrl, config, system, user, {
           omitTemperature: endpoint.omitTemperature,
           bodyExtras: endpoint.bodyExtras,
+          extraHeaders: sessionId ? { 'X-Hermes-Session-Id': sessionId } : {},
         })
     }
   })

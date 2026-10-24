@@ -1,9 +1,7 @@
-HermesOffice
-Copyright 2026 HermesOffice contributors
+GenOffice
+Copyright 2026 Mainfunc, Inc.
 
-HermesOffice is a fork of GenOffice (genspark-ai/genoffice, Apache-2.0).
-GenOffice and related names are trademarks of Mainfunc, Inc.; see upstream
-NOTICE and THIRD-PARTY-NOTICES for bundled components.
+This product includes software developed at Mainfunc, Inc.
 
 Bundled third-party components are listed in THIRD-PARTY-NOTICES.txt, which
 tools/gen-third-party-notices.mjs generates at packaging time. It is not

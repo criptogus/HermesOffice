@@ -6,8 +6,8 @@ import { run, tempDir } from './helpers'
 // hasGskAuth reads process.env, not the command context: isolate the login state per test
 const saved: Record<string, string | undefined> = {}
 beforeEach(() => {
-  for (const k of ['GENOFFICE_AUTH_DIR', 'AI_SEARCH_DISABLE_GSK']) saved[k] = process.env[k]
-  process.env.GENOFFICE_AUTH_DIR = join(tempDir(), 'no-auth')
+  for (const k of ['HERMESOFFICE_AUTH_DIR', 'AI_SEARCH_DISABLE_GSK']) saved[k] = process.env[k]
+  process.env.HERMESOFFICE_AUTH_DIR = join(tempDir(), 'no-auth')
   process.env.AI_SEARCH_DISABLE_GSK = '1'
 })
 afterEach(() => {
@@ -30,8 +30,8 @@ describe('genoffice capabilities', () => {
     const r = await run(['capabilities', '--json'], {
       env: {
         ...process.env,
-        GENOFFICE_AI_SETTINGS: join(dir, 'missing.json'),
-        GENOFFICE_APP_BIN: '',
+        HERMESOFFICE_AI_SETTINGS: join(dir, 'missing.json'),
+        HERMESOFFICE_APP_BIN: '',
       },
     })
     expect(r.code).toBe(0)
@@ -58,8 +58,8 @@ describe('genoffice capabilities', () => {
     const r = await run(['capabilities', '--json'], {
       env: {
         ...process.env,
-        GENOFFICE_AI_SETTINGS: settings,
-        GENOFFICE_APP_BIN: join(dir, 'bin', 'app'),
+        HERMESOFFICE_AI_SETTINGS: settings,
+        HERMESOFFICE_APP_BIN: join(dir, 'bin', 'app'),
       },
     })
     expect(r.code).toBe(0)
@@ -81,7 +81,7 @@ describe('genoffice capabilities', () => {
       },
     })
     const r = await run(['capabilities', '--json'], {
-      env: { ...process.env, GENOFFICE_AI_SETTINGS: settings },
+      env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
     })
     const d = r.json().detail
     expect(d.search).toEqual({ available: true, via: 'tavily' })

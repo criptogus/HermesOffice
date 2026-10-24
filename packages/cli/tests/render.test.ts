@@ -57,7 +57,7 @@ describe('genoffice render', () => {
     const pdf = writeMinimalPdf(join(dir, 'export.pdf'))
     const shots = join(dir, 'shots')
     const r = await run(['render', xlsx, '--out', shots, '--json'], {
-      env: { ...process.env, GENOFFICE_APP_BIN: fakeApp(dir, pdf) },
+      env: { ...process.env, HERMESOFFICE_APP_BIN: fakeApp(dir, pdf) },
     })
     expect(r.code).toBe(0)
     expect(r.json().detail.via).toContain('headless-export')
@@ -91,7 +91,7 @@ describe('genoffice render', () => {
     const id = read.pages[0].elements[0].id as string
     const pdf = writeMinimalPdf(join(dir, 'export.pdf'))
     const shots = join(dir, 'shots')
-    const env = { ...process.env, GENOFFICE_APP_BIN: fakeApp(dir, pdf) }
+    const env = { ...process.env, HERMESOFFICE_APP_BIN: fakeApp(dir, pdf) }
     const r = await run(
       ['render', deck, '--out', shots, '--el', id, '--pad', '10', '--grid', '--json'],
       { env },

@@ -44,7 +44,12 @@ import { createFilesSkill } from './files-skill'
 import { createElectronTransport } from './transport'
 import { useI18n, t as tModule, aiLangDirective, type StringKey } from '../i18n/locale'
 import { Markdown } from '@hermesoffice/ui'
-import { AiComposer, AiScopeQuote, AiTypingIndicator, type AiScopeQuoteData } from '@hermesoffice/ui'
+import {
+  AiComposer,
+  AiScopeQuote,
+  AiTypingIndicator,
+  type AiScopeQuoteData,
+} from '@hermesoffice/ui'
 import { HermesMark } from '../components/icons'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
@@ -751,6 +756,11 @@ export function AiPanel({
     loopRef.current = new AgentLoop<PmNode>({
       transport: transportRef.current,
       systemSuffix: aiLangDirective,
+      // Fork: stable per-document session id (project-store chatId = sha256 of file path).
+      // Sent as X-Hermes-Session-Id → the Hermes gateway keeps ONE session per document,
+      // so follow-up questions continue the same conversation instead of opening a new thread
+      // and re-reading the document from scratch.
+      sessionId: () => chatRefIds.current?.chatId,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(
           () => editorRef.current,

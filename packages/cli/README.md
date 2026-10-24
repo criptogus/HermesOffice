@@ -117,7 +117,7 @@ file store.
 
 ## Putting genoffice on the PATH
 
-- **macOS**: the app tries to symlink `/usr/local/bin/genoffice` (or `/opt/homebrew/bin/genoffice`) on every launch until one succeeds. If neither directory is writable it stays silent; run `genoffice install-cli` from the launcher, or `sudo mkdir -p /usr/local/bin && sudo ln -sf "/Applications/GenOffice.app/Contents/Resources/cli/genoffice" /usr/local/bin/genoffice`.
+- **macOS**: the app tries to symlink `/usr/local/bin/genoffice` (or `/opt/homebrew/bin/genoffice`) on every launch until one succeeds. If neither directory is writable it stays silent; run `genoffice install-cli` from the launcher, or `sudo mkdir -p /usr/local/bin && sudo ln -sf "/Applications/HermesOffice.app/Contents/Resources/cli/genoffice" /usr/local/bin/genoffice`.
 - **Windows**: the installer appends `<install dir>\resources\cli` to the user PATH (`apps/shell/build/installer.nsh`, REG_EXPAND_SZ preserved, removed on uninstall) and the app re-checks once per version; new terminals see `genoffice`. The directory holds `genoffice.cmd` for cmd / PowerShell and the extension-less `genoffice` for Git Bash.
 - **Linux**: the deb/rpm post-install links `/usr/bin/genoffice`; the AppImage relies on the first-launch symlink into `/usr/local/bin` when it is writable.
 
@@ -137,7 +137,7 @@ Independently of the PATH, every launch of the packaged app writes the launcher 
   and the sheets CSV importer.
 - `src/resources.ts` — locates pdfium wasm, the xlsx sidecar and the OCR
   helper in both the packaged `Resources/` layout and the dev checkout.
-- `bin/genoffice`, `bin/genoffice.cmd` — launchers copied next to `genoffice.cjs` in the
+- `bin/genoffice`, `bin/genoffice.cmd` — launchers copied next to `hermesoffice.cjs` in the
   packaged app.
 
 ## Path policy and audit log
@@ -172,7 +172,7 @@ the machine.
 ## Build and run in a checkout
 
 ```
-npm run build -w @hermesoffice/cli       # esbuild → dist/genoffice.cjs
+npm run build -w @hermesoffice/cli       # esbuild → dist/hermesoffice.cjs
 packages/cli/bin/genoffice info file.docx  # falls back to the system node
 ```
 

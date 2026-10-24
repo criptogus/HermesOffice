@@ -157,7 +157,7 @@ describe('genoffice slides render', () => {
     chmodSync(fake, 0o755)
     const shots = join(dir, 'shots')
     const r = await run(['slides', 'render', pptx, '--out', shots, '--scale', '2', '--json'], {
-      env: { ...process.env, GENOFFICE_APP_BIN: fake },
+      env: { ...process.env, HERMESOFFICE_APP_BIN: fake },
     })
     expect(r.code).toBe(0)
     const files = r.json().detail.files as { path: string; width: number }[]

@@ -7,7 +7,7 @@ import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
 // the preload exposes window.__genofficeDebug only under this env var; the
 // spec needs it to read the selection through Univer's Facade
-process.env.GENOFFICE_DEBUG_HOOKS = '1'
+process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 /**
  * Regression for "cut K97:L97, press Right, lands on M97" (user

@@ -15,7 +15,10 @@ import {
   rangeCellCount,
   type RangeBounds,
 } from '@hermesoffice/xlsx-gateway/domain/cell-address'
-import { CHART_EDIT_TYPES, chartDataFromValues } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
+import {
+  CHART_EDIT_TYPES,
+  chartDataFromValues,
+} from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import type { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import {
   convertToValuesBatchError,

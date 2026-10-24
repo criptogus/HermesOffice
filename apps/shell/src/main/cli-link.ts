@@ -35,7 +35,7 @@ export function installCliLinkBestEffort(settingsPath: string): void {
     const version = app.getVersion()
     const previous = readAppSettings(settingsPath)[SETTING_KEY] as CliLinkRecord | undefined
     if (process.platform === 'win32' && previous?.version === version) return
-    const launcher = join(dir, process.platform === 'win32' ? 'genoffice.cmd' : 'hermesoffice')
+    const launcher = join(dir, process.platform === 'win32' ? 'hermesoffice.cmd' : 'hermesoffice')
     const outcome = installCliLink({ launcher })
     console.log(
       `[genoffice] cli link: ${outcome.status}${outcome.location ? ` (${outcome.location})` : ''}`,
@@ -55,10 +55,10 @@ export function isEphemeralInstall(resourcesPath: string, env: NodeJS.ProcessEnv
 
 /** Same directory the genoffice CLI uses for auth.json and its audit log. */
 export function launcherFilePath(env: NodeJS.ProcessEnv): string {
-  return join(env.GENOFFICE_AUTH_DIR || join(homedir(), '.genoffice'), 'launcher')
+  return join(env.HERMESOFFICE_AUTH_DIR || join(homedir(), '.hermesoffice'), 'launcher')
 }
 
-/** One line, the directory holding genoffice / genoffice.cmd; rewritten only when it changed. */
+/** One line, the directory holding genoffice / hermesoffice.cmd; rewritten only when it changed. */
 export function writeLauncherFile(file: string, launcherDir: string): boolean {
   const content = `${launcherDir}\n`
   try {

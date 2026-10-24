@@ -40,7 +40,7 @@ export async function exportViaApp(
   const launch = appLaunch(env)
   if (!launch) {
     throw new CliError(EXIT.app, 'GenOffice app not found (needed for this conversion)', {
-      hint: 'install GenOffice, or set GENOFFICE_APP_BIN to its executable',
+      hint: 'install GenOffice, or set HERMESOFFICE_APP_BIN to its executable',
     })
   }
   const args = [

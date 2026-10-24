@@ -13,7 +13,7 @@ function fakeMachine(agents: string[]) {
   for (const dot of agents) mkdirSync(join(home, dot), { recursive: true })
   const userData = join(home, 'userData')
   mkdirSync(userData)
-  return { home, env: { GENOFFICE_HOME: home, GENOFFICE_USER_DATA: userData } }
+  return { home, env: { HERMESOFFICE_HOME: home, HERMESOFFICE_USER_DATA: userData } }
 }
 
 describe('genoffice skill', () => {
@@ -58,7 +58,7 @@ describe('genoffice skill', () => {
       installed_version: bundledVersion,
     })
     const settings = JSON.parse(
-      readFileSync(join(m.env.GENOFFICE_USER_DATA, 'app-settings.json'), 'utf-8'),
+      readFileSync(join(m.env.HERMESOFFICE_USER_DATA, 'app-settings.json'), 'utf-8'),
     )
     expect(settings.agentSkillInstalls[path]).toMatchObject({
       version: bundledVersion,
@@ -146,19 +146,21 @@ describe('genoffice skill', () => {
     expect(existsSync(join(dir, 'hermesoffice', 'SKILL.md'))).toBe(true)
     expect(r.json().detail.agents[0]).toMatchObject({ agent: null, skills_dir: dir })
     const settings = JSON.parse(
-      readFileSync(join(m.env.GENOFFICE_USER_DATA, 'app-settings.json'), 'utf-8'),
+      readFileSync(join(m.env.HERMESOFFICE_USER_DATA, 'app-settings.json'), 'utf-8'),
     )
-    expect(Object.keys(settings.agentSkillInstalls)).toEqual([join(dir, 'hermesoffice', 'SKILL.md')])
+    expect(Object.keys(settings.agentSkillInstalls)).toEqual([
+      join(dir, 'hermesoffice', 'SKILL.md'),
+    ])
     const none = await run(['skill', 'install', 'all', '--json'], { env: m.env })
     expect(none.code).toBe(1)
   })
 
   it('creates the app data folder for the ledger on a machine that never ran the app', async () => {
     const m = fakeMachine(['.claude'])
-    const env = { ...m.env, GENOFFICE_USER_DATA: join(m.home, 'never', 'launched') }
+    const env = { ...m.env, HERMESOFFICE_USER_DATA: join(m.home, 'never', 'launched') }
     const r = await run(['skill', 'install', 'claude-code', '--json'], { env })
     expect(r.code).toBe(0)
-    expect(existsSync(join(env.GENOFFICE_USER_DATA, 'app-settings.json'))).toBe(true)
+    expect(existsSync(join(env.HERMESOFFICE_USER_DATA, 'app-settings.json'))).toBe(true)
   })
 
   it('install all refuses before writing anything when one target is blocked', async () => {
@@ -170,6 +172,6 @@ describe('genoffice skill', () => {
     expect(r.code).toBe(2)
     expect(r.json().detail).toMatchObject({ agent: 'codex', status: 'occupied' })
     expect(existsSync(join(m.home, '.claude', 'skills', 'hermesoffice'))).toBe(false)
-    expect(existsSync(join(m.env.GENOFFICE_USER_DATA, 'app-settings.json'))).toBe(false)
+    expect(existsSync(join(m.env.HERMESOFFICE_USER_DATA, 'app-settings.json'))).toBe(false)
   })
 })

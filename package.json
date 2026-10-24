@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/genspark-ai/genoffice.git"
+    "url": "git+https://github.com/criptogus/HermesOffice.git"
   },
   "workspaces": [
     "apps/*",
@@ -36,9 +36,9 @@
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "notices": "node tools/gen-third-party-notices.mjs",
     "licenses": "node tools/check-licenses.mjs",
-    "dist:mac": "npm run notices && npm run build:all && npm run native:build:universal -w @hermesoffice/sheets && npm run dist:mac -w @hermesoffice/shell",
-    "dist:win": "npm run notices && npm run build:all && npm run dist:win -w @hermesoffice/shell",
-    "dist:linux": "npm run notices && npm run build:all && npm run dist:linux -w @hermesoffice/shell"
+    "dist:mac": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run native:build:universal -w @hermesoffice/sheets && npm run dist:mac -w @hermesoffice/shell",
+    "dist:win": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run dist:win -w @hermesoffice/shell",
+    "dist:linux": "node tools/write-build-info.mjs && npm run notices && npm run build:all && npm run dist:linux -w @hermesoffice/shell"
   },
   "dependencies": {
     "ws": "^8.21.1"
@@ -51,7 +51,7 @@
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
     "concurrently": "^9.2.4",
-    "cross-env": "^10.1.0",
+    "cross-env": "^7.0.3",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.8.0",

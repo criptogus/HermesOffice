@@ -17,8 +17,9 @@ const agentHarness = vi.hoisted(() => ({
 }))
 
 vi.mock('@hermesoffice/agent-core', async () => {
-  const actual =
-    await vi.importActual<typeof import('@hermesoffice/agent-core')>('@hermesoffice/agent-core')
+  const actual = await vi.importActual<typeof import('@hermesoffice/agent-core')>(
+    '@hermesoffice/agent-core',
+  )
   return {
     ...actual,
     AgentLoop: class MockAgentLoop {

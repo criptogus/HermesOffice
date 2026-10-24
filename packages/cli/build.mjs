@@ -26,7 +26,7 @@ const rawText = {
 
 await build({
   entryPoints: [join(here, 'src/cli.ts')],
-  outfile: join(here, 'dist/genoffice.cjs'),
+  outfile: join(here, 'dist/hermesoffice.cjs'),
   bundle: true,
   platform: 'node',
   target: 'node22',
@@ -36,7 +36,7 @@ await build({
   // for asset lookups, so give them the bundle's own location.
   define: {
     'import.meta.url': '__cliImportMetaUrl',
-    __GENOFFICE_VERSION__: JSON.stringify(version),
+    __HERMESOFFICE_VERSION__: JSON.stringify(version),
   },
   banner: { js: "const __cliImportMetaUrl = require('node:url').pathToFileURL(__filename).href;" },
   jsx: 'automatic',

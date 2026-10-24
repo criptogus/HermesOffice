@@ -1136,6 +1136,8 @@ export function App(): React.JSX.Element {
     agentLoopRef.current = new AgentLoop({
       transport: createElectronTransport(() => aiSettingsRef.current!),
       systemSuffix: aiLangDirective,
+      // Fork: stable per-workbook session id → X-Hermes-Session-Id keeps ONE gateway session
+      sessionId: () => chatRefIdsRef.current?.chatId,
       skill: composeSkills('sheets+files', '', [
         createWorkbookSkill(sheetsSkillDeps()),
         createFilesSkill(availableAttachments),
@@ -3830,7 +3832,7 @@ export function App(): React.JSX.Element {
       ;(window as unknown as Record<string, unknown>).__ribbonCommand = handleRibbonCommand
     }
     // Built-app e2e hook, off by default: the preload exposes
-    // __genofficeDebugHooks only when GENOFFICE_DEBUG_HOOKS=1 (scroll/freeze
+    // __genofficeDebugHooks only when HERMESOFFICE_DEBUG_HOOKS=1 (scroll/freeze
     // drivers read Univer's render state through the Facade).
     if ((window as unknown as Record<string, unknown>).__genofficeDebugHooks === true) {
       ;(window as unknown as Record<string, unknown>).__genofficeDebug = {

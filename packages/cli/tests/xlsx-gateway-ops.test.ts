@@ -80,7 +80,7 @@ describe('genoffice sheet apply --ops: gateway-written features', () => {
     const comments = [...p.keys()].find((k) => /xl\/comments\d*\.xml$/.test(k))
     expect(comments).toBeDefined()
     expect(p.get(comments!)).toContain('Provisional figure')
-    expect(p.get(comments!)).toContain('<author>GenOffice</author>')
+    expect(p.get(comments!)).toContain('<author>HermesOffice</author>')
 
     // a second batch keeps the first note (the whole comment set is rewritten from the file's state)
     const again = await apply(out, [{ op: 'set_note', address: 'C2', text: 'Second note' }])

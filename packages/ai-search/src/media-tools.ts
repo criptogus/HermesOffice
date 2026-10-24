@@ -21,7 +21,10 @@ import {
   type MediaBlob,
 } from '@hermesoffice/ai-provider'
 // deep imports: the package root re-exports Electron-bound modules, and this file also runs in the genoffice CLI
-import { readGeneratedImage, storeGeneratedImage } from '@hermesoffice/electron-utils/generated-images'
+import {
+  readGeneratedImage,
+  storeGeneratedImage,
+} from '@hermesoffice/electron-utils/generated-images'
 import { fetchRemoteImage } from '@hermesoffice/electron-utils/remote-image'
 import { fetchWithSsrfGuard } from '@hermesoffice/electron-utils/safe-remote-url'
 import { gskAnalyzeMedia, gskGenerateImage, hasGskAuth, type GskGenerateImageOptions } from './gsk'
@@ -112,7 +115,8 @@ export async function loadMediaReference(ref: string): Promise<MediaBlob> {
     const m = /^data:([^;,]+);base64,([\s\S]*)$/.exec(ref)
     const mimePart = m?.[1]
     const b64 = m?.[2]
-    if (!mimePart || !b64) throw new Error('Unsupported data URL: only base64-encoded media can be analyzed')
+    if (!mimePart || !b64)
+      throw new Error('Unsupported data URL: only base64-encoded media can be analyzed')
     const bytes = new Uint8Array(Buffer.from(b64.replace(/\s+/g, ''), 'base64'))
     if (bytes.byteLength > MAX_MEDIA_BYTES) {
       throw new MediaTooLargeError('data URL is too large to analyze')

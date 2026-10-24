@@ -6,7 +6,12 @@
  * the fallback while PowerPoint shows the typeset formula.
  */
 import { latexToOmml } from '@hermesoffice/docx-engine/math'
-import { addElement, type Paragraph, type TextElement, type TextRun } from '@hermesoffice/pptx-engine'
+import {
+  addElement,
+  type Paragraph,
+  type TextElement,
+  type TextRun,
+} from '@hermesoffice/pptx-engine'
 import { ommlToText } from './omml-linear'
 import {
   GuidedError,

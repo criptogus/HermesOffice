@@ -22,7 +22,6 @@ import {
   isAiNetworkError,
   isAiOverloadedError,
   defaultAiSettings,
-  activeProvider,
   maxOutputTokensOf,
   resolveAiSettings,
   setAiUserAgent,
@@ -285,7 +284,7 @@ export function registerSlidesOnlyAiIpc(): void {
   )
 
   ipcMain.handle(
-    'ai:analyze-media',
+    'slides:analyze-media',
     async (_event, op: { mediaUrls: string[]; requirements: string }) => {
       return analyzeMediaTool(
         AI_SETTINGS_PATH(),

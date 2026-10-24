@@ -113,6 +113,7 @@ function emitOpenAiJsonMessage(bodyText: string, cb: StreamCallbacks): void {
 
 /** Per-endpoint request shaping resolved from the provider registry. */
 export interface OpenAiRequestOptions {
+  extraHeaders?: Record<string, string> | undefined
   omitTemperature?: boolean | undefined
   /** send the output cap as OpenAI's renamed `max_completion_tokens` (GPT-5.x/o-series 400 on `max_tokens`) */
   useMaxCompletionTokens?: boolean | undefined
@@ -158,6 +159,7 @@ async function openAiCompatibleTurn(
       'Content-Type': 'application/json',
       ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       ...gensparkAttributionHeaders(baseUrl),
+      ...options.extraHeaders,
       ...opencodeSessionHeaders(baseUrl, cb.sessionId),
     },
     body: JSON.stringify({
@@ -330,6 +332,7 @@ export async function chatOpenAiCompatible(
       'Content-Type': 'application/json',
       ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       ...gensparkAttributionHeaders(baseUrl),
+      ...options.extraHeaders,
       ...opencodeSessionHeaders(baseUrl),
     },
     body: JSON.stringify({

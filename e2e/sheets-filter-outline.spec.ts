@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl, screenshotPath } from './helpers'
 
 // the preload exposes window.__genofficeDebug only under this env var
-process.env.GENOFFICE_DEBUG_HOOKS = '1'
+process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 interface CellRect {
   left: number

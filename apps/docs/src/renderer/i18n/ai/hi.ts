@@ -8,7 +8,7 @@ export const hi = {
   aiStarterPolishAll: 'पूरे दस्तावेज़ को अधिक पेशेवर लहजे में निखारें',
   aiStarterContinue: 'दस्तावेज़ जहाँ रुका है वहाँ से आगे लिखें',
   aiStarterFillTemplate: 'दस्तावेज़ के प्लेसहोल्डर ढूँढ़कर भरें',
-  aiGskLoginBtn: 'Hermes में साइन इन करें',
+  aiGskLoginBtn: 'Genspark में साइन इन करें',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'AI सहायक खोलें',
   aiSummarizeBtn: 'AI सारांश',
@@ -114,7 +114,7 @@ export const hi = {
   aiNetworkError:
     'नेटवर्क समस्या: AI सेवा से कनेक्ट नहीं हो सका। कनेक्शन जांचें और फिर से प्रयास करें',
   aiCreditsExhausted:
-    'आपके Hermes क्रेडिट समाप्त हो गए हैं। hermesoffice.local/pricing पर रिचार्ज करें और फिर से प्रयास करें',
+    'आपके Genspark क्रेडिट समाप्त हो गए हैं। genspark.ai/pricing पर रिचार्ज करें और फिर से प्रयास करें',
   aiSumReadAttachment: 'अनुलग्नक पढ़ें',
   aiSumImageAttachment: 'चित्र अनुलग्नक {name}',
   aiSumRead: '{name} पढ़ें',

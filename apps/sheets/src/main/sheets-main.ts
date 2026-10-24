@@ -64,7 +64,6 @@ import {
   isAiOverloadedError,
   chatForProvider,
   defaultAiSettings,
-  activeProvider,
   maxOutputTokensOf,
   resolveAiSettings,
   setAiUserAgent,
@@ -4179,17 +4178,17 @@ export function startSheetsStandalone(): void {
   registerRendererScheme()
   installNavigationGuard(app)
   installContextMenu(app, () => contextMenuLabels(getUiLang()))
-  // GENOFFICE_USER_DATA: test drivers point this at a scratch dir so automated
+  // HERMESOFFICE_USER_DATA: test drivers point this at a scratch dir so automated
   // instances get their own userData AND single-instance lock (the lock is scoped
   // to userData), allowing parallel instances alongside a normal dev run.
   // Same dev-only hook as apps/slides/src/main/slides-main.ts.
-  if (!app.isPackaged && process.env.GENOFFICE_USER_DATA) {
-    app.setPath('userData', process.env.GENOFFICE_USER_DATA)
+  if (!app.isPackaged && process.env.HERMESOFFICE_USER_DATA) {
+    app.setPath('userData', process.env.HERMESOFFICE_USER_DATA)
   }
   void applyMainProcessProxy()
   app.whenReady().then(() => {
     installRendererProtocol({ sheets: join(__dirname, '../renderer') })
-    setUiLang(normalizeLang(process.env.GENOFFICE_LANG ?? app.getLocale()))
+    setUiLang(normalizeLang(process.env.HERMESOFFICE_LANG ?? app.getLocale()))
     app.setAccessibilitySupportEnabled(true)
     installApplicationMenu()
     startCaptureServer()

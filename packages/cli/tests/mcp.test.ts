@@ -104,7 +104,7 @@ describe('mcp server', () => {
     dir = tempDir()
     ctx = createContext({
       cwd: dir,
-      env: { ...process.env, GENOFFICE_AUDIT_LOG: 'off' },
+      env: { ...process.env, HERMESOFFICE_AUDIT_LOG: 'off' },
       log: () => {},
     })
     const server = createMcpServer(ctx, { registry })
@@ -312,11 +312,11 @@ describe('mcp server', () => {
     expect(readFileSync(join(deck, 'pages', '02.json'), 'utf-8')).toContain('Thanks')
   })
 
-  it('keeps the deck tools inside GENOFFICE_ALLOWED_ROOTS', async () => {
+  it('keeps the deck tools inside HERMESOFFICE_ALLOWED_ROOTS', async () => {
     const inside = join(dir, 'roots')
     const ctx2 = createContext({
       cwd: dir,
-      env: { ...process.env, GENOFFICE_AUDIT_LOG: 'off', GENOFFICE_ALLOWED_ROOTS: inside },
+      env: { ...process.env, HERMESOFFICE_AUDIT_LOG: 'off', HERMESOFFICE_ALLOWED_ROOTS: inside },
       log: () => {},
     })
     const server = createMcpServer(ctx2, { registry })

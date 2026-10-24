@@ -23,7 +23,10 @@ export async function streamForProvider(
   tools: AgentToolDef[],
   maxTokens: number,
   cb: StreamCallbacks,
+  sessionId?: string,
 ): Promise<void> {
+  const documentSessionId = sessionId ?? cb.sessionId
+  cb = { ...cb, ...(documentSessionId ? { sessionId: documentSessionId } : {}) }
   const endpoint = getProviderAdapter(provider).resolveEndpoint(config)
   const { baseUrl } = endpoint
   if (endpoint.protocol === 'codex-app-server') {
@@ -43,6 +46,7 @@ export async function streamForProvider(
           omitTemperature: endpoint.omitTemperature,
           useMaxCompletionTokens: endpoint.useMaxCompletionTokens,
           bodyExtras: endpoint.bodyExtras,
+          extraHeaders: documentSessionId ? { 'X-Hermes-Session-Id': documentSessionId } : {},
         })
     }
   })

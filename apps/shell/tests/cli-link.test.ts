@@ -11,7 +11,7 @@ import { isEphemeralInstall, launcherFilePath, writeLauncherFile } from '../src/
 describe('genoffice launcher file', () => {
   it('lives in the genoffice auth directory, overridable like auth.json', () => {
     expect(launcherFilePath({})).toBe(join(process.env.HOME ?? '', '.genoffice', 'launcher'))
-    expect(launcherFilePath({ GENOFFICE_AUTH_DIR: '/tmp/x' })).toBe(join('/tmp/x', 'launcher'))
+    expect(launcherFilePath({ HERMESOFFICE_AUTH_DIR: '/tmp/x' })).toBe(join('/tmp/x', 'launcher'))
   })
 
   it('writes one line, creates the directory, and only rewrites on change', () => {

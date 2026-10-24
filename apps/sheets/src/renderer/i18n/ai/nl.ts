@@ -5,7 +5,7 @@ export const nl = {
   aiEmptyBuildTitle: 'Laat AI deze werkmap voor je opbouwen',
   aiEmptyBuildBody:
     'Beschrijf de tabel, gegevens of grafiek die je nodig hebt — AI maakt het direct.',
-  aiGskLoginBtn: 'Aanmelden bij Hermes',
+  aiGskLoginBtn: 'Aanmelden bij Genspark',
   aiUndelivered: 'Niet verzonden',
   aiRetry: 'Opnieuw proberen',
   aiOpenAssistant: 'AI-assistent openen',
@@ -50,13 +50,13 @@ export const nl = {
   aiFileTooltip:
     'SHA-256 {sha}\nBij het opslaan worden alleen de bewerkte items herschreven; al het andere blijft behouden.',
   aiFileMeta: '{sheets} bladen · {entries} items',
-  aiHermesAccount: 'Hermes-account',
+  aiHermesAccount: 'Genspark-account',
   aiAccountChecking: 'Controleren…',
   aiLoggedIn: 'Aangemeld',
   aiLoggedInAs: 'Aangemeld: {email}',
-  aiNotLoggedIn: 'Niet aangemeld (AI-functies vereisen een Hermes-account)',
+  aiNotLoggedIn: 'Niet aangemeld (AI-functies vereisen een Genspark-account)',
   aiWaitingBrowserLogin: 'Wachten op aanmelding in de browser…',
-  aiLoginHermes: 'Aanmelden bij Hermes',
+  aiLoginHermes: 'Aanmelden bij Genspark',
   aiModel: 'Model',
   aiCancel: 'Annuleren',
   aiSave: 'Opslaan',
@@ -67,7 +67,7 @@ export const nl = {
   aiNetworkError:
     'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
   aiCreditsExhausted:
-    'Je Hermes-credits zijn op. Waardeer op via hermesoffice.local/pricing en probeer het opnieuw',
+    'Je Genspark-credits zijn op. Waardeer op via genspark.ai/pricing en probeer het opnieuw',
   aiToolWorkbookContext: 'Werkmapgegevens lezen',
   aiToolReadRange: 'Bereik lezen',
   aiToolReadRangeOf: 'Bereik {range} lezen',

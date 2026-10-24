@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -135,6 +143,142 @@ test('prepare resolves npm outside the minimal PATH (fake sh reports it)', () =>
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(readFileSync(marker, 'utf8'), 'called')
   } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('build hands the rust toolchain to npm (cargo lives in ~/.cargo/bin)', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  try {
+    const bin = join(temp, 'bin')
+    const src = join(temp, 'src')
+    const stage = join(temp, 'stage')
+    const seenPath = join(temp, 'npm-path.txt')
+    const app = join(src, 'apps', 'shell', 'release', 'mac-arm64', 'HermesOffice.app')
+    mkdirSync(bin, { recursive: true })
+    mkdirSync(join(src, '.git'), { recursive: true })
+    makeMinimalBundle(app)
+    // fake npm: records the PATH it was spawned with, then reports success.
+    // `cargo` is deliberately not reachable through this PATH — dist:mac
+    // compiles the sheets sidecar with cargo, which lives in ~/.cargo/bin.
+    executable(join(bin, 'npm'), `printf '%s' "$PATH" > "${seenPath}"`)
+    const result = spawnSync(process.execPath, [HELPER, 'build'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, // LaunchServices' minimal PATH + the fake npm
+        HERMESOFFICE_NPM: join(bin, 'npm'),
+        HERMESOFFICE_SOURCE_DIR: src,
+        HERMESOFFICE_STAGE_DIR: stage,
+      },
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const childPath = readFileSync(seenPath, 'utf8').split(':')
+    assert.ok(
+      childPath.includes(join(homedir(), '.cargo', 'bin')),
+      `cargo dir missing: ${childPath.join(':')}`,
+    )
+    assert.equal(childPath[0], bin, `caller PATH must win: ${childPath.join(':')}`)
+    assert.ok(childPath.includes('/usr/bin'), `system PATH dropped: ${childPath.join(':')}`)
+    assert.ok(
+      existsSync(join(stage, 'HermesOffice.app', 'Contents', 'Resources', 'build-info.json')),
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('build resolves npm outside LaunchServices PATH and exposes its sibling node', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  try {
+    const bin = join(temp, 'bin')
+    const npmDir = join(temp, 'node-bin')
+    const src = join(temp, 'src')
+    const stage = join(temp, 'stage')
+    const seenPath = join(temp, 'npm-path.txt')
+    const app = join(src, 'apps', 'shell', 'release', 'mac-arm64', 'HermesOffice.app')
+    mkdirSync(bin, { recursive: true })
+    mkdirSync(npmDir, { recursive: true })
+    mkdirSync(join(src, '.git'), { recursive: true })
+    makeMinimalBundle(app)
+    // fake npm: records the PATH it was spawned with, then reports success.
+    // `cargo` is deliberately not reachable through this PATH — dist:mac
+    // compiles the sheets sidecar with cargo, which lives in ~/.cargo/bin.
+    executable(join(npmDir, 'npm'), `printf '%s' "$PATH" > "${seenPath}"`)
+    const result = spawnSync(process.execPath, [HELPER, 'build'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, // LaunchServices' minimal PATH + the fake npm
+        HERMESOFFICE_NPM: join(npmDir, 'npm'),
+        HERMESOFFICE_SOURCE_DIR: src,
+        HERMESOFFICE_STAGE_DIR: stage,
+      },
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const childPath = readFileSync(seenPath, 'utf8').split(':')
+    assert.ok(
+      childPath.includes(join(homedir(), '.cargo', 'bin')),
+      `cargo dir missing: ${childPath.join(':')}`,
+    )
+    assert.equal(childPath[0], npmDir, `npm sibling node dir missing: ${childPath.join(':')}`)
+    assert.ok(childPath.includes(bin), 'caller PATH must be preserved')
+    assert.ok(childPath.includes(join(homedir(), '.local', 'bin')), 'local user tools missing')
+    assert.ok(childPath.includes('/usr/bin'), `system PATH dropped: ${childPath.join(':')}`)
+    assert.ok(
+      existsSync(join(stage, 'HermesOffice.app', 'Contents', 'Resources', 'build-info.json')),
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('install survives a stale .update-old it cannot delete', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  const backup = join(temp, 'Applications', 'HermesOffice.app.update-old')
+  try {
+    const bin = join(temp, 'bin')
+    const stage = join(temp, 'stage')
+    const stagedApp = join(stage, 'HermesOffice.app')
+    const appPath = join(temp, 'Applications', 'HermesOffice.app')
+
+    makeMinimalBundle(stagedApp)
+    writeFileSync(
+      join(stagedApp, 'Contents', 'Resources', 'build-info.json'),
+      JSON.stringify({ commit: 'new-commit' }),
+    )
+    makeMinimalBundle(appPath)
+    // Residue of an update that died mid-cleanup, made undeletable (no write bit
+    // on the directory) — the update must still swap and relaunch instead of
+    // aborting with ENOTEMPTY *after* the bundle was already replaced.
+    mkdirSync(join(backup, 'Contents'), { recursive: true })
+    writeFileSync(join(backup, 'Contents', 'leftover.txt'), 'x')
+    chmodSync(backup, 0o500)
+    mkdirSync(bin, { recursive: true })
+    executable(join(bin, 'pgrep'), 'exit 1')
+    executable(join(bin, 'sleep'), 'exit 0')
+    executable(join(bin, 'codesign'), 'exit 0')
+    executable(join(bin, 'open'), 'exit 0')
+
+    const result = spawnSync(process.execPath, [HELPER, 'install'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin`,
+        HERMESOFFICE_STAGE_DIR: stage,
+        HERMESOFFICE_APP_PATH: appPath,
+      },
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const info = JSON.parse(
+      readFileSync(join(appPath, 'Contents', 'Resources', 'build-info.json'), 'utf8'),
+    )
+    assert.equal(info.commit, 'new-commit', 'swap must land even with a stuck backup')
+  } finally {
+    try {
+      chmodSync(backup, 0o700)
+    } catch {}
     rmSync(temp, { recursive: true, force: true })
   }
 })

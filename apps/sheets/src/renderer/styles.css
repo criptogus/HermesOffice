@@ -205,7 +205,8 @@
   font-weight: bold;
   src:
     local('Aptos Bold'), local('Calibri Bold'), local('Carlito Bold'),
-    url('@hermesoffice/ui/fonts/Carlito-Bold.ttf'), local('Helvetica Neue Bold'), local('Arial Bold');
+    url('@hermesoffice/ui/fonts/Carlito-Bold.ttf'), local('Helvetica Neue Bold'),
+    local('Arial Bold');
   font-display: block;
 }
 
@@ -283,8 +284,9 @@
   font-family: Calibri;
   font-style: italic;
   src:
-    local('Calibri Italic'), local('Carlito Italic'), url('@hermesoffice/ui/fonts/Carlito-Italic.ttf'),
-    local('Helvetica Neue Italic'), local('Arial Italic');
+    local('Calibri Italic'), local('Carlito Italic'),
+    url('@hermesoffice/ui/fonts/Carlito-Italic.ttf'), local('Helvetica Neue Italic'),
+    local('Arial Italic');
   font-display: block;
 }
 

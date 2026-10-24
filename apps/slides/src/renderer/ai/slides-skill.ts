@@ -7,7 +7,12 @@ import type {
   ShapeRenderNode,
 } from '@hermesoffice/pptx-render'
 import type { AgentToolCall, AgentToolDef } from '../../shared/ipc'
-import { OP_GROUPS, opGuide, opGuideCatalog, opSignatureIndex } from '@hermesoffice/pptx-ops/op-docs'
+import {
+  OP_GROUPS,
+  opGuide,
+  opGuideCatalog,
+  opSignatureIndex,
+} from '@hermesoffice/pptx-ops/op-docs'
 import { auditSlideLayout, formatAudit } from '@hermesoffice/pipelines/slides/layout-audit'
 import { runLayoutScript, type LayoutScriptElement } from './layout-script'
 import { t } from '../i18n/locale'
@@ -1053,7 +1058,7 @@ export function formatSlideDump(slide: RenderSlide): string {
   return `Canvas ${slide.widthPx}×${slide.heightPx}px (1 px = ${pxToEmu} EMU)\n${parts.join('\n---\n') || '(no elements on this page)'}${colorNote}`
 }
 
-/** tools that need a media provider: Hermes login + cloud tools, or a BYOK media key in Settings */
+/** tools that need a media provider: Genspark login + cloud tools, or a BYOK media key in Settings */
 function hiddenMediaTools(access: DeckAccess): Set<string> {
   const hidden = new Set<string>()
   if (access.imageGenAvailable?.() === false) hidden.add('generate_image')
@@ -1064,7 +1069,7 @@ function hiddenMediaTools(access: DeckAccess): Set<string> {
 function mediaToolsOffNote(hidden: Set<string>): string {
   if (hidden.size === 0) return ''
   const plural = hidden.size > 1
-  return `\n\nNote: ${[...hidden].join(' and ')} ${plural ? 'are' : 'is'} currently unavailable (no image/media provider: signed out of Hermes or cloud tools off, and no media API key in Settings). Do not call or promise ${plural ? 'them' : 'it'}; for imagery use image_search + insert_web_image instead.`
+  return `\n\nNote: ${[...hidden].join(' and ')} ${plural ? 'are' : 'is'} currently unavailable (no image/media provider: signed out of Genspark or cloud tools off, and no media API key in Settings). Do not call or promise ${plural ? 'them' : 'it'}; for imagery use image_search + insert_web_image instead.`
 }
 
 export function createSlidesSkill(access: DeckAccess): AgentSkill {

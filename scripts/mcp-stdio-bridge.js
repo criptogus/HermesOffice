@@ -31,8 +31,8 @@ const DEFAULT_PORT = 3093
 const DEFAULT_HOST = '127.0.0.1'
 
 function parseArgs(argv) {
-  let port = Number(process.env.GENOFFICE_MCP_PORT) || DEFAULT_PORT
-  let host = process.env.GENOFFICE_MCP_HOST || DEFAULT_HOST
+  let port = Number(process.env.HERMESOFFICE_MCP_PORT) || DEFAULT_PORT
+  let host = process.env.HERMESOFFICE_MCP_HOST || DEFAULT_HOST
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--port' && argv[i + 1]) port = parseInt(argv[++i], 10)
     else if (argv[i] === '--host' && argv[i + 1]) host = argv[++i]

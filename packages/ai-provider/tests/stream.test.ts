@@ -287,7 +287,15 @@ describe('streamForProvider: anthropic', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(sseStream(starts))))
     const { cb } = collector()
     await expect(
-      streamForProvider('anthropic', { apiKey: 'k', model: 'claude-sonnet-5' }, 'sys', [], [], 100, cb),
+      streamForProvider(
+        'anthropic',
+        { apiKey: 'k', model: 'claude-sonnet-5' },
+        'sys',
+        [],
+        [],
+        100,
+        cb,
+      ),
     ).rejects.toThrow(/Too many streamed tool calls/)
   })
 
@@ -960,6 +968,55 @@ describe('streamForProvider: openai-compatible', () => {
     ).catch(() => {})
     const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>
     expect(headers.Authorization).toBeUndefined()
+  })
+})
+
+// Regression tests for #17. Commit 70374e0 added X-Hermes-Session-Id (one Hermes
+// gateway session per document); the upstream syncs (672e5d8, then #58) dropped the
+// app-layer wiring together with the header tests that pinned it, so the header
+// silently stopped being sent. These pin the provider end of the pipe: a sessionId
+// that reaches streamForProvider must land on the wire as X-Hermes-Session-Id.
+describe('streamForProvider: X-Hermes-Session-Id', () => {
+  const okTurn = () =>
+    okResponse(sseStream(['data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}']))
+  const headersOf = (fetchMock: ReturnType<typeof vi.fn>, call: number) =>
+    fetchMock.mock.calls[call]![1].headers as Record<string, string>
+
+  it('sends the same X-Hermes-Session-Id on every request for one document (#17)', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    const sessionId = 'doc-abc123'
+    for (let i = 0; i < 2; i++) {
+      await streamForProvider(
+        'openai',
+        { apiKey: 'k', model: 'gpt-4.1-mini' },
+        'sys',
+        [{ role: 'user', text: `question ${i + 1}` }],
+        [],
+        100,
+        collector().cb,
+        sessionId,
+      )
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(headersOf(fetchMock, 0)['X-Hermes-Session-Id']).toBe(sessionId)
+    expect(headersOf(fetchMock, 1)['X-Hermes-Session-Id']).toBe(sessionId)
+  })
+
+  it('omits X-Hermes-Session-Id when no sessionId is provided (#17)', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    await streamForProvider(
+      'openai',
+      { apiKey: 'k', model: 'gpt-4.1-mini' },
+      'sys',
+      [{ role: 'user', text: 'question' }],
+      [],
+      100,
+      collector().cb,
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect('X-Hermes-Session-Id' in headersOf(fetchMock, 0)).toBe(false)
   })
 })
 

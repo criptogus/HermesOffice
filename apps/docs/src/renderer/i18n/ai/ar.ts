@@ -8,7 +8,7 @@ export const ar = {
   aiStarterPolishAll: 'حسّن صياغة المستند كاملًا بنبرة أكثر احترافية',
   aiStarterContinue: 'تابع الكتابة من حيث انتهى المستند',
   aiStarterFillTemplate: 'اعثر على العناصر النائبة في المستند واملأها',
-  aiGskLoginBtn: 'تسجيل الدخول إلى Hermes',
+  aiGskLoginBtn: 'تسجيل الدخول إلى Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'فتح مساعد الذكاء الاصطناعي',
   aiSummarizeBtn: 'تلخيص AI',
@@ -112,7 +112,7 @@ export const ar = {
   aiNetworkError:
     'مشكلة في الشبكة: تعذّر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من الاتصال وحاول مجددًا',
   aiCreditsExhausted:
-    'نفدت أرصدة Hermes لديك. يرجى إعادة الشحن عبر hermesoffice.local/pricing ثم المحاولة مجددًا',
+    'نفدت أرصدة Genspark لديك. يرجى إعادة الشحن عبر genspark.ai/pricing ثم المحاولة مجددًا',
   aiSumReadAttachment: 'قراءة المرفق',
   aiSumImageAttachment: 'مرفق صورة {name}',
   aiSumRead: 'قراءة {name}',

@@ -26,7 +26,11 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['@hermesoffice/docx-engine', '@hermesoffice/electron-utils', '@hermesoffice/font-metrics'],
+        exclude: [
+          '@hermesoffice/docx-engine',
+          '@hermesoffice/electron-utils',
+          '@hermesoffice/font-metrics',
+        ],
       }),
     ],
     resolve: { alias: localAlias },

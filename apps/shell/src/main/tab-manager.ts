@@ -70,7 +70,7 @@ const HOME_ID = 'home'
  */
 export class TabManager {
   private readonly tabs: TabRecord[] = [
-    { id: HOME_ID, kind: 'home', view: null, title: 'GenOffice' },
+    { id: HOME_ID, kind: 'home', view: null, title: 'HermesOffice' },
   ]
   private activeId: string = HOME_ID
   private nextId = 1
@@ -108,7 +108,7 @@ export class TabManager {
   }
 
   private scheduleSpareSheetsView(delayMs: number): void {
-    if (process.env.GENOFFICE_NO_SPARE_VIEW || this.spareSheetsTimer) return
+    if (process.env.HERMESOFFICE_NO_SPARE_VIEW || this.spareSheetsTimer) return
     this.spareSheetsTimer = setTimeout(() => {
       this.spareSheetsTimer = null
       if (this.spareSheetsView || this.shellWindow.isDestroyed()) return

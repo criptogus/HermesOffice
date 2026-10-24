@@ -7,7 +7,7 @@ import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
 // the preload exposes window.__genofficeDebug only under this env var; the
 // spec needs it to read Univer's visible range through the Facade
-process.env.GENOFFICE_DEBUG_HOOKS = '1'
+process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 /**
  * Regression for "Ctrl+Shift+Down extends the selection but the viewport

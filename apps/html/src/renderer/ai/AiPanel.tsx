@@ -642,6 +642,7 @@ export function AiPanel({
   const loopRef = useRef<AgentLoop<DocSnapshot> | null>(null)
   if (!loopRef.current) {
     loopRef.current = new AgentLoop<DocSnapshot>({
+      sessionId: () => chatIdsRef.current?.chatId,
       transport: transportRef.current,
       skill: composeSkills('html+search', '', [
         createDocumentSkill({

@@ -14,23 +14,23 @@ done
 here=$(cd "$(dirname "$self")" && pwd)
 
 if [ -n "$GENOFFICE_NODE" ]; then
-  exec "$GENOFFICE_NODE" "$here/genoffice.cjs" "$@"
+  exec "$GENOFFICE_NODE" "$here/hermesoffice.cjs" "$@"
 fi
 
 case "$here" in
   */Contents/Resources/cli) app="$here/../../MacOS/GenOffice" ;;
   */resources/cli)
     # Linux install, or the Windows install reached from Git Bash / MSYS
-    if [ -x "$here/../../GenOffice.exe" ]; then app="$here/../../GenOffice.exe"; else app="$here/../../genoffice"; fi
+    if [ -x "$here/../../HermesOffice.exe" ]; then app="$here/../../HermesOffice.exe"; else app="$here/../../genoffice"; fi
     ;;
   *) app="" ;;
 esac
 
 if [ -n "$app" ] && [ -x "$app" ]; then
-  ELECTRON_RUN_AS_NODE=1 exec "$app" "$here/genoffice.cjs" "$@"
+  ELECTRON_RUN_AS_NODE=1 exec "$app" "$here/hermesoffice.cjs" "$@"
 fi
 
-if [ -f "$here/genoffice.cjs" ]; then
-  exec node "$here/genoffice.cjs" "$@"
+if [ -f "$here/hermesoffice.cjs" ]; then
+  exec node "$here/hermesoffice.cjs" "$@"
 fi
-exec node "$here/../dist/genoffice.cjs" "$@"
+exec node "$here/../dist/hermesoffice.cjs" "$@"

@@ -3,7 +3,7 @@
  * auto-update feed URL can be injected at build time instead of living in
  * the repo).
  *
- * GENOFFICE_UPDATE_URL — public base URL of the update channel (the generic
+ * HERMESOFFICE_UPDATE_URL — public base URL of the update channel (the generic
  * provider prefix that serves latest.yml / latest-mac.yml). Required for
  * release builds; CI provides it as a repository secret. For local release
  * builds put it in apps/shell/electron-builder.env (gitignored) — the
@@ -13,14 +13,14 @@
  * the publish config is omitted: electron-builder then bakes no
  * app-update.yml into the app and in-app auto-update stays disabled.
  *
- * GENOFFICE_GA4_MEASUREMENT_ID / GENOFFICE_GA4_API_SECRET — GA4 Measurement
+ * HERMESOFFICE_GA4_MEASUREMENT_ID / HERMESOFFICE_GA4_API_SECRET — GA4 Measurement
  * Protocol credentials for anonymous usage analytics, injected the same way
  * (CI secrets, or apps/shell/electron-builder.env locally). They are written
  * into the packaged app's package.json via extraMetadata and read back by
  * src/main/analytics.ts. When either is unset — every source/fork build —
  * nothing is injected and the app runs with analytics fully disabled.
  *
- * GENOFFICE_FONT_CDN_URL — base URL for the curated downloadable-font catalog.
+ * HERMESOFFICE_FONT_CDN_URL — base URL for the curated downloadable-font catalog.
  * Official release jobs inject it through extraMetadata so the endpoint stays
  * out of source. Without it, font download prompts/catalog entries are hidden;
  * users can still install local font files.
@@ -43,33 +43,33 @@ function normalizeHttpsBaseUrl(name, value) {
   }
 }
 
-const updateUrl = process.env.GENOFFICE_UPDATE_URL
-const ga4MeasurementId = process.env.GENOFFICE_GA4_MEASUREMENT_ID
-const ga4ApiSecret = process.env.GENOFFICE_GA4_API_SECRET
+const updateUrl = process.env.HERMESOFFICE_UPDATE_URL
+const ga4MeasurementId = process.env.HERMESOFFICE_GA4_MEASUREMENT_ID
+const ga4ApiSecret = process.env.HERMESOFFICE_GA4_API_SECRET
 const fontCdnUrl = normalizeHttpsBaseUrl(
-  'GENOFFICE_FONT_CDN_URL',
-  process.env.GENOFFICE_FONT_CDN_URL,
+  'HERMESOFFICE_FONT_CDN_URL',
+  process.env.HERMESOFFICE_FONT_CDN_URL,
 )
 
-// GENOFFICE_MAC_X64=1 — opt into packaging the Intel (x64) dmg/zip alongside
+// HERMESOFFICE_MAC_X64=1 — opt into packaging the Intel (x64) dmg/zip alongside
 // arm64. Off by default: Intel packages must only ever ship signed with the
 // company certificate (planned dual-track pipeline), so the current release
 // pipeline stays arm64-only and never produces a personally-signed Intel
-// artifact. The downstream layout (feed archive name, GenOffice-intel.dmg
+// artifact. The downstream layout (feed archive name, HermesOffice-intel.dmg
 // alias) keys off which dmgs exist, so flipping this flag is the single
 // switch.
-const includeMacX64 = process.env.GENOFFICE_MAC_X64 === '1'
+const includeMacX64 = process.env.HERMESOFFICE_MAC_X64 === '1'
 
-// GENOFFICE_WIN_ARM64=1 — package the Windows ARM64 installer instead of x64.
+// HERMESOFFICE_WIN_ARM64=1 — package the Windows ARM64 installer instead of x64.
 // CI runs it as a second electron-builder pass (own BUILD_DIR) after the
 // unchanged x64 pass, so the two never share an output dir or a sidecar path:
 // the sidecar comes from the matching cargo target dir and is checked to
 // exist at beforePack because electron-builder exits 0 on a missing
 // extraResources source (Sheets would ship dead on every ARM install).
-const winArm64 = process.env.GENOFFICE_WIN_ARM64 === '1'
+const winArm64 = process.env.HERMESOFFICE_WIN_ARM64 === '1'
 // 7-Zip packs ARM64 executables with its ARM64 branch filter, which the NSIS
 // install-time extractor (Nsis7z) cannot decode: it silently skips
-// GenOffice.exe and every dll (electron-builder#9983). BCJ it can decode.
+// HermesOffice.exe and every dll (electron-builder#9983). BCJ it can decode.
 if (winArm64 && !process.env.ELECTRON_BUILDER_7Z_FILTER) {
   process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'
 }
@@ -87,6 +87,9 @@ const WIN_SIDECAR = `../sheets/native/xlsx-engine/target/${winSidecarTarget}/rel
 // exits 0 on a missing extraResources source, so without this check the
 // installer would silently ship without the Chromium license.
 for (const rel of [
+  // written by tools/write-build-info.mjs, which every dist:* script runs before
+  // electron-builder — a bundle without it can never be installed by the updater
+  'build/build-info.json',
   '../../node_modules/@genspark/cli',
   '../../node_modules/@genspark/cli/node_modules/commander',
   '../../node_modules/ws',
@@ -187,7 +190,7 @@ function assertUniversalVisionOcr() {
 // Runs from the beforePack hook, not at module load: gen-third-party-notices
 // requires this config to read extraResources, and the dist:* scripts run
 // notices before build:all, when the out dirs legitimately don't exist yet.
-// When the mac build packages BOTH arches (GENOFFICE_MAC_X64=1) its
+// When the mac build packages BOTH arches (HERMESOFFICE_MAC_X64=1) its
 // extraResources entry is a single path shared by the two packs, so the
 // sidecar there must be a lipo fat binary — a host-arch-only build (the plain
 // `native:build` dev path) would silently ship an arm64 sidecar inside the
@@ -219,7 +222,7 @@ function assertModuleTreesPresent() {
     '../pdf/out',
     '../markdown/out',
     '../html/out',
-    '../../packages/cli/dist/genoffice.cjs',
+    '../../packages/cli/dist/hermesoffice.cjs',
     '../../packages/cli/dist/node_modules/jsdom',
   ]) {
     if (!existsSync(join(__dirname, rel))) {
@@ -232,8 +235,8 @@ function assertModuleTreesPresent() {
 
 /** @type {import('electron-builder').Configuration} */
 const config = {
-  appId: 'com.genoffice.app',
-  productName: 'GenOffice',
+  appId: 'com.hermesoffice.app',
+  productName: 'HermesOffice',
   // Resolved from the installed electron package so dependency bumps can
   // never leave a stale hard-coded pin behind (packaging would silently ship
   // the old runtime).
@@ -243,6 +246,16 @@ const config = {
   },
   files: ['out/**'],
   extraResources: [
+    // build-info.json — the commit/version the bundle was built from, written
+    // by tools/write-build-info.mjs (run from the dist:* scripts, right before
+    // electron-builder). The GitHub-main updater reads it at runtime to decide
+    // whether an update exists, and tools/hermesoffice-update.mjs REFUSES to
+    // install a bundle without it — dropping this entry silently breaks the
+    // update path for every installed app.
+    {
+      from: 'build/build-info.json',
+      to: 'build-info.json',
+    },
     {
       from: 'build/THIRD-PARTY-NOTICES.txt',
       to: 'THIRD-PARTY-NOTICES.txt',
@@ -300,21 +313,21 @@ const config = {
       from: '../../node_modules/@genspark/cli',
       to: 'gsk/node_modules/@genspark/cli',
     },
-    // genoffice command line: runs on the app binary with ELECTRON_RUN_AS_NODE (as
+    // hermesoffice command line: runs on the app binary with ELECTRON_RUN_AS_NODE (as
     // the gsk CLI above already does), so the RunAsNode fuse must stay enabled.
     // Layout (Resources/cli next to wasm/, native/, ocr/) is what
     // packages/cli/src/resources.ts expects.
     {
-      from: '../../packages/cli/dist/genoffice.cjs',
-      to: 'cli/genoffice.cjs',
+      from: '../../packages/cli/dist/hermesoffice.cjs',
+      to: 'cli/hermesoffice.cjs',
     },
     {
-      from: '../../packages/cli/bin/genoffice',
-      to: 'cli/genoffice',
+      from: '../../packages/cli/bin/hermesoffice',
+      to: 'cli/hermesoffice',
     },
     {
-      from: '../../packages/cli/bin/genoffice.cmd',
-      to: 'cli/genoffice.cmd',
+      from: '../../packages/cli/bin/hermesoffice.cmd',
+      to: 'cli/hermesoffice.cmd',
     },
     // the CLI's version (Settings → Integrations shows it) and the agent skill
     // the same pane installs into Claude Code / Codex / …; bytes identical to the repo file
@@ -326,7 +339,7 @@ const config = {
       from: '../../skills/hermesoffice/SKILL.md',
       to: 'cli/skills/hermesoffice/SKILL.md',
     },
-    // runtime deps the genoffice bundle leaves external (jsdom for the Word/Markdown
+    // runtime deps the hermesoffice bundle leaves external (jsdom for the Word/Markdown
     // paths); collected by packages/cli/collect-deps.mjs during its build
     {
       from: '../../packages/cli/dist/node_modules',
@@ -349,7 +362,7 @@ const config = {
   // build/ as <icon>.icns for the mac CFBundleDocumentTypes entry and
   // <icon>.ico for the NSIS DefaultIcon registry value. Without it both
   // platforms fall back to the app icon, so every associated file shows the
-  // bare GenOffice logo instead of a per-type document icon. The icns/ico
+  // bare HermesOffice logo instead of a per-type document icon. The icns/ico
   // pairs are generated from the shell renderer's file-type tiles by
   // tools/gen-file-association-icons.mjs.
   fileAssociations: [
@@ -438,9 +451,9 @@ const config = {
   mac: {
     // Two separate arch packages (NOT universal): arm64 keeps the exact
     // artifact names and update-feed entries it always had, x64 (opt-in via
-    // GENOFFICE_MAC_X64=1, see includeMacX64 above) adds Intel support with
-    // electron-builder's default arch-less names (GenOffice-<v>.dmg /
-    // GenOffice-<v>-mac.zip). Both zips land in one latest-mac.yml and
+    // HERMESOFFICE_MAC_X64=1, see includeMacX64 above) adds Intel support with
+    // electron-builder's default arch-less names (HermesOffice-<v>.dmg /
+    // HermesOffice-<v>-mac.zip). Both zips land in one latest-mac.yml and
     // electron-updater picks by process.arch. Dual-arch packs ship the same
     // lipo fat xlsx-sidecar (see assertUniversalSidecar above).
     target: [
@@ -489,7 +502,7 @@ const config = {
     // AppImage (self-contained, any distro) + deb (apt install, pulls in the
     // GTK/NSS runtime deps) + rpm (dnf/zypper install on Fedora / RHEL /
     // openSUSE). Default artifact names are kept on purpose —
-    // GenOffice-<v>.AppImage / genoffice_<v>_amd64.deb — because the public
+    // HermesOffice-<v>.AppImage / hermesoffice_<v>_amd64.deb — because the public
     // README download links and the already-published linux-v0.5.149 release
     // use them.
     target: [
@@ -506,21 +519,21 @@ const config = {
     category: 'Office',
     // Icon SET directory, not the single 1024px png: electron-builder does
     // not resize a lone png, so deb/rpm would install only
-    // hicolor/1024x1024/apps/genoffice.png — a size absent from the hicolor
+    // hicolor/1024x1024/apps/hermesoffice.png — a size absent from the hicolor
     // theme index, leaving GNOME/KDE launchers on the generic fallback icon
-    // (genspark-ai/genoffice#90). The set ships every standard raster size.
+    // (genspark-ai/hermesoffice#90). The set ships every standard raster size.
     icon: 'build/icons',
     // mac and win name the binary from productName; linux instead derives it
     // from package.json "name", and "@hermesoffice/shell" sanitizes to the
-    // invalid "@genofficeshell". Setting it explicitly also makes the
-    // generated genoffice.desktop match the WM_CLASS Electron reports (it
+    // invalid "@hermesofficeshell". Setting it explicitly also makes the
+    // generated hermesoffice.desktop match the WM_CLASS Electron reports (it
     // takes that from the executable basename), so the running window links
     // back to its launcher entry.
     executableName: 'hermesoffice',
     // Electron takes its X11 app_id from package.json "desktopName"
-    // (genoffice.desktop); syncDesktopName makes electron-builder name the
+    // (hermesoffice.desktop); syncDesktopName makes electron-builder name the
     // .desktop file and its StartupWMClass from the same value. Without it
-    // StartupWMClass falls back to productName ("GenOffice"), which does not
+    // StartupWMClass falls back to productName ("HermesOffice"), which does not
     // match the "hermesoffice" WM_CLASS the window actually reports — and X11
     // compares case-sensitively, so the taskbar shows an unlinked window.
     syncDesktopName: true,
@@ -533,16 +546,16 @@ const config = {
   },
   // Same "@hermesoffice/shell" problem as executableName above: the default deb
   // artifact name derives from package.json "name", and the scope's "/" makes
-  // fpm treat "@genoffice" as a directory. Spell the published name out
-  // (genoffice_<version>_amd64.deb, matching the linux-v0.5.149 release).
+  // fpm treat "@hermesoffice" as a directory. Spell the published name out
+  // (hermesoffice_<version>_amd64.deb, matching the linux-v0.5.149 release).
   // packageName pins the control Package field to the same value the 0.5.149
   // deb shipped with — apt treats a different Package name as an unrelated
   // install, breaking upgrades. Without it, fpm receives productName
-  // "GenOffice" and only happens to downcase it to the right value.
+  // "HermesOffice" and only happens to downcase it to the right value.
   deb: {
-    artifactName: 'genoffice_${version}_${arch}.deb',
+    artifactName: 'hermesoffice_${version}_${arch}.deb',
     packageName: 'hermesoffice',
-    // expose the genoffice command line shipped inside the app
+    // expose the hermesoffice command line shipped inside the app
     afterInstall: 'build/linux-after-install.sh',
     afterRemove: 'build/linux-after-remove.sh',
   },
@@ -558,7 +571,7 @@ const config = {
   // latest-linux.yml keeps listing exactly what the CDN pipeline uploads
   // (AppImage + deb) and the promote workflow needs no rpm alias.
   rpm: {
-    artifactName: 'genoffice-${version}.${arch}.rpm',
+    artifactName: 'hermesoffice-${version}.${arch}.rpm',
     packageName: 'hermesoffice',
     publish: null,
     afterInstall: 'build/linux-after-install.sh',
@@ -590,19 +603,21 @@ const config = {
 // individually (Smart App Control, WDAC/AppLocker, AV heuristics) block
 // unsigned child processes — the unsigned xlsx-sidecar.exe died with
 // "spawn UNKNOWN" on such machines even though the installer itself was
-// signed. When CI exports GENOFFICE_WIN_SIGN_MODE ("test" = alpha
+// signed. When CI exports HERMESOFFICE_WIN_SIGN_MODE ("test" = alpha
 // self-signed PFX, "production" = DigiCert KeyLocker — the two modes of
 // scripts/win-sign.cjs, whose env-var contract applies here too), every
-// binary electron-builder signs for win (GenOffice.exe, the NSIS
+// binary electron-builder signs for win (HermesOffice.exe, the NSIS
 // uninstaller, and the installer) goes through that script. The static
 // extraResources binaries (xlsx-sidecar.exe, win-ocr.exe) are signed by the
 // workflow before packaging since electron-builder does not sign
 // extraResources. Unset (local / fork builds) keeps the old behavior:
 // electron-builder has no signing config and packages everything unsigned.
-const winSignMode = process.env.GENOFFICE_WIN_SIGN_MODE
+const winSignMode = process.env.HERMESOFFICE_WIN_SIGN_MODE
 if (winSignMode) {
   if (winSignMode !== 'test' && winSignMode !== 'production') {
-    throw new Error(`GENOFFICE_WIN_SIGN_MODE must be "test" or "production", got "${winSignMode}"`)
+    throw new Error(
+      `HERMESOFFICE_WIN_SIGN_MODE must be "test" or "production", got "${winSignMode}"`,
+    )
   }
   config.win.signtoolOptions = {
     // Single pass per file: the sha1+sha256 dual-signing default is a
@@ -633,12 +648,12 @@ if (updateUrl) {
 // so the version and all injected feature settings survive together.
 const extraMetadata = {}
 if (ga4MeasurementId && ga4ApiSecret) {
-  extraMetadata.genofficeAnalytics = {
+  extraMetadata.hermesofficeAnalytics = {
     measurementId: ga4MeasurementId,
     apiSecret: ga4ApiSecret,
   }
 }
-if (fontCdnUrl) extraMetadata.genofficeFontCdn = { baseUrl: fontCdnUrl }
+if (fontCdnUrl) extraMetadata.hermesofficeFontCdn = { baseUrl: fontCdnUrl }
 if (Object.keys(extraMetadata).length) config.extraMetadata = extraMetadata
 
 module.exports = config

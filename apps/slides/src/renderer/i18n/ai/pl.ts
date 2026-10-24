@@ -17,7 +17,7 @@ export const pl = {
   aiQcPageSkipped: 'Strona {n}: pominięto automatyczne sprawdzanie układu',
   aiQcStopped: 'Sprawdzanie układu zatrzymane',
   aiQcCapped: 'Pozostałe {count} stron(y) nie sprawdzono (limit na uruchomienie)',
-  aiGskLoginBtn: 'Zaloguj się do Hermes',
+  aiGskLoginBtn: 'Zaloguj się do Genspark',
   aiPanelTitle: 'Hermes',
   aiOpenAssistant: 'Otwórz asystenta AI',
   aiFactCheckBtn: 'Weryfikacja AI',
@@ -114,7 +114,7 @@ export const pl = {
   aiErrNetwork:
     'Problem z siecią: nie można połączyć się z usługą AI. Sprawdź połączenie i spróbuj ponownie',
   aiCreditsExhausted:
-    'Twoje kredyty Hermes wyczerpały się. Doładuj konto na hermesoffice.local/pricing i spróbuj ponownie',
+    'Twoje kredyty Genspark wyczerpały się. Doładuj konto na genspark.ai/pricing i spróbuj ponownie',
   aiErrRequestFailed: 'Wysłanie żądania nie powiodło się: {msg}',
   aiErrGenerateFailed: 'Generowanie nie powiodło się',
   aiErrRegenFailed: 'Ponowne wygenerowanie slajdu nie powiodło się',

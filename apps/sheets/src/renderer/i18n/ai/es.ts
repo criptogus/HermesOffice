@@ -5,7 +5,7 @@ export const es = {
   aiEmptyBuildTitle: 'Deja que la IA construya este libro por ti',
   aiEmptyBuildBody:
     'Describe la tabla, los datos o el gráfico que necesitas: la IA los crea directamente.',
-  aiGskLoginBtn: 'Iniciar sesión en Hermes',
+  aiGskLoginBtn: 'Iniciar sesión en Genspark',
   aiUndelivered: 'No enviado',
   aiRetry: 'Reintentar',
   aiOpenAssistant: 'Abrir el asistente de IA',
@@ -50,13 +50,13 @@ export const es = {
   aiFileTooltip:
     'SHA-256 {sha}\nAl guardar solo se reescriben las entradas editadas; todo lo demás se conserva.',
   aiFileMeta: '{sheets} hojas · {entries} entradas',
-  aiHermesAccount: 'Cuenta de Hermes',
+  aiHermesAccount: 'Cuenta de Genspark',
   aiAccountChecking: 'Comprobando…',
   aiLoggedIn: 'Sesión iniciada',
   aiLoggedInAs: 'Sesión iniciada: {email}',
-  aiNotLoggedIn: 'Sin sesión iniciada (las funciones de IA requieren una cuenta de Hermes)',
+  aiNotLoggedIn: 'Sin sesión iniciada (las funciones de IA requieren una cuenta de Genspark)',
   aiWaitingBrowserLogin: 'Esperando el inicio de sesión en el navegador…',
-  aiLoginHermes: 'Iniciar sesión en Hermes',
+  aiLoginHermes: 'Iniciar sesión en Genspark',
   aiModel: 'Modelo',
   aiCancel: 'Cancelar',
   aiSave: 'Guardar',
@@ -68,7 +68,7 @@ export const es = {
   aiNetworkError:
     'Problema de red: no se pudo conectar con el servicio de IA. Comprueba tu conexión e inténtalo de nuevo',
   aiCreditsExhausted:
-    'Tus créditos de Hermes se han agotado. Recarga en hermesoffice.local/pricing e inténtalo de nuevo',
+    'Tus créditos de Genspark se han agotado. Recarga en genspark.ai/pricing e inténtalo de nuevo',
   aiToolWorkbookContext: 'Leer información del libro',
   aiToolReadRange: 'Leer rango',
   aiToolReadRangeOf: 'Leer rango {range}',

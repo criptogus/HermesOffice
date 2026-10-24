@@ -4,8 +4,8 @@ export const strings = {
     // Sidebar navigation
     navRecent: '最近',
     navStarred: '收藏',
-    navCloud: 'Hermes Projects',
-    cloudSubtitle: '在网页端用 Hermes AI 创建的项目。编辑在浏览器中继续——点击任意项目即可打开。',
+    navCloud: 'Genspark Projects',
+    cloudSubtitle: '在网页端用 Genspark AI 创建的项目。编辑在浏览器中继续——点击任意项目即可打开。',
     cloudSearchPlaceholder: '搜索 {n} 个项目…',
     cloudNoResults: '没有匹配的项目。',
     cloudGroupThisWeek: '本周',
@@ -14,7 +14,7 @@ export const strings = {
     cloudSortRecent: '最近',
     cloudSortOldest: '最早',
     cloudRefresh: '刷新',
-    cloudLoginHint: '登录 Hermes 账号，查看你在网页端创建的项目。',
+    cloudLoginHint: '登录 Genspark 账号，查看你在网页端创建的项目。',
     cloudEmpty: '还没有网页端项目。',
     cloudError: '加载失败，请稍后重试。',
     cloudRetry: '重试',
@@ -124,9 +124,9 @@ export const strings = {
     accountHermes: 'Hermes 账号',
     account: '账号',
     login: '登录',
-    loginHermes: '登录 Hermes 账号',
+    loginHermes: '配置 Hermes',
     loggedIn: '已登录',
-    loggedInHermes: '已登录 Hermes',
+    loggedInHermes: '已连接 Hermes',
     waitingLogin: '等待浏览器登录…点击可重新拉起登录页',
     waitingShort: '等待登录…',
     loginTimeout: '登录超时,点击重试',
@@ -135,7 +135,7 @@ export const strings = {
     loginOpenShort: '手动打开登录页',
     loginCopyUrl: '复制登录链接',
     loginCopied: '已复制',
-    loginNetworkError: '无法连接 Hermes,请检查网络或代理设置',
+    loginNetworkError: '无法连接 Hermes，请检查网络或代理设置',
     loginExpired: '登录已过期,点击重试',
     loginFailed: '登录失败,点击重试',
     loggingOut: '正在退出…',
@@ -304,8 +304,7 @@ export const strings = {
     setAiMediaHermesHint: '生图与图片/视频解析使用 Hermes 账号登录。',
     setAiImageModel: '生图模型',
     setAiAnalysisModel: '解析模型',
-    setAiSearchHermesHint:
-      '网页与图片搜索使用 Hermes 账号登录；未登录或关闭云工具时改用免费来源。',
+    setAiSearchHermesHint: '网页与图片搜索使用 Hermes 账号登录；未登录或关闭云工具时改用免费来源。',
     setAiSearchSerperHint: 'Serper 用你的 key 同时提供网页与图片搜索。',
     setAiSearchTavilyHint: 'Tavily 用你的 key 提供网页搜索；图片搜索改用免费来源。',
     setAiCapImage: '生图',
@@ -313,9 +312,9 @@ export const strings = {
     setAiCapVideo: '视频解析',
     setAiCapSearch: '网络搜索',
     setAiSharedKeyHint: '同一服务商的 key 与 Base URL 在各项能力间共用，只需填一次。',
-    setAiGskTools: 'Hermes 云工具',
+    setAiGskTools: 'Genspark 云工具',
     setAiGskToolsDesc:
-      '服务商选择 Hermes 时，网页搜索、生图与媒体解析经 Hermes 云端并消耗积分；关闭后搜索改用免费来源，Hermes 生图工具不可用。',
+      '服务商选择 Genspark 时，网页搜索、生图与媒体解析经 Genspark 云端并消耗积分；关闭后搜索改用免费来源，Genspark 生图工具不可用。',
     setGithub: '开源项目',
     starOnGitHub: '去 GitHub 点 Star',
     starPromptTitle: '喜欢 HermesOffice 吗？',
@@ -344,8 +343,9 @@ export const strings = {
     onbSubtitle1: '第一个开源的 AI 原生 Office 套件',
     onbBody1: '创建文档、制作表格、生成演示、审阅 PDF。AI 深度融入每个环节。',
     onbTitle2: '这只是一个开始',
-    onbBody2: 'HermesOffice 目前处于 alpha 阶段。欢迎加入 GitHub 群聊，分享反馈，一起塑造它的未来。',
-    onbCredits: '活跃贡献者可获得 **1,000+ open-source contribution**',
+    onbBody2:
+      'HermesOffice 目前处于 alpha 阶段。欢迎加入 GitHub 群聊，分享反馈，一起塑造它的未来。',
+    onbCredits: '活跃贡献者可获得 **1,000+ Genspark 积分**',
     onbJoinGitHub: '加入 GitHub',
     onbSkip: '跳过',
     onbNext: '下一步',
@@ -359,9 +359,9 @@ export const strings = {
   en: {
     navRecent: 'Recent',
     navStarred: 'Starred',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projects created on the web with Hermes AI. Editing continues in your browser — click any project to open it.',
+      'Projects created on the web with Genspark AI. Editing continues in your browser — click any project to open it.',
     cloudSearchPlaceholder: 'Search {n} projects…',
     cloudNoResults: 'No matching projects.',
     cloudGroupThisWeek: 'This week',
@@ -370,7 +370,7 @@ export const strings = {
     cloudSortRecent: 'Recent',
     cloudSortOldest: 'Oldest',
     cloudRefresh: 'Refresh',
-    cloudLoginHint: 'Sign in to your Hermes account to see projects you created on the web.',
+    cloudLoginHint: 'Sign in to your Genspark account to see projects you created on the web.',
     cloudEmpty: 'No web projects yet.',
     cloudError: 'Failed to load. Try again later.',
     cloudRetry: 'Retry',
@@ -476,9 +476,9 @@ export const strings = {
     accountHermes: 'Hermes Account',
     account: 'Account',
     login: 'Sign in',
-    loginHermes: 'Sign in with Hermes',
+    loginHermes: 'Set up Hermes',
     loggedIn: 'Signed in',
-    loggedInHermes: 'Signed in to Hermes',
+    loggedInHermes: 'Connected to Hermes',
     waitingLogin: 'Waiting for browser sign-in… Click to relaunch the sign-in page',
     loginTimeout: 'Sign-in timed out — click to retry',
     loginLaunchFailed: 'Could not start sign-in — click to retry',
@@ -676,9 +676,9 @@ export const strings = {
     setAiCapSearch: 'Web search',
     setAiSharedKeyHint:
       "A vendor's key and base URL are shared across capabilities; enter them once.",
-    setAiGskTools: 'Hermes cloud tools',
+    setAiGskTools: 'Genspark cloud tools',
     setAiGskToolsDesc:
-      'Web search, image generation and media analysis run through Hermes and use credits while their provider is set to Hermes; when off, search uses free sources and the Hermes image tools are unavailable.',
+      'Web search, image generation and media analysis run through Genspark and use credits while their provider is set to Genspark; when off, search uses free sources and the Genspark image tools are unavailable.',
     setGithub: 'Open Source',
     starOnGitHub: 'Star on GitHub',
     starPromptTitle: 'Enjoying HermesOffice?',
@@ -709,7 +709,7 @@ export const strings = {
     onbTitle2: 'This is just the beginning',
     onbBody2:
       'HermesOffice is still in alpha. Join the group chat on GitHub to share feedback and help shape what comes next.',
-    onbCredits: 'Active contributors get **1,000+ open-source contribution**',
+    onbCredits: 'Active contributors get **1,000+ Genspark credits**',
     onbJoinGitHub: 'Join GitHub',
     onbSkip: 'Skip',
     onbNext: 'Next',
@@ -724,9 +724,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: '最近使用',
     navStarred: 'お気に入り',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Web で Hermes AI を使って作成したプロジェクト。編集はブラウザで続行します。クリックで開きます。',
+      'Web で Genspark AI を使って作成したプロジェクト。編集はブラウザで続行します。クリックで開きます。',
     cloudSearchPlaceholder: '{n} 件のプロジェクトを検索…',
     cloudNoResults: '一致するプロジェクトはありません。',
     cloudGroupThisWeek: '今週',
@@ -736,7 +736,7 @@ export const strings = {
     cloudSortOldest: '古い順',
     cloudRefresh: '更新',
     cloudLoginHint:
-      'Hermes アカウントにサインインすると、Web で作成したプロジェクトを表示できます。',
+      'Genspark アカウントにサインインすると、Web で作成したプロジェクトを表示できます。',
     cloudEmpty: 'Web のプロジェクトはまだありません。',
     cloudError: '読み込みに失敗しました。後でもう一度お試しください。',
     cloudRetry: '再試行',
@@ -848,9 +848,9 @@ export const strings = {
     accountHermes: 'Hermes アカウント',
     account: 'アカウント',
     login: 'サインイン',
-    loginHermes: 'Hermes アカウントでサインイン',
+    loginHermes: 'Hermes を設定',
     loggedIn: 'サインイン済み',
-    loggedInHermes: 'Hermes にサインイン済み',
+    loggedInHermes: 'Hermes に接続済み',
     waitingLogin:
       'ブラウザーでのサインインを待っています… クリックするとサインインページを再表示します',
     waitingShort: 'サインイン待ち…',
@@ -860,8 +860,7 @@ export const strings = {
     loginOpenShort: 'ログインページを手動で開く',
     loginCopyUrl: 'ログインリンクをコピー',
     loginCopied: 'コピーしました',
-    loginNetworkError:
-      'Hermes に接続できません。ネットワークまたはプロキシ設定を確認してください',
+    loginNetworkError: 'Hermes に接続できません。ネットワークまたはプロキシ設定を確認してください',
     loginExpired: 'サインインの有効期限が切れました。クリックして再試行',
     loginFailed: 'サインインに失敗しました。クリックして再試行',
     loggingOut: 'サインアウトしています…',
@@ -1052,9 +1051,9 @@ export const strings = {
     setAiCapSearch: 'Web 検索',
     setAiSharedKeyHint:
       '同じプロバイダーのキーと Base URL は各機能で共有されます。一度入力すれば済みます。',
-    setAiGskTools: 'Hermes クラウドツール',
+    setAiGskTools: 'Genspark クラウドツール',
     setAiGskToolsDesc:
-      'プロバイダーが Hermes のとき、Web 検索・画像生成・メディア解析は Hermes 経由でクレジットを消費します。オフにすると検索は無料ソースを使い、Hermes の画像ツールは利用できません。',
+      'プロバイダーが Genspark のとき、Web 検索・画像生成・メディア解析は Genspark 経由でクレジットを消費します。オフにすると検索は無料ソースを使い、Genspark の画像ツールは利用できません。',
     setGithub: 'オープンソース',
     starOnGitHub: 'GitHub でスターを付ける',
     starPromptTitle: 'HermesOffice はいかがですか？',
@@ -1087,7 +1086,7 @@ export const strings = {
     onbTitle2: 'これはまだ始まりにすぎません',
     onbBody2:
       'HermesOffice はまだアルファ版です。GitHub のグループチャットに参加して、フィードバックを共有し、今後の開発を一緒に形作りましょう。',
-    onbCredits: 'アクティブな貢献者への特典 **1,000+ オープンソースへの貢献**',
+    onbCredits: 'アクティブな貢献者への特典 **1,000+ Genspark クレジット**',
     onbJoinGitHub: 'GitHub に参加',
     onbSkip: 'スキップ',
     onbNext: '次へ',
@@ -1102,9 +1101,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: '최근 사용',
     navStarred: '즐겨찾기',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Hermes AI로 웹에서 만든 프로젝트입니다. 편집은 브라우저에서 계속됩니다. 프로젝트를 클릭하면 열립니다.',
+      'Genspark AI로 웹에서 만든 프로젝트입니다. 편집은 브라우저에서 계속됩니다. 프로젝트를 클릭하면 열립니다.',
     cloudSearchPlaceholder: '프로젝트 {n}개 검색…',
     cloudNoResults: '일치하는 프로젝트가 없습니다.',
     cloudGroupThisWeek: '이번 주',
@@ -1113,7 +1112,7 @@ export const strings = {
     cloudSortRecent: '최신순',
     cloudSortOldest: '오래된순',
     cloudRefresh: '새로고침',
-    cloudLoginHint: 'Hermes 계정에 로그인하면 웹에서 만든 프로젝트를 볼 수 있습니다.',
+    cloudLoginHint: 'Genspark 계정에 로그인하면 웹에서 만든 프로젝트를 볼 수 있습니다.',
     cloudEmpty: '아직 웹 프로젝트가 없습니다.',
     cloudError: '불러오지 못했습니다. 나중에 다시 시도해 주세요.',
     cloudRetry: '다시 시도',
@@ -1224,9 +1223,9 @@ export const strings = {
     accountHermes: 'Hermes 계정',
     account: '계정',
     login: '로그인',
-    loginHermes: 'Hermes 계정으로 로그인',
+    loginHermes: 'Hermes 설정',
     loggedIn: '로그인됨',
-    loggedInHermes: 'Hermes에 로그인됨',
+    loggedInHermes: 'Hermes에 연결됨',
     waitingLogin: '브라우저 로그인을 기다리는 중… 클릭하면 로그인 페이지를 다시 엽니다',
     waitingShort: '로그인 대기 중…',
     loginTimeout: '로그인 시간이 초과되었습니다. 클릭하여 다시 시도',
@@ -1421,9 +1420,9 @@ export const strings = {
     setAiCapSearch: '웹 검색',
     setAiSharedKeyHint:
       '같은 제공자의 키와 Base URL은 모든 기능에서 공유되므로 한 번만 입력하면 됩니다.',
-    setAiGskTools: 'Hermes 클라우드 도구',
+    setAiGskTools: 'Genspark 클라우드 도구',
     setAiGskToolsDesc:
-      '제공자가 Hermes일 때 웹 검색, 이미지 생성, 미디어 분석은 Hermes를 거쳐 크레딧을 사용합니다. 끄면 검색은 무료 소스를 사용하고 Hermes 이미지 도구는 사용할 수 없습니다.',
+      '제공자가 Genspark일 때 웹 검색, 이미지 생성, 미디어 분석은 Genspark를 거쳐 크레딧을 사용합니다. 끄면 검색은 무료 소스를 사용하고 Genspark 이미지 도구는 사용할 수 없습니다.',
     setGithub: '오픈 소스',
     starOnGitHub: 'GitHub에서 스타 누르기',
     starPromptTitle: 'HermesOffice가 마음에 드시나요?',
@@ -1456,7 +1455,7 @@ export const strings = {
     onbTitle2: '이제 시작일 뿐입니다',
     onbBody2:
       'HermesOffice는 아직 알파 단계입니다. GitHub 그룹 채팅에 참여해 피드백을 공유하고 앞으로의 방향을 함께 만들어 가세요.',
-    onbCredits: '활발한 기여자를 위한 혜택 **1,000+ Hermes 크레딧**',
+    onbCredits: '활발한 기여자를 위한 혜택 **1,000+ Genspark 크레딧**',
     onbJoinGitHub: 'GitHub 참여하기',
     onbSkip: '건너뛰기',
     onbNext: '다음',
@@ -1471,9 +1470,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Récents',
     navStarred: 'Favoris',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      "Projets créés sur le web avec Hermes AI. L'édition continue dans votre navigateur — cliquez sur un projet pour l'ouvrir.",
+      "Projets créés sur le web avec Genspark AI. L'édition continue dans votre navigateur — cliquez sur un projet pour l'ouvrir.",
     cloudSearchPlaceholder: 'Rechercher parmi {n} projets…',
     cloudNoResults: 'Aucun projet correspondant.',
     cloudGroupThisWeek: 'Cette semaine',
@@ -1483,7 +1482,7 @@ export const strings = {
     cloudSortOldest: 'Plus anciens',
     cloudRefresh: 'Actualiser',
     cloudLoginHint:
-      'Connectez-vous à votre compte Hermes pour voir les projets créés sur le web.',
+      'Connectez-vous à votre compte Genspark pour voir les projets créés sur le web.',
     cloudEmpty: 'Aucun projet web pour le moment.',
     cloudError: 'Échec du chargement. Réessayez plus tard.',
     cloudRetry: 'Réessayer',
@@ -1597,7 +1596,7 @@ export const strings = {
     accountHermes: 'Compte Hermes',
     account: 'Compte',
     login: 'Se connecter',
-    loginHermes: 'Se connecter avec Hermes',
+    loginHermes: 'Configurer Hermes',
     loggedIn: 'Connecté',
     loggedInHermes: 'Connecté à Hermes',
     waitingLogin:
@@ -1805,9 +1804,9 @@ export const strings = {
     setAiCapSearch: 'Recherche web',
     setAiSharedKeyHint:
       "La clé et l'URL de base d'un fournisseur sont partagées entre les capacités ; saisissez-les une seule fois.",
-    setAiGskTools: 'Outils cloud Hermes',
+    setAiGskTools: 'Outils cloud Genspark',
     setAiGskToolsDesc:
-      "Lorsque leur fournisseur est Hermes, la recherche web, la génération d'images et l'analyse de médias passent par Hermes et consomment des crédits ; désactivé, la recherche utilise des sources gratuites et les outils d'image Hermes sont indisponibles.",
+      "Lorsque leur fournisseur est Genspark, la recherche web, la génération d'images et l'analyse de médias passent par Genspark et consomment des crédits ; désactivé, la recherche utilise des sources gratuites et les outils d'image Genspark sont indisponibles.",
     setGithub: 'Open source',
     starOnGitHub: 'Mettre une étoile sur GitHub',
     starPromptTitle: 'HermesOffice vous plaît ?',
@@ -1840,7 +1839,7 @@ export const strings = {
     onbTitle2: 'Ce n’est qu’un début',
     onbBody2:
       'HermesOffice est encore en alpha. Rejoignez la discussion de groupe sur GitHub pour partager vos retours et façonner la suite.',
-    onbCredits: 'Les contributeurs actifs reçoivent **1 000+ crédits Hermes**',
+    onbCredits: 'Les contributeurs actifs reçoivent **1 000+ crédits Genspark**',
     onbJoinGitHub: 'Rejoindre GitHub',
     onbSkip: 'Passer',
     onbNext: 'Suivant',
@@ -1855,9 +1854,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Zuletzt verwendet',
     navStarred: 'Favoriten',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Mit Hermes AI im Web erstellte Projekte. Die Bearbeitung läuft im Browser weiter – klicken Sie auf ein Projekt, um es zu öffnen.',
+      'Mit Genspark AI im Web erstellte Projekte. Die Bearbeitung läuft im Browser weiter – klicken Sie auf ein Projekt, um es zu öffnen.',
     cloudSearchPlaceholder: '{n} Projekte durchsuchen…',
     cloudNoResults: 'Keine passenden Projekte.',
     cloudGroupThisWeek: 'Diese Woche',
@@ -1867,7 +1866,7 @@ export const strings = {
     cloudSortOldest: 'Älteste',
     cloudRefresh: 'Aktualisieren',
     cloudLoginHint:
-      'Melden Sie sich bei Ihrem Hermes-Konto an, um Ihre im Web erstellten Projekte zu sehen.',
+      'Melden Sie sich bei Ihrem Genspark-Konto an, um Ihre im Web erstellten Projekte zu sehen.',
     cloudEmpty: 'Noch keine Web-Projekte.',
     cloudError: 'Laden fehlgeschlagen. Bitte später erneut versuchen.',
     cloudRetry: 'Erneut versuchen',
@@ -1984,9 +1983,9 @@ export const strings = {
     accountHermes: 'Hermes-Konto',
     account: 'Konto',
     login: 'Anmelden',
-    loginHermes: 'Mit Hermes anmelden',
+    loginHermes: 'Hermes einrichten',
     loggedIn: 'Angemeldet',
-    loggedInHermes: 'Bei Hermes angemeldet',
+    loggedInHermes: 'Mit Hermes verbunden',
     waitingLogin:
       'Warten auf Anmeldung im Browser… Klicken Sie, um die Anmeldeseite erneut zu öffnen',
     waitingShort: 'Warten…',
@@ -2177,8 +2176,7 @@ export const strings = {
     setAiMaxTokensDesc:
       'Ausgabe-Budget pro Durchlauf. Denk-Modelle verbrauchen es beim Reasoning; ist es erschöpft, kommt eine leere Antwort zurück — dann diesen Wert erhöhen.',
     setSecAiMedia: 'KI-Medien & Suche',
-    setAiMediaHermesHint:
-      'Bildgenerierung und Bild-/Videoanalyse nutzen deine Hermes-Anmeldung.',
+    setAiMediaHermesHint: 'Bildgenerierung und Bild-/Videoanalyse nutzen deine Hermes-Anmeldung.',
     setAiImageModel: 'Bildmodell',
     setAiAnalysisModel: 'Analysemodell',
     setAiSearchHermesHint:
@@ -2192,9 +2190,9 @@ export const strings = {
     setAiCapSearch: 'Websuche',
     setAiSharedKeyHint:
       'Schlüssel und Base URL eines Anbieters gelten für alle Fähigkeiten; einmal eintragen genügt.',
-    setAiGskTools: 'Hermes-Cloud-Tools',
+    setAiGskTools: 'Genspark-Cloud-Tools',
     setAiGskToolsDesc:
-      'Steht ihr Anbieter auf Hermes, laufen Websuche, Bildgenerierung und Medienanalyse über Hermes und verbrauchen Credits; ausgeschaltet nutzt die Suche kostenlose Quellen und die Hermes-Bildwerkzeuge sind nicht verfügbar.',
+      'Steht ihr Anbieter auf Genspark, laufen Websuche, Bildgenerierung und Medienanalyse über Genspark und verbrauchen Credits; ausgeschaltet nutzt die Suche kostenlose Quellen und die Genspark-Bildwerkzeuge sind nicht verfügbar.',
     setGithub: 'Open Source',
     starOnGitHub: 'Auf GitHub Stern geben',
     starPromptTitle: 'Gefällt Ihnen HermesOffice?',
@@ -2227,7 +2225,7 @@ export const strings = {
     onbTitle2: 'Das ist erst der Anfang',
     onbBody2:
       'HermesOffice ist noch in der Alpha-Phase. Treten Sie dem Gruppenchat auf GitHub bei, um Feedback zu teilen und die Zukunft mitzugestalten.',
-    onbCredits: 'Aktive Mitwirkende erhalten **1.000+ Hermes-Guthaben**',
+    onbCredits: 'Aktive Mitwirkende erhalten **1.000+ Genspark-Guthaben**',
     onbJoinGitHub: 'GitHub beitreten',
     onbSkip: 'Überspringen',
     onbNext: 'Weiter',
@@ -2242,9 +2240,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Recientes',
     navStarred: 'Destacados',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Proyectos creados en la web con Hermes AI. La edición continúa en tu navegador: haz clic en un proyecto para abrirlo.',
+      'Proyectos creados en la web con Genspark AI. La edición continúa en tu navegador: haz clic en un proyecto para abrirlo.',
     cloudSearchPlaceholder: 'Buscar entre {n} proyectos…',
     cloudNoResults: 'No hay proyectos coincidentes.',
     cloudGroupThisWeek: 'Esta semana',
@@ -2254,7 +2252,7 @@ export const strings = {
     cloudSortOldest: 'Más antiguos',
     cloudRefresh: 'Actualizar',
     cloudLoginHint:
-      'Inicia sesión en tu cuenta de Hermes para ver los proyectos creados en la web.',
+      'Inicia sesión en tu cuenta de Genspark para ver los proyectos creados en la web.',
     cloudEmpty: 'Aún no hay proyectos en la web.',
     cloudError: 'Error al cargar. Inténtalo más tarde.',
     cloudRetry: 'Reintentar',
@@ -2369,9 +2367,9 @@ export const strings = {
     accountHermes: 'Cuenta de Hermes',
     account: 'Cuenta',
     login: 'Iniciar sesión',
-    loginHermes: 'Iniciar sesión con Hermes',
+    loginHermes: 'Configurar Hermes',
     loggedIn: 'Sesión iniciada',
-    loggedInHermes: 'Sesión iniciada en Hermes',
+    loggedInHermes: 'Conectado a Hermes',
     waitingLogin:
       'Esperando el inicio de sesión en el navegador… Haga clic para volver a abrir la página de inicio de sesión',
     waitingShort: 'Esperando…',
@@ -2529,7 +2527,8 @@ export const strings = {
     intgSaveZipTitle: 'Guardar skill',
     intgSavedTo: 'Guardado en {path}',
     intgCopied: 'Copiado',
-    intgCliEphemeral: 'Arrastra primero HermesOffice a Aplicaciones y luego usa la línea de comandos.',
+    intgCliEphemeral:
+      'Arrastra primero HermesOffice a Aplicaciones y luego usa la línea de comandos.',
     intgCopyPath: 'Copiar ruta',
     intgCliNeedsUpdate:
       'Este skill necesita la línea de comandos {v} o superior; actualiza HermesOffice.',
@@ -2575,9 +2574,9 @@ export const strings = {
     setAiCapSearch: 'Búsqueda web',
     setAiSharedKeyHint:
       'La clave y la URL base de un proveedor se comparten entre capacidades; introdúcelas una sola vez.',
-    setAiGskTools: 'Herramientas en la nube de Hermes',
+    setAiGskTools: 'Herramientas en la nube de Genspark',
     setAiGskToolsDesc:
-      'Cuando su proveedor es Hermes, la búsqueda web, la generación de imágenes y el análisis de medios pasan por Hermes y consumen créditos; desactivado, la búsqueda usa fuentes gratuitas y las herramientas de imagen de Hermes no están disponibles.',
+      'Cuando su proveedor es Genspark, la búsqueda web, la generación de imágenes y el análisis de medios pasan por Genspark y consumen créditos; desactivado, la búsqueda usa fuentes gratuitas y las herramientas de imagen de Genspark no están disponibles.',
     setGithub: 'Código abierto',
     starOnGitHub: 'Dar una estrella en GitHub',
     starPromptTitle: '¿Te gusta HermesOffice?',
@@ -2610,7 +2609,7 @@ export const strings = {
     onbTitle2: 'Esto es solo el comienzo',
     onbBody2:
       'HermesOffice aún está en alfa. Únete al chat grupal en GitHub para compartir comentarios y ayudar a dar forma a lo que viene.',
-    onbCredits: 'Los colaboradores activos reciben **1.000+ créditos de Hermes**',
+    onbCredits: 'Los colaboradores activos reciben **1.000+ créditos de Genspark**',
     onbJoinGitHub: 'Unirse a GitHub',
     onbSkip: 'Omitir',
     onbNext: 'Siguiente',
@@ -2625,9 +2624,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'ล่าสุด',
     navStarred: 'รายการโปรด',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'โปรเจกต์ที่สร้างบนเว็บด้วย Hermes AI แก้ไขต่อได้ในเบราว์เซอร์ — คลิกโปรเจกต์เพื่อเปิด',
+      'โปรเจกต์ที่สร้างบนเว็บด้วย Genspark AI แก้ไขต่อได้ในเบราว์เซอร์ — คลิกโปรเจกต์เพื่อเปิด',
     cloudSearchPlaceholder: 'ค้นหา {n} โปรเจกต์…',
     cloudNoResults: 'ไม่มีโปรเจกต์ที่ตรงกัน',
     cloudGroupThisWeek: 'สัปดาห์นี้',
@@ -2636,7 +2635,7 @@ export const strings = {
     cloudSortRecent: 'ล่าสุด',
     cloudSortOldest: 'เก่าสุด',
     cloudRefresh: 'รีเฟรช',
-    cloudLoginHint: 'ลงชื่อเข้าใช้บัญชี Hermes เพื่อดูโปรเจกต์ที่คุณสร้างบนเว็บ',
+    cloudLoginHint: 'ลงชื่อเข้าใช้บัญชี Genspark เพื่อดูโปรเจกต์ที่คุณสร้างบนเว็บ',
     cloudEmpty: 'ยังไม่มีโปรเจกต์บนเว็บ',
     cloudError: 'โหลดไม่สำเร็จ โปรดลองอีกครั้งภายหลัง',
     cloudRetry: 'ลองอีกครั้ง',
@@ -2747,9 +2746,9 @@ export const strings = {
     accountHermes: 'บัญชี Hermes',
     account: 'บัญชี',
     login: 'ลงชื่อเข้าใช้',
-    loginHermes: 'ลงชื่อเข้าใช้ด้วย Hermes',
+    loginHermes: 'ตั้งค่า Hermes',
     loggedIn: 'ลงชื่อเข้าใช้แล้ว',
-    loggedInHermes: 'ลงชื่อเข้าใช้ Hermes แล้ว',
+    loggedInHermes: 'เชื่อมต่อ Hermes แล้ว',
     waitingLogin: 'กำลังรอการลงชื่อเข้าใช้ในเบราว์เซอร์… คลิกเพื่อเปิดหน้าลงชื่อเข้าใช้อีกครั้ง',
     waitingShort: 'กำลังรอ…',
     loginTimeout: 'การลงชื่อเข้าใช้หมดเวลา — คลิกเพื่อลองอีกครั้ง',
@@ -2927,8 +2926,7 @@ export const strings = {
     setAiMaxTokensDesc:
       'งบผลลัพธ์ต่อหนึ่งรอบ โมเดลแบบใช้เหตุผลจะใช้ส่วนหนึ่งไปกับการคิด หากงบหมด คำตอบอาจกลับมาว่างเปล่า ให้เพิ่มค่านี้',
     setSecAiMedia: 'สื่อ AI และการค้นหา',
-    setAiMediaHermesHint:
-      'การสร้างภาพและการวิเคราะห์ภาพ/วิดีโอใช้การลงชื่อเข้าใช้ Hermes ของคุณ',
+    setAiMediaHermesHint: 'การสร้างภาพและการวิเคราะห์ภาพ/วิดีโอใช้การลงชื่อเข้าใช้ Hermes ของคุณ',
     setAiImageModel: 'โมเดลสร้างภาพ',
     setAiAnalysisModel: 'โมเดลวิเคราะห์',
     setAiSearchHermesHint:
@@ -2942,9 +2940,9 @@ export const strings = {
     setAiCapSearch: 'ค้นหาเว็บ',
     setAiSharedKeyHint:
       'คีย์และ Base URL ของผู้ให้บริการเดียวกันใช้ร่วมกันทุกความสามารถ กรอกครั้งเดียวพอ',
-    setAiGskTools: 'เครื่องมือคลาวด์ Hermes',
+    setAiGskTools: 'เครื่องมือคลาวด์ Genspark',
     setAiGskToolsDesc:
-      'เมื่อผู้ให้บริการตั้งเป็น Hermes การค้นหาเว็บ การสร้างภาพ และการวิเคราะห์สื่อจะผ่าน Hermes และใช้เครดิต เมื่อปิด การค้นหาจะใช้แหล่งข้อมูลฟรีและเครื่องมือภาพของ Hermes จะใช้ไม่ได้',
+      'เมื่อผู้ให้บริการตั้งเป็น Genspark การค้นหาเว็บ การสร้างภาพ และการวิเคราะห์สื่อจะผ่าน Genspark และใช้เครดิต เมื่อปิด การค้นหาจะใช้แหล่งข้อมูลฟรีและเครื่องมือภาพของ Genspark จะใช้ไม่ได้',
     setGithub: 'โอเพนซอร์ส',
     starOnGitHub: 'กดดาวบน GitHub',
     starPromptTitle: 'ชอบ HermesOffice ไหม?',
@@ -2976,7 +2974,7 @@ export const strings = {
     onbTitle2: 'นี่เป็นเพียงจุดเริ่มต้น',
     onbBody2:
       'HermesOffice ยังอยู่ในช่วงอัลฟ่า เข้าร่วมแชทกลุ่มบน GitHub เพื่อแบ่งปันความคิดเห็นและร่วมกำหนดทิศทางต่อไป',
-    onbCredits: 'ผู้มีส่วนร่วมอย่างต่อเนื่องจะได้รับ **เครดิต Hermes กว่า 1,000**',
+    onbCredits: 'ผู้มีส่วนร่วมอย่างต่อเนื่องจะได้รับ **เครดิต Genspark กว่า 1,000**',
     onbJoinGitHub: 'เข้าร่วม GitHub',
     onbSkip: 'ข้าม',
     onbNext: 'ถัดไป',
@@ -2991,9 +2989,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Terbaru',
     navStarred: 'Berbintang',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Proyek yang dibuat di web dengan Hermes AI. Pengeditan berlanjut di browser — klik proyek untuk membukanya.',
+      'Proyek yang dibuat di web dengan Genspark AI. Pengeditan berlanjut di browser — klik proyek untuk membukanya.',
     cloudSearchPlaceholder: 'Cari {n} proyek…',
     cloudNoResults: 'Tidak ada proyek yang cocok.',
     cloudGroupThisWeek: 'Minggu ini',
@@ -3002,7 +3000,7 @@ export const strings = {
     cloudSortRecent: 'Terbaru',
     cloudSortOldest: 'Terlama',
     cloudRefresh: 'Segarkan',
-    cloudLoginHint: 'Masuk ke akun Hermes untuk melihat proyek yang Anda buat di web.',
+    cloudLoginHint: 'Masuk ke akun Genspark untuk melihat proyek yang Anda buat di web.',
     cloudEmpty: 'Belum ada proyek web.',
     cloudError: 'Gagal memuat. Coba lagi nanti.',
     cloudRetry: 'Coba lagi',
@@ -3116,9 +3114,9 @@ export const strings = {
     accountHermes: 'Akun Hermes',
     account: 'Akun',
     login: 'Masuk',
-    loginHermes: 'Masuk dengan Hermes',
+    loginHermes: 'Konfigurasi Hermes',
     loggedIn: 'Sudah masuk',
-    loggedInHermes: 'Sudah masuk ke Hermes',
+    loggedInHermes: 'Terhubung ke Hermes',
     waitingLogin: 'Menunggu login di browser… Klik untuk membuka kembali halaman login',
     waitingShort: 'Menunggu…',
     loginTimeout: 'Waktu login habis — klik untuk mencoba lagi',
@@ -3238,7 +3236,8 @@ export const strings = {
     intgMcpHttpDesc:
       'Berjalan di dalam HermesOffice; asisten terhubung lewat URL dan Anda bisa melihat dokumen dibangun langkah demi langkah di editor Word. HermesOffice harus tetap terbuka; untuk saat ini hanya dokumen Word.',
     intgMcpHttpAdvanced: 'Lanjutan: alamat lain dan log',
-    intgMcpTryNote: 'Asisten memanggil HermesOffice melalui MCP; Anda tidak pernah mengetik perintah.',
+    intgMcpTryNote:
+      'Asisten memanggil HermesOffice melalui MCP; Anda tidak pernah mengetik perintah.',
     intgMcpClaudeTitle: 'Claude Code',
     intgMcpClaudeDesc: 'Jalankan ini sekali di terminal:',
     intgMcpOtherTitle: 'Cursor, Claude Desktop, atau asisten lain yang mendukung MCP',
@@ -3318,9 +3317,9 @@ export const strings = {
     setAiCapSearch: 'Pencarian web',
     setAiSharedKeyHint:
       'Kunci dan Base URL satu penyedia dipakai bersama oleh semua kemampuan; cukup isi sekali.',
-    setAiGskTools: 'Alat cloud Hermes',
+    setAiGskTools: 'Alat cloud Genspark',
     setAiGskToolsDesc:
-      'Saat penyedianya disetel ke Hermes, pencarian web, pembuatan gambar, dan analisis media berjalan lewat Hermes dan memakai kredit; jika dimatikan, pencarian memakai sumber gratis dan alat gambar Hermes tidak tersedia.',
+      'Saat penyedianya disetel ke Genspark, pencarian web, pembuatan gambar, dan analisis media berjalan lewat Genspark dan memakai kredit; jika dimatikan, pencarian memakai sumber gratis dan alat gambar Genspark tidak tersedia.',
     setGithub: 'Sumber Terbuka',
     starOnGitHub: 'Beri Bintang di GitHub',
     starPromptTitle: 'Suka HermesOffice?',
@@ -3353,7 +3352,7 @@ export const strings = {
     onbTitle2: 'Ini baru permulaan',
     onbBody2:
       'HermesOffice masih dalam tahap alpha. Gabung obrolan grup di GitHub untuk berbagi masukan dan ikut menentukan arah ke depan.',
-    onbCredits: 'Kontributor aktif mendapat **1.000+ kredit Hermes**',
+    onbCredits: 'Kontributor aktif mendapat **1.000+ kredit Genspark**',
     onbJoinGitHub: 'Gabung GitHub',
     onbSkip: 'Lewati',
     onbNext: 'Berikutnya',
@@ -3368,9 +3367,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'Недавние',
     navStarred: 'Избранное',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Проекты, созданные в вебе с Hermes AI. Редактирование продолжается в браузере — нажмите на проект, чтобы открыть его.',
+      'Проекты, созданные в вебе с Genspark AI. Редактирование продолжается в браузере — нажмите на проект, чтобы открыть его.',
     cloudSearchPlaceholder: 'Поиск среди {n} проектов…',
     cloudNoResults: 'Нет подходящих проектов.',
     cloudGroupThisWeek: 'На этой неделе',
@@ -3379,7 +3378,7 @@ export const strings = {
     cloudSortRecent: 'Сначала новые',
     cloudSortOldest: 'Сначала старые',
     cloudRefresh: 'Обновить',
-    cloudLoginHint: 'Войдите в аккаунт Hermes, чтобы увидеть проекты, созданные в вебе.',
+    cloudLoginHint: 'Войдите в аккаунт Genspark, чтобы увидеть проекты, созданные в вебе.',
     cloudEmpty: 'Пока нет веб-проектов.',
     cloudError: 'Не удалось загрузить. Повторите попытку позже.',
     cloudRetry: 'Повторить',
@@ -3488,12 +3487,12 @@ export const strings = {
     untitled: 'Без названия',
     noContent: '(пусто)',
     // Account
-    accountHermes: 'Учётная запись Hermes',
+    accountHermes: 'Учётная запись Genspark',
     account: 'Учётная запись',
     login: 'Войти',
-    loginHermes: 'Войти через Hermes',
+    loginHermes: 'Настроить Hermes',
     loggedIn: 'Вход выполнен',
-    loggedInHermes: 'Выполнен вход в Hermes',
+    loggedInHermes: 'Подключено к Hermes',
     waitingLogin: 'Ожидание входа в браузере… Нажмите, чтобы снова открыть страницу входа',
     waitingShort: 'Ожидание…',
     loginTimeout: 'Время входа истекло — нажмите, чтобы повторить',
@@ -3693,9 +3692,9 @@ export const strings = {
     setAiCapSearch: 'Веб-поиск',
     setAiSharedKeyHint:
       'Ключ и базовый URL провайдера общие для всех функций; введите их один раз.',
-    setAiGskTools: 'Облачные инструменты Hermes',
+    setAiGskTools: 'Облачные инструменты Genspark',
     setAiGskToolsDesc:
-      'Когда провайдером выбран Hermes, веб-поиск, генерация изображений и анализ медиа идут через Hermes и расходуют кредиты; при выключении поиск использует бесплатные источники, а инструменты изображений Hermes недоступны.',
+      'Когда провайдером выбран Genspark, веб-поиск, генерация изображений и анализ медиа идут через Genspark и расходуют кредиты; при выключении поиск использует бесплатные источники, а инструменты изображений Genspark недоступны.',
     setGithub: 'Открытый код',
     starOnGitHub: 'Поставить звезду на GitHub',
     starPromptTitle: 'Нравится HermesOffice?',
@@ -3728,7 +3727,7 @@ export const strings = {
     onbTitle2: 'Это только начало',
     onbBody2:
       'HermesOffice пока в альфа-версии. Присоединяйтесь к групповому чату в GitHub, чтобы делиться отзывами и влиять на дальнейшее развитие.',
-    onbCredits: 'Активные участники получают **1000+ кредитов Hermes**',
+    onbCredits: 'Активные участники получают **1000+ кредитов Genspark**',
     onbJoinGitHub: 'Присоединиться к GitHub',
     onbSkip: 'Пропустить',
     onbNext: 'Далее',
@@ -3743,9 +3742,9 @@ export const strings = {
     // Sidebar navigation
     navRecent: 'الأخيرة',
     navStarred: 'المفضلة',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'مشاريع أُنشئت على الويب باستخدام Hermes AI. يستمر التحرير في المتصفح — انقر على أي مشروع لفتحه.',
+      'مشاريع أُنشئت على الويب باستخدام Genspark AI. يستمر التحرير في المتصفح — انقر على أي مشروع لفتحه.',
     cloudSearchPlaceholder: 'ابحث في {n} مشروعًا…',
     cloudNoResults: 'لا توجد مشاريع مطابقة.',
     cloudGroupThisWeek: 'هذا الأسبوع',
@@ -3754,7 +3753,7 @@ export const strings = {
     cloudSortRecent: 'الأحدث',
     cloudSortOldest: 'الأقدم',
     cloudRefresh: 'تحديث',
-    cloudLoginHint: 'سجّل الدخول إلى حساب Hermes لعرض المشاريع التي أنشأتها على الويب.',
+    cloudLoginHint: 'سجّل الدخول إلى حساب Genspark لعرض المشاريع التي أنشأتها على الويب.',
     cloudEmpty: 'لا توجد مشاريع على الويب بعد.',
     cloudError: 'فشل التحميل. حاول مرة أخرى لاحقًا.',
     cloudRetry: 'إعادة المحاولة',
@@ -3865,9 +3864,9 @@ export const strings = {
     accountHermes: 'حساب Hermes',
     account: 'الحساب',
     login: 'تسجيل الدخول',
-    loginHermes: 'تسجيل الدخول باستخدام Hermes',
+    loginHermes: 'إعداد Hermes',
     loggedIn: 'تم تسجيل الدخول',
-    loggedInHermes: 'تم تسجيل الدخول إلى Hermes',
+    loggedInHermes: 'متصل بـ Hermes',
     waitingLogin: 'في انتظار تسجيل الدخول في المتصفح… انقر لإعادة فتح صفحة تسجيل الدخول',
     waitingShort: 'في الانتظار…',
     loginTimeout: 'انتهت مهلة تسجيل الدخول — انقر لإعادة المحاولة',
@@ -4061,9 +4060,9 @@ export const strings = {
     setAiCapSearch: 'البحث في الويب',
     setAiSharedKeyHint:
       'مفتاح المزوّد وعنوان Base URL مشتركان بين جميع القدرات؛ أدخلهما مرة واحدة فقط.',
-    setAiGskTools: 'أدوات Hermes السحابية',
+    setAiGskTools: 'أدوات Genspark السحابية',
     setAiGskToolsDesc:
-      'عندما يكون المزوّد Hermes، يمر البحث في الويب وتوليد الصور وتحليل الوسائط عبر Hermes ويستهلك الرصيد؛ عند الإيقاف يستخدم البحث مصادر مجانية وتصبح أدوات صور Hermes غير متاحة.',
+      'عندما يكون المزوّد Genspark، يمر البحث في الويب وتوليد الصور وتحليل الوسائط عبر Genspark ويستهلك الرصيد؛ عند الإيقاف يستخدم البحث مصادر مجانية وتصبح أدوات صور Genspark غير متاحة.',
     setGithub: 'مفتوح المصدر',
     starOnGitHub: 'ضع نجمة على GitHub',
     starPromptTitle: 'هل أعجبك HermesOffice؟',
@@ -4095,7 +4094,7 @@ export const strings = {
     onbTitle2: 'هذه مجرد البداية',
     onbBody2:
       'لا يزال HermesOffice في مرحلة ألفا. انضم إلى الدردشة الجماعية على GitHub لمشاركة ملاحظاتك والمساهمة في تشكيل المستقبل.',
-    onbCredits: 'يحصل المساهمون النشطون على **+1,000 من أرصدة Hermes**',
+    onbCredits: 'يحصل المساهمون النشطون على **+1,000 من أرصدة Genspark**',
     onbJoinGitHub: 'الانضمام إلى GitHub',
     onbSkip: 'تخطي',
     onbNext: 'التالي',
@@ -4109,9 +4108,9 @@ export const strings = {
   pt: {
     navRecent: 'Recentes',
     navStarred: 'Favoritos',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projetos criados na web com o Hermes AI. A edição continua no navegador — clique em um projeto para abri-lo.',
+      'Projetos criados na web com o Genspark AI. A edição continua no navegador — clique em um projeto para abri-lo.',
     cloudSearchPlaceholder: 'Pesquisar {n} projetos…',
     cloudNoResults: 'Nenhum projeto correspondente.',
     cloudGroupThisWeek: 'Esta semana',
@@ -4120,7 +4119,7 @@ export const strings = {
     cloudSortRecent: 'Recentes',
     cloudSortOldest: 'Mais antigos',
     cloudRefresh: 'Atualizar',
-    cloudLoginHint: 'Entre na sua conta Hermes para ver os projetos criados na web.',
+    cloudLoginHint: 'Entre na sua conta Genspark para ver os projetos criados na web.',
     cloudEmpty: 'Ainda não há projetos na web.',
     cloudError: 'Falha ao carregar. Tente novamente mais tarde.',
     cloudRetry: 'Tentar novamente',
@@ -4228,9 +4227,9 @@ export const strings = {
     accountHermes: 'Conta Hermes',
     account: 'Conta',
     login: 'Entrar',
-    loginHermes: 'Entrar com a Hermes',
+    loginHermes: 'Configurar Hermes',
     loggedIn: 'Conectado',
-    loggedInHermes: 'Conectado à Hermes',
+    loggedInHermes: 'Conectado ao Hermes',
     waitingLogin: 'Aguardando o login no navegador… Clique para reabrir a página de login',
     waitingShort: 'Aguardando…',
     loginTimeout: 'O login expirou — clique para tentar novamente',
@@ -4434,9 +4433,9 @@ export const strings = {
     setAiCapSearch: 'Busca na web',
     setAiSharedKeyHint:
       'A chave e a URL base de um provedor são compartilhadas entre as capacidades; insira-as uma só vez.',
-    setAiGskTools: 'Ferramentas na nuvem Hermes',
+    setAiGskTools: 'Ferramentas na nuvem Genspark',
     setAiGskToolsDesc:
-      'Quando o provedor é o Hermes, a busca na web, a geração de imagens e a análise de mídia passam pelo Hermes e consomem créditos; desativado, a busca usa fontes gratuitas e as ferramentas de imagem do Hermes ficam indisponíveis.',
+      'Quando o provedor é o Genspark, a busca na web, a geração de imagens e a análise de mídia passam pelo Genspark e consomem créditos; desativado, a busca usa fontes gratuitas e as ferramentas de imagem do Genspark ficam indisponíveis.',
     setGithub: 'Código aberto',
     starOnGitHub: 'Dar uma estrela no GitHub',
     starPromptTitle: 'Gostando do HermesOffice?',
@@ -4467,7 +4466,7 @@ export const strings = {
     onbTitle2: 'Isto é só o começo',
     onbBody2:
       'O HermesOffice ainda está em alfa. Entre no chat em grupo no GitHub para compartilhar feedback e ajudar a moldar o que vem a seguir.',
-    onbCredits: 'Contribuidores ativos recebem **1.000+ créditos Hermes**',
+    onbCredits: 'Contribuidores ativos recebem **1.000+ créditos Genspark**',
     onbJoinGitHub: 'Entrar no GitHub',
     onbSkip: 'Pular',
     onbNext: 'Avançar',
@@ -4481,9 +4480,9 @@ export const strings = {
   it: {
     navRecent: 'Recenti',
     navStarred: 'Preferiti',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Progetti creati sul web con Hermes AI. La modifica continua nel browser: fai clic su un progetto per aprirlo.',
+      'Progetti creati sul web con Genspark AI. La modifica continua nel browser: fai clic su un progetto per aprirlo.',
     cloudSearchPlaceholder: 'Cerca tra {n} progetti…',
     cloudNoResults: 'Nessun progetto corrispondente.',
     cloudGroupThisWeek: 'Questa settimana',
@@ -4492,7 +4491,7 @@ export const strings = {
     cloudSortRecent: 'Recenti',
     cloudSortOldest: 'Meno recenti',
     cloudRefresh: 'Aggiorna',
-    cloudLoginHint: 'Accedi al tuo account Hermes per vedere i progetti creati sul web.',
+    cloudLoginHint: 'Accedi al tuo account Genspark per vedere i progetti creati sul web.',
     cloudEmpty: 'Ancora nessun progetto web.',
     cloudError: 'Caricamento non riuscito. Riprova più tardi.',
     cloudRetry: 'Riprova',
@@ -4597,12 +4596,12 @@ export const strings = {
     timelineUserAria: 'Utente',
     untitled: 'Senza titolo',
     noContent: '(vuoto)',
-    accountHermes: 'Account Hermes',
+    accountHermes: 'Account Genspark',
     account: 'Account',
     login: 'Accedi',
-    loginHermes: 'Accedi con Hermes',
+    loginHermes: 'Configura Hermes',
     loggedIn: 'Accesso effettuato',
-    loggedInHermes: 'Accesso effettuato a Hermes',
+    loggedInHermes: 'Connesso a Hermes',
     waitingLogin: "In attesa dell'accesso nel browser… Fai clic per riaprire la pagina di accesso",
     waitingShort: 'In attesa…',
     loginTimeout: 'Accesso scaduto — fai clic per riprovare',
@@ -4805,9 +4804,9 @@ export const strings = {
     setAiCapSearch: 'Ricerca web',
     setAiSharedKeyHint:
       "La chiave e l'URL base di un provider sono condivisi tra le capacità; inseriscili una volta sola.",
-    setAiGskTools: 'Strumenti cloud Hermes',
+    setAiGskTools: 'Strumenti cloud Genspark',
     setAiGskToolsDesc:
-      "Quando il provider è Hermes, la ricerca web, la generazione di immagini e l'analisi dei media passano da Hermes e consumano crediti; se disattivato, la ricerca usa fonti gratuite e gli strumenti immagine di Hermes non sono disponibili.",
+      "Quando il provider è Genspark, la ricerca web, la generazione di immagini e l'analisi dei media passano da Genspark e consumano crediti; se disattivato, la ricerca usa fonti gratuite e gli strumenti immagine di Genspark non sono disponibili.",
     setGithub: 'Open source',
     starOnGitHub: 'Metti una stella su GitHub',
     starPromptTitle: 'Ti piace HermesOffice?',
@@ -4838,7 +4837,7 @@ export const strings = {
     onbTitle2: 'Questo è solo l’inizio',
     onbBody2:
       'HermesOffice è ancora in alpha. Unisciti alla chat di gruppo su GitHub per condividere feedback e contribuire a plasmare il futuro.',
-    onbCredits: 'I collaboratori attivi ricevono **1.000+ crediti Hermes**',
+    onbCredits: 'I collaboratori attivi ricevono **1.000+ crediti Genspark**',
     onbJoinGitHub: 'Unisciti a GitHub',
     onbSkip: 'Salta',
     onbNext: 'Avanti',
@@ -4852,9 +4851,9 @@ export const strings = {
   pl: {
     navRecent: 'Ostatnie',
     navStarred: 'Ulubione',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projekty utworzone w sieci za pomocą Hermes AI. Edycja jest kontynuowana w przeglądarce — kliknij projekt, aby go otworzyć.',
+      'Projekty utworzone w sieci za pomocą Genspark AI. Edycja jest kontynuowana w przeglądarce — kliknij projekt, aby go otworzyć.',
     cloudSearchPlaceholder: 'Szukaj wśród {n} projektów…',
     cloudNoResults: 'Brak pasujących projektów.',
     cloudGroupThisWeek: 'W tym tygodniu',
@@ -4863,7 +4862,7 @@ export const strings = {
     cloudSortRecent: 'Najnowsze',
     cloudSortOldest: 'Najstarsze',
     cloudRefresh: 'Odśwież',
-    cloudLoginHint: 'Zaloguj się na konto Hermes, aby zobaczyć projekty utworzone w sieci.',
+    cloudLoginHint: 'Zaloguj się na konto Genspark, aby zobaczyć projekty utworzone w sieci.',
     cloudEmpty: 'Brak projektów w sieci.',
     cloudError: 'Nie udało się wczytać. Spróbuj ponownie później.',
     cloudRetry: 'Spróbuj ponownie',
@@ -4970,9 +4969,9 @@ export const strings = {
     accountHermes: 'Konto Hermes',
     account: 'Konto',
     login: 'Zaloguj się',
-    loginHermes: 'Zaloguj się przez Hermes',
+    loginHermes: 'Skonfiguruj Hermes',
     loggedIn: 'Zalogowano',
-    loggedInHermes: 'Zalogowano do Hermes',
+    loggedInHermes: 'Połączono z Hermes',
     waitingLogin:
       'Oczekiwanie na logowanie w przeglądarce… Kliknij, aby ponownie otworzyć stronę logowania',
     waitingShort: 'Oczekiwanie…',
@@ -5077,7 +5076,8 @@ export const strings = {
     intgExample1: 'Zamień ~/Downloads/report.md na dokument Word',
     intgExample2: 'Zrób prezentację z 6 slajdów o naszych wynikach za III kwartał',
     intgExample3: 'Przekonwertuj budget.xlsx do PDF i otwórz w HermesOffice',
-    intgStep2Note: 'Asystent sam uruchamia wiersz poleceń hermesoffice; nigdy nie musisz go wpisywać.',
+    intgStep2Note:
+      'Asystent sam uruchamia wiersz poleceń hermesoffice; nigdy nie musisz go wpisywać.',
     intgCliPartTitle: 'CLI · wiersz poleceń + skill',
     intgCliPartDesc:
       'Dla asystentów, które potrafią uruchamiać polecenia terminala (Claude Code, Codex, Cursor i inne). Po zainstalowaniu skilla asystent sam wywołuje wiersz poleceń hermesoffice, aby tworzyć, konwertować, czytać i edytować pliki; nigdy nie wpisujesz polecenia.',
@@ -5128,7 +5128,8 @@ export const strings = {
     intgCopied: 'Skopiowano',
     intgCliEphemeral: 'Najpierw przenieś HermesOffice do Aplikacji, potem użyj wiersza poleceń.',
     intgCopyPath: 'Kopiuj ścieżkę',
-    intgCliNeedsUpdate: 'Ten skill wymaga wiersza poleceń {v} lub nowszego; zaktualizuj HermesOffice.',
+    intgCliNeedsUpdate:
+      'Ten skill wymaga wiersza poleceń {v} lub nowszego; zaktualizuj HermesOffice.',
     intgLoading: 'Sprawdzanie…',
     intgUpdateDue: 'Dostępna aktualizacja skilla',
     setSecAiModel: 'Model AI',
@@ -5171,9 +5172,9 @@ export const strings = {
     setAiCapSearch: 'Wyszukiwanie w sieci',
     setAiSharedKeyHint:
       'Klucz i bazowy URL dostawcy są wspólne dla wszystkich funkcji; wpisz je raz.',
-    setAiGskTools: 'Narzędzia chmurowe Hermes',
+    setAiGskTools: 'Narzędzia chmurowe Genspark',
     setAiGskToolsDesc:
-      'Gdy dostawcą jest Hermes, wyszukiwanie w sieci, generowanie obrazów i analiza mediów przechodzą przez Hermes i zużywają kredyty; po wyłączeniu wyszukiwanie używa darmowych źródeł, a narzędzia obrazów Hermes są niedostępne.',
+      'Gdy dostawcą jest Genspark, wyszukiwanie w sieci, generowanie obrazów i analiza mediów przechodzą przez Genspark i zużywają kredyty; po wyłączeniu wyszukiwanie używa darmowych źródeł, a narzędzia obrazów Genspark są niedostępne.',
     setGithub: 'Open source',
     starOnGitHub: 'Gwiazdka na GitHubie',
     starPromptTitle: 'Podoba Ci się HermesOffice?',
@@ -5204,7 +5205,7 @@ export const strings = {
     onbTitle2: 'To dopiero początek',
     onbBody2:
       'HermesOffice jest wciąż w fazie alfa. Dołącz do czatu grupowego na GitHub, aby dzielić się opiniami i współtworzyć jego przyszłość.',
-    onbCredits: 'Aktywni współtwórcy otrzymują **1000+ kredytów Hermes**',
+    onbCredits: 'Aktywni współtwórcy otrzymują **1000+ kredytów Genspark**',
     onbJoinGitHub: 'Dołącz do GitHub',
     onbSkip: 'Pomiń',
     onbNext: 'Dalej',
@@ -5218,9 +5219,9 @@ export const strings = {
   cs: {
     navRecent: 'Nedávné',
     navStarred: 'Oblíbené',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projekty vytvořené na webu pomocí Hermes AI. Úpravy pokračují v prohlížeči — klikněte na projekt a otevřete ho.',
+      'Projekty vytvořené na webu pomocí Genspark AI. Úpravy pokračují v prohlížeči — klikněte na projekt a otevřete ho.',
     cloudSearchPlaceholder: 'Hledat mezi {n} projekty…',
     cloudNoResults: 'Žádné odpovídající projekty.',
     cloudGroupThisWeek: 'Tento týden',
@@ -5230,7 +5231,7 @@ export const strings = {
     cloudSortOldest: 'Nejstarší',
     cloudRefresh: 'Obnovit',
     cloudLoginHint:
-      'Přihlaste se ke svému účtu Hermes a zobrazte projekty, které jste vytvořili na webu.',
+      'Přihlaste se ke svému účtu Genspark a zobrazte projekty, které jste vytvořili na webu.',
     cloudEmpty: 'Zatím žádné webové projekty.',
     cloudError: 'Načtení se nezdařilo. Zkuste to později.',
     cloudRetry: 'Zkusit znovu',
@@ -5477,7 +5478,8 @@ export const strings = {
     intgSaveZipTitle: 'Uložit skill',
     intgSavedTo: 'Uloženo do {path}',
     intgCopied: 'Zkopírováno',
-    intgCliEphemeral: 'Nejprve přetáhněte HermesOffice do Aplikací a poté použijte příkazový řádek.',
+    intgCliEphemeral:
+      'Nejprve přetáhněte HermesOffice do Aplikací a poté použijte příkazový řádek.',
     intgCopyPath: 'Kopírovat cestu',
     intgCliNeedsUpdate:
       'Tento skill vyžaduje příkazový řádek {v} nebo novější; aktualizujte HermesOffice.',
@@ -5524,9 +5526,9 @@ export const strings = {
     setAiCapSearch: 'Webové vyhledávání',
     setAiSharedKeyHint:
       'Klíč a základní URL jednoho poskytovatele se sdílejí mezi funkcemi; zadejte je jen jednou.',
-    setAiGskTools: 'Cloudové nástroje Hermes',
+    setAiGskTools: 'Cloudové nástroje Genspark',
     setAiGskToolsDesc:
-      'Webové vyhledávání, generování obrázků a analýza médií běží přes Hermes a čerpají kredity, pokud je jejich poskytovatel nastaven na Hermes; při vypnutí vyhledávání používá bezplatné zdroje a obrázkové nástroje Hermes nejsou dostupné.',
+      'Webové vyhledávání, generování obrázků a analýza médií běží přes Genspark a čerpají kredity, pokud je jejich poskytovatel nastaven na Genspark; při vypnutí vyhledávání používá bezplatné zdroje a obrázkové nástroje Genspark nejsou dostupné.',
     setGithub: 'Open source',
     starOnGitHub: 'Dát hvězdičku na GitHubu',
     starPromptTitle: 'Líbí se vám HermesOffice?',
@@ -5557,7 +5559,7 @@ export const strings = {
     onbTitle2: 'Toto je jen začátek',
     onbBody2:
       'HermesOffice je stále ve fázi alfa. Připojte se ke skupinovému chatu na GitHub, sdílejte zpětnou vazbu a pomozte utvářet, co přijde dál.',
-    onbCredits: 'Aktivní přispěvatelé získají **1 000+ kreditů Hermes**',
+    onbCredits: 'Aktivní přispěvatelé získají **1 000+ kreditů Genspark**',
     onbJoinGitHub: 'Připojit se ke GitHub',
     onbSkip: 'Přeskočit',
     onbNext: 'Další',
@@ -5584,9 +5586,9 @@ export const strings = {
   nl: {
     navRecent: 'Recent',
     navStarred: 'Favorieten',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projecten gemaakt op het web met Hermes AI. Bewerken gaat verder in je browser — klik op een project om het te openen.',
+      'Projecten gemaakt op het web met Genspark AI. Bewerken gaat verder in je browser — klik op een project om het te openen.',
     cloudSearchPlaceholder: 'Zoek in {n} projecten…',
     cloudNoResults: 'Geen overeenkomende projecten.',
     cloudGroupThisWeek: 'Deze week',
@@ -5596,7 +5598,7 @@ export const strings = {
     cloudSortOldest: 'Oudste',
     cloudRefresh: 'Vernieuwen',
     cloudLoginHint:
-      'Log in op je Hermes-account om projecten te zien die je op het web hebt gemaakt.',
+      'Log in op je Genspark-account om projecten te zien die je op het web hebt gemaakt.',
     cloudEmpty: 'Nog geen webprojecten.',
     cloudError: 'Laden mislukt. Probeer het later opnieuw.',
     cloudRetry: 'Opnieuw proberen',
@@ -5703,9 +5705,9 @@ export const strings = {
     accountHermes: 'Hermes-account',
     account: 'Account',
     login: 'Inloggen',
-    loginHermes: 'Inloggen met Hermes',
+    loginHermes: 'Hermes instellen',
     loggedIn: 'Ingelogd',
-    loggedInHermes: 'Ingelogd bij Hermes',
+    loggedInHermes: 'Verbonden met Hermes',
     waitingLogin: 'Wachten op inloggen in de browser… Klik om de inlogpagina opnieuw te openen',
     waitingShort: 'Wachten…',
     loginTimeout: 'Inloggen verlopen — klik om het opnieuw te proberen',
@@ -5861,7 +5863,8 @@ export const strings = {
     intgSaveZipTitle: 'Skill opslaan',
     intgSavedTo: 'Opgeslagen in {path}',
     intgCopied: 'Gekopieerd',
-    intgCliEphemeral: "Sleep HermesOffice eerst naar Programma's en gebruik daarna de opdrachtregel.",
+    intgCliEphemeral:
+      "Sleep HermesOffice eerst naar Programma's en gebruik daarna de opdrachtregel.",
     intgCopyPath: 'Pad kopiëren',
     intgCliNeedsUpdate: 'Deze skill vereist opdrachtregel {v} of nieuwer; werk HermesOffice bij.',
     intgLoading: 'Controleren…',
@@ -5906,9 +5909,9 @@ export const strings = {
     setAiCapSearch: 'Zoeken op het web',
     setAiSharedKeyHint:
       'De sleutel en basis-URL van een provider gelden voor alle functies; één keer invoeren volstaat.',
-    setAiGskTools: 'Hermes-cloudtools',
+    setAiGskTools: 'Genspark-cloudtools',
     setAiGskToolsDesc:
-      'Staat de provider op Hermes, dan lopen zoeken op het web, afbeeldingen genereren en media-analyse via Hermes en kosten ze credits; uitgeschakeld gebruikt zoeken gratis bronnen en zijn de Hermes-afbeeldingstools niet beschikbaar.',
+      'Staat de provider op Genspark, dan lopen zoeken op het web, afbeeldingen genereren en media-analyse via Genspark en kosten ze credits; uitgeschakeld gebruikt zoeken gratis bronnen en zijn de Genspark-afbeeldingstools niet beschikbaar.',
     setGithub: 'Open source',
     starOnGitHub: 'Geef een ster op GitHub',
     starPromptTitle: 'Bevalt HermesOffice?',
@@ -5939,7 +5942,7 @@ export const strings = {
     onbTitle2: 'Dit is nog maar het begin',
     onbBody2:
       'HermesOffice is nog in alfa. Doe mee aan de groepschat op GitHub om feedback te delen en mee te bepalen wat er komt.',
-    onbCredits: 'Actieve bijdragers krijgen **1.000+ Hermes-credits**',
+    onbCredits: 'Actieve bijdragers krijgen **1.000+ Genspark-credits**',
     onbJoinGitHub: 'Word lid van GitHub',
     onbSkip: 'Overslaan',
     onbNext: 'Volgende',
@@ -5953,9 +5956,9 @@ export const strings = {
   ms: {
     navRecent: 'Terkini',
     navStarred: 'Berbintang',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Projek yang dicipta di web dengan Hermes AI. Penyuntingan diteruskan dalam pelayar — klik projek untuk membukanya.',
+      'Projek yang dicipta di web dengan Genspark AI. Penyuntingan diteruskan dalam pelayar — klik projek untuk membukanya.',
     cloudSearchPlaceholder: 'Cari {n} projek…',
     cloudNoResults: 'Tiada projek sepadan.',
     cloudGroupThisWeek: 'Minggu ini',
@@ -5964,7 +5967,7 @@ export const strings = {
     cloudSortRecent: 'Terbaru',
     cloudSortOldest: 'Terlama',
     cloudRefresh: 'Muat semula',
-    cloudLoginHint: 'Log masuk ke akaun Hermes untuk melihat projek yang anda cipta di web.',
+    cloudLoginHint: 'Log masuk ke akaun Genspark untuk melihat projek yang anda cipta di web.',
     cloudEmpty: 'Belum ada projek web.',
     cloudError: 'Gagal memuatkan. Cuba lagi kemudian.',
     cloudRetry: 'Cuba lagi',
@@ -6071,9 +6074,9 @@ export const strings = {
     accountHermes: 'Akaun Hermes',
     account: 'Akaun',
     login: 'Log masuk',
-    loginHermes: 'Log masuk dengan Hermes',
+    loginHermes: 'Sediakan Hermes',
     loggedIn: 'Telah log masuk',
-    loggedInHermes: 'Telah log masuk ke Hermes',
+    loggedInHermes: 'Disambung ke Hermes',
     waitingLogin: 'Menunggu log masuk dalam pelayar… Klik untuk membuka semula halaman log masuk',
     waitingShort: 'Menunggu…',
     loginTimeout: 'Log masuk tamat masa — klik untuk cuba lagi',
@@ -6278,9 +6281,9 @@ export const strings = {
     setAiCapSearch: 'Carian web',
     setAiSharedKeyHint:
       'Kunci dan Base URL pembekal dikongsi oleh semua keupayaan; isi sekali sahaja.',
-    setAiGskTools: 'Alat awan Hermes',
+    setAiGskTools: 'Alat awan Genspark',
     setAiGskToolsDesc:
-      'Apabila pembekalnya ditetapkan kepada Hermes, carian web, penjanaan imej dan analisis media melalui Hermes dan menggunakan kredit; apabila dimatikan, carian menggunakan sumber percuma dan alat imej Hermes tidak tersedia.',
+      'Apabila pembekalnya ditetapkan kepada Genspark, carian web, penjanaan imej dan analisis media melalui Genspark dan menggunakan kredit; apabila dimatikan, carian menggunakan sumber percuma dan alat imej Genspark tidak tersedia.',
     setGithub: 'Sumber Terbuka',
     starOnGitHub: 'Beri Bintang di GitHub',
     starPromptTitle: 'Suka HermesOffice?',
@@ -6311,7 +6314,7 @@ export const strings = {
     onbTitle2: 'Ini baru permulaan',
     onbBody2:
       'HermesOffice masih dalam peringkat alfa. Sertai sembang kumpulan di GitHub untuk berkongsi maklum balas dan membentuk masa depannya.',
-    onbCredits: 'Penyumbang aktif menerima **1,000+ kredit Hermes**',
+    onbCredits: 'Penyumbang aktif menerima **1,000+ kredit Genspark**',
     onbJoinGitHub: 'Sertai GitHub',
     onbSkip: 'Langkau',
     onbNext: 'Seterusnya',
@@ -6325,9 +6328,9 @@ export const strings = {
   he: {
     navRecent: 'אחרונים',
     navStarred: 'מועדפים',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'פרויקטים שנוצרו באינטרנט עם Hermes AI. העריכה נמשכת בדפדפן — לחצו על פרויקט כדי לפתוח אותו.',
+      'פרויקטים שנוצרו באינטרנט עם Genspark AI. העריכה נמשכת בדפדפן — לחצו על פרויקט כדי לפתוח אותו.',
     cloudSearchPlaceholder: 'חיפוש בין {n} פרויקטים…',
     cloudNoResults: 'אין פרויקטים תואמים.',
     cloudGroupThisWeek: 'השבוע',
@@ -6336,7 +6339,7 @@ export const strings = {
     cloudSortRecent: 'החדשים ביותר',
     cloudSortOldest: 'הישנים ביותר',
     cloudRefresh: 'רענון',
-    cloudLoginHint: 'התחברו לחשבון Hermes כדי לראות פרויקטים שיצרתם באתר.',
+    cloudLoginHint: 'התחברו לחשבון Genspark כדי לראות פרויקטים שיצרתם באתר.',
     cloudEmpty: 'אין עדיין פרויקטים מהאתר.',
     cloudError: 'הטעינה נכשלה. נסו שוב מאוחר יותר.',
     cloudRetry: 'נסו שוב',
@@ -6441,7 +6444,7 @@ export const strings = {
     accountHermes: 'חשבון Hermes',
     account: 'חשבון',
     login: 'התחברות',
-    loginHermes: 'התחברות עם Hermes',
+    loginHermes: 'הגדר את Hermes',
     loggedIn: 'מחובר',
     loggedInHermes: 'מחובר ל-Hermes',
     waitingLogin: 'ממתין להתחברות בדפדפן… לחצו כדי לפתוח שוב את דף ההתחברות',
@@ -6523,7 +6526,8 @@ export const strings = {
     intgStep1Title: 'התקינו את ה-skill בעוזר שלכם',
     intgStep1Desc:
       'מוצגים רק עוזרים שנמצאו במחשב הזה. התקינו בזה שבו אתם משתמשים באמת; אין צורך בכולם.',
-    intgStep1Update: 'כשעדכון של HermesOffice מביא skill חדש יותר, ליד אותו עוזר יופיע כפתור עדכון.',
+    intgStep1Update:
+      'כשעדכון של HermesOffice מביא skill חדש יותר, ליד אותו עוזר יופיע כפתור עדכון.',
     intgSkillVersion: 'skill {v}',
     intgStateMissing: 'ה-skill לא מותקן',
     intgStateInstalled: 'skill {v} מותקן · מוכן בשיחה הבאה',
@@ -6634,9 +6638,9 @@ export const strings = {
     setAiCapSearch: 'חיפוש באינטרנט',
     setAiSharedKeyHint:
       'המפתח וכתובת ה-Base URL של ספק משותפים לכל היכולות; יש להזין אותם פעם אחת בלבד.',
-    setAiGskTools: 'כלי הענן של Hermes',
+    setAiGskTools: 'כלי הענן של Genspark',
     setAiGskToolsDesc:
-      'כשהספק מוגדר ל-Hermes, חיפוש באינטרנט, יצירת תמונות וניתוח מדיה עוברים דרך Hermes וצורכים קרדיטים; כשהוא כבוי החיפוש משתמש במקורות חינמיים וכלי התמונות של Hermes אינם זמינים.',
+      'כשהספק מוגדר ל-Genspark, חיפוש באינטרנט, יצירת תמונות וניתוח מדיה עוברים דרך Genspark וצורכים קרדיטים; כשהוא כבוי החיפוש משתמש במקורות חינמיים וכלי התמונות של Genspark אינם זמינים.',
     setGithub: 'קוד פתוח',
     starOnGitHub: 'תנו כוכב ב-GitHub',
     starPromptTitle: 'נהנים מ-HermesOffice?',
@@ -6665,7 +6669,7 @@ export const strings = {
     onbTitle2: 'זו רק ההתחלה',
     onbBody2:
       'HermesOffice עדיין בגרסת אלפא. הצטרפו לצ׳אט הקבוצתי ב-GitHub כדי לשתף משוב ולעזור לעצב את ההמשך.',
-    onbCredits: 'תורמים פעילים מקבלים **1,000+ נקודות Hermes**',
+    onbCredits: 'תורמים פעילים מקבלים **1,000+ נקודות Genspark**',
     onbJoinGitHub: 'הצטרפו ל-GitHub',
     onbSkip: 'דילוג',
     onbNext: 'הבא',
@@ -6679,9 +6683,9 @@ export const strings = {
   hi: {
     navRecent: 'हाल के',
     navStarred: 'तारांकित',
-    navCloud: 'Hermes Projects',
+    navCloud: 'Genspark Projects',
     cloudSubtitle:
-      'Hermes AI के साथ वेब पर बनाए गए प्रोजेक्ट। संपादन ब्राउज़र में जारी रहता है — खोलने के लिए किसी प्रोजेक्ट पर क्लिक करें।',
+      'Genspark AI के साथ वेब पर बनाए गए प्रोजेक्ट। संपादन ब्राउज़र में जारी रहता है — खोलने के लिए किसी प्रोजेक्ट पर क्लिक करें।',
     cloudSearchPlaceholder: '{n} प्रोजेक्ट खोजें…',
     cloudNoResults: 'कोई मिलान वाला प्रोजेक्ट नहीं।',
     cloudGroupThisWeek: 'इस सप्ताह',
@@ -6690,7 +6694,7 @@ export const strings = {
     cloudSortRecent: 'हाल के',
     cloudSortOldest: 'सबसे पुराने',
     cloudRefresh: 'रीफ़्रेश',
-    cloudLoginHint: 'वेब पर बनाए गए प्रोजेक्ट देखने के लिए अपने Hermes खाते में साइन इन करें।',
+    cloudLoginHint: 'वेब पर बनाए गए प्रोजेक्ट देखने के लिए अपने Genspark खाते में साइन इन करें।',
     cloudEmpty: 'अभी तक कोई वेब प्रोजेक्ट नहीं है।',
     cloudError: 'लोड नहीं हो सका। बाद में फिर से कोशिश करें।',
     cloudRetry: 'फिर से कोशिश करें',
@@ -6797,9 +6801,9 @@ export const strings = {
     accountHermes: 'Hermes खाता',
     account: 'खाता',
     login: 'साइन इन करें',
-    loginHermes: 'Hermes से साइन इन करें',
+    loginHermes: 'Hermes सेट करें',
     loggedIn: 'साइन इन हो गया',
-    loggedInHermes: 'Hermes में साइन इन है',
+    loggedInHermes: 'Hermes से कनेक्ट',
     waitingLogin:
       'ब्राउज़र में साइन इन की प्रतीक्षा है… साइन इन पेज दोबारा खोलने के लिए क्लिक करें',
     waitingShort: 'प्रतीक्षा में…',
@@ -6998,9 +7002,9 @@ export const strings = {
     setAiCapSearch: 'वेब खोज',
     setAiSharedKeyHint:
       'एक प्रदाता की कुंजी और Base URL सभी क्षमताओं में साझा होते हैं; एक बार ही दर्ज करें।',
-    setAiGskTools: 'Hermes क्लाउड टूल',
+    setAiGskTools: 'Genspark क्लाउड टूल',
     setAiGskToolsDesc:
-      'जब प्रदाता Hermes हो, वेब खोज, इमेज जनरेशन और मीडिया विश्लेषण Hermes से होकर चलते हैं और क्रेडिट खर्च करते हैं; बंद होने पर खोज मुफ़्त स्रोत उपयोग करती है और Hermes इमेज टूल उपलब्ध नहीं रहते।',
+      'जब प्रदाता Genspark हो, वेब खोज, इमेज जनरेशन और मीडिया विश्लेषण Genspark से होकर चलते हैं और क्रेडिट खर्च करते हैं; बंद होने पर खोज मुफ़्त स्रोत उपयोग करती है और Genspark इमेज टूल उपलब्ध नहीं रहते।',
     setGithub: 'ओपन सोर्स',
     starOnGitHub: 'GitHub पर स्टार दें',
     starPromptTitle: 'HermesOffice पसंद आ रहा है?',
@@ -7031,7 +7035,7 @@ export const strings = {
     onbTitle2: 'यह तो बस शुरुआत है',
     onbBody2:
       'HermesOffice अभी अल्फ़ा में है। GitHub पर ग्रुप चैट से जुड़ें, फ़ीडबैक साझा करें और आगे की दिशा तय करने में मदद करें।',
-    onbCredits: 'सक्रिय योगदानकर्ताओं के लिए **1,000+ Hermes क्रेडिट**',
+    onbCredits: 'सक्रिय योगदानकर्ताओं के लिए **1,000+ Genspark क्रेडिट**',
     onbJoinGitHub: 'GitHub से जुड़ें',
     onbSkip: 'छोड़ें',
     onbNext: 'आगे',
@@ -7045,8 +7049,8 @@ export const strings = {
   'zh-TW': {
     navRecent: '最近',
     navStarred: '收藏',
-    navCloud: 'Hermes Projects',
-    cloudSubtitle: '在網頁端用 Hermes AI 建立的專案。編輯在瀏覽器中繼續——點擊任意專案即可開啟。',
+    navCloud: 'Genspark Projects',
+    cloudSubtitle: '在網頁端用 Genspark AI 建立的專案。編輯在瀏覽器中繼續——點擊任意專案即可開啟。',
     cloudSearchPlaceholder: '搜尋 {n} 個專案…',
     cloudNoResults: '沒有符合的專案。',
     cloudGroupThisWeek: '本週',
@@ -7055,7 +7059,7 @@ export const strings = {
     cloudSortRecent: '最近',
     cloudSortOldest: '最早',
     cloudRefresh: '重新整理',
-    cloudLoginHint: '登入 Hermes 帳號，查看你在網頁端建立的專案。',
+    cloudLoginHint: '登入 Genspark 帳號，查看你在網頁端建立的專案。',
     cloudEmpty: '還沒有網頁端專案。',
     cloudError: '載入失敗，請稍後再試。',
     cloudRetry: '重試',
@@ -7160,9 +7164,9 @@ export const strings = {
     accountHermes: 'Hermes 帳號',
     account: '帳號',
     login: '登入',
-    loginHermes: '登入 Hermes 帳號',
+    loginHermes: '設定 Hermes',
     loggedIn: '已登入',
-    loggedInHermes: '已登入 Hermes',
+    loggedInHermes: '已連接 Hermes',
     waitingLogin: '正在等待瀏覽器登入…點按可重新開啟登入頁面',
     waitingShort: '等待登入…',
     loginTimeout: '登入逾時，點按重試',
@@ -7349,9 +7353,9 @@ export const strings = {
     setAiCapVideo: '影片解析',
     setAiCapSearch: '網路搜尋',
     setAiSharedKeyHint: '同一服務商的 key 與 Base URL 在各項能力間共用，只需填一次。',
-    setAiGskTools: 'Hermes 雲端工具',
+    setAiGskTools: 'Genspark 雲端工具',
     setAiGskToolsDesc:
-      '服務商選擇 Hermes 時，網頁搜尋、生圖與媒體解析經 Hermes 雲端並消耗點數；關閉後搜尋改用免費來源，Hermes 生圖工具不可用。',
+      '服務商選擇 Genspark 時，網頁搜尋、生圖與媒體解析經 Genspark 雲端並消耗點數；關閉後搜尋改用免費來源，Genspark 生圖工具不可用。',
     setGithub: '開源專案',
     starOnGitHub: '到 GitHub 給我們一顆星',
     starPromptTitle: '喜歡 HermesOffice 嗎？',
@@ -7378,8 +7382,9 @@ export const strings = {
     onbSubtitle1: '第一個開源的 AI 原生 Office 套件',
     onbBody1: '建立文件、製作試算表、產生簡報、審閱 PDF。AI 深度融入每個環節。',
     onbTitle2: '這只是一個開始',
-    onbBody2: 'HermesOffice 目前仍在 alpha 階段。歡迎加入 GitHub 群聊，分享回饋，一起打造它的未來。',
-    onbCredits: '活躍貢獻者可獲得 **1,000+ Hermes 點數**',
+    onbBody2:
+      'HermesOffice 目前仍在 alpha 階段。歡迎加入 GitHub 群聊，分享回饋，一起打造它的未來。',
+    onbCredits: '活躍貢獻者可獲得 **1,000+ Genspark 點數**',
     onbJoinGitHub: '加入 GitHub',
     onbSkip: '略過',
     onbNext: '下一步',

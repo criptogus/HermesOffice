@@ -15,7 +15,11 @@ import type {
   DeleteTableColumnOperation,
   DeleteTableRowOperation,
 } from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
-import { columnLabel, parseAddress, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import {
+  columnLabel,
+  parseAddress,
+  parseRange,
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { renameRefSheet } from '@hermesoffice/xlsx-gateway/domain/chart-visual'
 import {
   areasOverlap,

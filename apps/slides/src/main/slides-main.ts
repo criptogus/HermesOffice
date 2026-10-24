@@ -1653,8 +1653,8 @@ export function registerSlidesIpc(): void {
   })
   // ── Cloud single-page generation (gsk slide_generate): brief → cloud HTML+conversion → one-slide
   // pptx saved to a temp file. Returns a marker string that slides:land-generated-pages redeems for
-  // the bytes. Enabled when gsk is logged in; GENOFFICE_CLOUD_SLIDE=0 is the kill switch.
-  const cloudSlideEnabled = () => process.env.GENOFFICE_CLOUD_SLIDE !== '0' && !!gskApiKey()
+  // the bytes. Enabled when gsk is logged in; HERMESOFFICE_CLOUD_SLIDE=0 is the kill switch.
+  const cloudSlideEnabled = () => process.env.HERMESOFFICE_CLOUD_SLIDE !== '0' && !!gskApiKey()
 
   ipcMain.handle('slides:cloud-gen-status', () => ({ enabled: cloudSlideEnabled() }))
 
@@ -1677,7 +1677,7 @@ export function registerSlidesIpc(): void {
         // Ultra resolves to the opus-class slide model server-side; standard is the
         // lighter MiniMax M3 model. Keep an explicit escape hatch for quality
         // comparisons and emergency rollback.
-        const tier = process.env.GENOFFICE_CLOUD_SLIDE_TIER === 'standard' ? 'standard' : 'ultra'
+        const tier = process.env.HERMESOFFICE_CLOUD_SLIDE_TIER === 'standard' ? 'standard' : 'ultra'
         const started = Date.now()
         const { bytes, model } = await gskSlideGenerate({
           tier,
@@ -4758,11 +4758,11 @@ export function startSlidesStandalone(): void {
     app.commandLine.appendSwitch('remote-debugging-port', process.env.SLIDES_CDP_PORT)
     app.commandLine.appendSwitch('remote-allow-origins', '*')
   }
-  // GENOFFICE_USER_DATA: test drivers point this at a scratch dir so automated
+  // HERMESOFFICE_USER_DATA: test drivers point this at a scratch dir so automated
   // instances get their own userData AND single-instance lock (the lock is scoped
   // to userData), allowing parallel instances alongside a normal dev run.
-  if (!app.isPackaged && process.env.GENOFFICE_USER_DATA) {
-    app.setPath('userData', process.env.GENOFFICE_USER_DATA)
+  if (!app.isPackaged && process.env.HERMESOFFICE_USER_DATA) {
+    app.setPath('userData', process.env.HERMESOFFICE_USER_DATA)
   }
   // The main process's Node fetch (undici) does not use the system proxy by default, so access
   // from mainland China to overseas LLM APIs like api.anthropic.com hits ETIMEDOUT on direct
@@ -4795,7 +4795,7 @@ export function startSlidesStandalone(): void {
 
   app.whenReady().then(async () => {
     installRendererProtocol({ slides: join(__dirname, '../renderer') })
-    setUiLang(normalizeLang(process.env.GENOFFICE_LANG ?? app.getLocale()))
+    setUiLang(normalizeLang(process.env.HERMESOFFICE_LANG ?? app.getLocale()))
     registerSlidesIpc()
     registerAiIpc()
     registerProjectIpc()

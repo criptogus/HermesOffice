@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import { applySectionStartType, sectionFromSectPr, type SectionInfo } from '@hermesoffice/docx-engine'
+import {
+  applySectionStartType,
+  sectionFromSectPr,
+  type SectionInfo,
+} from '@hermesoffice/docx-engine'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import {
   applyResolvedPageSetup,

@@ -96,7 +96,7 @@ export class McpServerService {
   // ── tool registration ─────────────────────────────────────────────────────
 
   private createSessionServer(): McpServer {
-    const server = new McpServer({ name: 'GenOffice', version: this.version })
+    const server = new McpServer({ name: 'HermesOffice', version: this.version })
     // a factory gives each connected client its own tool instances (session
     // state lives in their closures); otherwise the fixed set is shared
     const tools = this.toolsFactory ? this.toolsFactory() : this.tools
@@ -146,7 +146,7 @@ export class McpServerService {
     if (url.pathname === '/health' && req.method === 'GET') {
       return this.json(res, 200, {
         status: 'ok',
-        server: 'GenOffice',
+        server: 'HermesOffice',
         transport: 'StreamableHTTP + SSE',
         port: this.port,
       })

@@ -4,7 +4,7 @@ import { join, win32 } from 'node:path'
 
 /**
  * Making `genoffice` reachable from a terminal. The launcher ships inside the app
- * (Resources/cli/genoffice, or genoffice.cmd on Windows); nothing at install time puts
+ * (Resources/cli/genoffice, or hermesoffice.cmd on Windows); nothing at install time puts
  * it on PATH for the dmg, so the app tries this on every launch until it
  * succeeds and `genoffice install-cli` repeats it on demand. Best effort
  * everywhere: no prompts, no elevation, never an error on the app's startup
@@ -73,7 +73,11 @@ export function installCliLink(opts: InstallOptions): InstallOutcome {
     }
   }
   if (occupied) return { status: 'occupied', location: occupied, manual }
-  return { status: 'unwritable', location: join(dirs[0] ?? '/usr/local/bin', 'hermesoffice'), manual }
+  return {
+    status: 'unwritable',
+    location: join(dirs[0] ?? '/usr/local/bin', 'hermesoffice'),
+    manual,
+  }
 }
 
 /** Read-only twin of `installCliLink`: what a fresh terminal would find, without changing anything. */
@@ -98,7 +102,11 @@ export function inspectCliLink(opts: InstallOptions): InstallOutcome {
     if (writable(dir)) return { status: 'missing', location: link, manual }
   }
   if (occupied) return { status: 'occupied', location: occupied, manual }
-  return { status: 'unwritable', location: join(dirs[0] ?? '/usr/local/bin', 'hermesoffice'), manual }
+  return {
+    status: 'unwritable',
+    location: join(dirs[0] ?? '/usr/local/bin', 'hermesoffice'),
+    manual,
+  }
 }
 
 function manualCommand(launcher: string): string {

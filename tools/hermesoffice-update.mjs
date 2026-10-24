@@ -53,6 +53,7 @@ function npmBin() {
     }
   }
   const candidates = [
+    join(homedir(), '.local', 'bin', 'npm'),
     join(homedir(), '.hermes', 'node', 'bin', 'npm'),
     join(homedir(), '.homebrew', 'bin', 'npm'),
     '/opt/homebrew/bin/npm',
@@ -67,6 +68,56 @@ function npmBin() {
   throw new Error(
     'npm not found — add npm to PATH or install Node.js (brew install node), then retry the update',
   )
+}
+
+/**
+ * Dirs that hold the build toolchain when the helper runs with the minimal PATH
+ * LaunchServices hands to apps (`/usr/bin:/bin`). npm needs node, and
+ * `npm run dist:mac` compiles the sheets sidecar with cargo — the rustup
+ * toolchain lives in `~/.cargo/bin`, so without it the build dies with
+ * "cargo: command not found" and the UI reports a bogus network error.
+ */
+const TOOLCHAIN_DIRS = [
+  join(homedir(), '.local', 'bin'),
+  join(homedir(), '.cargo', 'bin'),
+  join(homedir(), '.hermes', 'node', 'bin'),
+  join(homedir(), '.homebrew', 'bin'),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+]
+
+/** Always present, whatever PATH the caller had (the build shells out to cp/ditto/git). */
+const SYSTEM_PATH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
+
+/**
+ * PATH for the build tools: the caller's PATH first (the app and the tests rely
+ * on their own npm winning), then the toolchain dirs LaunchServices does not
+ * provide — `~/.cargo/bin` is where rustup puts cargo, and `npm run dist:mac`
+ * compiles the sheets sidecar with it (without it the build dies with
+ * "cargo: command not found" and the UI reports a bogus network error).
+ */
+function toolchainPath(base) {
+  const seen = new Set()
+  const out = []
+  const caller = (base ?? process.env.PATH ?? '').split(':')
+  for (const dir of [...caller, ...TOOLCHAIN_DIRS, ...SYSTEM_PATH_DIRS]) {
+    if (dir && !seen.has(dir)) {
+      seen.add(dir)
+      out.push(dir)
+    }
+  }
+  return out.join(':')
+}
+
+/** Delete that must never abort the caller — used for the bundle backups around
+ * the swap, where the new bundle is already in place and a leftover is
+ * harmless. A residue from a previous update is exactly what wedges the swap. */
+function removeQuietly(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch (err) {
+    console.error(`cleanup of ${dir} failed (ignored): ${err.message}`)
+  }
 }
 
 function run(cmd, args, opts = {}) {
@@ -198,12 +249,13 @@ function cmdPrepare() {
   run(npm, ['ci', '--no-audit', '--no-fund'], {
     cwd: SOURCE_DIR,
     timeout: 600_000,
-    env: { ...process.env, PATH: `${dirname(npm)}:${process.env.PATH || ''}` },
+    env: { ...process.env, PATH: toolchainPath(`${dirname(npm)}:${process.env.PATH || ''}`) },
   })
   progress(35, 'deps ready')
 }
 
 function cmdBuild() {
+  const npm = npmBin()
   progress(40, 'building app (dist:mac)')
   // Retry-once, modeled on the Hermes Desktop updater (update-rebuild.ts): the
   // first rebuild can fail on a still-settling tree or a network-blocked
@@ -215,7 +267,11 @@ function cmdBuild() {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) progress(40, 'retrying build (attempt 2)')
     try {
-      run('npm', ['run', 'dist:mac'], { cwd: SOURCE_DIR, timeout: 900_000 })
+      run(npm, ['run', 'dist:mac'], {
+        cwd: SOURCE_DIR,
+        timeout: 900_000,
+        env: { ...process.env, PATH: toolchainPath(`${dirname(npm)}:${process.env.PATH || ''}`) },
+      })
       buildError = null
       break
     } catch (err) {
@@ -327,16 +383,31 @@ function cmdInstall() {
   verifyBundle(fresh)
   run('codesign', ['--force', '--deep', '--sign', '-', fresh], { timeout: 120_000 })
 
-  rmSync(backup, { recursive: true, force: true })
-  renameSync(APP_PATH, backup)
+  // A previous update can leave a partial backup behind (a recursive delete that
+  // died mid-way — e.g. LaunchServices touching the bundle). Clear it first: the
+  // rename below then has somewhere to go. Best-effort, because a residue we
+  // cannot delete (permissions) must not abort an install.
+  removeQuietly(backup)
+  let parked = backup
+  try {
+    renameSync(APP_PATH, parked)
+  } catch (err) {
+    // Occupied (ENOTEMPTY) or permission-blocked (EACCES) backup: park the
+    // outgoing bundle under a unique name instead of failing the update.
+    if (err.code !== 'ENOTEMPTY' && err.code !== 'EACCES') throw err
+    parked = `${backup}.${Date.now()}`
+    renameSync(APP_PATH, parked)
+  }
   try {
     renameSync(fresh, APP_PATH)
   } catch (err) {
     // restore the previous bundle rather than leaving no app at all
-    renameSync(backup, APP_PATH)
+    renameSync(parked, APP_PATH)
     throw err
   }
-  rmSync(backup, { recursive: true, force: true })
+  // The swap is DONE: from here on nothing may abort, or the app stays closed
+  // with the new bundle in place (the user sees an error and no app).
+  removeQuietly(parked)
 
   progress(100, 'relaunching')
   // This helper itself runs through the packaged Electron binary with

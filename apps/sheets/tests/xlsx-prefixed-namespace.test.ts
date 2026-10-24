@@ -13,7 +13,10 @@ import {
   ensureRelationshipNamespace,
   normalizeOoxmlPartPrefix,
 } from '@hermesoffice/xlsx-gateway/gateway/xlsx-namespace'
-import { maxRelationshipId, parseSheetElements } from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
+import {
+  maxRelationshipId,
+  parseSheetElements,
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
 
 const MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'

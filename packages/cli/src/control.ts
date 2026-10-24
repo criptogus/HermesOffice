@@ -14,8 +14,8 @@ import { CliError, EXIT, type ErrorReason } from './result'
 
 /** The running shell's control endpoint, or null when no live shell published one. */
 export function controlEndpoint(env: NodeJS.ProcessEnv): ControlEndpoint | null {
-  const dirs = env.GENOFFICE_USER_DATA
-    ? [env.GENOFFICE_USER_DATA]
+  const dirs = env.HERMESOFFICE_USER_DATA
+    ? [env.HERMESOFFICE_USER_DATA]
     : [genofficeUserDataDir(env), `${genofficeUserDataDir(env)} Dev`]
   for (const dir of dirs) {
     const file = join(dir, CONTROL_FILE)

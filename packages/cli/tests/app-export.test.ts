@@ -58,7 +58,7 @@ function fakeSpawn(script: Script, calls: { command: string; args: string[] }[])
   }) as unknown as typeof import('node:child_process').spawn
 }
 
-const env = { GENOFFICE_APP_BIN: '/Applications/GenOffice.app/Contents/MacOS/GenOffice' }
+const env = { HERMESOFFICE_APP_BIN: '/Applications/HermesOffice.app/Contents/MacOS/GenOffice' }
 
 describe('exportViaApp', () => {
   it('spawns the app in headless-export mode and returns the envelope', async () => {
@@ -76,7 +76,7 @@ describe('exportViaApp', () => {
       ),
     })
     expect(r.outputPath).toBe(out)
-    expect(calls[0]!.command).toBe(env.GENOFFICE_APP_BIN)
+    expect(calls[0]!.command).toBe(env.HERMESOFFICE_APP_BIN)
     expect(calls[0]!.args).toEqual([
       '--headless-export',
       '/tmp/a.docx',
@@ -185,8 +185,8 @@ describe('exportViaApp', () => {
   })
 
   // Opt-in end-to-end run against the checkout's Electron (needs `npm run build:all`):
-  //   GENOFFICE_E2E_APP=1 npx vitest run tests/app-export.test.ts
-  it.skipIf(!process.env.GENOFFICE_E2E_APP)(
+  //   HERMESOFFICE_E2E_APP=1 npx vitest run tests/app-export.test.ts
+  it.skipIf(!process.env.HERMESOFFICE_E2E_APP)(
     'converts a Word document to PDF through the real app',
     async () => {
       const dir = tempDir()
@@ -203,7 +203,7 @@ describe('exportViaApp', () => {
     240_000,
   )
 
-  it.skipIf(!process.env.GENOFFICE_E2E_APP)(
+  it.skipIf(!process.env.HERMESOFFICE_E2E_APP)(
     'round-trips Word → HTML → Word through the real app',
     async () => {
       const dir = tempDir()

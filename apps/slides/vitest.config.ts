@@ -42,7 +42,10 @@ export default defineConfig({
         here,
         '../../packages/pipelines/src/slides/layout-audit.ts',
       ),
-      '@hermesoffice/pipelines/slides': resolve(here, '../../packages/pipelines/src/slides/index.ts'),
+      '@hermesoffice/pipelines/slides': resolve(
+        here,
+        '../../packages/pipelines/src/slides/index.ts',
+      ),
       '@hermesoffice/docx-engine/metafile': resolve(
         here,
         '../../packages/docx-engine/src/metafile.ts',

@@ -279,7 +279,7 @@ function resolvePath(path: string, ctx: McpContext): string {
   return isAbsolute(path) ? path : resolve(ctx.cwd, path)
 }
 
-/** The deck folder, inside GENOFFICE_ALLOWED_ROOTS when that is set: everything the tools write lives under it. */
+/** The deck folder, inside HERMESOFFICE_ALLOWED_ROOTS when that is set: everything the tools write lives under it. */
 function deckDir(raw: unknown, ctx: McpContext): string {
   return assertAllowed(resolvePath(String(raw), ctx), ctx.env, 'write')
 }

@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
 // the preload exposes window.__genofficeDebug only under this env var
-process.env.GENOFFICE_DEBUG_HOOKS = '1'
+process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 /**
  * Regression for "copied C2:E2, selected C2:C14, paste didn't repeat" (user
