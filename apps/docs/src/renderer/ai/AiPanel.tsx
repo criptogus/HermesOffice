@@ -471,6 +471,7 @@ export function AiPanel({
   /** false once the user scrolls up to read; re-arms near the bottom */
   const stickToBottomRef = useRef(true)
   /** projectId/chatId of the current chat */
+  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatRefIds = useRef<{ projectId: string; chatId: string } | null>(null)
 
   // latest props for the loop's closures (the loop instance outlives renders)
@@ -564,8 +565,9 @@ export function AiPanel({
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
     if (!api) return
     const tempChatId = `unsaved-${Date.now()}`
-    void api
-      .resolveChat({ filePath: filePath ?? null, tempChatId })
+    const pendingChat = api.resolveChat({ filePath: filePath ?? null, tempChatId })
+    sessionReadyRef.current = pendingChat
+    void pendingChat
       .then((ids) => {
         chatRefIds.current = ids
         return api.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
@@ -760,6 +762,7 @@ export function AiPanel({
       // Sent as X-Hermes-Session-Id → the Hermes gateway keeps ONE session per document,
       // so follow-up questions continue the same conversation instead of opening a new thread
       // and re-reading the document from scratch.
+      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
       sessionId: () => chatRefIds.current?.chatId,
       skill: composeSkills('docs+files', '', [
         createDocsSkill(

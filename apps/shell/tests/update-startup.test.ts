@@ -5,12 +5,20 @@ const mocks = vi.hoisted(() => ({
   app: { isPackaged: true },
   source: vi.fn(),
   server: vi.fn(),
+  sourceCheck: vi.fn(),
+  serverCheck: vi.fn(),
 }))
 vi.mock('electron', () => ({ app: mocks.app }))
 vi.mock('node:fs', () => ({ existsSync: mocks.existsSync }))
-vi.mock('../src/main/main-updater', () => ({ initMainUpdater: mocks.source }))
-vi.mock('../src/main/updater', () => ({ initAutoUpdater: mocks.server }))
-import { initAppUpdater } from '../src/main/update-startup'
+vi.mock('../src/main/main-updater', () => ({
+  initMainUpdater: mocks.source,
+  checkMainUpdatesNow: mocks.sourceCheck,
+}))
+vi.mock('../src/main/updater', () => ({
+  initAutoUpdater: mocks.server,
+  checkForUpdatesNow: mocks.serverCheck,
+}))
+import { checkAppUpdatesNow, initAppUpdater } from '../src/main/update-startup'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -41,5 +49,21 @@ describe('application update startup', () => {
     initAppUpdater(window, 'beta')
     expect(mocks.server).toHaveBeenCalledWith(window, 'beta')
     expect(mocks.source).not.toHaveBeenCalled()
+  })
+})
+
+describe('manual application update checks', () => {
+  it('uses the source transport without a packaged feed', async () => {
+    mocks.existsSync.mockReturnValue(false)
+    const window = () => null
+    await checkAppUpdatesNow(window)
+    expect(mocks.sourceCheck).toHaveBeenCalledWith(window)
+    expect(mocks.serverCheck).not.toHaveBeenCalled()
+  })
+  it('uses the server transport with a packaged feed', async () => {
+    mocks.existsSync.mockReturnValue(true)
+    await checkAppUpdatesNow(() => null)
+    expect(mocks.serverCheck).toHaveBeenCalledOnce()
+    expect(mocks.sourceCheck).not.toHaveBeenCalled()
   })
 })

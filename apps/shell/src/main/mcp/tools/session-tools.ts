@@ -141,7 +141,7 @@ export function createSessionTools(
     {
       name: 'create_session',
       description:
-        `Open a new empty file in a visible GenOffice tab and start an editing session; family picks the editor: ${listing}. ` +
+        `Open a new empty file in a visible HermesOffice tab and start an editing session; family picks the editor: ${listing}. ` +
         "Then add content with that family's tools (docs: insert_content / replace_blocks / apply_ops; slides: apply_slide_ops; sheets: apply_sheet_ops) and finish with save_session. " +
         'One session is active at a time — a new create_session replaces it. The user watches each step in the app.',
       inputSchema: {
@@ -157,7 +157,7 @@ export function createSessionTools(
           ok: true,
           family,
           sessionId: wcId,
-          message: `A new empty ${familyLabel(family)} is open in GenOffice. Add content, then call save_session.`,
+          message: `A new empty ${familyLabel(family)} is open in HermesOffice. Add content, then call save_session.`,
         }
       },
     },

@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { ZodRawShape } from 'zod'
 
 /**
- * Local MCP server for GenOffice.
+ * Local MCP server for HermesOffice.
  *
  * Lives in the Electron main process, so it only exists while the app runs.
  * Speaks both the current Streamable HTTP transport (`/mcp`) and the legacy SSE
@@ -309,7 +309,7 @@ export class McpServerService {
   /**
    * A malformed body is a client error, not a server fault: answering 500
    * "internal error" hides the actual problem (bad JSON) from the caller and
-   * reads as a GenOffice bug. Answers the JSON-RPC parse error itself and
+   * reads as a HermesOffice bug. Answers the JSON-RPC parse error itself and
    * returns null; the caller stops there.
    */
   private async readBodyOrReject(

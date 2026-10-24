@@ -14,7 +14,7 @@ async function part(path: string, name: string): Promise<string> {
   return zip.file(name)!.async('string')
 }
 
-describe('genoffice sheet apply --ops (workbook DSL)', () => {
+describe('hermesoffice sheet apply --ops (workbook DSL)', () => {
   it('runs content, format and layout ops through the in-memory workbook and saves them', async () => {
     const dir = tempDir()
     const out = await book(dir, [

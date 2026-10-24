@@ -26,6 +26,19 @@ describe('installCliLink', () => {
     })
   })
 
+  it('does not take ownership of an upstream GenOffice launcher', () => {
+    const dir = tempDir()
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    const foreign = join(dir, 'GenOffice.app', 'Contents', 'Resources', 'cli', 'genoffice')
+    symlinkSync(foreign, join(bin, 'hermesoffice'))
+    expect(
+      installCliLink({ launcher: '/our/cli/hermesoffice', platform: 'linux', candidateDirs: [bin] })
+        .status,
+    ).toBe('occupied')
+    expect(readlinkSync(join(bin, 'hermesoffice'))).toBe(foreign)
+  })
+
   it('replaces our stale symlink but never a real file or a foreign symlink, and reports unwritable dirs with a manual command', () => {
     const dir = tempDir()
     const bin = join(dir, 'bin')
@@ -44,7 +57,7 @@ describe('installCliLink', () => {
 
     const npm = join(dir, 'npm-bin')
     mkdirSync(npm)
-    const npmTarget = join(dir, 'lib', 'node_modules', 'hermesoffice', 'bin', 'genoffice.js')
+    const npmTarget = join(dir, 'lib', 'node_modules', 'hermesoffice', 'bin', 'hermesoffice.js')
     symlinkSync(npmTarget, join(npm, 'hermesoffice'))
     expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [npm] }).status).toBe(
       'occupied',
@@ -123,8 +136,9 @@ describe('installCliLink', () => {
       return { ok: true, stdout: scripts.length === 1 ? 'linked\n' : 'present\n' }
     }
     const launcher =
-      "C:\\Users\\O'Brien\\AppData\\Local\\Programs\\GenOffice\\resources\\genoffice\\hermesoffice.cmd"
-    const dir = "C:\\Users\\O'Brien\\AppData\\Local\\Programs\\GenOffice\\resources\\genoffice"
+      "C:\\Users\\O'Brien\\AppData\\Local\\Programs\\HermesOffice\\resources\\hermesoffice\\hermesoffice.cmd"
+    const dir =
+      "C:\\Users\\O'Brien\\AppData\\Local\\Programs\\HermesOffice\\resources\\hermesoffice"
     const first = installCliLink({ launcher, platform: 'win32', runPowerShell: run })
     expect(first).toEqual({ status: 'linked', location: dir })
     expect(scripts[0]).toContain("$dir = 'C:\\Users\\O''Brien\\AppData")
@@ -146,14 +160,14 @@ describe('installCliLink', () => {
 
   it('inspects the Windows PATH read-only', () => {
     const scripts: string[] = []
-    const launcher = 'C:\\GenOffice\\resources\\genoffice\\hermesoffice.cmd'
+    const launcher = 'C:\\HermesOffice\\resources\\hermesoffice\\hermesoffice.cmd'
     const present = inspectCliLink({
       launcher,
       platform: 'win32',
       runPowerShell: (s) => (scripts.push(s), { ok: true, stdout: 'present\n' }),
     })
     expect(present.status).toBe('present')
-    expect(present.location).toBe('C:\\GenOffice\\resources\\genoffice')
+    expect(present.location).toBe('C:\\HermesOffice\\resources\\hermesoffice')
     expect(scripts[0]).not.toContain('SetValue')
     const missing = inspectCliLink({
       launcher,

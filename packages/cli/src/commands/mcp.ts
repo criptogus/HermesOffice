@@ -5,7 +5,7 @@ import { CliError, EXIT } from '../result'
 export const mcpCommand: CommandDef = {
   name: 'mcp',
   summary:
-    'Serve every command as a Model Context Protocol tool: on stdio for an MCP client on this machine (`claude mcp add --transport stdio genoffice -- genoffice mcp`, Cursor, Claude Desktop), or with --http as a Streamable HTTP server that clients on other machines reach by URL. Over HTTP, files travel too: PUT /files/<name> uploads one and every tool takes http(s) URLs in place of paths; outputs come back as download URLs and, when small, as embedded resources. Ops, specs and Markdown are passed inline either way; a new deck goes through deck_start, deck_page and deck_build.',
+    'Serve every command as a Model Context Protocol tool: on stdio for an MCP client on this machine (`claude mcp add --transport stdio hermesoffice -- hermesoffice mcp`, Cursor, Claude Desktop), or with --http as a Streamable HTTP server that clients on other machines reach by URL. Over HTTP, files travel too: PUT /files/<name> uploads one and every tool takes http(s) URLs in place of paths; outputs come back as download URLs and, when small, as embedded resources. Ops, specs and Markdown are passed inline either way; a new deck goes through deck_start, deck_page and deck_build.',
   usage: 'mcp [--http <port> [--host <addr>] [--token <secret>]]',
   quiet: true,
   options: [

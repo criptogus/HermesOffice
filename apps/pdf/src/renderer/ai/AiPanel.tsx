@@ -107,6 +107,7 @@ export function AiPanel({
   const stickToBottomRef = useRef(true)
 
   // ── Chat-history persistence (r142): same shared store Docs/Sheets use ──
+  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
   /** current turn's streamed text; completed turns collect into runTextsRef */
   const segTextRef = useRef('')
@@ -195,8 +196,9 @@ export function AiPanel({
     const store = chatStore()
     if (!store) return
     const tempChatId = `unsaved-${Date.now()}`
-    void store
-      .resolveChat({ filePath: filePath || null, tempChatId })
+    const pendingChat = store.resolveChat({ filePath: filePath || null, tempChatId })
+    sessionReadyRef.current = pendingChat
+    void pendingChat
       .then((ids) => {
         chatIdsRef.current = ids
         return store.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
@@ -388,6 +390,7 @@ export function AiPanel({
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
       // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per PDF
+      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
       sessionId: () => chatIdsRef.current?.chatId,
       events: {
         onText: (text) => {

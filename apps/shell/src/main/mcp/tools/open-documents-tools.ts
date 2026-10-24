@@ -123,7 +123,7 @@ export function resolveOpenDocumentOfFamily(
 /** a guided "no such document" error listing what is actually open */
 function noMatch(target: string, documents: readonly OpenDocumentTab[]): Error {
   if (documents.length === 0) {
-    return new Error(`no document is open in GenOffice, so "${target}" cannot be resolved`)
+    return new Error(`no document is open in HermesOffice, so "${target}" cannot be resolved`)
   }
   const listing = documents
     .map((doc) => `  ${doc.id}  ${doc.filePath ?? '(never saved)'}  — ${typeLabel(doc)}`)
@@ -166,7 +166,7 @@ export function createOpenDocumentTools(deps: OpenDocumentsDeps): McpToolDefinit
     {
       name: 'open_documents',
       description:
-        'Work with the documents the user currently has open in GenOffice tabs — not just the ' +
+        'Work with the documents the user currently has open in HermesOffice tabs — not just the ' +
         'one a session opened. Actions: "list" (no target) returns every open document with its ' +
         'id, type, path, title, whether it has ever been saved, and whether it has unsaved ' +
         'changes; "read" returns one document\'s live content including unsaved edits; "close" ' +
@@ -192,7 +192,7 @@ export function createOpenDocumentTools(deps: OpenDocumentsDeps): McpToolDefinit
       },
       handler: async (args) => {
         if (!control) {
-          throw new Error('GenOffice is not running, so its open documents are unreachable')
+          throw new Error('HermesOffice is not running, so its open documents are unreachable')
         }
         const action = String(args.action ?? '')
         if (action === 'list') {

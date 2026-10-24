@@ -25,7 +25,7 @@ type Content = {
   resource?: { uri: string; blob?: string }
 }
 
-describe('genoffice mcp --http', () => {
+describe('hermesoffice mcp --http', () => {
   let handle: HttpHandle
   let client: Client
   let dir: string

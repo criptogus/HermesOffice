@@ -5,7 +5,7 @@ import { realizedPath } from './fs'
 import { CliError, EXIT } from './result'
 
 /** The shell's Electron userData directory, located without Electron (HERMESOFFICE_USER_DATA overrides). */
-export function genofficeUserDataDir(env: NodeJS.ProcessEnv): string {
+export function hermesofficeUserDataDir(env: NodeJS.ProcessEnv): string {
   if (env.HERMESOFFICE_USER_DATA) return env.HERMESOFFICE_USER_DATA
   const base =
     process.platform === 'darwin'
@@ -22,7 +22,7 @@ export interface GuiOpenDocuments {
 }
 
 /**
- * Files the running GenOffice shell has open, from the registry it publishes
+ * Files the running HermesOffice shell has open, from the registry it publishes
  * on every tab change (apps/shell/src/main/open-documents.ts). Null when no
  * shell is running: a registry whose pid is gone is a crash leftover.
  */
@@ -30,7 +30,7 @@ export function guiOpenDocuments(env: NodeJS.ProcessEnv): GuiOpenDocuments | nul
   // a checkout's shell keeps its userData in "<name> Dev" beside the packaged one
   const dirs = env.HERMESOFFICE_USER_DATA
     ? [env.HERMESOFFICE_USER_DATA]
-    : [genofficeUserDataDir(env), `${genofficeUserDataDir(env)} Dev`]
+    : [hermesofficeUserDataDir(env), `${hermesofficeUserDataDir(env)} Dev`]
   for (const dir of dirs) {
     const path = join(dir, 'open-documents.json')
     if (!existsSync(path)) continue
@@ -63,12 +63,12 @@ export function assertNotOpenInGui(abs: string, env: NodeJS.ProcessEnv): void {
   if (!open.paths.some((p) => realizedPath(p) === target)) return
   throw new CliError(
     EXIT.file,
-    `GenOffice has this file open: ${abs}`,
+    `HermesOffice has this file open: ${abs}`,
     { gui_pid: open.pid },
     {
       reason: 'file_open_in_gui',
       suggestion:
-        'close the tab in GenOffice first, or pass --force to write anyway (the editor may overwrite your change on its next save)',
+        'close the tab in HermesOffice first, or pass --force to write anyway (the editor may overwrite your change on its next save)',
     },
   )
 }

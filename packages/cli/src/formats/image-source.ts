@@ -11,7 +11,7 @@ export interface ImageSource {
 }
 
 /**
- * Image bytes for a spec or op field: a data: URL, an http(s) URL genoffice
+ * Image bytes for a spec or op field: a data: URL, an http(s) URL hermesoffice
  * downloads, or a local path (absolute, else relative to the current directory
  * and then to the file the reference came from).
  */

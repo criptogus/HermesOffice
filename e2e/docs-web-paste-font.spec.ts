@@ -103,7 +103,7 @@ test.describe('docs web-HTML paste fonts', () => {
           },
           { html, text },
         )
-        await editorPage.keyboard.press('Control+v')
+        await editorPage.keyboard.press('ControlOrMeta+v')
         await editorPage.waitForTimeout(400)
       }
 

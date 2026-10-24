@@ -16,7 +16,7 @@ function fakeMachine(agents: string[]) {
   return { home, env: { HERMESOFFICE_HOME: home, HERMESOFFICE_USER_DATA: userData } }
 }
 
-describe('genoffice skill', () => {
+describe('hermesoffice skill', () => {
   it('path prints the bundled SKILL.md', async () => {
     const r = await run(['skill', 'path', '--json'])
     expect(r.code).toBe(0)

@@ -26,7 +26,7 @@ function resolvePkg(name, from) {
 const seen = new Set()
 function walk(name, from) {
   const dir = resolvePkg(name, from)
-  if (!dir) throw new Error(`genoffice deps: cannot resolve ${name} from ${from}`)
+  if (!dir) throw new Error(`hermesoffice deps: cannot resolve ${name} from ${from}`)
   if (seen.has(dir)) return
   seen.add(dir)
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
@@ -42,7 +42,7 @@ mkdirSync(out, { recursive: true })
 for (const dir of seen) {
   const rel = relative(rootModules, dir)
   if (rel.startsWith('..'))
-    throw new Error(`genoffice deps: ${dir} is outside the root node_modules`)
+    throw new Error(`hermesoffice deps: ${dir} is outside the root node_modules`)
   cpSync(dir, join(out, rel), {
     recursive: true,
     dereference: true,
@@ -50,4 +50,4 @@ for (const dir of seen) {
     filter: (src) => !relative(dir, src).split(sep).includes('node_modules'),
   })
 }
-console.log(`genoffice deps: ${seen.size} packages → ${relative(here, out)}`)
+console.log(`hermesoffice deps: ${seen.size} packages → ${relative(here, out)}`)

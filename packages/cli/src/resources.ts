@@ -95,7 +95,7 @@ export interface AppLaunch {
   args: string[]
 }
 
-/** How to start the GenOffice GUI: the app binary that hosts this CLI, an installed app, or the dev checkout. */
+/** How to start the HermesOffice GUI: the app binary that hosts this CLI, an installed app, or the dev checkout. */
 export function appLaunch(env: NodeJS.ProcessEnv = process.env): AppLaunch | null {
   if (env.HERMESOFFICE_APP_BIN) return { command: env.HERMESOFFICE_APP_BIN, args: [] }
   if (packagedResourcesDir() && process.versions.electron) {
@@ -116,8 +116,8 @@ function installedAppBinaries(env: NodeJS.ProcessEnv): string[] {
   switch (process.platform) {
     case 'darwin':
       return [
-        '/Applications/HermesOffice.app/Contents/MacOS/GenOffice',
-        join(homedir(), 'Applications/HermesOffice.app/Contents/MacOS/GenOffice'),
+        '/Applications/HermesOffice.app/Contents/MacOS/HermesOffice',
+        join(homedir(), 'Applications/HermesOffice.app/Contents/MacOS/HermesOffice'),
       ]
     case 'win32':
       return [

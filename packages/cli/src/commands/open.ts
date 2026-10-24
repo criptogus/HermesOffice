@@ -14,7 +14,7 @@ const APP_START_TIMEOUT_MS = 45_000
 export const openCommand: CommandDef = {
   name: 'open',
   summary:
-    'Open a document in the GenOffice app (starts the app if needed); with a target, also select that spot for the user.',
+    'Open a document in the HermesOffice app (starts the app if needed); with a target, also select that spot for the user.',
   usage:
     'open <file> [--slide n [--el e_12] | --block n | --range [Sheet!]B2:D5 [--sheet name] | --page n]',
   options: [
@@ -43,12 +43,12 @@ export const openCommand: CommandDef = {
     let endpoint = controlEndpoint(ctx.env)
     if (!endpoint) {
       const launch = await spawnApp(path, ctx)
-      if (!target) return { summary: `opening ${path} in GenOffice`, detail: { app: launch } }
+      if (!target) return { summary: `opening ${path} in HermesOffice`, detail: { app: launch } }
       endpoint = await waitForControlEndpoint(ctx.env, APP_START_TIMEOUT_MS)
       if (!endpoint) {
         throw new CliError(
           EXIT.app,
-          'GenOffice started but did not publish its control endpoint',
+          'HermesOffice started but did not publish its control endpoint',
           undefined,
           {
             reason: 'app_unavailable',
@@ -64,8 +64,8 @@ export const openCommand: CommandDef = {
     })
     return {
       summary: target
-        ? `${path}: showing ${describe(target)} in GenOffice`
-        : `opened ${path} in GenOffice`,
+        ? `${path}: showing ${describe(target)} in HermesOffice`
+        : `opened ${path} in HermesOffice`,
       detail: { ...result, gui_pid: endpoint.pid },
     }
   },
@@ -74,7 +74,7 @@ export const openCommand: CommandDef = {
 async function spawnApp(path: string, ctx: CommandContext): Promise<string> {
   const launch = appLaunch(ctx.env)
   if (!launch) {
-    throw new CliError(EXIT.app, 'GenOffice app not found', { hint: 'set HERMESOFFICE_APP_BIN' })
+    throw new CliError(EXIT.app, 'HermesOffice app not found', { hint: 'set HERMESOFFICE_APP_BIN' })
   }
   const env = { ...ctx.env }
   delete env.ELECTRON_RUN_AS_NODE
@@ -85,7 +85,7 @@ async function spawnApp(path: string, ctx: CommandContext): Promise<string> {
       env,
     })
     child.once('error', (err) =>
-      reject(new CliError(EXIT.app, `failed to start GenOffice: ${err.message}`)),
+      reject(new CliError(EXIT.app, `failed to start HermesOffice: ${err.message}`)),
     )
     child.once('spawn', () => {
       child.unref()
@@ -163,7 +163,7 @@ export function parseTarget(args: ParsedArgs, path: string): ControlTarget | und
     EXIT.usage,
     `targets are supported for pptx, docx, xlsx and pdf files, not ${ext || 'this file'}`,
     { supported: ['.pptx', '.docx', '.xlsx', '.pdf'] },
-    { reason: 'unsupported', suggestion: 'run `genoffice open <file>` without a target' },
+    { reason: 'unsupported', suggestion: 'run `hermesoffice open <file>` without a target' },
   )
 }
 

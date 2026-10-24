@@ -16,8 +16,8 @@ import type { ZodShape } from './tools'
 
 /**
  * The staged deck flow as tools. The deck directory is the state: style.md,
- * outline.json and pages/NN.json are exactly what `genoffice slides check` and
- * `genoffice create --spec <dir>` read, so a deck started here can be finished
+ * outline.json and pages/NN.json are exactly what `hermesoffice slides check` and
+ * `hermesoffice create --spec <dir>` read, so a deck started here can be finished
  * from the command line and vice versa. Each tool refuses to run before the
  * stage it depends on exists, pages are written in outline order, and a page
  * that fails its check never replaces the file on disk.

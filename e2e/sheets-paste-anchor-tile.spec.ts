@@ -77,7 +77,7 @@ test.describe('sheets: paste repeats into an anchor-shaped target', () => {
         await sheet.getRange(0, 0, 1, 3).setValues([['a', 'b', 'c']])
         sheet.getRange(0, 0, 1, 3).activate()
       })
-      await sheets.keyboard.press('Control+c')
+      await sheets.keyboard.press('ControlOrMeta+c')
       await sheets.waitForTimeout(300)
 
       // paste into the 4×1 anchor selection A2:A5
@@ -86,7 +86,7 @@ test.describe('sheets: paste repeats into an anchor-shaped target', () => {
           .__genofficeDebug
         debug.univerAPI.getActiveWorkbook().getActiveSheet().getRange(1, 0, 4, 1).activate()
       })
-      await sheets.keyboard.press('Control+v')
+      await sheets.keyboard.press('ControlOrMeta+v')
 
       await expect(async () => {
         const values = await sheets.evaluate(() => {

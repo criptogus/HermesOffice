@@ -1,5 +1,5 @@
 /**
- * Wire format between the genoffice CLI and the running GenOffice shell.
+ * Wire format between the hermesoffice CLI and the running HermesOffice shell.
  *
  * The shell listens on a local socket (unix socket in userData, named pipe on
  * Windows) and publishes its endpoint plus a per-run token in
@@ -54,7 +54,7 @@ export type ControlReply =
   { ok: true; result: Record<string, unknown> } | { ok: false; error: ControlError }
 
 /**
- * What a renderer answers to `window.__genofficeControl(req)`; `not_ready`
+ * What a renderer answers to `window.__hermesofficeControl(req)`; `not_ready`
  * means the document has not finished loading and the shell should ask again.
  */
 export type RendererControlRequest = { cmd: 'goto'; target: ControlTarget } | { cmd: 'selection' }

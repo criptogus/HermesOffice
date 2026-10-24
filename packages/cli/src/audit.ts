@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path'
 
 /**
  * One JSON line per executed command, so the person who let an agent loose
- * with genoffice can see afterwards what it touched. Default location
- * ~/.genoffice/cli-audit.jsonl; HERMESOFFICE_AUDIT_LOG=<path> redirects, `off`
+ * with hermesoffice can see afterwards what it touched. Default location
+ * ~/.hermesoffice/cli-audit.jsonl; HERMESOFFICE_AUDIT_LOG=<path> redirects, `off`
  * disables. Never throws: a failed audit write must not fail the command.
  */
 export interface AuditRecord {

@@ -5,8 +5,8 @@ import { CliError, EXIT } from '../result'
 
 /**
  * Conversions that need an app renderer (Word, Excel and PowerPoint layout,
- * HTML and Markdown print, Word ↔ HTML) run in the GenOffice binary itself through its
- * `--headless-export` entry: Dock hidden, no window, one export, exit. genoffice
+ * HTML and Markdown print, Word ↔ HTML) run in the HermesOffice binary itself through its
+ * `--headless-export` entry: Dock hidden, no window, one export, exit. hermesoffice
  * just spawns it and reads the JSON envelope it prints. The app skips the
  * single-instance lock in that mode, so a running GUI does not interfere.
  */
@@ -39,8 +39,8 @@ export async function exportViaApp(
   const env = opts.env ?? process.env
   const launch = appLaunch(env)
   if (!launch) {
-    throw new CliError(EXIT.app, 'GenOffice app not found (needed for this conversion)', {
-      hint: 'install GenOffice, or set HERMESOFFICE_APP_BIN to its executable',
+    throw new CliError(EXIT.app, 'HermesOffice app not found (needed for this conversion)', {
+      hint: 'install HermesOffice, or set HERMESOFFICE_APP_BIN to its executable',
     })
   }
   const args = [
@@ -55,7 +55,7 @@ export async function exportViaApp(
   ]
   const childEnv = { ...env }
   delete childEnv.ELECTRON_RUN_AS_NODE
-  opts.log?.(`starting GenOffice for ${target} export`)
+  opts.log?.(`starting HermesOffice for ${target} export`)
   const spawn = opts.spawn ?? nodeSpawn
   const child = spawn(launch.command, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
   const { code, stdout, stderr, timedOut } = await waitFor(
@@ -66,13 +66,13 @@ export async function exportViaApp(
   const envelope = parseEnvelope(stdout)
   const exported = envelope?.status === 'ok' && existsSync(outputPath)
   if (exported && (code === 0 || timedOut)) {
-    if (timedOut) opts.log?.('export finished but GenOffice had to be terminated on quit')
+    if (timedOut) opts.log?.('export finished but HermesOffice had to be terminated on quit')
     return { outputPath, summary: envelope.summary ?? `exported to ${outputPath}` }
   }
   if (timedOut) {
     throw new CliError(
       EXIT.conversion,
-      `GenOffice did not finish the export within ${Math.round((opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)}s`,
+      `HermesOffice did not finish the export within ${Math.round((opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000)}s`,
       {
         app: launch.command,
       },
@@ -84,8 +84,8 @@ export async function exportViaApp(
     envelope?.summary ??
     (tail ||
       (code === 0
-        ? 'GenOffice exited without writing the file; this GenOffice version may not support --headless-export'
-        : `GenOffice exited with code ${code}`))
+        ? 'HermesOffice exited without writing the file; this HermesOffice version may not support --headless-export'
+        : `HermesOffice exited with code ${code}`))
   throw new CliError(exitCodeFor(code), message, {
     app: launch.command,
     exit_code: code,

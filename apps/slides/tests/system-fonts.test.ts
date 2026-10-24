@@ -11,7 +11,7 @@ vi.mock('../src/main/shaped-metrics', () => ({
   complexScriptOf: () => null,
 }))
 
-import { createSystemFontMetrics } from '../src/main/fonts'
+import { createSystemFontMetrics, familyAvailable } from '../src/main/fonts'
 
 const style = (fontFamily: string, over: Partial<RunStyle> = {}): RunStyle => ({
   fontFamily,
@@ -91,12 +91,15 @@ describe.runIf(mac)(
       expect(m.displayFamily!(style('Georgia Light'))).toBe('Georgia')
     })
 
-    it.runIf(office)('a weight-suffix request picks the matching cloud face, not Regular', () => {
-      const w = (fam: string) =>
-        m.measure('contract', { fontFamily: fam, fontSizePx: 100, bold: false, italic: false })
-      // Office CloudFonts carry Montserrat in every weight as numeric files
-      expect(w('Montserrat SemiBold')).toBeGreaterThan(w('Montserrat') + 5)
-    })
+    it.runIf(office && familyAvailable('Montserrat'))(
+      'a weight-suffix request picks the matching cloud face, not Regular',
+      () => {
+        const w = (fam: string) =>
+          m.measure('contract', { fontFamily: fam, fontSizePx: 100, bold: false, italic: false })
+        // Office CloudFonts carry Montserrat in every weight as numeric files
+        expect(w('Montserrat SemiBold')).toBeGreaterThan(w('Montserrat') + 5)
+      },
+    )
 
     it('non-CJK path is unaffected', () => {
       expect(m.displayFamily!(style('Arial'))).toBe('Arial')

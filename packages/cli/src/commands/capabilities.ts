@@ -11,7 +11,7 @@ import type { CommandDef } from '../registry'
 import { appLaunch } from '../resources'
 
 /**
- * What the cloud commands can do on this machine, decided from GenOffice's
+ * What the cloud commands can do on this machine, decided from HermesOffice's
  * own settings without a network call: a Genspark login with cloud tools on,
  * or a BYOK key the user entered in Settings. Unkeyed fallbacks (DuckDuckGo)
  * do not count as configured. Agents check this once before planning work
@@ -20,7 +20,7 @@ import { appLaunch } from '../resources'
 export const capabilitiesCommand: CommandDef = {
   name: 'capabilities',
   summary:
-    'Report which cloud features (search, image search, image generation, media analysis) are configured in GenOffice, and whether the app is installed.',
+    'Report which cloud features (search, image search, image generation, media analysis) are configured in HermesOffice, and whether the app is installed.',
   usage: 'capabilities',
   async run(_args, ctx) {
     await prepareCloud(ctx.env)

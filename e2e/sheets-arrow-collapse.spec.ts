@@ -109,7 +109,7 @@ test.describe('sheets: arrow collapses a multi-cell selection to the active cell
         startColumn: 1,
         endColumn: 2,
       })
-      await sheets.keyboard.press('Control+x')
+      await sheets.keyboard.press('ControlOrMeta+x')
 
       // ArrowRight: collapse to active B2, step one right → C2 (not D2)
       await sheets.keyboard.press('ArrowRight')
@@ -138,7 +138,7 @@ test.describe('sheets: arrow collapses a multi-cell selection to the active cell
       // Ctrl+Arrow (excel-jump) on a multi-cell selection collapses the same
       // way: C3:D3 with active C3, Ctrl+Right jumps along row 3 from C3
       await sheets.keyboard.press('Shift+ArrowRight')
-      await sheets.keyboard.press('Control+ArrowRight')
+      await sheets.keyboard.press('ControlOrMeta+ArrowRight')
       await expect(async () => {
         const rect = await selectionRect(sheets)
         expect(rect.startRow).toBe(2)

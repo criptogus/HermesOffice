@@ -15,18 +15,19 @@ export function launcherPath(): string | null {
 
 export const installCommand: CommandDef = {
   name: 'install-cli',
-  summary: 'Put genoffice on the PATH (symlink into /usr/local/bin, or the user PATH on Windows).',
+  summary:
+    'Put hermesoffice on the PATH (symlink into /usr/local/bin, or the user PATH on Windows).',
   usage: 'install-cli',
   async run() {
     const launcher = launcherPath()
-    if (!launcher) throw new CliError(EXIT.app, 'cannot locate the genoffice launcher')
+    if (!launcher) throw new CliError(EXIT.app, 'cannot locate the hermesoffice launcher')
     const r = installCliLink({ launcher })
     const detail = { status: r.status, launcher, ...(r.location ? { location: r.location } : {}) }
     switch (r.status) {
       case 'linked':
-        return { summary: `genoffice is now on the PATH (${r.location})`, detail }
+        return { summary: `hermesoffice is now on the PATH (${r.location})`, detail }
       case 'present':
-        return { summary: `genoffice is already on the PATH (${r.location})`, detail }
+        return { summary: `hermesoffice is already on the PATH (${r.location})`, detail }
       case 'occupied':
         throw new CliError(EXIT.app, `${r.location} is another program; not replacing it`, {
           ...detail,

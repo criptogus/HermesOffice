@@ -9,14 +9,14 @@ import {
   type ControlReply,
   type ControlRequest,
 } from './control-protocol'
-import { genofficeUserDataDir } from './gui'
+import { hermesofficeUserDataDir } from './gui'
 import { CliError, EXIT, type ErrorReason } from './result'
 
 /** The running shell's control endpoint, or null when no live shell published one. */
 export function controlEndpoint(env: NodeJS.ProcessEnv): ControlEndpoint | null {
   const dirs = env.HERMESOFFICE_USER_DATA
     ? [env.HERMESOFFICE_USER_DATA]
-    : [genofficeUserDataDir(env), `${genofficeUserDataDir(env)} Dev`]
+    : [hermesofficeUserDataDir(env), `${hermesofficeUserDataDir(env)} Dev`]
   for (const dir of dirs) {
     const file = join(dir, CONTROL_FILE)
     if (!existsSync(file)) continue
@@ -77,9 +77,9 @@ export function controlRequest(
     const unavailable = (why: string) =>
       settle(() =>
         reject(
-          new CliError(EXIT.app, `GenOffice did not answer: ${why}`, undefined, {
+          new CliError(EXIT.app, `HermesOffice did not answer: ${why}`, undefined, {
             reason: 'app_unavailable',
-            suggestion: 'start GenOffice (or `genoffice open <file>`) and retry',
+            suggestion: 'start HermesOffice (or `hermesoffice open <file>`) and retry',
           }),
         ),
       )
@@ -135,7 +135,7 @@ function defaultSuggestion(reason: ErrorReason, detail: Record<string, unknown>)
     case 'sheet_not_found':
       return 'use one of `detail.sheets` verbatim'
     case 'file_not_open_in_gui':
-      return 'run `genoffice open <file>` first'
+      return 'run `hermesoffice open <file>` first'
     default:
       return 'check the target and retry'
   }

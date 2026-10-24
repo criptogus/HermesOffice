@@ -75,14 +75,14 @@ export function opSuggestion(f: OpFailure, domain: 'slides' | 'docs' | 'sheets')
   switch (f.reason) {
     case 'unknown_op':
       return f.did_you_mean
-        ? `did you mean "${f.did_you_mean}"? (\`genoffice guide ${domain}\` lists every op), then resend the whole batch`
-        : `run \`genoffice guide ${domain}\` for the op list, then resend the whole batch`
+        ? `did you mean "${f.did_you_mean}"? (\`hermesoffice guide ${domain}\` lists every op), then resend the whole batch`
+        : `run \`hermesoffice guide ${domain}\` for the op list, then resend the whole batch`
     case 'out_of_range':
-      return `use an index between ${f.valid_range![0]} and ${f.valid_range![1]} (\`genoffice ${domain} read <file> --json\` lists the current ones), then resend the whole batch`
+      return `use an index between ${f.valid_range![0]} and ${f.valid_range![1]} (\`hermesoffice ${domain} read <file> --json\` lists the current ones), then resend the whole batch`
     case 'target_not_found':
       return f.did_you_mean
         ? `did you mean "${f.did_you_mean}"? (detail.failures[].available lists the ids on that slide), then resend the whole batch`
-        : `run \`genoffice ${domain} read <file> --json\` for the current ids${f.available ? ' (see detail.failures[].available)' : ''}, then resend the whole batch`
+        : `run \`hermesoffice ${domain} read <file> --json\` for the current ids${f.available ? ' (see detail.failures[].available)' : ''}, then resend the whole batch`
     default:
       return f.usage
         ? `fix op ${f.index} to match its usage line (detail.failures[].usage), then resend the whole batch`

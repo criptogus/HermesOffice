@@ -26,7 +26,7 @@ const NODE_ROUTES: Record<string, readonly string[]> = {
 }
 
 /**
- * Conversions the GenOffice binary runs for us in its hidden headless-export
+ * Conversions the HermesOffice binary runs for us in its hidden headless-export
  * mode: anything that needs an app renderer (page layout for pdf, the Word
  * editor's HTML export, html2docx). Mirrors HEADLESS_TARGETS in the shell.
  */
@@ -57,7 +57,7 @@ function appTarget(from: string, to: string): AppExportTarget | null {
 
 export const convertCommand: CommandDef = {
   name: 'convert',
-  summary: 'Convert a document to another format using the GenOffice engines.',
+  summary: 'Convert a document to another format using the HermesOffice engines.',
   usage: 'convert <file> --to <format> [--out <path>] [--force] [--password <pw>] [--sheet <name>]',
   options: [
     { name: 'to', value: 'format', description: 'target format: ' + describeRoutes() },
@@ -120,7 +120,7 @@ async function run(
   const viaApp = appTarget(from, to)
   if (viaApp) {
     const r = await exportViaApp(input, viaApp, output, { env: ctx.env, log: ctx.log })
-    return { detail: { via: 'genoffice --headless-export', summary: r.summary } }
+    return { detail: { via: 'hermesoffice --headless-export', summary: r.summary } }
   }
   if (from === 'pdf') {
     try {
@@ -163,7 +163,7 @@ async function run(
         ctx.warn({
           code: 'images_dropped',
           message: `${exported.skipped.images} image(s) have no Markdown form and were dropped`,
-          suggestion: 'use `genoffice docs read --html` when the images matter',
+          suggestion: 'use `hermesoffice docs read --html` when the images matter',
         })
       }
       return {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# genoffice launcher. Inside a packaged GenOffice it runs the bundled CLI on the
+# hermesoffice launcher. Inside a packaged HermesOffice it runs the bundled CLI on the
 # app's own Node runtime (ELECTRON_RUN_AS_NODE); in a dev checkout it falls
 # back to the system node and the local build output. Usually reached through
 # a symlink on the PATH, so the real location is resolved first.
@@ -13,15 +13,15 @@ while [ -L "$self" ]; do
 done
 here=$(cd "$(dirname "$self")" && pwd)
 
-if [ -n "$GENOFFICE_NODE" ]; then
-  exec "$GENOFFICE_NODE" "$here/hermesoffice.cjs" "$@"
+if [ -n "$HERMESOFFICE_NODE" ]; then
+  exec "$HERMESOFFICE_NODE" "$here/hermesoffice.cjs" "$@"
 fi
 
 case "$here" in
-  */Contents/Resources/cli) app="$here/../../MacOS/GenOffice" ;;
+  */Contents/Resources/cli) app="$here/../../MacOS/HermesOffice" ;;
   */resources/cli)
     # Linux install, or the Windows install reached from Git Bash / MSYS
-    if [ -x "$here/../../HermesOffice.exe" ]; then app="$here/../../HermesOffice.exe"; else app="$here/../../genoffice"; fi
+    if [ -x "$here/../../HermesOffice.exe" ]; then app="$here/../../HermesOffice.exe"; else app="$here/../../hermesoffice"; fi
     ;;
   *) app="" ;;
 esac

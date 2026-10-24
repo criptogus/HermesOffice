@@ -263,7 +263,7 @@ export class TabManager {
       id,
       kind: 'docs',
       view,
-      title: openPath ? basename(openPath) : this.untitled('docs', 'GenOffice Docs'),
+      title: openPath ? basename(openPath) : this.untitled('docs', 'HermesOffice Docs'),
       filePath: openPath,
     })
     this.activateTab(id)

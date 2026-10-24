@@ -159,7 +159,7 @@ describe('mcp http hardening', () => {
 
 /** Delete this server's stored copy found under the tmp FileStore roots. */
 function removeStoredCopy(name: string): void {
-  const prefix = `genoffice-mcp-http-${process.pid}-`
+  const prefix = `hermesoffice-mcp-http-${process.pid}-`
   for (const entry of readdirSync(tmpdir())) {
     if (!entry.startsWith(prefix)) continue
     removeMatching(join(tmpdir(), entry), name)

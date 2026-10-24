@@ -34,7 +34,7 @@ export interface PathContext {
 }
 
 /**
- * HERMESOFFICE_ALLOWED_ROOTS: PATH-style list of directories genoffice may read from and
+ * HERMESOFFICE_ALLOWED_ROOTS: PATH-style list of directories hermesoffice may read from and
  * write to. Unset means unrestricted. Roots are compared after resolving
  * symlinks so a link inside a root cannot point out of it.
  */
@@ -148,7 +148,7 @@ export interface OutputOptions {
 
 /**
  * The single place an output path is resolved, policy-checked and its
- * directory created. A file the running GenOffice shell has open is refused
+ * directory created. A file the running HermesOffice shell has open is refused
  * without --force, so a CLI edit cannot race the editor's own save.
  */
 export function resolveOutput(

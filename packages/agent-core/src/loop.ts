@@ -73,6 +73,8 @@ export interface AgentLoopOptions<TSnapshot = unknown> {
    * A getter is evaluated at request time so re-opened panels reuse the id.
    */
   sessionId?: string | (() => string | undefined)
+  /** Resolve document identity before any request; transcript loading need not block the run. */
+  waitForSession?(): Promise<unknown>
 }
 
 const COMPACT_MAX_BYTES = 256 * 1024
@@ -323,7 +325,20 @@ export class AgentLoop<TSnapshot = unknown> {
   private async beginRun(userMsg: AgentMessage): Promise<void> {
     const generation = this.generation
     try {
-      await this.maybeCompact()
+      if (this.options.waitForSession) await this.options.waitForSession()
+    } catch (error) {
+      if (generation !== this.generation) return
+      this.running = false
+      if (this.cancelled) {
+        this.options.events?.onDone?.({ text: '', cancelled: true, turnLimit: false })
+      } else {
+        this.options.events?.onError?.(error instanceof Error ? error.message : String(error))
+      }
+      return
+    }
+    if (generation !== this.generation) return
+    try {
+      if (!this.cancelled) await this.maybeCompact()
     } catch {
       // Proceed with the run even if compaction fails (an over-budget history only costs more, it's still correct)
     }
@@ -450,6 +465,7 @@ export class AgentLoop<TSnapshot = unknown> {
         this.handle = this.options.transport.stream(
           {
             system: SUMMARIZE_SYSTEM,
+            ...(this.sessionId ? { sessionId: this.sessionId } : {}),
             messages: [
               ...slim,
               { role: 'user', text: 'Compress the conversation above as instructed.' },

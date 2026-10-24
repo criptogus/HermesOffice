@@ -18,7 +18,7 @@ import {
   type SkillLedger,
 } from '../agent-skills'
 import { flagBool, flagString } from '../args'
-import { genofficeUserDataDir } from '../gui'
+import { hermesofficeUserDataDir } from '../gui'
 import type { CommandContext, CommandDef } from '../registry'
 import { bundledSkillPath } from '../resources'
 import { CliError, EXIT, type Warning } from '../result'
@@ -33,7 +33,7 @@ import { didYouMean } from '../suggest'
 export const skillCommand: CommandDef = {
   name: 'skill',
   summary:
-    'List the coding agents found on this machine and install or update the bundled genoffice skill for them.',
+    'List the coding agents found on this machine and install or update the bundled hermesoffice skill for them.',
   usage: 'skill list | skill install <agent|all> [--dir <path>] [--force] | skill path',
   options: [
     { name: 'list', description: 'same as `skill list`' },
@@ -259,7 +259,7 @@ function bundled(): BundledSkill {
 }
 
 function settingsPath(env: NodeJS.ProcessEnv): string {
-  return join(genofficeUserDataDir(env), 'app-settings.json')
+  return join(hermesofficeUserDataDir(env), 'app-settings.json')
 }
 
 function readSettings(env: NodeJS.ProcessEnv): Record<string, unknown> {

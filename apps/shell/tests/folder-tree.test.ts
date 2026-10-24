@@ -273,8 +273,8 @@ describe('helpers', () => {
   })
 
   it('describeRoot creates a missing root and reports it usable', () => {
-    const fresh = join(root, 'GenOffice')
-    expect(describeRoot(fresh)).toEqual({ path: fresh, name: 'GenOffice', usable: true })
+    const fresh = join(root, 'HermesOffice')
+    expect(describeRoot(fresh)).toEqual({ path: fresh, name: 'HermesOffice', usable: true })
   })
 
   it('describeRoot reports a path blocked by a file as unusable', () => {

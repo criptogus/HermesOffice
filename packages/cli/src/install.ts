@@ -3,10 +3,10 @@ import { accessSync, constants, lstatSync, readlinkSync, symlinkSync, unlinkSync
 import { join, win32 } from 'node:path'
 
 /**
- * Making `genoffice` reachable from a terminal. The launcher ships inside the app
- * (Resources/cli/genoffice, or hermesoffice.cmd on Windows); nothing at install time puts
+ * Making `hermesoffice` reachable from a terminal. The launcher ships inside the app
+ * (Resources/cli/hermesoffice, or hermesoffice.cmd on Windows); nothing at install time puts
  * it on PATH for the dmg, so the app tries this on every launch until it
- * succeeds and `genoffice install-cli` repeats it on demand. Best effort
+ * succeeds and `hermesoffice install-cli` repeats it on demand. Best effort
  * everywhere: no prompts, no elevation, never an error on the app's startup
  * path. `inspectCliLink` reports the same states without writing anything.
  */
@@ -59,7 +59,7 @@ export function installCliLink(opts: InstallOptions): InstallOutcome {
       return { status: 'present', location: link }
     }
     if (state === 'file' || state === 'foreign') {
-      // somebody else's genoffice (a file, or npm's symlink): never clobber it
+      // somebody else's hermesoffice (a file, or npm's symlink): never clobber it
       occupied = link
       continue
     }
@@ -124,9 +124,9 @@ function linkState(path: string, launcher: string): 'missing' | 'ours' | 'file' 
   }
 }
 
-/** Only launchers we shipped (<app resources>/cli/hermesoffice or legacy genoffice) may be replaced. */
+/** Only our launchers (<app resources>/cli/hermesoffice) may be replaced. */
 function isOurLauncher(target: string): boolean {
-  return /[\\/]cli[\\/](?:hermesoffice|genoffice)$/.test(target)
+  return /[\\/]cli[\\/]hermesoffice$/.test(target)
 }
 
 function writable(dir: string): boolean {
@@ -153,9 +153,9 @@ const WIN_PATH_READ =
 // best effort: a locked-down PowerShell may refuse Add-Type, the PATH edit still stands
 const WIN_BROADCAST =
   'try { ' +
-  'Add-Type -Namespace GenOfficePath -Name Native -MemberDefinition \'[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);\'; ' +
+  'Add-Type -Namespace HermesOfficePath -Name Native -MemberDefinition \'[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);\'; ' +
   '$r = [UIntPtr]::Zero; ' +
-  "[void][GenOfficePath.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r) " +
+  "[void][HermesOfficePath.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r) " +
   '} catch {}; '
 
 function psQuote(text: string): string {

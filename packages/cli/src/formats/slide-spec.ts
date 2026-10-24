@@ -164,7 +164,7 @@ export function stageContext(
   if (outlineFile) out.outline = { file: outlineFile, outline: readOutline(outlineFile) }
   else {
     out.notes.push(
-      'no outline.json beside the page files or one folder up: the staged flow writes deck/outline.json first and checks every page against it (genoffice guide slides design)',
+      'no outline.json beside the page files or one folder up: the staged flow writes deck/outline.json first and checks every page against it (hermesoffice guide slides design)',
     )
   }
   if (found.style) {

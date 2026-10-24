@@ -13,7 +13,7 @@ import { createContext, disposeContext, type McpContext } from './run'
 import { createMcpServer, type ServeOptions } from './server'
 
 /**
- * `genoffice mcp --http <port>`: the same tools over Streamable HTTP for clients
+ * `hermesoffice mcp --http <port>`: the same tools over Streamable HTTP for clients
  * on other machines. Routes:
  *   POST /mcp            the MCP session (GET for the notification stream, DELETE to end it)
  *   PUT  /files/<name>   upload a file (also POST /files?name=), reply { url, name, size }
@@ -48,7 +48,7 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
 export async function startHttp(opts: HttpServeOptions): Promise<HttpHandle> {
   const host = opts.host ?? '127.0.0.1'
   const files = new FileStore(
-    join(tmpdir(), `genoffice-mcp-http-${process.pid}-${randomBytes(4).toString('hex')}`),
+    join(tmpdir(), `hermesoffice-mcp-http-${process.pid}-${randomBytes(4).toString('hex')}`),
   )
   const roots = opts.env.HERMESOFFICE_ALLOWED_ROOTS?.trim()
   const env = {

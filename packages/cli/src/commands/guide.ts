@@ -42,10 +42,12 @@ export const guideCommand: CommandDef = {
       throw new CliError(
         EXIT.usage,
         'guides available for: slides, docs, sheets',
-        { usage: 'genoffice guide slides | genoffice guide docs | genoffice guide sheets' },
+        {
+          usage: 'hermesoffice guide slides | hermesoffice guide docs | hermesoffice guide sheets',
+        },
         {
           reason: domain === undefined ? 'missing_argument' : 'invalid_argument',
-          suggestion: 'run `genoffice guide slides|docs|sheets`',
+          suggestion: 'run `hermesoffice guide slides|docs|sheets`',
         },
       )
     }
@@ -77,7 +79,7 @@ export const guideCommand: CommandDef = {
           reason: 'invalid_argument',
           suggestion: guess
             ? `did you mean ${guess}?`
-            : `run \`genoffice guide ${domain}\` for the groups and ops`,
+            : `run \`hermesoffice guide ${domain}\` for the groups and ops`,
         },
       )
     }
@@ -112,13 +114,13 @@ async function load(
       if (index) return docs.opSignatureIndex()
       if (group) return docs.opGuide(group)!
       return [
-        'Op groups (genoffice guide slides <group> prints one; genoffice guide slides <op> prints one op):',
+        'Op groups (hermesoffice guide slides <group> prints one; hermesoffice guide slides <op> prints one op):',
         docs.opGuideCatalog(),
         '',
-        'Building a new deck: `genoffice guide slides design` (the staged workflow: style sheet, outline, one page file at a time, build, QC) and `genoffice guide slides spec` (the outline and page spec JSON for `genoffice slides check` and `genoffice create --type pptx --spec`).',
+        'Building a new deck: `hermesoffice guide slides design` (the staged workflow: style sheet, outline, one page file at a time, build, QC) and `hermesoffice guide slides spec` (the outline and page spec JSON for `hermesoffice slides check` and `hermesoffice create --type pptx --spec`).',
         '',
         'Every op: { "op": "<name>", "target": { "slide": <index|"s_n">, "el"?: "e_*" }, ...fields }.',
-        'Units are EMU (914400 per inch; suffixes in/cm/mm/pt/px accepted); font sizes are pt. `genoffice slides read <file>` lists ids and geometry.',
+        'Units are EMU (914400 per inch; suffixes in/cm/mm/pt/px accepted); font sizes are pt. `hermesoffice slides read <file>` lists ids and geometry.',
         'Vocabulary:',
         docs.opVocabulary(),
       ].join('\n')
@@ -142,8 +144,8 @@ function slidesCatalog(docs: SlidesOpDocs): OpCatalog {
 
 function docsGuideText(catalog: OpCatalog, htmlRules: string, group?: string): string {
   const lines = [
-    'Word ops (genoffice docs apply --ops): a JSON array; every entry has "op".',
-    'Targets: { "blockIndexes": [..] } or { "nodeType": "docHeading"|"docParagraph"|"docListItem"|"image", "headingLevel"? }; get indexes from `genoffice docs read`.',
+    'Word ops (hermesoffice docs apply --ops): a JSON array; every entry has "op".',
+    'Targets: { "blockIndexes": [..] } or { "nodeType": "docHeading"|"docParagraph"|"docListItem"|"image", "headingLevel"? }; get indexes from `hermesoffice docs read`.',
     'Field notation: bare = string, n = number, bool = boolean, ? = optional, a|b = one of.',
     '',
     ...renderGroups(catalog, group),

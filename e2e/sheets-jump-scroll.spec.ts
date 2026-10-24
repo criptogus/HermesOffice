@@ -91,7 +91,7 @@ test.describe('sheets: ctrl+shift+arrow scroll follow', () => {
       expect(before.visible.startRow).toBe(0)
       expect(before.selection).toEqual({ startRow: 0, endRow: 0 })
 
-      await sheets.keyboard.press('Control+Shift+ArrowDown')
+      await sheets.keyboard.press('ControlOrMeta+Shift+ArrowDown')
       // the selection extends to the last row and the viewport follows the
       // moving bottom edge off the first screen
       await expect(async () => {
@@ -102,7 +102,7 @@ test.describe('sheets: ctrl+shift+arrow scroll follow', () => {
       }).toPass({ timeout: 10_000 })
 
       // shrinking back to the anchor must scroll the viewport back up
-      await sheets.keyboard.press('Control+Shift+ArrowUp')
+      await sheets.keyboard.press('ControlOrMeta+Shift+ArrowUp')
       await expect(async () => {
         const back = await gridState(sheets)
         expect(back.selection).toEqual({ startRow: 0, endRow: 0 })

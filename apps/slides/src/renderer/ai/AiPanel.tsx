@@ -505,6 +505,7 @@ export function AiPanel({
   /** Stop following once the user scrolls up; re-attach when near the bottom */
   const stickToBottomRef = useRef(true)
   /** Current chat's projectId/chatId, set after resolve succeeds */
+  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatRefIds = useRef<{ projectId: string; chatId: string } | null>(null)
 
   // The loop instance survives across renders; closures read refs for the latest state
@@ -585,8 +586,9 @@ export function AiPanel({
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
     if (!api) return
     const tempChatId = `unsaved-${Date.now()}`
-    void api
-      .resolveChat({ filePath: currentFilePath ?? null, tempChatId })
+    const pendingChat = api.resolveChat({ filePath: currentFilePath ?? null, tempChatId })
+    sessionReadyRef.current = pendingChat
+    void pendingChat
       .then((ids) => {
         chatRefIds.current = ids
         return api.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
@@ -1367,6 +1369,7 @@ export function AiPanel({
       transport: createElectronTransport(() => settingsRef.current),
       systemSuffix: aiLangDirective,
       // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per deck
+      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
       sessionId: () => chatRefIds.current?.chatId,
       skill: composeSkills('slides+files', '', [
         createSlidesSkill(access),

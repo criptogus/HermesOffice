@@ -91,7 +91,7 @@ test.describe('docs paste options chip', () => {
           },
           { html: WEB_TWO_PARAS, text: WEB_TEXT },
         )
-        await editorPage.keyboard.press('Control+v')
+        await editorPage.keyboard.press('ControlOrMeta+v')
         await editorPage.waitForTimeout(400)
       }
 

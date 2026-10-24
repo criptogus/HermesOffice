@@ -48,7 +48,7 @@ import { computedValues } from './xlsx'
 
 const OP_REJECTED: ErrorHints = {
   reason: 'op_rejected',
-  suggestion: 'fix the op against `genoffice guide sheets`, then resend the whole batch',
+  suggestion: 'fix the op against `hermesoffice guide sheets`, then resend the whole batch',
 }
 /** Pins a rejection to one op so a non-atomic `sheet apply` can drop that op and rerun the rest. */
 function pinned(
@@ -65,8 +65,8 @@ function pinned(
 function unknownOpSuggestion(op: string): string {
   const guess = didYouMean(op, SUPPORTED_DSL_OPS)
   return guess
-    ? `did you mean "${guess}"? (\`genoffice guide sheets\` lists every op), then resend the whole batch`
-    : 'run `genoffice guide sheets` for the op list, then resend the whole batch'
+    ? `did you mean "${guess}"? (\`hermesoffice guide sheets\` lists every op), then resend the whole batch`
+    : 'run `hermesoffice guide sheets` for the op list, then resend the whole batch'
 }
 const TWO_BATCHES: ErrorHints = {
   reason: 'op_rejected',
@@ -277,9 +277,9 @@ export async function runWorkbookDsl(
       try {
         plan = adapter.plan({
           dslVersion: 1,
-          transactionId: `genoffice-${Date.now()}-${position}`,
+          transactionId: `hermesoffice-${Date.now()}-${position}`,
           baseRevision: adapter.getSnapshot().revision,
-          summary: 'genoffice sheet apply',
+          summary: 'hermesoffice sheet apply',
           operations: [op],
         })
       } catch (err) {
@@ -704,7 +704,7 @@ function normalizeOp(
   if (!(SUPPORTED_DSL_OPS as readonly string[]).includes(op.op)) {
     const reason = Object.hasOwn(REFUSED_DSL_OPS, op.op) ? REFUSED_DSL_OPS[op.op] : undefined
     const message = reason
-      ? `"${op.op}" is not available headless (${reason}); use the GenOffice app`
+      ? `"${op.op}" is not available headless (${reason}); use the HermesOffice app`
       : `unknown op "${op.op}"`
     throw new CliError(
       EXIT.usage,
@@ -716,7 +716,7 @@ function normalizeOp(
       {
         reason: reason ? 'unsupported' : 'unknown_op',
         suggestion: reason
-          ? 'open the workbook in GenOffice for this edit'
+          ? 'open the workbook in HermesOffice for this edit'
           : unknownOpSuggestion(op.op),
       },
     )

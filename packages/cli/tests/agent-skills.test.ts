@@ -22,7 +22,7 @@ const skillText = (version: string, body = 'Run `hermesoffice --version` first.'
 const bundled = (version = '1.2.0') => bundledSkillFrom(Buffer.from(skillText(version)))
 
 function home(): string {
-  return mkdtempSync(join(tmpdir(), 'genoffice-skills-'))
+  return mkdtempSync(join(tmpdir(), 'hermesoffice-skills-'))
 }
 
 describe('detectAgents', () => {

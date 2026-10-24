@@ -22,7 +22,7 @@ const DEFAULT_TILE_PX = 320
 export const renderCommand: CommandDef = {
   name: 'render',
   summary:
-    'One PNG per page of a document, as the GenOffice renderer lays it out: the picture an agent looks at to check a Word document, a workbook or a page it just made.',
+    'One PNG per page of a document, as the HermesOffice renderer lays it out: the picture an agent looks at to check a Word document, a workbook or a page it just made.',
   usage:
     'render <file> --out <dir> [--page n] [--scale n] [--el e_12[,e_13] [--pad px]] [--grid [--cols n] [--tile px]]',
   options: [
@@ -128,7 +128,9 @@ export const renderCommand: CommandDef = {
     const detail: Record<string, unknown> = {
       files: [...files, ...crops].map((f) => ({ ...f, page: f.page + 1 })),
       formats: RENDERABLE,
-      via: path.toLowerCase().endsWith('.pdf') ? 'pdfium' : 'genoffice --headless-export + pdfium',
+      via: path.toLowerCase().endsWith('.pdf')
+        ? 'pdfium'
+        : 'hermesoffice --headless-export + pdfium',
     }
     if (flagBool(args, 'grid')) {
       const sheet = contactSheet(
@@ -229,7 +231,7 @@ function locate(
         reason: 'target_not_found',
         suggestion: guess
           ? `did you mean ${guess}?`
-          : 'run `genoffice slides read <file>` for the ids',
+          : 'run `hermesoffice slides read <file>` for the ids',
       },
     )
   }

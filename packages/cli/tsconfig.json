@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // the docs/markdown editor modules are typed against the DOM even though genoffice runs them under jsdom
+    // the docs/markdown editor modules are typed against the DOM even though hermesoffice runs them under jsdom
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "types": ["node"],
@@ -26,7 +26,7 @@
       "@hermesoffice/ui": ["../ui/src/index.ts"]
     }
   },
-  // ambient declarations travel with the sources genoffice reuses: package module shims and the
+  // ambient declarations travel with the sources hermesoffice reuses: package module shims and the
   // renderer window globals (window.desktop / window.markdownApi) the editor modules reference
   "include": [
     "src",

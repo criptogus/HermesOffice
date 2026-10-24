@@ -3053,7 +3053,7 @@ html.genoffice-popover-open .ribbon-tabs {
 
 .hx-float {
   position: absolute;
-  z-index: 5;
+  z-index: 7;
   display: flex;
   align-items: center;
   gap: 2px;

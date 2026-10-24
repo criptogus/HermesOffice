@@ -67,7 +67,7 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         await sheet.getRange(0, 0, 1, 3).setValues([[10, 'hi', '=A1&"-x"']])
         sheet.getRange(0, 0, 1, 3).activate()
       })
-      await sheets.keyboard.press('Control+c')
+      await sheets.keyboard.press('ControlOrMeta+c')
       await sheets.waitForTimeout(300)
 
       // tile-paste into A2:C3 — row 3's formula cell becomes an si follower
@@ -88,7 +88,7 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         }
         debug.univerAPI.getActiveWorkbook().getActiveSheet().getRange(1, 0, 2, 3).activate()
       })
-      await sheets.keyboard.press('Control+v')
+      await sheets.keyboard.press('ControlOrMeta+v')
       await sheets.waitForTimeout(800)
 
       await app.evaluate(({ webContents }) => {
@@ -96,7 +96,7 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         wc?.send('menu:action', 'save')
       })
 
-      const saveDir = join(scratch, 'GenOffice')
+      const saveDir = join(scratch, 'HermesOffice')
       await expect(async () => {
         const files = (await readdir(saveDir)).filter((f) => f.endsWith('.xlsx'))
         expect(files).toHaveLength(1)

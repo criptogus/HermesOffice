@@ -909,6 +909,7 @@ export function App(): React.JSX.Element {
    * Only one picker/open request may own the workbook session at a time. */
   const workbookOpeningRef = useRef(false)
   /** Current session's projectId/chatId (resolved when the workbook opens) */
+  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatRefIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
 
   // File renamed externally (in the shell Home list) → sync the title-bar file
@@ -1011,8 +1012,9 @@ export function App(): React.JSX.Element {
     const sessionId = workbookFile?.sessionId
     const resolveArgs: Parameters<typeof api.resolveChat>[0] = { filePath: null, tempChatId }
     if (sessionId !== undefined) resolveArgs.sessionId = sessionId
-    void api
-      .resolveChat(resolveArgs)
+    const pendingChat = api.resolveChat(resolveArgs)
+    sessionReadyRef.current = pendingChat
+    void pendingChat
       .then(async (ids) => {
         chatRefIdsRef.current = ids
         const msgs = await api.loadChat({
@@ -1137,6 +1139,7 @@ export function App(): React.JSX.Element {
       transport: createElectronTransport(() => aiSettingsRef.current!),
       systemSuffix: aiLangDirective,
       // Fork: stable per-workbook session id → X-Hermes-Session-Id keeps ONE gateway session
+      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
       sessionId: () => chatRefIdsRef.current?.chatId,
       skill: composeSkills('sheets+files', '', [
         createWorkbookSkill(sheetsSkillDeps()),

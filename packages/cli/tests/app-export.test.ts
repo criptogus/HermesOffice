@@ -58,7 +58,7 @@ function fakeSpawn(script: Script, calls: { command: string; args: string[] }[])
   }) as unknown as typeof import('node:child_process').spawn
 }
 
-const env = { HERMESOFFICE_APP_BIN: '/Applications/HermesOffice.app/Contents/MacOS/GenOffice' }
+const env = { HERMESOFFICE_APP_BIN: '/Applications/HermesOffice.app/Contents/MacOS/HermesOffice' }
 
 describe('exportViaApp', () => {
   it('spawns the app in headless-export mode and returns the envelope', async () => {

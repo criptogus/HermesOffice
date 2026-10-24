@@ -6,15 +6,15 @@ import { CliError, EXIT } from '../result'
 export const selectionCommand: CommandDef = {
   name: 'selection',
   summary:
-    "What the user has selected in the GenOffice editor showing this file (the user's own pointer for 'this one', 'here').",
+    "What the user has selected in the HermesOffice editor showing this file (the user's own pointer for 'this one', 'here').",
   usage: 'selection <file> --json',
   async run(args, ctx) {
     const path = resolveInput(args.positionals[0], ctx)
     const endpoint = controlEndpoint(ctx.env)
     if (!endpoint) {
-      throw new CliError(EXIT.app, 'GenOffice is not running', undefined, {
+      throw new CliError(EXIT.app, 'HermesOffice is not running', undefined, {
         reason: 'app_unavailable',
-        suggestion: `run \`genoffice open ${path}\` and ask the user to select something`,
+        suggestion: `run \`hermesoffice open ${path}\` and ask the user to select something`,
       })
     }
     const result = await controlRequest(endpoint, { cmd: 'selection', path })

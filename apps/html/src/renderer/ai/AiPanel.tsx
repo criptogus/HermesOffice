@@ -492,6 +492,7 @@ export function AiPanel({
   const runMutatedRef = useRef(false)
   /** tool activity of the whole run, for transcript persistence */
   const runToolsRef = useRef<ToolActivity[]>([])
+  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
   /** messages sent before resolveChat returned, flushed once the chat id is known */
   const pendingPersistRef = useRef<
@@ -642,6 +643,7 @@ export function AiPanel({
   const loopRef = useRef<AgentLoop<DocSnapshot> | null>(null)
   if (!loopRef.current) {
     loopRef.current = new AgentLoop<DocSnapshot>({
+      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
       sessionId: () => chatIdsRef.current?.chatId,
       transport: transportRef.current,
       skill: composeSkills('html+search', '', [
@@ -791,8 +793,9 @@ export function AiPanel({
     const api = window.projectApi
     if (!api) return
     const tempChatId = `unsaved-${Date.now()}`
-    void api
-      .resolveChat({ filePath: filePathRef.current ?? null, tempChatId })
+    const pendingChat = api.resolveChat({ filePath: filePathRef.current ?? null, tempChatId })
+    sessionReadyRef.current = pendingChat
+    void pendingChat
       .then((ids) => {
         chatIdsRef.current = ids
         for (const msg of pendingPersistRef.current.splice(0)) {
