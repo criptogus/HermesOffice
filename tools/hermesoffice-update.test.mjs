@@ -167,6 +167,7 @@ test('build hands the rust toolchain to npm (cargo lives in ~/.cargo/bin)', () =
       env: {
         ...process.env,
         PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, // LaunchServices' minimal PATH + the fake npm
+        HERMESOFFICE_NPM: join(bin, 'npm'),
         HERMESOFFICE_SOURCE_DIR: src,
         HERMESOFFICE_STAGE_DIR: stage,
       },
@@ -178,6 +179,51 @@ test('build hands the rust toolchain to npm (cargo lives in ~/.cargo/bin)', () =
       `cargo dir missing: ${childPath.join(':')}`,
     )
     assert.equal(childPath[0], bin, `caller PATH must win: ${childPath.join(':')}`)
+    assert.ok(childPath.includes('/usr/bin'), `system PATH dropped: ${childPath.join(':')}`)
+    assert.ok(
+      existsSync(join(stage, 'HermesOffice.app', 'Contents', 'Resources', 'build-info.json')),
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('build resolves npm outside LaunchServices PATH and exposes its sibling node', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermesoffice-update-test-'))
+  try {
+    const bin = join(temp, 'bin')
+    const npmDir = join(temp, 'node-bin')
+    const src = join(temp, 'src')
+    const stage = join(temp, 'stage')
+    const seenPath = join(temp, 'npm-path.txt')
+    const app = join(src, 'apps', 'shell', 'release', 'mac-arm64', 'HermesOffice.app')
+    mkdirSync(bin, { recursive: true })
+    mkdirSync(npmDir, { recursive: true })
+    mkdirSync(join(src, '.git'), { recursive: true })
+    makeMinimalBundle(app)
+    // fake npm: records the PATH it was spawned with, then reports success.
+    // `cargo` is deliberately not reachable through this PATH — dist:mac
+    // compiles the sheets sidecar with cargo, which lives in ~/.cargo/bin.
+    executable(join(npmDir, 'npm'), `printf '%s' "$PATH" > "${seenPath}"`)
+    const result = spawnSync(process.execPath, [HELPER, 'build'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, // LaunchServices' minimal PATH + the fake npm
+        HERMESOFFICE_NPM: join(npmDir, 'npm'),
+        HERMESOFFICE_SOURCE_DIR: src,
+        HERMESOFFICE_STAGE_DIR: stage,
+      },
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const childPath = readFileSync(seenPath, 'utf8').split(':')
+    assert.ok(
+      childPath.includes(join(homedir(), '.cargo', 'bin')),
+      `cargo dir missing: ${childPath.join(':')}`,
+    )
+    assert.equal(childPath[0], npmDir, `npm sibling node dir missing: ${childPath.join(':')}`)
+    assert.ok(childPath.includes(bin), 'caller PATH must be preserved')
+    assert.ok(childPath.includes(join(homedir(), '.local', 'bin')), 'local user tools missing')
     assert.ok(childPath.includes('/usr/bin'), `system PATH dropped: ${childPath.join(':')}`)
     assert.ok(
       existsSync(join(stage, 'HermesOffice.app', 'Contents', 'Resources', 'build-info.json')),

@@ -194,7 +194,8 @@ import { TABS_CHANNELS } from '../shared/tabs-api'
 import { showErrorDialog } from './error-dialog'
 import { normalizeRecentQuery, pageRecentPaths, statExistingPaths } from './recent-files'
 import { TabManager } from './tab-manager'
-import { applyUpdateChannel, initAutoUpdater } from './updater'
+import { applyUpdateChannel } from './updater'
+import { initAppUpdater } from './update-startup'
 import { isUpdateChannel, type UpdateChannel } from '../shared/update-api'
 
 /**
@@ -4422,7 +4423,7 @@ app.whenReady().then(async () => {
   // deferred to ready: labels need currentLang(), which reads app.getLocale()
   installBackToHomeItems()
   installDockMenu()
-  initAutoUpdater(() => shellWindow, currentUpdateChannel())
+  initAppUpdater(() => shellWindow, currentUpdateChannel())
 
   if (!pendingLaunchPath || !openDocumentPath(pendingLaunchPath)) tabManager?.openHomeTab()
   pendingLaunchPath = null
