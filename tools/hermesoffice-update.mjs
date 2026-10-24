@@ -53,6 +53,7 @@ function npmBin() {
     }
   }
   const candidates = [
+    join(homedir(), '.local', 'bin', 'npm'),
     join(homedir(), '.hermes', 'node', 'bin', 'npm'),
     join(homedir(), '.homebrew', 'bin', 'npm'),
     '/opt/homebrew/bin/npm',
@@ -77,6 +78,7 @@ function npmBin() {
  * "cargo: command not found" and the UI reports a bogus network error.
  */
 const TOOLCHAIN_DIRS = [
+  join(homedir(), '.local', 'bin'),
   join(homedir(), '.cargo', 'bin'),
   join(homedir(), '.hermes', 'node', 'bin'),
   join(homedir(), '.homebrew', 'bin'),
@@ -253,6 +255,7 @@ function cmdPrepare() {
 }
 
 function cmdBuild() {
+  const npm = npmBin()
   progress(40, 'building app (dist:mac)')
   // Retry-once, modeled on the Hermes Desktop updater (update-rebuild.ts): the
   // first rebuild can fail on a still-settling tree or a network-blocked
@@ -264,10 +267,10 @@ function cmdBuild() {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) progress(40, 'retrying build (attempt 2)')
     try {
-      run('npm', ['run', 'dist:mac'], {
+      run(npm, ['run', 'dist:mac'], {
         cwd: SOURCE_DIR,
         timeout: 900_000,
-        env: { ...process.env, PATH: toolchainPath() },
+        env: { ...process.env, PATH: toolchainPath(`${dirname(npm)}:${process.env.PATH || ''}`) },
       })
       buildError = null
       break
