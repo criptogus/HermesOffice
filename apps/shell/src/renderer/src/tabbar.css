@@ -315,17 +315,17 @@ body.overlay-title-bar .tab-bar-drag-spacer {
 }
 
 [data-theme='dark'] .tab-item:not(.active):hover .tab-plate {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover);
 }
 
 [data-theme='dark'] .tab-close:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--pressed);
 }
 
 [data-theme='dark'] .tab-new-btn:hover,
 [data-theme='dark'] .tab-overflow-btn:hover,
 [data-theme='dark'] .tab-app-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 
 /* System dark: same overrides when following OS preference */
@@ -340,15 +340,15 @@ body.overlay-title-bar .tab-bar-drag-spacer {
     background: var(--surface);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-item:not(.active):hover .tab-plate {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--hover);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-close:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--pressed);
   }
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-new-btn:hover,
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-overflow-btn:hover,
   :root:not([data-theme='light']):not([data-theme='dark']) .tab-app-menu-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-hover);
   }
 }
 /* Motion accessibility: suppress all animation for users who opt out */

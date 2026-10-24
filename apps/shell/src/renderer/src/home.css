@@ -1617,7 +1617,7 @@ body.vib .home {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
+  box-shadow: var(--shadow-menu);
   padding: 4px;
   z-index: 5;
 }
@@ -1826,7 +1826,7 @@ body.vib .home {
 /* always visible so rows read as external links; darkens on hover */
 .cloud-row-external {
   flex-shrink: 0;
-  color: #c9ced4;
+  color: var(--icon-muted);
 }
 
 .cloud-row:hover .cloud-row-external,
