@@ -149,7 +149,6 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
     modelMetadata: {
       'MiniMax-M3.1-Flash': {
         contextWindow: 1_000_000,
-        maxOutputTokens: 524_288,
         pricingUsdPerMillionTokens: { input: 0.15, output: 0.6, cacheRead: 0.015 },
         inputModalities: ['text', 'image', 'video'],
         thinkingModes: ['adaptive'],
