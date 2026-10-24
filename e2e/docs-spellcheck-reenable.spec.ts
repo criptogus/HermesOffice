@@ -68,6 +68,12 @@ test('re-enabling spellcheck respells existing text without user input', async (
       })
       .toBeGreaterThanOrEqual(Math.max(off + 101, Math.floor(baseline * 0.8)))
 
+    // Squiggles can paint before the trusted-space kick has been scrubbed.
+    // Require byte-identical text after that asynchronous round trip too.
+    await expect
+      .poll(() => editor.evaluate(() => document.querySelector('.doc-page')?.textContent ?? ''))
+      .toBe(textBefore)
+
     const textAfter = await editor.evaluate(
       () => document.querySelector('.doc-page')?.textContent ?? '',
     )
