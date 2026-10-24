@@ -42,6 +42,31 @@ export interface AiProviderMeta {
   needsBaseUrl?: boolean
   /** Fork: canonical local gateway base URL (e.g. hermes → http://127.0.0.1:8642/v1) used as the default when unset */
   defaultBaseUrl?: string
+  /** Descriptive vendor model capabilities and pricing; not enforced by request guards. */
+  modelMetadata?: Record<string, AiModelMetadata>
+  /** Regional endpoints published by the provider. */
+  endpoints?: AiProviderEndpoint[]
+}
+
+export interface AiModelMetadata {
+  contextWindow: number
+  maxOutputTokens?: number
+  /** Qualifications for the listed base rates, such as input-length and priority tiers. */
+  pricingNotes?: string
+  pricingUsdPerMillionTokens: {
+    input: number
+    output: number
+    cacheRead?: number
+    cacheWrite?: number
+  }
+  inputModalities: Array<'text' | 'image' | 'video' | 'audio'>
+  thinkingModes: string[]
+}
+
+export interface AiProviderEndpoint {
+  region: string
+  openaiBaseUrl: string
+  anthropicBaseUrl: string
 }
 
 export interface AiSettings {

@@ -319,6 +319,8 @@ export function AiPanel({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
+      // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per PDF
+      sessionId: () => chatIdsRef.current?.chatId,
       events: {
         onText: (text) => {
           setPhase('replying')
@@ -880,7 +882,7 @@ function IconCollapse(): ReactElement {
   )
 }
 
-/** Genspark brand mark (rounded-square sparkle badge), inline so it renders
+/** Hermes brand mark (rounded-square H badge), inline so it renders
  * crisply at device resolution instead of going through <img> rasterization */
 export function HermesMark({ size = 26 }: { size?: number }) {
   return (

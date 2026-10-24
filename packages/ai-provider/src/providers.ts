@@ -142,10 +142,49 @@ export const AI_PROVIDERS: AiProviderMeta[] = [
   {
     id: 'minimax',
     label: 'MiniMax',
-    // M3 is the current agentic/tool-use model; M2.5 moved to the legacy tier
-    models: ['MiniMax-M3', 'MiniMax-M2.7'],
-    defaultModel: 'MiniMax-M3',
+    // Keep saved model ids intact; only the ordinary choices follow the current lineup.
+    models: ['MiniMax-M3.1-Flash', 'MiniMax-M3'],
+    defaultModel: 'MiniMax-M3.1-Flash',
     keyPlaceholder: 'eyJ...',
+    modelMetadata: {
+      'MiniMax-M3.1-Flash': {
+        contextWindow: 1_000_000,
+        pricingUsdPerMillionTokens: { input: 0.15, output: 0.6, cacheRead: 0.015 },
+        inputModalities: ['text', 'image', 'video'],
+        thinkingModes: ['adaptive'],
+      },
+      'MiniMax-M3': {
+        contextWindow: 1_000_000,
+        pricingUsdPerMillionTokens: { input: 0.3, output: 1.2, cacheRead: 0.06 },
+        pricingNotes:
+          'Standard up to 512k input tokens; above 512k: input $0.60, output $2.40, cache read $0.12 per million tokens. Priority costs 1.5x standard.',
+        inputModalities: ['text', 'image', 'video'],
+        thinkingModes: ['adaptive', 'disabled'],
+      },
+      'MiniMax-M2.7': {
+        contextWindow: 204_800,
+        pricingUsdPerMillionTokens: {
+          input: 0.3,
+          output: 1.2,
+          cacheRead: 0.06,
+          cacheWrite: 0.375,
+        },
+        inputModalities: ['text'],
+        thinkingModes: ['always_on'],
+      },
+    },
+    endpoints: [
+      {
+        region: 'global_en',
+        openaiBaseUrl: 'https://api.minimax.io/v1',
+        anthropicBaseUrl: 'https://api.minimax.io/anthropic',
+      },
+      {
+        region: 'cn_zh',
+        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        anthropicBaseUrl: 'https://api.minimaxi.com/anthropic',
+      },
+    ],
   },
   {
     id: 'xai',
