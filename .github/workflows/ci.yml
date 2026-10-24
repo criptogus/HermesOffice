@@ -108,6 +108,12 @@ jobs:
       - name: Check committed fixtures match the generator
         run: git diff --exit-code -- fixtures/generated
 
+      # CLI XLSX tests run before the Sheets workspace tests in npm test.
+      - name: Prepare Sheets engine and fixtures for CLI tests
+        run: |
+          npm run native:build -w @hermesoffice/sheets
+          npm run fixtures -w @hermesoffice/sheets
+
       - name: Test
         run: npm test
 
