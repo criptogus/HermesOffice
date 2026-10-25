@@ -54,12 +54,6 @@ const TEXT_MAX_CHARS = 32_000
 /** Max stored characters of a scope excerpt */
 const SCOPE_TEXT_MAX_CHARS = 400
 const TEXT_TRUNCATED_MARK = '\n\n[truncated]'
-/**
- * Max opening messages buffered in memory per chat before the first
- * assistant message materializes the file. Without a cap, thousands of
- * pre-first-reply user messages accumulate unboundedly in the map.
- */
-export const MAX_PENDING_OPENING_MESSAGES = 200
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -320,38 +314,7 @@ export class ProjectStore {
     this.writeIndex(index)
   }
 
-  /**
-   * Buffer for the opening messages of a chat that has no file yet: the file
-   * is not created until the first assistant reply arrives, so aborted or
-   * failed requests never leave behind an empty record with a lone user
-   * message.
-   */
-  private readonly pendingFirstWrite = new Map<string, ChatMessage[]>()
-
-  /** Flushes buffered opening messages to disk (materialized before rebind: once the file is saved, the opening messages should be kept). */
-  private flushPending(projectId: string, chatId: string): void {
-    // Validate before any IO so traversal ids throw instead of being swallowed below
-    assertSafeId(projectId, 'projectId')
-    assertSafeId(chatId, 'chatId')
-    const key = this.seqKey(projectId, chatId)
-    const buf = this.pendingFirstWrite.get(key)
-    this.pendingFirstWrite.delete(key)
-    if (!buf || buf.length === 0) return
-    try {
-      ensureDir(this.chatsDir(projectId))
-      const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
-      appendFileSync(this.chatPath(projectId, chatId), lines, 'utf8')
-    } catch (err) {
-      console.warn('[project-store] flushPending failed:', err)
-    }
-  }
-
-  /**
-   * Appends one message to the JSONL. Write failures warn silently, never throw.
-   * seq is auto-assigned by the store layer (monotonically increasing).
-   * When the record file doesn't exist yet, non-assistant messages are buffered;
-   * the file is created and flushed only when the first assistant message arrives.
-   */
+  /** Persist every message immediately, including failed/cancelled opening turns. */
   appendChatMessage(
     projectId: string,
     chatId: string,
@@ -387,26 +350,8 @@ export class ProjectStore {
         }
       }
 
-      const key = this.seqKey(projectId, chatId)
-      if (msg.role !== 'assistant' && !existsSync(this.chatPath(projectId, chatId))) {
-        const buf = this.pendingFirstWrite.get(key) ?? []
-        buf.push(record)
-        // Bound the in-memory buffer: overflow materializes the file early
-        // instead of dropping user messages.
-        if (buf.length >= MAX_PENDING_OPENING_MESSAGES) {
-          ensureDir(this.chatsDir(projectId))
-          this.pendingFirstWrite.delete(key)
-          const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
-          appendFileSync(this.chatPath(projectId, chatId), lines, 'utf8')
-          return
-        }
-        this.pendingFirstWrite.set(key, buf)
-        return
-      }
       ensureDir(this.chatsDir(projectId))
-      const buf = this.pendingFirstWrite.get(key) ?? []
-      this.pendingFirstWrite.delete(key)
-      const lines = [...buf, record].map((r) => JSON.stringify(r) + '\n').join('')
+      const lines = JSON.stringify(record) + '\n'
       appendFileSync(this.chatPath(projectId, chatId), lines, 'utf8')
     } catch (err) {
       console.warn('[project-store] appendChatMessage failed:', err)
@@ -423,9 +368,8 @@ export class ProjectStore {
     assertSafeId(chatId, 'chatId')
     // Clamp limit so 0 no longer returns all messages via slice(-0)
     const safeLimit = normalizeChatLimit(limit)
-    const pending = this.pendingFirstWrite.get(this.seqKey(projectId, chatId)) ?? []
     const filePath = this.chatPath(projectId, chatId)
-    const messages: ChatMessage[] = [...pending]
+    const messages: ChatMessage[] = []
     try {
       if (existsSync(filePath)) {
         const raw = readFileSync(filePath, 'utf8')
@@ -493,8 +437,6 @@ export class ProjectStore {
     toId: string,
   ): void {
     if (fromProjectId === toProjectId && fromId === toId) return
-    // The source may still have buffered opening messages: materialize them first (once the file is saved, they should be kept)
-    this.flushPending(fromProjectId, fromId)
     const oldPath = this.chatPath(fromProjectId, fromId)
     const newPath = this.chatPath(toProjectId, toId)
     let mergedMaxSeq: number | undefined
@@ -748,9 +690,8 @@ export class ProjectStore {
     targetProj.updatedAt = nowIso()
     this.writeProject(targetProj)
 
-    // 4. Move the corresponding chat's JSONL (materialize buffered opening messages first)
+    // 4. Move the corresponding chat's JSONL
     const chatId = this.chatIdForPath(filePath)
-    this.flushPending(fromProjectId, chatId)
     const srcChatPath = this.chatPath(fromProjectId, chatId)
     const dstChatPath = this.chatPath(targetProjectId, chatId)
     try {

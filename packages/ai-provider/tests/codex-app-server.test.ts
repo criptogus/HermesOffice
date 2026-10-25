@@ -11,6 +11,7 @@ import {
   codexThreadStartParams,
   parseCodexAppServerTurn,
   resolveCodexCliPath,
+  requireCodexPermissionProfile,
   waitForTurn,
   type CodexTurnTransport,
   type RpcMessage,
@@ -104,7 +105,7 @@ describe('Codex app-server bridge', () => {
 
   it('confines Codex tool reads to the temp dir through a permission profile', () => {
     const config = { apiKey: '', model: 'gpt-5.6-terra' }
-    const params = codexThreadStartParams(config, '/tmp/genoffice-codex-x', 'profile')
+    const params = codexThreadStartParams(config, '/tmp/genoffice-codex-x')
     expect(params).not.toHaveProperty('sandbox')
     expect(params.approvalPolicy).toBe('never')
     expect(params.config).toEqual({
@@ -115,9 +116,15 @@ describe('Codex app-server bridge', () => {
         },
       },
     })
-    expect(codexThreadStartParams(config, '/tmp/genoffice-codex-x', 'read-only')).toMatchObject({
-      sandbox: 'read-only',
-    })
+    expect(() => requireCodexPermissionProfile({ thread: { id: 'wrong' } })).toThrow(
+      'permission profile',
+    )
+    expect(
+      requireCodexPermissionProfile({
+        thread: { id: 'safe' },
+        activePermissionProfile: { id: 'hermesoffice' },
+      }),
+    ).toBe('safe')
     expect(activePermissionProfileId({ activePermissionProfile: { id: 'hermesoffice' } })).toBe(
       'hermesoffice',
     )
@@ -236,4 +243,27 @@ describe('Codex app-server bridge', () => {
       ),
     ).rejects.toThrow('boom')
   })
+})
+
+it('discovers the macOS bundled CLI with a Finder-style PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'office-macos-codex-'))
+  try {
+    const bin = join(root, 'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS')
+    await mkdir(bin, { recursive: true })
+    await writeFile(join(bin, 'codex'), '')
+    expect(
+      await resolveCodexCliPath('', {
+        platform: 'darwin',
+        env: { PATH: '' },
+        bundledAppDirs: [root],
+      }),
+    ).toBe(join(bin, 'codex'))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+it('does not silently replace a missing explicit CLI path with another runtime', async () => {
+  await expect(
+    resolveCodexCliPath('/nonexistent/office-codex', { platform: 'darwin', env: {} }),
+  ).rejects.toThrow('Configured Codex CLI')
 })

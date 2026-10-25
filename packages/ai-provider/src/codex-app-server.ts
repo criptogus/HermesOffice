@@ -65,9 +65,9 @@ const REQUEST_TIMEOUT_MS = 30_000
 const IDLE_SHUTDOWN_MS = 120_000
 const MAX_NATIVE_SESSIONS = 64
 const MAX_MODEL_PAGES = 10
-const CODEX_TEMP_PREFIX = 'genoffice-codex-app-server-'
+const CODEX_TEMP_PREFIX = 'hermesoffice-codex-app-server-'
 const CODEX_BASE_INSTRUCTIONS =
-  'You are the language-model backend embedded in GenOffice. Never inspect or modify local files, run shell commands, browse, call MCP, use apps, or invoke any built-in Codex tool. The caller supplies the complete relevant conversation and a JSON Schema. Return exactly one assistant response matching that schema; GenOffice itself executes document tools.'
+  'You are the language-model backend embedded in HermesOffice. Never inspect or modify local files, run shell commands, browse, call MCP, use apps, or invoke any built-in Codex tool. The caller supplies the complete relevant conversation and a JSON Schema. Return exactly one assistant response matching that schema; HermesOffice itself executes document tools.'
 
 function cleanCliPath(value: string | undefined): string {
   const trimmed = (value ?? '').trim()
@@ -86,6 +86,7 @@ interface CodexCliResolutionOptions {
   managedInstallRoot?: string | undefined
   env?: NodeJS.ProcessEnv | undefined
   platform?: NodeJS.Platform | undefined
+  bundledAppDirs?: string[] | undefined
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -220,6 +221,9 @@ export async function resolveCodexCliPath(
     if (!managed) {
       if (!isAbsolute(configuredExecutable)) return configuredExecutable
       if (await fileExists(configuredExecutable)) return configuredExecutable
+      throw new Error(
+        'Configured Codex CLI was not found. Choose an existing executable or clear the path for automatic discovery.',
+      )
     }
   }
 
@@ -229,6 +233,22 @@ export async function resolveCodexCliPath(
   }
   const fromPath = await codexOnPath(platform, env)
   if (fromPath) return fromPath
+  if (platform === 'darwin') {
+    const apps = options.bundledAppDirs ?? [
+      '/Applications',
+      ...(env.HOME ? [join(env.HOME, 'Applications')] : []),
+    ]
+    for (const folder of apps) {
+      for (const relative of [
+        'Codex.app/Contents/Resources/codex',
+        'Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+        'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+      ]) {
+        const candidate = join(folder, relative)
+        if (await fileExists(candidate)) return candidate
+      }
+    }
+  }
   throw new Error(
     'Codex CLI was not found automatically. Install or open the Codex app, or set a custom codex executable path.',
   )
@@ -711,7 +731,6 @@ const CODEX_PERMISSION_PROFILE = 'hermesoffice'
 export function codexThreadStartParams(
   config: AiProviderConfig,
   tempDir: string,
-  mode: 'profile' | 'read-only',
 ): Record<string, unknown> {
   const base = {
     ...(config.model.trim() ? { model: config.model.trim() } : {}),
@@ -721,7 +740,6 @@ export function codexThreadStartParams(
     baseInstructions: CODEX_BASE_INSTRUCTIONS,
     ephemeral: true,
   }
-  if (mode === 'read-only') return { ...base, sandbox: 'read-only' }
   return {
     ...base,
     config: {
@@ -738,33 +756,29 @@ export function activePermissionProfileId(result: unknown): string | undefined {
   return typeof active?.id === 'string' ? active.id : undefined
 }
 
+export function requireCodexPermissionProfile(result: unknown): string {
+  if (activePermissionProfileId(result) !== CODEX_PERMISSION_PROFILE) {
+    throw new Error(
+      'Codex did not activate the HermesOffice permission profile. Update the Codex runtime before connecting.',
+    )
+  }
+  return threadIdFrom(result)
+}
+
 async function startNativeThread(
   client: CodexAppServerClient,
   config: AiProviderConfig,
   tempDir: string,
 ): Promise<string> {
-  let profileResult: unknown
+  const result = await client.request('thread/start', codexThreadStartParams(config, tempDir))
   try {
-    profileResult = await client.request(
-      'thread/start',
-      codexThreadStartParams(config, tempDir, 'profile'),
-    )
-    if (activePermissionProfileId(profileResult) === CODEX_PERMISSION_PROFILE) {
-      return threadIdFrom(profileResult)
-    }
-  } catch {
-    // Older Codex builds reject the profile keys; fall through to the sandbox.
-    profileResult = undefined
+    return requireCodexPermissionProfile(result)
+  } catch (error) {
+    const abandoned = optionalThreadId(result)
+    if (abandoned)
+      await client.request('thread/delete', { threadId: abandoned }).catch(() => undefined)
+    throw error
   }
-  // A user config.toml sandbox_mode or an older Codex ignored the profile. Discard
-  // that thread before falling back so it does not linger under looser permissions.
-  const abandoned = optionalThreadId(profileResult)
-  if (abandoned) {
-    await client.request('thread/delete', { threadId: abandoned }).catch(() => undefined)
-  }
-  return threadIdFrom(
-    await client.request('thread/start', codexThreadStartParams(config, tempDir, 'read-only')),
-  )
 }
 
 export interface CodexTurnTransport {

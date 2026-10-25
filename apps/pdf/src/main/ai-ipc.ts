@@ -38,7 +38,6 @@ export function registerPdfAiIpc(): void {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
     // AI features all go through Hermes; stored settings that chose another provider are normalized back
-    settings.provider = 'hermes'
     return settings
   })
 
