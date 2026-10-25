@@ -52,3 +52,32 @@ but are not advertised as live-tested Codex integrations by this change.
 Automated regression coverage includes CLI discovery, permission-profile
 activation, transport/session routing, cancellation, failed opening-message
 persistence, and history restoration before a fast first follow-up.
+
+The measured macOS run used `codex-cli 0.164.0-alpha.11.1` (seven available
+models). Two Docs conversations returned their own chat-only markers before and
+after a complete process restart, with stable distinct chat IDs and visible
+restored history. A controlled paragraph insertion and the editor's rollback
+button both passed. This does not establish compatibility with every Codex build;
+permission-profile activation is checked at runtime.
+
+Reproduce the deterministic regression without model access:
+
+```sh
+npm run build:all
+npm run test:e2e -- e2e/codex-history.spec.ts
+```
+
+The live test is skipped by default because it consumes the signed-in Codex
+account's usage. Explicitly opt in; it creates only synthetic documents and an
+isolated Office profile, then closes its own processes:
+
+```sh
+HERMESOFFICE_CODEX_LIVE=1 \
+HERMESOFFICE_TEST_EXECUTABLE=/Applications/HermesOffice.app/Contents/MacOS/HermesOffice \
+HERMESOFFICE_CODEX_REPORT=/tmp/codex-live-result.json \
+npm run test:e2e -- e2e/codex-live.spec.ts
+```
+
+Omit `HERMESOFFICE_TEST_EXECUTABLE` to test the built development shell. Optional
+`HERMESOFFICE_CODEX_CLI` selects a specific runtime. The JSON report records
+observed replies, process IDs, document chat IDs and the tested app version.
