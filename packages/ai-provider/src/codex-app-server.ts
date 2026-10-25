@@ -12,7 +12,7 @@ import type {
 } from '@hermesoffice/agent-core'
 import type { AiChatResponse, AiProviderConfig, CodexModelCatalog } from './types'
 import { parseToolInput, type StreamCallbacks } from './protocols/shared'
-import { createStreamWatchdog } from './watchdog'
+import { AiTimeoutError, createStreamWatchdog } from './watchdog'
 
 interface CodexAppServerTurn {
   text: string
@@ -731,6 +731,7 @@ const CODEX_PERMISSION_PROFILE = 'hermesoffice'
 export function codexThreadStartParams(
   config: AiProviderConfig,
   tempDir: string,
+  nativeToolOverrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const base = {
     ...(config.model.trim() ? { model: config.model.trim() } : {}),
@@ -743,6 +744,7 @@ export function codexThreadStartParams(
   return {
     ...base,
     config: {
+      ...nativeToolOverrides,
       default_permissions: CODEX_PERMISSION_PROFILE,
       permissions: {
         [CODEX_PERMISSION_PROFILE]: { filesystem: { ':minimal': 'read', [tempDir]: 'read' } },
@@ -765,12 +767,47 @@ export function requireCodexPermissionProfile(result: unknown): string {
   return threadIdFrom(result)
 }
 
-async function startNativeThread(
-  client: CodexAppServerClient,
+export async function startNativeThread(
+  client: Pick<CodexAppServerClient, 'request'>,
   config: AiProviderConfig,
   tempDir: string,
 ): Promise<string> {
-  const result = await client.request('thread/start', codexThreadStartParams(config, tempDir))
+  // The embedded model must not inherit the user's coding tools or wait for
+  // unrelated MCP/plugin startup. Overrides apply only to this Office thread.
+  const effective = objectValue(
+    await client.request('config/read', { includeLayers: false, cwd: tempDir }),
+  )
+  const runtimeConfig = objectValue(effective?.config)
+  if (!runtimeConfig || Array.isArray(runtimeConfig))
+    throw new Error(
+      'Codex did not return its effective configuration. Update the runtime before connecting.',
+    )
+  const disabledEntries = (value: unknown): Record<string, { enabled: false }> => {
+    const entries = objectValue(value)
+    if (value != null && (!entries || Array.isArray(value)))
+      throw new Error('Codex returned unsupported native integration configuration.')
+    return Object.fromEntries(
+      Object.keys(entries ?? {}).map((name) => [name, { enabled: false as const }]),
+    )
+  }
+  const overrides = {
+    features: {
+      apps: false,
+      plugins: false,
+      remote_plugin: false,
+      shell_tool: false,
+      image_generation: false,
+      browser_use: false,
+      computer_use: false,
+    },
+    web_search: 'disabled',
+    mcp_servers: disabledEntries(runtimeConfig.mcp_servers),
+    plugins: disabledEntries(runtimeConfig.plugins),
+  }
+  const result = await client.request(
+    'thread/start',
+    codexThreadStartParams(config, tempDir, overrides),
+  )
   try {
     return requireCodexPermissionProfile(result)
   } catch (error) {
@@ -815,9 +852,9 @@ export async function waitForTurn(
     const unsubscribe = client.onNotification((message) => {
       const params = objectValue(message.params)
       if (params?.threadId !== threadId) return
-      cb.onActivity?.()
       const eventTurnId = typeof params.turnId === 'string' ? params.turnId : ''
       if (turnId && eventTurnId && eventTurnId !== turnId) return
+      cb.onActivity?.()
       if (message.method === 'turn/started') {
         const turn = objectValue(params.turn)
         if (typeof turn?.id === 'string') turnId = turn.id
@@ -925,17 +962,28 @@ export async function streamCodexAppServer(
   maxTokens: number,
   cb: StreamCallbacks,
 ): Promise<void> {
-  const wd = createStreamWatchdog(cb.signal)
-  return wd.guard(() =>
-    runCodexAppServer(config, system, messages, tools, maxTokens, {
-      ...cb,
-      signal: wd.signal,
-      onActivity: () => {
-        wd.touch()
-        cb.onActivity?.()
-      },
-    }),
-  )
+  let retriedTimeout = false
+  for (;;) {
+    const wd = createStreamWatchdog(cb.signal)
+    try {
+      return await wd.guard(() =>
+        runCodexAppServer(config, system, messages, tools, maxTokens, {
+          ...cb,
+          signal: wd.signal,
+          onActivity: () => {
+            wd.touch()
+            cb.onActivity?.()
+          },
+        }),
+      )
+    } catch (error) {
+      // Preserve the generous shared watchdog. Only after it aborts a silent
+      // turn, replay once in a fresh native thread. Nothing reaches Office
+      // until a complete structured response, so prior edits are not rerun.
+      if (!(error instanceof AiTimeoutError) || retriedTimeout || cb.signal.aborted) throw error
+      retriedTimeout = true
+    }
+  }
 }
 
 export async function chatCodexAppServer(
@@ -947,7 +995,7 @@ export async function chatCodexAppServer(
   let content = ''
   // No sessionId: a one-shot chat/connection test is not reused, so it runs as
   // an ephemeral turn whose thread and temp dir are dropped when it ends.
-  await runCodexAppServer(config, system, [{ role: 'user', text: user }], [], 1024, {
+  await streamCodexAppServer(config, system, [{ role: 'user', text: user }], [], 1024, {
     signal,
     onDelta: (text) => {
       content += text

@@ -37,7 +37,13 @@ are not automatically reattached to the model when reopening a document.
 Codex returns structured HermesOffice tool requests. The existing editor agent
 executes them, including its normal undo/rollback flow. Native Codex shell,
 filesystem, browsing and MCP tools are forbidden by the backend instructions;
-server-side requests for approval or unsupported tools are rejected.
+server-side requests for approval or unsupported tools are rejected. The
+thread also disables inherited Codex apps, plugins, configured MCP servers, shell,
+browser/computer control, native image generation and native web search. Effective
+configuration is read to disable inherited integration names only for the Office
+thread; no Codex user settings are rewritten. If that configuration cannot be
+read or has an unsupported inventory shape, connection fails before a thread is
+started. Office media/search capabilities still use their own configured tools.
 
 A named `hermesoffice` permission profile limits filesystem reads to minimal
 runtime paths and the connector's private temporary directory. Connection fails
@@ -81,3 +87,22 @@ npm run test:e2e -- e2e/codex-live.spec.ts
 Omit `HERMESOFFICE_TEST_EXECUTABLE` to test the built development shell. Optional
 `HERMESOFFICE_CODEX_CLI` selects a specific runtime. The JSON report records
 observed replies, process IDs, document chat IDs and the tested app version.
+
+## Silent runtime calls
+
+The connector keeps the shared 180-second inactivity watchdog. Long-context
+requests may legitimately pause while thinking; lowering this threshold can
+interrupt generations that are still being billed. Native activity refreshes
+that existing watchdog. If it expires, the affected native thread is interrupted
+and dropped, and the connector retries the same pending request once with the
+saved conversation in a fresh native thread. A second timeout reports an error;
+Stop never triggers this retry. The connection test uses the same bounded path.
+
+The retry cannot replay already-applied Office edits: Office executes a tool only
+after the runtime returns a complete structured response, and a follow-up request
+already includes earlier tool results. Logical document chat IDs stay unchanged.
+
+`npm run test:e2e -- e2e/codex-recovery.spec.ts` verifies successful recovery,
+retry exhaustion and cancellation with a deterministic fake stdio runtime. It
+accelerates the existing watchdog only inside the isolated test process, requires
+no model account, and asserts that an already-applied paragraph appears once.
