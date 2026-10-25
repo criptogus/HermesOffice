@@ -44,4 +44,11 @@ describe('safeExternalUrl', () => {
     expect(safeExternalUrl('   ')).toBeNull()
     expect(safeExternalUrl('  file:///etc/passwd  ')).toBeNull()
   })
+
+  it('rejects URLs containing embedded unencoded control characters', () => {
+    expect(safeExternalUrl('http://ex\tample.com')).toBeNull()
+    expect(safeExternalUrl('h\tttps://example.com')).toBeNull()
+    expect(safeExternalUrl('http://example.com\r\n/path')).toBeNull()
+    expect(safeExternalUrl('http://example.com/foo\0bar')).toBeNull()
+  })
 })
