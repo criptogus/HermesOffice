@@ -3786,10 +3786,13 @@ function registerHomeIpc(): void {
     return root
   })
 
-  ipcMain.handle(HOME_CHANNELS.listFolder, (_event, dir: unknown): FolderListing => {
-    if (!insideRoot(dir)) return { dir: String(dir), folders: [], files: [] }
-    return listFolder(dir, new Set(readStarredFiles()))
-  })
+  ipcMain.handle(
+    HOME_CHANNELS.listFolder,
+    (_event, dir: unknown): FolderListing | Promise<FolderListing> => {
+      if (!insideRoot(dir)) return { dir: String(dir), folders: [], files: [] }
+      return listFolder(dir, new Set(readStarredFiles()))
+    },
+  )
 
   ipcMain.handle(
     HOME_CHANNELS.createFolder,
