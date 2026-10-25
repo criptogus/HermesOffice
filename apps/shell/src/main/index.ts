@@ -2592,6 +2592,7 @@ const gatewayStartupStrings = (): LauncherStrings => ({
 
 // ---- the shell window + its tab manager (recreated if the user closes it on macOS) ----
 
+let quitRequested = false
 let shellWindow: BrowserWindow | null = null
 let tabManager: TabManager | null = null
 
@@ -2934,32 +2935,59 @@ function createShellWindow(): void {
     void (async () => {
       for (const tab of dirtySheets) {
         manager.activateTab(tab.id)
-        if (!(await requestSheetsClose(tab.webContents, win))) return
+        if (!(await requestSheetsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtyPdf) {
         manager.activateTab(tab.id)
-        if (!(await requestPdfClose(tab.webContents, win))) return
+        if (!(await requestPdfClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtyMarkdown) {
         manager.activateTab(tab.id)
-        if (!(await requestMarkdownClose(tab.webContents, win))) return
+        if (!(await requestMarkdownClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtyHtml) {
         manager.activateTab(tab.id)
-        if (!(await requestHtmlClose(tab.webContents, win))) return
+        if (!(await requestHtmlClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of dirtySlides) {
         manager.activateTab(tab.id)
-        if (!(await requestSlidesClose(tab.webContents, win))) return
+        if (!(await requestSlidesClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       for (const tab of docsTabs) {
         if (!(await docsQueryDirty(tab.webContents))) continue
         manager.activateTab(tab.id)
-        if (!(await requestDocsClose(tab.webContents, win))) return
+        if (!(await requestDocsClose(tab.webContents, win))) {
+          quitRequested = false
+          return
+        }
       }
       closeConfirmed = true
-      if (!win.isDestroyed()) win.close()
-    })()
+      if (!win.isDestroyed()) {
+        // preventDefault cancelled Electron's original quit while the async
+        // document checks ran. Resume that quit after confirmation; a plain
+        // window close on macOS intentionally keeps the app running.
+        if (quitRequested) app.quit()
+        else win.close()
+      }
+    })().catch((error: unknown) => {
+      quitRequested = false
+      console.warn('[shell] close confirmation failed:', error)
+    })
   })
 
   win.on('closed', () => {
@@ -5246,6 +5274,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  quitRequested = true
   // No close prompt may fall through to "Save" during shutdown
   markSheetsShuttingDown()
   stopSheetsSidecar()
