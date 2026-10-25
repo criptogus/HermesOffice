@@ -5,9 +5,9 @@
   "license": "Apache-2.0",
   "homepage": "https://github.com/criptogus/HermesOffice",
   "private": true,
-  "description": "Unified GenOffice shell: one app hosting the docs and sheets modules behind a home/launcher window",
+  "description": "Unified HermesOffice shell hosting Docs, Sheets, Slides, PDF, Markdown and HTML",
   "main": "out/main/index.js",
-  "desktopName": "genoffice.desktop",
+  "desktopName": "hermesoffice.desktop",
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build": "electron-vite build",
