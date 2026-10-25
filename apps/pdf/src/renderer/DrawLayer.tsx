@@ -4,7 +4,7 @@ import { pdfToView, viewToPdf } from './annotations'
 import type { PageGeom } from './annotations'
 import type { DrawingInput } from '../shared/ipc'
 
-export type DrawTool = 'ink' | 'rect' | 'ellipse' | 'line' | 'arrow' | 'note'
+export type DrawTool = 'ink' | 'rect' | 'ellipse' | 'line' | 'arrow' | 'note' | 'redact'
 
 /** Displayed-pixel box (scaled) */
 interface Box {

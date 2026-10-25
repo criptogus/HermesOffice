@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { foldCase } from '@hermesoffice/ui'
 import { buildSearchIndex, searchInIndex, type SearchIndex } from '../src/renderer/search'
 
 interface FakeItem {
@@ -83,7 +84,7 @@ describe('buildSearchIndex', () => {
 describe('searchInIndex', () => {
   const entry = (text: string, items: SearchIndex[number]['items']): SearchIndex[number] => ({
     text,
-    lower: text.toLowerCase(),
+    lower: foldCase(text),
     items,
   })
 
@@ -148,5 +149,14 @@ describe('searchInIndex', () => {
     const text = 'a'.repeat(2000)
     const index = [entry(text, [{ start: 0, end: 2000, x: 0, y: 0, w: 2000, h: 10 }])]
     expect(searchInIndex(index, 'a')).toHaveLength(1000)
+  })
+
+  it('keeps folded text the same length so rects stay aligned (dotted capital)', async () => {
+    const doc = fakeDoc([[item('İ', 10, 700, 10, 12)]])
+    const index = await buildSearchIndex(doc)
+    expect(index[0]!.lower.length).toBe(index[0]!.text.length)
+    const matches = searchInIndex(index, 'i')
+    expect(matches).toHaveLength(0)
+    expect(searchInIndex(index, 'İ')).toHaveLength(1)
   })
 })

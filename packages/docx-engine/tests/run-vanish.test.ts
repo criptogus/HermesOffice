@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseDocx } from '../src/index'
+import { staysVanished } from '../src/parse-props'
 import { buildDocx } from './helpers/build-docx'
 
 const STYLES =
@@ -78,5 +79,14 @@ describe('run-level hidden text (w:vanish)', () => {
       ['char hidden', true],
       ['plain', false],
     ])
+  })
+})
+
+describe('staysVanished falsy variants', () => {
+  it('treats none, uppercase, and single-quoted falsy vals as visible', () => {
+    expect(staysVanished('<w:p><w:rPr><w:vanish w:val="none"/></w:rPr></w:p>')).toBe(false)
+    expect(staysVanished('<w:p><w:rPr><w:vanish w:val="False"/></w:rPr></w:p>')).toBe(false)
+    expect(staysVanished("<w:p><w:rPr><w:vanish w:val='off'/></w:rPr></w:p>")).toBe(false)
+    expect(staysVanished('<w:p><w:rPr><w:vanish/></w:rPr></w:p>')).toBe(true)
   })
 })

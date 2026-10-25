@@ -6,9 +6,9 @@ import {
   assertOnlyTouchedEntriesChanged,
   createBufferEntrySource,
   planCellEditsToXlsx,
-} from '../src/gateway/xlsx-gateway'
-import type { CellEdit, SheetVisualAddition } from '../src/gateway/xlsx-gateway'
-import type { SheetEditPlan } from '../src/gateway/xlsx-sheets'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { CellEdit, SheetVisualAddition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetEditPlan } from '@hermesoffice/xlsx-gateway/gateway/xlsx-sheets'
 import { buildEditFixture, buildSheetsFixture } from './fixture-builder'
 
 const ANCHOR = {

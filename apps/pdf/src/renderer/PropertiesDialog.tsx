@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { MetadataInput } from '../shared/ipc'
@@ -54,6 +54,32 @@ export function PropertiesDialog({
 }): ReactElement {
   const [info, setInfo] = useState<RawInfo | null>(null)
   const [form, setForm] = useState<MetadataInput>({})
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previouslyFocused = useRef<HTMLElement | null>(null)
+
+  // Escape closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onCancel()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+
+  // Focus the first field on mount; return focus to the opener on unmount
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null
+    const root = dialogRef.current
+    if (root && !root.contains(document.activeElement)) {
+      root.querySelector<HTMLElement>('input, textarea, select, button')?.focus()
+    }
+    return () => {
+      previouslyFocused.current?.focus?.()
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -94,7 +120,14 @@ export function PropertiesDialog({
 
   return (
     <div className="pdf-modal-mask" onClick={onCancel}>
-      <div className="pdf-modal pdf-modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="pdf-modal pdf-modal-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('propsTitle')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="pdf-modal-title">{t('propsTitle')}</div>
         {edit('title', t('propTitle'))}
         {edit('author', t('propAuthor'))}

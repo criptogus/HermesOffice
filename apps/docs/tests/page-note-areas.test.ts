@@ -41,6 +41,22 @@ describe('PageEndnotes — canvas endnote area (Word parity)', () => {
     unmount()
   })
 
+  it('omits the numeral for notes without a self-reference mark run (Word probe: empty endnotes keep their line but show no number)', () => {
+    const { container, unmount } = render(
+      createElement(PageEndnotes, {
+        notes: [{ id: '1', text: '', noRefMark: true }, note('2', 'second')],
+        top: null,
+        onEdit: () => {},
+        onDelete: () => {},
+      }),
+    )
+    const rows = Array.from(container.querySelectorAll('.page-note'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0].querySelector('sup')).toBeNull()
+    expect(rows[1].querySelector('sup')?.textContent).toBe('ii')
+    unmount()
+  })
+
   it('anchors at the measured flow end when a top is provided', () => {
     const { container, unmount } = render(
       createElement(PageEndnotes, {
@@ -146,6 +162,23 @@ describe('endnotesAnchorY — flow-end anchor for the endnote area', () => {
     const pm = document.createElement('div')
     pm.append(child({ bottom: 10, height: 0 }))
     expect(endnotesAnchorY(pm, 0, 1)).toBeNull()
+  })
+})
+
+describe('note areas: engine numbering', () => {
+  it('markers follow the supplied numbers (body order / numStart) instead of list position', () => {
+    const { container, unmount } = render(
+      createElement(PageFootnotes, {
+        notes: [note('a', 'first'), note('b', 'second')],
+        skipIds: new Set<string>(),
+        numberOf: (n) => (n.id === 'a' ? 6 : 5),
+        onEdit: () => {},
+        onDelete: () => {},
+      }),
+    )
+    const sups = Array.from(container.querySelectorAll('.page-note sup'), (s) => s.textContent)
+    expect(sups).toEqual(['6', '5'])
+    unmount()
   })
 })
 

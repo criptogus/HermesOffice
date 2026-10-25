@@ -2,6 +2,9 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import { rangeSlot } from '../dom-range'
+import { SettledParagraphCache } from './settled-measure'
+import { PHASED_CONTENT_SETTLED_EVENT, isPhasedContentPending } from '../phased-content'
 
 /**
  * Word 2013+ (settings compatibilityMode >= 15) justified line breaking pulls
@@ -52,8 +55,10 @@ const SPACE_SHRINK_MAX = 0.25
 const SHRINK_VS_STRETCH = 0.5
 /** total overshoot (px) so Chromium's breaker definitely pulls the word */
 const SHRINK_EPS = 0.5
-/** measurement noise floor (px): smaller imbalances are not real shrink state */
-const NOISE = 0.25
+/** imbalance floor (px): Blink breaks lines in 1/64px LayoutUnits, so any
+ *  overflow of one unit or more is a real wrap (a Cyrillic Times line that
+ *  Word fits by twip rounding overflows Chromium by ~1/64px) */
+const NOISE = 1 / 128
 
 export function decideLineShrinks(lines: ShrinkLine[]): Array<ShrinkDecision | null> {
   return lines.map((line) => {
@@ -136,6 +141,7 @@ interface LineAcc {
 }
 
 let spaceCtx: CanvasRenderingContext2D | null | undefined
+const wordRange = rangeSlot()
 
 function spaceAdvancePx(cs: CSSStyleDeclaration): number {
   if (spaceCtx === undefined) spaceCtx = document.createElement('canvas').getContext('2d')
@@ -144,9 +150,17 @@ function spaceAdvancePx(cs: CSSStyleDeclaration): number {
   return spaceCtx.measureText(' ').width + (parseFloat(cs.letterSpacing) || 0)
 }
 
-/** same rendered line = the boxes overlap vertically by more than a hairline */
-function sameLine(a: WordBox, b: WordBox): boolean {
-  return a.top < b.bottom - 1 && a.bottom > b.top + 1
+/** same rendered line = the boxes share more than half the shorter box's height.
+ *  Glyph boxes (ascent+descent) are taller than tight line-heights (w:line < 240
+ *  auto, or a 1.0 face factor under Blink's Mac ascent bump), so consecutive
+ *  lines overlap by a few px and a hairline test would chain the whole
+ *  paragraph into one line */
+export function sameLine(
+  a: { top: number; bottom: number },
+  b: { top: number; bottom: number },
+): boolean {
+  const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+  return overlap > Math.min(a.bottom - a.top, b.bottom - b.top) / 2
 }
 
 class JustifyShrinkView {
@@ -157,7 +171,15 @@ class JustifyShrinkView {
   private retries = 0
   private resizeObserver?: ResizeObserver
   private lastDomWidth = -1
+  private results = new SettledParagraphCache<MeasuredShrink[]>(
+    (r, d) => r.map((s) => ({ ...s, from: s.from + d, to: s.to + d })),
+    (r) => r.length === 0,
+  )
   private onFontsLoaded = () => {
+    this.invalidate()
+    this.measure()
+  }
+  private onPhasedSettled = () => {
     this.invalidate()
     this.measure()
   }
@@ -168,6 +190,7 @@ class JustifyShrinkView {
   ) {
     this.measure()
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
+    document.addEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
         const w = this.view.dom.offsetWidth
@@ -180,7 +203,13 @@ class JustifyShrinkView {
     }
   }
 
+  /** layout input changed (resize, fonts): every paragraph re-measures */
   private invalidate() {
+    this.results.clear()
+    this.restartConvergence()
+  }
+
+  private restartConvergence() {
     this.seenSigs.clear()
     this.frozen = false
     // decorations may have been dropped with the old doc (setContent/reload):
@@ -190,7 +219,8 @@ class JustifyShrinkView {
 
   update(view: EditorView, prevState: EditorState) {
     if (view.state.doc !== prevState.doc) {
-      this.invalidate()
+      // untouched paragraphs keep their settled results (keyed on node identity)
+      this.restartConvergence()
     } else if (
       justifyShrinkPluginKey.getState(view.state) === justifyShrinkPluginKey.getState(prevState)
     ) {
@@ -201,6 +231,7 @@ class JustifyShrinkView {
 
   destroy() {
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
+    document.removeEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
     this.resizeObserver?.disconnect()
     if (this.retryRaf) cancelAnimationFrame(this.retryRaf)
   }
@@ -220,6 +251,15 @@ class JustifyShrinkView {
       this.retryRaf = 0
     }
     const { view } = this
+    // a streamed tail is still landing: measured once, when it has (settled event)
+    if (isPhasedContentPending()) return
+    // PDF export parks the editor subtree (.app.pv-exporting); any layout
+    // read here would force the parked document to re-lay out per print chunk
+    if (view.dom.closest('.app.pv-exporting')) {
+      this.retries = 0
+      this.scheduleRetry()
+      return
+    }
     const old = justifyShrinkPluginKey.getState(view.state)
     if (!this.storage.enabled) {
       if (old && old !== DecorationSet.empty)
@@ -238,15 +278,27 @@ class JustifyShrinkView {
       if (!node.isTextblock) return true
       if (node.attrs?.align !== 'justify') return false
       const text = node.textContent
-      if (!text.includes(' ') || text.includes('\t') || SKIP_SCRIPT_RE.test(text)) return false
+      if (!text.includes(' ') || SKIP_SCRIPT_RE.test(text)) return false
+      // a tab after the first space absorbs any shrink of the spaces before it
+      // (the segment re-anchors at its stop), so the word model only holds for
+      // leading tabs ("5.<tab>The claim...", "<tab>First line indent")
+      if (text.lastIndexOf('\t') > text.indexOf(' ')) return false
       paras.push({ node, pos })
       return false
     })
 
     const shrinks: MeasuredShrink[] = []
     let measurable = paras.length === 0
+    this.results.beginPass(view)
+    const topLevel = SettledParagraphCache.topLevelDom(view)
     for (const para of paras) {
-      const measured = this.measureParagraph(para.node, para.pos)
+      const measured = this.results.measure(
+        view,
+        para.node,
+        para.pos,
+        (el) => this.measureParagraph(para.node, para.pos, el),
+        topLevel.get(para.node),
+      )
       if (!measured) continue
       measurable = true
       shrinks.push(...measured)
@@ -281,10 +333,12 @@ class JustifyShrinkView {
   }
 
   /** null = not measurable right now (hidden / not mounted) → retry */
-  private measureParagraph(node: ProseMirrorNode, pos: number): MeasuredShrink[] | null {
+  private measureParagraph(
+    node: ProseMirrorNode,
+    pos: number,
+    el: HTMLElement,
+  ): MeasuredShrink[] | null {
     const { view } = this
-    const el = view.nodeDOM(pos)
-    if (!(el instanceof HTMLElement)) return null
     if (el.offsetWidth === 0) return null
     const rect = el.getBoundingClientRect()
     if (rect.width === 0) return null
@@ -328,8 +382,15 @@ class JustifyShrinkView {
     })
 
     const styleCache = new Map<Element, number>()
+    // a space starts where the previous word ended: the DOM is static within a pass
+    const domCache = new Map<number, { node: Node; offset: number }>()
+    const domAt = (p: number) => {
+      let d = domCache.get(p)
+      if (!d) domCache.set(p, (d = view.domAtPos(p)))
+      return d
+    }
     const spaceGap = (t: Extract<Token, { kind: 'space' }>): ShrinkGap => {
-      const dp = view.domAtPos(t.from)
+      const dp = domAt(t.from)
       const parent =
         dp.node.nodeType === Node.TEXT_NODE ? dp.node.parentElement : (dp.node as Element)
       let adv = styleCache.get(parent ?? el)
@@ -347,9 +408,9 @@ class JustifyShrinkView {
       if (dom instanceof HTMLElement) {
         rects = [dom.getBoundingClientRect()]
       } else {
-        const a = view.domAtPos(t.from)
-        const b = view.domAtPos(t.to)
-        const range = document.createRange()
+        const a = domAt(t.from)
+        const b = domAt(t.to)
+        const range = wordRange()
         try {
           range.setStart(a.node, a.offset)
           range.setEnd(b.node, b.offset)

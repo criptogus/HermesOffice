@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { InMemoryWorkbookAdapter } from '../src/domain/in-memory-workbook'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import {
   expandToPrimitiveOps,
   filteredCopySourceRows,
   matchableCellText,
   workbookOperationSchema,
   type WorkbookOperation,
-} from '../src/domain/workbook-dsl'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
 import { proposeOperations, type PlanContext } from '../src/renderer/plan-operations'
 
 /// copy_range filterColumn/filterValues: row extraction for splitting data
@@ -31,6 +31,40 @@ describe('copy_range filter schema and geometry validation', () => {
       filterValues: ['ja', 'ko'],
     })
     expect(parsed).toMatchObject({ filterColumn: 'D', filterValues: ['ja', 'ko'] })
+  })
+
+  it('accepts filter values up to the cell text cap (real cell contents are legal)', () => {
+    const longValue = 'x'.repeat(300)
+    const maxValue = 'y'.repeat(32_767)
+    const parsed = workbookOperationSchema.parse({
+      ...base,
+      filterColumn: 'D',
+      filterValues: [longValue, maxValue],
+    })
+    expect(parsed).toMatchObject({ filterValues: [longValue, maxValue] })
+    expect(() =>
+      workbookOperationSchema.parse({
+        ...base,
+        filterColumn: 'D',
+        filterValues: ['z'.repeat(32_768)],
+      }),
+    ).toThrow()
+  })
+
+  it('matches a long filter value against the cell text (trimmed, case-insensitive)', () => {
+    const longText = `Note: ${'x'.repeat(300)}`
+    const rows = filteredCopySourceRows(
+      {
+        op: 'copy_range',
+        sheetId: 'sheet-1',
+        source: 'A1:D6',
+        target: 'F1',
+        filterColumn: 'D',
+        filterValues: [` ${longText.toUpperCase()} `],
+      },
+      (row, column) => (column === 3 && row === 2 ? matchableCellText(longText) : ''),
+    )
+    expect(rows).toEqual([2])
   })
 
   it('rejects filterValues without filterColumn (and vice versa)', () => {

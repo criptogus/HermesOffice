@@ -5,8 +5,10 @@ import type { PageGeom } from './annotations'
 import { colorSegments, decodeStyle, encodeStyle, runsToColors } from './color-runs'
 import type { CharStyle } from './color-runs'
 import type { DocFontStyle } from './doc-font'
-import { EDIT_FONTS } from '../shared/ipc'
+import { EDIT_FONTS, SYNTHETIC_BOLD_STROKE_EM } from '../shared/ipc'
 import type { TextEditInput, TextEditValidation, TextInsertInput } from '../shared/ipc'
+import type { TextBlock } from './text-block'
+import { joinBlockLines } from './text-wrap'
 
 export const EDIT_FONT_BY_ID = new Map<string, (typeof EDIT_FONTS)[number]>(
   EDIT_FONTS.map((f) => [f.id, f]),
@@ -42,7 +44,13 @@ export const hexTo255 = (hex: string): [number, number, number] => [
   parseInt(hex.slice(5, 7), 16),
 ]
 export const rgb255ToHex = (c: readonly [number, number, number]): string =>
-  `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`
+  `#${c
+    .map((v) =>
+      Math.max(0, Math.min(255, Math.round(v)))
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`
 
 /** Committed IPC style runs → encoded-key runs over newText (the draft/preview form) */
 export const styleRunsToKeyRuns = (
@@ -60,13 +68,32 @@ export const styleRunsToKeyRuns = (
     }),
   }))
 
+/** Preview of a bold toggle, mirroring the engine: an explicit edit font draws its real
+    bold face; the document's own face is stroked in place (same advances), unless its
+    name already says it is bold — then the engine leaves it alone. */
+export const boldCss = (
+  bold: boolean | undefined,
+  explicitFont: boolean,
+  baseWeight?: number,
+): CSSProperties => {
+  if (bold === undefined) return {}
+  if (!bold) return { fontWeight: 400, WebkitTextStroke: '0' }
+  if (explicitFont) return { fontWeight: 700 }
+  if (baseWeight && baseWeight >= 600) return { fontWeight: baseWeight }
+  return { WebkitTextStroke: `${SYNTHETIC_BOLD_STROKE_EM}em currentColor` }
+}
+
+/** Weight token for canvas font shorthands: synthetic bold keeps regular advances */
+export const boldToken = (bold: boolean | undefined, explicitFont: boolean, baseWeight?: number) =>
+  bold && explicitFont ? 'bold' : baseWeight ? String(baseWeight) : ''
+
 /** CSS of one styled segment in the editor mirror / pending preview. Explicit on/off
     overrides the inherited draft-level weight/slant; size scales like the host text. */
-export const styleSegCss = (s: CharStyle, scale: number): CSSProperties => ({
+export const styleSegCss = (s: CharStyle, scale: number, draftFont?: string): CSSProperties => ({
   ...(s.color ? { color: s.color } : {}),
   ...(s.font ? { fontFamily: EDIT_FONT_BY_ID.get(s.font)?.css } : {}),
   ...(s.size !== undefined ? { fontSize: s.size * scale * 0.92 } : {}),
-  ...(s.bold !== undefined ? { fontWeight: s.bold ? 700 : 400 } : {}),
+  ...boldCss(s.bold, !!(s.font ?? draftFont)),
   ...(s.italic !== undefined ? { fontStyle: s.italic ? 'italic' : 'normal' } : {}),
 })
 
@@ -113,6 +140,144 @@ export const shiftRect = (
   r: readonly [number, number, number, number],
   d: readonly [number, number],
 ): [number, number, number, number] => [r[0] + d[0], r[1] + d[1], r[2] + d[0], r[3] + d[1]]
+
+/** Pure move of an untouched block: the engine translates the original text objects
+    as-is (fonts/kerning/leading survive byte-identical); newText keeps the document's
+    own visual lines so the pending preview stacks them the way the page draws them */
+export const blockMoveInput = (
+  origIdx: number,
+  block: TextBlock,
+  d: readonly [number, number],
+): TextEditInput => {
+  const lines = block.lines.map((l) => l.text)
+  const oldText = joinBlockLines(lines)
+  return {
+    pageIndex: origIdx,
+    rect: [...block.rect],
+    oldText,
+    newText: lines.join('\n'),
+    fontSize: block.fontSize,
+    origin: [block.rect[0] + d[0], block.lines[0]!.y + d[1]],
+    lineLeading: block.lineHeight,
+    align: block.align !== 'left' ? block.align : undefined,
+    blockSource: oldText,
+    translate: [d[0], d[1]],
+  }
+}
+
+/** Shift a pending edit that owns `block` by d: block rebuilds move their origin, pure
+    moves their translate. A line edit carries no position of its own (the rebuild sits
+    at the matched objects), so moving it converts it to an origin-anchored rebuild at
+    its own shifted line start — a restyled/edited line cannot take the pure-translate
+    path, that would discard its pending changes. */
+export const shiftPendingEdit = (
+  te: LocalTextEdit,
+  block: TextBlock,
+  d: readonly [number, number],
+): LocalTextEdit => {
+  const input = { ...te.input }
+  if (input.origin) {
+    input.origin = [input.origin[0] + d[0], input.origin[1] + d[1]]
+  } else if (!input.translate) {
+    // Anchor at the edit's own rect, not the block corner: the edit's visual line
+    // can start left of the block (the DOM line grouping joins runs the clustering
+    // split off). Baseline comes from the block row containing the edit; buildLine
+    // puts the row bottom 0.2 font sizes under the baseline, hence the fallback.
+    const cy = (input.rect[1] + input.rect[3]) / 2
+    const row = block.lines.find((l) => cy >= l.rect[1] && cy <= l.rect[3])
+    input.origin = [input.rect[0] + d[0], (row?.y ?? input.rect[1] + input.fontSize * 0.2) + d[1]]
+    input.lineLeading ??= block.lineHeight
+  }
+  if (input.translate) input.translate = [input.translate[0] + d[0], input.translate[1] + d[1]]
+  return {
+    ...te,
+    input,
+    moveBy: [(te.moveBy?.[0] ?? 0) + d[0], (te.moveBy?.[1] ?? 0) + d[1]],
+  }
+}
+
+/** Paragraph-level pending edit (rewrite or pure move): the editor and the AI tools
+    always record the logical paragraph text on those, while a line edit never gets one —
+    even after a block move gives it an origin */
+const isBlockEdit = (e: LocalTextEdit): boolean => e.input.blockSource !== undefined
+
+/** Block-level pending edit of exactly this block (its objects were validated when it
+    was queued, so shifting it needs no new dry-run) */
+export const isBlockEditOf = (te: LocalTextEdit, block: TextBlock): boolean =>
+  isBlockEdit(te) && blockRectKey(te.input.rect) === blockRectKey(block.rect)
+
+/** Whether a pending edit moves `block` as a whole: a block-level edit of it, or a line
+    edit whose text is the entire block (single-line blocks). A line edit inside a
+    longer paragraph only drags its own row along. */
+export const editCarriesBlock = (te: LocalTextEdit, block: TextBlock): boolean => {
+  const squash = (t: string) => t.replace(/\s+/g, '')
+  return (
+    isBlockEditOf(te, block) ||
+    squash(te.input.oldText) === squash(joinBlockLines(block.lines.map((l) => l.text)))
+  )
+}
+
+/** Where a new AI text edit lands among the pending edits. A paragraph rewrite
+    supersedes the pending edits that claim its objects — the block-level edit of the
+    same block and any line edits inside it — and rebuilds at the block's pending
+    displacement: the engine cannot translate and rebuild in one edit, so this is what
+    reopening a moved block in the editor does. A line edit inside a pending block-level
+    edit cannot fold (that edit still claims its objects), so it is refused. */
+export const resolveTextEdit = (
+  edits: LocalTextEdit[],
+  input: TextEditInput,
+):
+  | { input: TextEditInput; replaces: LocalTextEdit[]; moveBy?: [number, number] }
+  | { reason: string } => {
+  const key = blockRectKey(input.rect)
+  const inside = (r: readonly number[], of: readonly number[]) => {
+    const cx = (r[0]! + r[2]!) / 2
+    const cy = (r[1]! + r[3]!) / 2
+    return cx >= of[0]! && cx <= of[2]! && cy >= of[1]! && cy <= of[3]!
+  }
+  const onPage = edits.filter((e) => e.input.pageIndex === input.pageIndex)
+  if (input.origin === undefined) {
+    const blocker = onPage.find(
+      (e) =>
+        isBlockEdit(e) && (blockRectKey(e.input.rect) === key || inside(input.rect, e.input.rect)),
+    )
+    if (blocker) {
+      return {
+        reason:
+          'the paragraph containing this text already has a pending move or rewrite; use edit_block on the whole paragraph (its pending position is kept)',
+      }
+    }
+    return { input, replaces: [] }
+  }
+  const owner = onPage.find((e) => isBlockEdit(e) && blockRectKey(e.input.rect) === key)
+  const embedded = onPage.filter((e) => !isBlockEdit(e) && inside(e.input.rect, input.rect))
+  const replaces = owner ? [owner, ...embedded] : embedded
+  const moveBy = replaces.find((e) => e.moveBy)?.moveBy
+  return {
+    input: moveBy
+      ? { ...input, origin: [input.origin[0] + moveBy[0], input.origin[1] + moveBy[1]] }
+      : input,
+    replaces,
+    moveBy,
+  }
+}
+
+/** Land `te` on the live pending list: replace it in place by id and drop the edits it
+    superseded. A functional patch — never a snapshot written back — so edits queued or
+    dropped while an async validation ran survive. 'upsert' appends a new edit; 'replace'
+    (a shifted or folded owner) leaves the list untouched when that owner is gone, so a
+    background dry-run that dropped it is not undone by resurrecting the edit. */
+export const patchPendingEdits = (
+  prev: LocalTextEdit[],
+  te: LocalTextEdit,
+  remove: ReadonlySet<string> = new Set(),
+  mode: 'upsert' | 'replace' = 'upsert',
+): LocalTextEdit[] => {
+  const present = prev.some((e) => e.id === te.id)
+  if (!present && mode === 'replace') return prev
+  const kept = prev.filter((e) => e.id === te.id || !remove.has(e.id))
+  return present ? kept.map((e) => (e.id === te.id ? te : e)) : [...kept, te]
+}
 
 export interface LocalTextInsert {
   id: string
@@ -164,7 +329,7 @@ export const textInsertPreviewStyle = (
     textAlign: align,
   }
   if (insert.input.font) style.fontFamily = EDIT_FONT_BY_ID.get(insert.input.font)?.css
-  if (insert.input.bold) style.fontWeight = 700
+  if (insert.input.bold) Object.assign(style, boldCss(true, !!insert.input.font))
   if (insert.input.italic) style.fontStyle = 'italic'
   return style
 }
@@ -197,7 +362,7 @@ export const textEditPreviewParts = (
     // Look-alike of the document's own face
     style.fontFamily = baseF.css
   }
-  if (te.input.newBold) style.fontWeight = 700
+  if (te.input.newBold) Object.assign(style, boldCss(true, !!te.input.newFont, baseF?.weight))
   else if (baseF?.weight) style.fontWeight = baseF.weight
   if (te.input.newItalic) style.fontStyle = 'italic'
   else if (baseF?.italic) style.fontStyle = 'italic'
@@ -219,13 +384,16 @@ export const textEditPreviewParts = (
   // The rebuilt run grows right past the original rect when the replacement is
   // longer; the preview must too, or the extra characters look cut off until
   // the save (overflow: hidden)
-  const previewFont = `${te.input.newItalic || baseF?.italic ? 'italic ' : ''}${
-    te.input.newBold ? 'bold ' : baseF?.weight ? `${baseF.weight} ` : ''
-  }${fs}px ${
+  const previewFont = [
+    te.input.newItalic || baseF?.italic ? 'italic' : '',
+    boldToken(te.input.newBold, !!te.input.newFont, baseF?.weight),
+    `${fs}px`,
     (te.input.newFont && EDIT_FONT_BY_ID.get(te.input.newFont)?.css) ||
-    baseF?.css ||
-    getComputedStyle(document.body).fontFamily
-  }`
+      baseF?.css ||
+      getComputedStyle(document.body).fontFamily,
+  ]
+    .filter(Boolean)
+    .join(' ')
   const widest = Math.max(
     ...te.input.newText.split('\n').map((l) => measureTextWidth(l, previewFont)),
   )
@@ -263,7 +431,7 @@ export const textEditPreviewContent = (te: LocalTextEdit, scale: number): ReactN
         if (!seg.color) return <Fragment key={i}>{seg.text}</Fragment>
         const s = decodeStyle(seg.color)
         return (
-          <span key={i} style={styleSegCss(s, scale)}>
+          <span key={i} style={styleSegCss(s, scale, te.input.newFont)}>
             {seg.text}
           </span>
         )

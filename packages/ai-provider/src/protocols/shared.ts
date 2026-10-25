@@ -2,6 +2,9 @@ import type { AgentToolCall } from '@hermesoffice/agent-core'
 
 // ---- streaming (SSE line splitting shared by all providers) ----
 
+/** Max buffered SSE line: a gateway sending GB without newline would OOM main. */
+export const MAX_SSE_LINE_BYTES = 4 * 1024 * 1024
+
 export async function* sseLines(
   body: NodeJS.ReadableStream | ReadableStream<Uint8Array>,
   onBytes?: () => void,
@@ -16,10 +19,20 @@ export async function* sseLines(
       if (done) break
       onBytes?.()
       buffer += decoder.decode(value, { stream: true })
+      if (buffer.length > MAX_SSE_LINE_BYTES) {
+        throw new Error(
+          `SSE line exceeded buffer limit (${buffer.length} chars, cap ${MAX_SSE_LINE_BYTES}); the gateway sent a line without newline.`,
+        )
+      }
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) yield line
     }
+    // Flush the decoder: bytes of a multibyte char still buffered inside
+    // TextDecoder under { stream: true } are discarded without a final
+    // decode() — a stream cut mid-char (dropped connection) would lose its
+    // tail silently instead of surfacing the standard replacement mark.
+    buffer += decoder.decode()
     if (buffer) yield buffer
   } finally {
     // The consumer may abandon this generator mid-stream (an in-band gateway
@@ -28,6 +41,39 @@ export async function* sseLines(
     // returned to the pool until GC nondeterministically finalizes it.
     await reader.cancel().catch(() => undefined)
     reader.releaseLock()
+  }
+}
+
+/**
+ * Per-tool streamed argument buffer cap: a provider streaming argument
+ * fragments forever (never finishing) would otherwise grow the pending
+ * tool-call buffer without bound. Throwing aborts the turn; sseLines
+ * cancels the underlying stream on the way out.
+ */
+export const MAX_TOOL_JSON_CHARS = 512_000
+
+export function throwIfToolJsonOverBudget(jsonLength: number, provider: string): void {
+  if (jsonLength > MAX_TOOL_JSON_CHARS) {
+    throw new Error(
+      `Tool call arguments exceeded the ${provider} buffer limit (${jsonLength} chars, cap ${MAX_TOOL_JSON_CHARS}); ` +
+        'the provider kept streaming argument fragments without finishing. Ask for the output in several smaller parts.',
+    )
+  }
+}
+
+/**
+ * Max tool calls started per streamed turn: per-argument bytes are capped
+ * above, but a gateway could still stream 100k near-empty tool_use blocks
+ * and grow the completed-call list without bound.
+ */
+export const MAX_STREAM_TOOL_CALLS = 100
+
+export function throwIfToolCountOverBudget(count: number, provider: string): void {
+  if (count > MAX_STREAM_TOOL_CALLS) {
+    throw new Error(
+      `Too many streamed tool calls (${count}, cap ${MAX_STREAM_TOOL_CALLS}) for ${provider}; ` +
+        'the provider kept starting tool calls without finishing the turn.',
+    )
   }
 }
 
@@ -40,6 +86,8 @@ export interface StreamCallbacks {
   onStopReason?: (reason: string) => void
   /** bytes arrived on the wire (fires per network chunk, including SSE pings; used for keepalive) */
   onActivity?: () => void
+  /** Stable renderer transport id for providers with native sessions. */
+  sessionId?: string
   signal: AbortSignal
 }
 
@@ -107,7 +155,7 @@ export function sseErrorText(error: unknown, fallback: string): string {
  */
 export async function jsonBodyInsteadOfSse(response: Response): Promise<string | null> {
   const contentType = response.headers.get('content-type') ?? ''
-  return contentType.includes('application/json') ? await response.text() : null
+  return contentType.toLowerCase().includes('application/json') ? await response.text() : null
 }
 
 /**

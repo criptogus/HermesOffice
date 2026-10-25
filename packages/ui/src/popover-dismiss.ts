@@ -11,8 +11,8 @@
  * additionally suspend that region while a popover is open (drag regions
  * swallow mouse events, so no listener can see presses on the blank band).
  * While any popover installed here is open, `<html>` carries the
- * `hermesoffice-popover-open` class — suspend the drag region with
- * `html.hermesoffice-popover-open .your-drag-row { -webkit-app-region: no-drag; }`.
+ * `genoffice-popover-open` class — suspend the drag region with
+ * `html.genoffice-popover-open .your-drag-row { -webkit-app-region: no-drag; }`.
  */
 import { useEffect, useRef } from 'react'
 
@@ -20,7 +20,7 @@ type ChromePressedApi = { onChromePressed?: (handler: () => void) => () => void 
 
 /** Each app's preload exposes the app:chrome-pressed subscription under its
  * own namespace; probe the known ones so callers never need to care. */
-function subscribeChromePressed(handler: () => void): (() => void) | undefined {
+export function subscribeChromePressed(handler: () => void): (() => void) | undefined {
   const w = window as unknown as Record<string, ChromePressedApi | undefined>
   for (const name of [
     'slidesApi',
@@ -40,7 +40,7 @@ function subscribeChromePressed(handler: () => void): (() => void) | undefined {
 let openPopovers = 0
 function bumpOpenPopovers(delta: 1 | -1): void {
   openPopovers = Math.max(0, openPopovers + delta)
-  document.documentElement.classList.toggle('hermesoffice-popover-open', openPopovers > 0)
+  document.documentElement.classList.toggle('genoffice-popover-open', openPopovers > 0)
 }
 
 export interface PopoverDismissOptions {

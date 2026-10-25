@@ -10,7 +10,7 @@ import {
   shiftPinnedCells,
   type ClosureSheetInput,
 } from '../src/renderer/formula-closure'
-import { formulaKeepsCache } from '../src/renderer/univer-sync'
+import { formulaKeepsCache, usesLocaleDependentFunction } from '../src/renderer/univer-sync'
 
 const sheet = (
   id: string,
@@ -71,6 +71,21 @@ describe('containsUnresolvedNames', () => {
     expect(containsUnresolvedNames('NPV(الافتراضات!$B$31,C16:G16)+B18')).toBe(false)
     expect(containsUnresolvedNames('合計*2')).toBe(true)
   })
+
+  it('flags external-workbook references so their cached values survive (prod_009)', () => {
+    expect(containsUnresolvedNames('[1]PG_3!C13')).toBe(true)
+    expect(containsUnresolvedNames("'[1]F-PG_4'!C13")).toBe(true)
+    expect(containsUnresolvedNames('SUM([2]Data!$A$1:$A$9)')).toBe(true)
+    // A bracketed number inside a string literal is not a workbook index.
+    expect(containsUnresolvedNames('CONCAT("[1]",A1)')).toBe(false)
+  })
+
+  it('flags path-qualified external-workbook references (issue 235)', () => {
+    expect(containsUnresolvedNames("'C:\\data\\[source.xlsx]Sheet1'!A1*2")).toBe(true)
+    expect(containsUnresolvedNames('[source.xlsm]Sheet1!A1')).toBe(true)
+    expect(containsUnresolvedNames("SUM('[Budget 2024.xlsx]Q1'!A1:A9)")).toBe(true)
+    expect(containsUnresolvedNames('INDEX(A1:A9,MATCH("[x.xlsx]",B1:B9,0))')).toBe(false)
+  })
 })
 
 describe('formulaKeepsCache', () => {
@@ -85,6 +100,20 @@ describe('formulaKeepsCache', () => {
 
   it('recalculates ordinary formulas', () => {
     expect(formulaKeepsCache('SUM(A1:A5)')).toBe(false)
+  })
+
+  it('keeps the cached value for locale-dependent functions (prod_039)', () => {
+    // ko file: cached hangul numerals + ₩; the engine would emit zh + $.
+    expect(formulaKeepsCache('="금액 "&NUMBERSTRING(B2,1)&"원 ("&DOLLAR(B2,0)&")"')).toBe(true)
+    expect(formulaKeepsCache('dollar(A1)')).toBe(true)
+    expect(usesLocaleDependentFunction('NUMBERSTRING (A1,2)')).toBe(true)
+  })
+
+  it('does not flag lookalike names or quoted text as locale-dependent', () => {
+    expect(usesLocaleDependentFunction('XDOLLAR(A1)')).toBe(false)
+    expect(usesLocaleDependentFunction('DOLLARS(A1)')).toBe(false)
+    expect(usesLocaleDependentFunction('CONCAT("DOLLAR(",A1)')).toBe(false)
+    expect(usesLocaleDependentFunction('SUM(A1:A5)')).toBe(false)
   })
 })
 

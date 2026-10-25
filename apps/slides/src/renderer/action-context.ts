@@ -17,15 +17,23 @@ import type {
 } from '../shared/ipc'
 import type { BrushFormat } from './format-brush'
 import type { InkTool } from './ink'
+import type { SlidesViewMode } from './components/ribbon-shared'
 import type { CustomShow } from './slideshow-utils'
 
 type Set<T> = React.Dispatch<React.SetStateAction<T>>
 
 // ── State payload types shared between App useState declarations and the ctx ──
 
+/** Viewport point the caret lands on when editing starts; select: 'word' picks the word there (double-click). */
+export interface EditCaret {
+  x: number
+  y: number
+  select?: 'word'
+}
+
 export interface EditingState {
   sourceId: string
-  caret?: { x: number; y: number }
+  caret?: EditCaret
   groupId?: string
   replaceWith?: string
 }
@@ -129,6 +137,7 @@ export interface ActionCtx {
   /** Freehand ink tool ('select' = not drawing); Esc drops back to select */
   inkTool: InkTool
   setInkTool: Set<InkTool>
+  viewMode: SlidesViewMode
 
   // Animations / transition
   animations: AnimationItem[]

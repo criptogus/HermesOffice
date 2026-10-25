@@ -73,6 +73,15 @@ describe('isSafeRemoteUrl', () => {
     await expect(isSafeRemoteUrl(url)).resolves.toBe(false)
   })
 
+  it.each([
+    'http://localhost./x.png',
+    'http://LOCALHOST./x.png',
+    'http://printer.local./x.png',
+    'http://metadata.internal./x.png',
+  ])('rejects trailing-dot internal hostname %s without DNS', async (url) => {
+    await expect(isSafeRemoteUrl(url)).resolves.toBe(false)
+  })
+
   it('rejects malformed input and non-strings', async () => {
     await expect(isSafeRemoteUrl('not a url')).resolves.toBe(false)
     await expect(isSafeRemoteUrl(undefined)).resolves.toBe(false)

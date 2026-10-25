@@ -13,7 +13,19 @@ import { docStyleCss } from '../src/renderer/doc-style-css'
 
 function parsedWith(styleId: string, display: StyleDisplay): ParsedDocFull {
   const styles = new Map<string, StyleInfo>()
-  styles.set(styleId, { styleId, name: styleId, type: 'paragraph', display } as StyleInfo)
+  styles.set('Normal', {
+    styleId: 'Normal',
+    name: 'Normal',
+    type: 'paragraph',
+    isDefault: true,
+  } as StyleInfo)
+  styles.set(styleId, {
+    styleId,
+    name: styleId,
+    type: 'paragraph',
+    basedOn: 'Normal',
+    display,
+  } as StyleInfo)
   return { styles, docDefaults: {}, blocks: [] } as unknown as ParsedDocFull
 }
 
@@ -40,9 +52,70 @@ describe('docStyleCss spacing', () => {
     )
   })
 
+  it('suppresses style-level auto space-before on the document first block', () => {
+    const css = docStyleCss(parsedWith('web', { spaceBeforeAuto: true }))
+    expect(css).toContain(
+      '.doc-page > [data-style="web"]:nth-child(1 of :not(.page-float-host)) { margin-top:0 }',
+    )
+  })
+
+  it('suppresses default-level auto space-before on the document first block', () => {
+    const parsed = parsedWith('S', {})
+    ;(parsed as unknown as { docDefaults: object }).docDefaults = { spaceBeforeAuto: true }
+    const css = docStyleCss(parsed)
+    expect(css).toContain(
+      ':not([data-style]):nth-child(1 of :not(.page-float-host)) { margin-top:0 }',
+    )
+  })
+
+  it('zeroes style-level auto spacing at the cell boundaries (Word probe 2026-09-03)', () => {
+    const css = docStyleCss(parsedWith('web', { spaceBeforeAuto: true, spaceAfterAuto: true }))
+    const cell = '.doc-table :is(td, th, .cell-clip, .cell-vert) > '
+    expect(css).toContain(
+      `${cell}[data-style="web"]:nth-child(1 of :not(.doc-cell-boxes)) { margin-top:0 }`,
+    )
+    expect(css).toContain(
+      `${cell}[data-style="web"]:nth-last-child(1 of :not(.doc-cell-boxes)) { margin-bottom:0 }`,
+    )
+  })
+
+  it('zeroes default-level auto spacing at the cell boundaries', () => {
+    const parsed = parsedWith('S', {})
+    ;(parsed as unknown as { docDefaults: object }).docDefaults = {
+      spaceBeforeAuto: true,
+      spaceAfterAuto: true,
+    }
+    const css = docStyleCss(parsed)
+    const cell = '.doc-table :is(td, th, .cell-clip, .cell-vert) > '
+    expect(css).toContain(
+      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style]):nth-child(1 of :not(.doc-cell-boxes)) { margin-top:0 }`,
+    )
+    expect(css).toContain(
+      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style]):nth-last-child(1 of :not(.doc-cell-boxes)) { margin-bottom:0 }`,
+    )
+  })
+
   it('keeps the literal twips when autospacing is off', () => {
     const css = docStyleCss(parsedWith('S', { spaceBeforeTwips: 100, spaceAfterTwips: 100 }))
     expect(css).toContain('[data-style="S"] { margin-top:5.0pt;margin-bottom:5.0pt }')
+  })
+
+  it('marks fixed-line styles with --doc-line-fixed for the pagination fit', () => {
+    // style-level exact/atLeast lines have no doc-lh-fixed class; the marker
+    // stops measureBlocks dividing an inherited document auto multiple out of
+    // their full-height break-line box (Word probe 20260901: a style-level
+    // exact break line demands its full box like a direct one)
+    const exact = docStyleCss(parsedWith('BreakStyle', { lineRule: 'exact', lineRawTwips: 480 }))
+    expect(exact).toMatch(/\[data-style="BreakStyle"\] \{[^}]*--doc-line-fixed:1/)
+    const auto = docStyleCss(
+      parsedWith('Body', { lineRule: 'auto', lineRawTwips: 480, spaceAfterTwips: 100 }),
+    )
+    expect(auto).not.toContain('--doc-line-fixed')
+    // line="0" atLeast is a natural-height fixed line: its spans must not
+    // re-snap to the grid either (Word probe 2026-09-11)
+    const zero = docStyleCss(parsedWith('Loose', { lineRule: 'atLeast', lineRawTwips: 0 }))
+    expect(zero).toMatch(/\[data-style="Loose"\] \{[^}]*--doc-line-fixed:1/)
+    expect(zero).toContain('[data-style="Loose"]:not(.doc-lh-fixed) span { line-height:inherit }')
   })
 
   it('lets a direct ctxSp off (.ctx-sp-off) escape the style-level suppression', () => {
@@ -62,6 +135,56 @@ describe('docStyleCss spacing', () => {
     )
     expect(css).toContain(
       '[data-style="SBul"] + [data-style="SBul"].ctx-sp { margin-top:0 !important }',
+    )
+  })
+})
+
+describe('docStyleCss styles off the Normal chain', () => {
+  const parsedOff = (display: StyleDisplay, docDefaults: object = {}): ParsedDocFull => {
+    const styles = new Map<string, StyleInfo>()
+    styles.set('Normal', {
+      styleId: 'Normal',
+      name: 'Normal',
+      type: 'paragraph',
+      isDefault: true,
+      display: {
+        spaceAfterTwips: 160,
+        lineRule: 'auto',
+        lineRawTwips: 259,
+        lineSpacing: 259 / 240,
+      },
+    } as StyleInfo)
+    styles.set('NoSpacing', {
+      styleId: 'NoSpacing',
+      name: 'No Spacing',
+      type: 'paragraph',
+      display,
+    } as StyleInfo)
+    return { styles, docDefaults, blocks: [] } as unknown as ParsedDocFull
+  }
+
+  it('a paragraph style without w:basedOn takes docDefaults spacing and line, not Normal', () => {
+    const css = docStyleCss(parsedOff({ sizeHalfPoints: 22 }))
+    const rule = /\[data-style="NoSpacing"\] \{ ([^}]*) \}/.exec(css)![1]
+    expect(rule).toContain('margin-top:0.0pt')
+    expect(rule).toContain('margin-bottom:0.0pt')
+    expect(rule).toMatch(/line-height:/)
+    expect(rule).not.toContain('1.079')
+  })
+
+  it('docDefaults spacing reaches it when declared', () => {
+    const css = docStyleCss(
+      parsedOff({ sizeHalfPoints: 22 }, { spaceAfterTwips: 200, spaceBeforeAuto: true }),
+    )
+    const rule = /\[data-style="NoSpacing"\] \{ ([^}]*) \}/.exec(css)![1]
+    expect(rule).toContain('margin-top:14.0pt')
+    expect(rule).toContain('margin-bottom:10.0pt')
+  })
+
+  it('own spacing still wins over docDefaults', () => {
+    const css = docStyleCss(parsedOff({ spaceAfterTwips: 60 }, { spaceAfterTwips: 200 }))
+    expect(/\[data-style="NoSpacing"\] \{ ([^}]*) \}/.exec(css)![1]).toContain(
+      'margin-bottom:3.0pt',
     )
   })
 })

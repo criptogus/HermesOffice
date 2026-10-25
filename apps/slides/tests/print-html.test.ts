@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildPrintDocumentHtml, parsePrintRange, printPageCount } from '../src/shared/print-html'
+import {
+  buildPrintDocumentHtml,
+  currentRangeIndices,
+  normalizePrintRatio,
+  parsePrintRange,
+  printPageCount,
+} from '../src/shared/print-html'
 
 const srcs = (n: number) => Array.from({ length: n }, (_x, i) => `blob:img-${i}`)
 
@@ -17,6 +23,24 @@ describe('parsePrintRange', () => {
     expect(parsePrintRange('4-2', 5)).toBeNull()
     expect(parsePrintRange('6', 5)).toBeNull()
   })
+
+  it('accepts spaces around dashes', () => {
+    expect(parsePrintRange('1 - 3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1 – 3, 5', 5)).toEqual([0, 1, 2, 4])
+  })
+
+  it('accepts em-dash, tilde, fullwidth tilde and wave dash (IME variants)', () => {
+    expect(parsePrintRange('1—3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1~3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1～3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1〜3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1 — 3, 5～6', 6)).toEqual([0, 1, 2, 4, 5])
+  })
+
+  it('accepts spaces around dashes', () => {
+    expect(parsePrintRange('1 - 3', 5)).toEqual([0, 1, 2])
+    expect(parsePrintRange('1 – 3, 5', 5)).toEqual([0, 1, 2, 4])
+  })
 })
 
 describe('printPageCount', () => {
@@ -26,6 +50,16 @@ describe('printPageCount', () => {
     expect(printPageCount(7, 'handout2')).toBe(4)
     expect(printPageCount(7, 'handout3')).toBe(3)
     expect(printPageCount(7, 'handout6')).toBe(2)
+  })
+})
+
+describe('currentRangeIndices', () => {
+  it('yields [] for stale indices instead of crashing', () => {
+    expect(currentRangeIndices(2, 5)).toEqual([2])
+    expect(currentRangeIndices(7, 5)).toEqual([])
+    expect(currentRangeIndices(-1, 5)).toEqual([])
+    expect(currentRangeIndices(1.5, 5)).toEqual([])
+    expect(currentRangeIndices(NaN, 5)).toEqual([])
   })
 })
 
@@ -71,6 +105,23 @@ describe('buildPrintDocumentHtml', () => {
     expect(html).toContain('a &lt; b<br>next')
   })
 
+  it('escapes image sources for attribute context in every layout', () => {
+    const full = buildPrintDocumentHtml({
+      srcs: ['x" onerror="alert(1)'],
+      ratio: 16 / 9,
+      layout: 'full',
+    })
+    expect(full).toContain('src="x&quot; onerror=&quot;alert(1)"')
+    expect(full).not.toContain('src="x" onerror=')
+    const handout = buildPrintDocumentHtml({
+      srcs: ["c'd", 'e&f<g>'],
+      ratio: 16 / 9,
+      layout: 'handout2',
+    })
+    expect(handout).toContain('src="c&#39;d"')
+    expect(handout).toContain('src="e&amp;f&lt;g&gt;"')
+  })
+
   it('preview mode adds page badges with the total page count', () => {
     const html = buildPrintDocumentHtml({
       srcs: srcs(5),
@@ -80,5 +131,30 @@ describe('buildPrintDocumentHtml', () => {
     })
     expect(html).toContain("content: counter(pg) ' / 3';")
     expect(html).toContain('counter-reset: pg;')
+  })
+})
+
+describe('normalizePrintRatio', () => {
+  it('keeps real slide formats exact', () => {
+    expect(normalizePrintRatio(16 / 9)).toBe(16 / 9)
+    expect(normalizePrintRatio(4 / 3)).toBe(4 / 3)
+    expect(normalizePrintRatio(16 / 10)).toBe(16 / 10)
+  })
+
+  it('falls back to 16:9 for non-finite and non-positive ratios', () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1.5]) {
+      expect(normalizePrintRatio(bad)).toBe(16 / 9)
+      const html = buildPrintDocumentHtml({ srcs: srcs(1), ratio: bad, layout: 'full' })
+      expect(html).toContain('@page { size: 13.333in 7.5in; margin: 0; }')
+      expect(html).not.toContain('NaNin')
+      expect(html).not.toContain('Infinityin')
+    }
+  })
+
+  it('clamps absurd ratios so @page stays printable', () => {
+    const tiny = buildPrintDocumentHtml({ srcs: srcs(1), ratio: 0.01, layout: 'full' })
+    expect(tiny).toContain('@page { size: 1.5in 7.5in; margin: 0; }')
+    const huge = buildPrintDocumentHtml({ srcs: srcs(1), ratio: 100, layout: 'full' })
+    expect(huge).toContain('@page { size: 37.5in 7.5in; margin: 0; }')
   })
 })

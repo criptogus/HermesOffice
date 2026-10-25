@@ -1,13 +1,15 @@
 // cmaps/standard fonts/wasm are statically copied by the build into pdfjs/ of the renderer output (same path on the dev server)
 export const ASSET_BASE = new URL('pdfjs/', document.baseURI).href
 
-export const ZOOM_STEPS = [0.1, 0.25, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4]
+export const ZOOM_STEPS = [
+  0.1, 0.25, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8,
+]
 export const MIN_SCALE = ZOOM_STEPS[0]
 export const MAX_SCALE = ZOOM_STEPS[ZOOM_STEPS.length - 1]
 export const PAGE_GAP = 16
 export const SCROLL_PAD = 24
 // ── Sidebar (thumbnails / outline) width: drag the divider to resize; persisted ──
-export const SIDEBAR_W_KEY = 'hermesoffice-pdf-sidebar-width'
+export const SIDEBAR_W_KEY = 'genoffice-pdf-sidebar-width'
 export const SIDEBAR_W_DEFAULT = 150
 export const SIDEBAR_W_MIN = 120
 /** pane padding (10px × 2) + thumb box borders (2px × 2) */
@@ -65,3 +67,5 @@ export function parsePageRanges(input: string, max: number): number[] | null {
   }
   return out.size > 0 ? [...out].sort((x, y) => x - y) : null
 }
+/** Page bitmap budget: at 800% a hi-dpi Letter page would otherwise be ~125M px */
+export const MAX_PAGE_RENDER_PIXELS = 48_000_000

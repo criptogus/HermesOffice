@@ -38,6 +38,7 @@ function makeRecordingCtx(canvas: FakeOffscreenCanvas) {
         fn = (...args: unknown[]) => {
           calls.push({ method: name, args })
           if (name === 'measureText') return { width: 10 }
+          if (name === 'createPattern') return { pattern: args[0] }
           return undefined
         }
         fns.set(name, fn)
@@ -48,6 +49,12 @@ function makeRecordingCtx(canvas: FakeOffscreenCanvas) {
       target[prop] = value
       if (prop === 'globalCompositeOperation') {
         calls.push({ method: 'set:globalCompositeOperation', args: [value] })
+      }
+      if (prop === 'font') {
+        calls.push({ method: 'set:font', args: [value] })
+      }
+      if (prop === 'fillStyle') {
+        calls.push({ method: 'set:fillStyle', args: [value] })
       }
       return true
     },
@@ -275,6 +282,124 @@ describe('EMR_ALPHABLEND (w-icon.emf)', () => {
   })
 })
 
+/**
+ * Minimal EMF: header + EXTCREATEFONTINDIRECTW + SELECTOBJECT + EXTTEXTOUTW +
+ * EOF, with GDI+-style non-zero OutPrecision/Quality/PitchAndFamily bytes in
+ * the LOGFONTW (the facename-offset regression trigger).
+ */
+function buildEmfWithText(faceName: string, text: string): ArrayBuffer {
+  const header = new Uint8Array(88)
+  const hv = new DataView(header.buffer)
+  hv.setUint32(0, 1, true) // EMR_HEADER
+  hv.setUint32(4, 88, true)
+  hv.setInt32(16, 200, true) // rclBounds right
+  hv.setInt32(20, 100, true) // rclBounds bottom
+  hv.setInt32(32, 5292, true) // rclFrame right (.01 mm, matches bounds)
+  hv.setInt32(36, 2646, true)
+  hv.setUint32(40, 0x464d4520, true) // ' EMF'
+  hv.setUint32(44, 0x00010000, true)
+  hv.setUint32(52, 5, true) // nRecords
+  hv.setUint16(56, 2, true) // nHandles
+  hv.setInt32(72, 1920, true) // szlDevice
+  hv.setInt32(76, 1080, true)
+  hv.setInt32(80, 508, true) // szlMillimeters
+  hv.setInt32(84, 286, true)
+
+  const font = new Uint8Array(332)
+  const fv = new DataView(font.buffer)
+  fv.setUint32(0, 82, true) // EMR_EXTCREATEFONTINDIRECTW
+  fv.setUint32(4, 332, true)
+  fv.setUint32(8, 1, true) // ihFont
+  fv.setInt32(12, -15, true) // lfHeight
+  fv.setInt32(28, 400, true) // lfWeight
+  fv.setUint8(35, 0x80) // lfCharSet
+  fv.setUint8(36, 4) // lfOutPrecision
+  fv.setUint8(38, 5) // lfQuality
+  fv.setUint8(39, 0x32) // lfPitchAndFamily
+  for (let i = 0; i < faceName.length && i < 31; i++) {
+    fv.setUint16(40 + i * 2, faceName.charCodeAt(i), true)
+  }
+
+  const select = new Uint8Array(12)
+  const sv = new DataView(select.buffer)
+  sv.setUint32(0, 37, true) // EMR_SELECTOBJECT
+  sv.setUint32(4, 12, true)
+  sv.setUint32(8, 1, true)
+
+  const textRec = new Uint8Array(76 + text.length * 2)
+  const tv = new DataView(textRec.buffer)
+  tv.setUint32(0, 84, true) // EMR_EXTTEXTOUTW
+  tv.setUint32(4, textRec.length, true)
+  tv.setUint32(24, 1, true) // GM_COMPATIBLE
+  tv.setInt32(36, 10, true) // reference x
+  tv.setInt32(40, 20, true) // reference y
+  tv.setUint32(44, text.length, true)
+  tv.setUint32(48, 76, true) // offString
+  for (let i = 0; i < text.length; i++) {
+    tv.setUint16(76 + i * 2, text.charCodeAt(i), true)
+  }
+
+  const eof = new Uint8Array(20)
+  const ev = new DataView(eof.buffer)
+  ev.setUint32(0, 14, true) // EMR_EOF
+  ev.setUint32(4, 20, true)
+
+  const parts = [header, font, select, textRec, eof]
+  const total = parts.reduce((n, p) => n + p.length, 0)
+  hv.setUint32(48, total, true) // nBytes
+  const emf = new Uint8Array(total)
+  let at = 0
+  for (const p of parts) {
+    emf.set(p, at)
+    at += p.length
+  }
+  return emf.buffer
+}
+
+function fontSets(): string[] {
+  return calls.filter((c) => c.method === 'set:font').map((c) => c.args[0] as string)
+}
+
+describe('EMR_EXTTEXTOUTW alignment (ole-caption.emf)', () => {
+  it('centers a TA_CENTER caption instead of right-aligning it', async () => {
+    reset()
+    await convertEmfToDataUrl(loadFixture('ole-caption.emf'), { dpiScale: 2 })
+    const canvas = canvases[0]
+    const text = calls.find((c) => c.method === 'fillText')
+    expect(text?.args[0]).toBe('simple.txt')
+    expect(text?.args[1]).toBeCloseTo(canvas.width / 2, 0)
+    expect(canvas.getContext('2d')?.textAlign).toBe('center')
+  })
+})
+
+describe('EMR_EXTCREATEFONTINDIRECTW facename', () => {
+  it('reads the LOGFONTW FaceName at +32, past the precision/quality bytes', async () => {
+    reset()
+    const result = await convertEmfToDataUrl(buildEmfWithText('Segoe UI', 'Test'), { dpiScale: 2 })
+    expect(result).toMatch(/^data:image\/png;base64,/)
+    expect(calls.filter((c) => c.method === 'fillText').map((c) => c.args[0])).toContain('Test')
+    // regression: read at +28 prefixed the family with the OutPrecision/
+    // Quality bytes; the invalid CSS ident made the ctx.font assignment fail
+    // silently in a real canvas, dropping the 30px size with it
+    expect(fontSets()).toContain('30px "Segoe UI", sans-serif')
+    for (const font of fontSets()) {
+      expect([...font].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)).toBe(false)
+    }
+  })
+
+  it('strips control chars from a corrupt facename instead of losing the size', async () => {
+    reset()
+    await convertEmfToDataUrl(buildEmfWithText('\u0004㈅Meiryo UI', 'Test'), { dpiScale: 2 })
+    expect(fontSets()).toContain('30px "㈅Meiryo UI", sans-serif')
+  })
+
+  it('maps localized facenames through the wrapper fontFamilyMap', async () => {
+    reset()
+    await metafileToDataUrl(new Uint8Array(buildEmfWithText('游ゴシック', 'Test')), 'image/x-emf')
+    expect(fontSets()).toContain('30px "Yu Gothic", sans-serif')
+  })
+})
+
 describe('gzipped metafiles (.emz/.wmz)', () => {
   it('accepts emz/wmz mimes', () => {
     for (const m of ['image/emz', 'image/x-emz', 'image/wmz', 'image/x-wmz']) {
@@ -296,5 +421,325 @@ describe('gzipped metafiles (.emz/.wmz)', () => {
     const result = await metafileToDataUrl(new Uint8Array(gz), 'image/x-emf')
     expect(result).toMatch(/^data:image\/png;base64,/)
     expect(canvases[0]?.width).toBe(380)
+  })
+})
+
+describe('EMF+ bitmap image object (synthetic)', () => {
+  // EMR_HEADER + one EMR_COMMENT(EMF+) holding EmfPlusHeader, EmfPlusObject
+  // (image → bitmap → BitmapDataType Pixel = 0, 4×2 32bppARGB), EmfPlusDrawImage,
+  // EmfPlusEndOfFile + EMR_EOF — the shape PowerPoint uses for a picture
+  // background exported as EMF+ (prod master bg drew a blank white page)
+  function buildEmfPlusBitmap(): ArrayBuffer {
+    const w = 4
+    const h = 2
+    const pixels = new Uint8Array(w * h * 4).fill(0x80)
+    const plus: number[] = []
+    const u16 = (v: number) => plus.push(v & 0xff, (v >> 8) & 0xff)
+    const u32s = (...vs: number[]) => {
+      for (const v of vs) plus.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff)
+    }
+    const f32s = (...vs: number[]) => plus.push(...new Uint8Array(new Float32Array(vs).buffer))
+    // EmfPlusHeader
+    u16(0x4001)
+    u16(1)
+    u32s(28, 16, 0xdbc01001, 0, 96, 96)
+    // EmfPlusObject: type Image (5) << 8 | id 1
+    const objData = 28 + pixels.length
+    u16(0x4008)
+    u16(0x0500 | 1)
+    u32s(12 + objData, objData, 0xdbc01002, 1, w, h, w * 4, 0x26200a, 0)
+    plus.push(...pixels)
+    // EmfPlusDrawImage: image id 1, src unit pixel, float RectF src/dest
+    u16(0x401a)
+    u16(1)
+    u32s(52, 40, 0, 2)
+    f32s(0, 0, w, h, 0, 0, w, h)
+    // EmfPlusEndOfFile
+    u16(0x4002)
+    u16(0)
+    u32s(12, 0)
+
+    const commentData = 4 + plus.length
+    const commentSize = 12 + commentData
+    const total = 108 + commentSize + 20
+    const header: number[] = [
+      1,
+      108, // EMR_HEADER
+      0,
+      0,
+      w,
+      h, // bounds (px)
+      0,
+      0,
+      Math.round((w * 2540) / 96),
+      Math.round((h * 2540) / 96), // frame (0.01 mm)
+      0x464d4520,
+      0x10000,
+      total,
+      3, // signature, version, bytes, records
+      0, // handles + reserved
+      0,
+      0,
+      0, // description, palette
+      1920,
+      1080,
+      508,
+      286, // device px / mm
+      0,
+      0,
+      0,
+      508000,
+      286000, // pixel format, OpenGL, micrometers
+      70,
+      commentSize,
+      commentData,
+      0x2b464d45, // EMR_COMMENT + 'EMF+'
+    ]
+    const buf = new ArrayBuffer(total)
+    const v = new DataView(buf)
+    header.forEach((x, i) => v.setUint32(i * 4, x >>> 0, true))
+    new Uint8Array(buf).set(plus, header.length * 4)
+    const eof = [14, 20, 0, 16, 20]
+    eof.forEach((x, i) => v.setUint32(total - 20 + i * 4, x, true))
+    return buf
+  }
+
+  it('decodes the pixel bitmap and draws it through DrawImage', async () => {
+    reset()
+    const created: Blob[] = []
+    const savedCIB = globals.createImageBitmap
+    globals.createImageBitmap = async (blob: Blob) => {
+      created.push(blob)
+      return { width: 4, height: 2, close() {} }
+    }
+    try {
+      const result = await convertEmfToDataUrl(buildEmfPlusBitmap(), { dpiScale: 1 })
+      expect(result).toMatch(/^data:image\/png;base64,/)
+      expect(canvases[0]?.width).toBe(4)
+      expect(canvases[0]?.height).toBe(2)
+      // regression: BitmapDataType was compared against 1/2 instead of 0/1, so the
+      // object never decoded and DrawImage had nothing to paint
+      expect(created).toHaveLength(1)
+      const bmp = new Uint8Array(await created[0].arrayBuffer())
+      expect(String.fromCharCode(bmp[0], bmp[1])).toBe('BM')
+      const draws = calls.filter((c) => c.method === 'drawImage')
+      expect(draws).toHaveLength(1)
+      expect(draws[0].args.slice(1)).toEqual([0, 0, 4, 2])
+    } finally {
+      if (savedCIB === undefined) delete globals.createImageBitmap
+      else globals.createImageBitmap = savedCIB
+    }
+  })
+})
+
+describe('EMR_CREATEDIBPATTERNBRUSHPT (synthetic)', () => {
+  // EMR_HEADER + CREATEDIBPATTERNBRUSHPT (8×8 1bpp checker DIB) + SELECTOBJECT + BITBLT
+  // PATCOPY + EOF — how Excel OLE previews draw dotted cell borders
+  function buildPatternBrushEmf(): ArrayBuffer {
+    const dib = [
+      40,
+      8,
+      8,
+      0x00010001,
+      0,
+      32,
+      0,
+      0,
+      2,
+      0, // BITMAPINFOHEADER (planes=1, bpp=1)
+      0x00000000,
+      0x00ffffff, // color table: black, white
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55,
+      0xaa55aa55, // 8 rows × 4 bytes
+    ]
+    const brushRec = [94, 32 + dib.length * 4, 1, 0, 32, 48, 80, 32, ...dib]
+    const select = [37, 12, 1]
+    // BITBLT: bounds, dest 10,10 40×2, PATCOPY, no source DIB
+    const bitblt = [
+      76, 100, 0, 0, 100, 100, 10, 10, 40, 2, 0xf00021, 0, 0, 0, 0, 0, 0, 0x1000000, 0, 0, 0, 0, 0,
+      0, 0,
+    ]
+    const body = [...brushRec, ...select, ...bitblt, 14, 20, 0, 16, 20]
+    const total = 108 + body.length * 4
+    const header = [
+      1,
+      108,
+      0,
+      0,
+      100,
+      100,
+      0,
+      0,
+      2646,
+      2646,
+      0x464d4520,
+      0x10000,
+      total,
+      5,
+      2,
+      0,
+      0,
+      0,
+      1920,
+      1080,
+      508,
+      286,
+      0,
+      0,
+      0,
+      508000,
+      286000,
+    ]
+    const buf = new ArrayBuffer(total)
+    const v = new DataView(buf)
+    ;[...header, ...body].forEach((x, i) => v.setUint32(i * 4, x >>> 0, true))
+    return buf
+  }
+
+  it('fills the PATCOPY blit with a repeating pattern built from the brush DIB', async () => {
+    reset()
+    const result = await convertEmfToDataUrl(buildPatternBrushEmf(), { dpiScale: 1 })
+    expect(result).toMatch(/^data:image\/png;base64,/)
+    // the 8×8 pattern tile is a second canvas next to the 100×100 page
+    const tile = canvases.find((c) => c.width === 8 && c.height === 8)
+    expect(tile).toBeDefined()
+    const patterns = calls.filter((c) => c.method === 'createPattern')
+    expect(patterns).toHaveLength(1)
+    expect(patterns[0].args[1]).toBe('repeat')
+    // regression: the record was unhandled, so the blit used the previous solid brush
+    const fillIdx = calls.findIndex((c) => c.method === 'fillRect')
+    expect(fillIdx).toBeGreaterThan(0)
+    const lastFillStyle = calls
+      .slice(0, fillIdx)
+      .reverse()
+      .find((c) => c.method === 'set:fillStyle')
+    expect(lastFillStyle?.args[0]).toEqual({ pattern: tile })
+    expect(calls[fillIdx].args).toEqual([10, 10, 40, 2])
+  })
+})
+
+/**
+ * Minimal EMF+ dual-mode file the way Office writes chart pictures: the plot is
+ * clipped with SetClipRect, then SetClipRegion(region object) widens the clip
+ * back to the whole chart before the title/legend are drawn. Region objects
+ * carry ObjectType 4 (MS-EMFPLUS 2.1.1.22) and a single leaf node has
+ * RegionNodeCount 0.
+ */
+function buildEmfPlusRegionClipFile(): ArrayBuffer {
+  const plusRecord = (type: number, flags: number, data: number[]): number[] => {
+    const size = 12 + data.length
+    return [...u16(type), ...u16(flags), ...u32(size), ...u32(data.length), ...data]
+  }
+  const plus = [
+    ...plusRecord(0x4001, 1, [...u32(0xdbc01002), ...u32(1), ...u32(96), ...u32(96)]),
+    ...plusRecord(0x4032, 1 << 8, [...f32(10), ...f32(10), ...f32(20), ...f32(20)]),
+    ...plusRecord(0x4008, (4 << 8) | 0, [
+      ...u32(0xdbc01002),
+      ...u32(0),
+      ...u32(0x10000000),
+      ...f32(0),
+      ...f32(0),
+      ...f32(100),
+      ...f32(60),
+    ]),
+    ...plusRecord(0x4034, 1 << 8, []),
+    ...plusRecord(0x400a, 0x8000, [
+      ...u32(0xff0000ff),
+      ...u32(1),
+      ...f32(0),
+      ...f32(0),
+      ...f32(100),
+      ...f32(60),
+    ]),
+    ...plusRecord(0x4002, 0, []),
+  ]
+  const commentData = [...u32(0x2b464d45), ...plus]
+  const comment = [
+    ...u32(70),
+    ...u32(12 + commentData.length),
+    ...u32(commentData.length),
+    ...commentData,
+  ]
+  const eof = [...u32(14), ...u32(20), ...u32(0), ...u32(16), ...u32(20)]
+  const total = 88 + comment.length + eof.length
+  const header = [
+    ...u32(1),
+    ...u32(88),
+    ...i32(0),
+    ...i32(0),
+    ...i32(100),
+    ...i32(60),
+    ...i32(0),
+    ...i32(0),
+    ...i32(2646),
+    ...i32(1588),
+    ...u32(0x464d4520),
+    ...u32(0x10000),
+    ...u32(total),
+    ...u32(3),
+    ...u16(1),
+    ...u16(0),
+    ...u32(0),
+    ...u32(0),
+    ...u32(0),
+    ...i32(1000),
+    ...i32(600),
+    ...i32(265),
+    ...i32(159),
+  ]
+  return new Uint8Array([...header, ...comment, ...eof]).buffer
+}
+function u16(v: number): number[] {
+  return [v & 0xff, (v >>> 8) & 0xff]
+}
+function u32(v: number): number[] {
+  return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]
+}
+function i32(v: number): number[] {
+  return u32(v >>> 0)
+}
+function f32(v: number): number[] {
+  const b = new Uint8Array(4)
+  new DataView(b.buffer).setFloat32(0, v, true)
+  return [...b]
+}
+
+describe('EMF+ SetClipRegion (synthetic dual-mode chart picture)', () => {
+  it('restores the whole-chart clip from a region object before the fill', async () => {
+    reset()
+    const url = await convertEmfToDataUrl(buildEmfPlusRegionClipFile(), { dpiScale: 1 })
+    expect(url).toMatch(/^data:image\/png/)
+    const fillAt = calls.findIndex((c) => c.method === 'fillRect')
+    expect(fillAt).toBeGreaterThan(0)
+    const clipAt = calls
+      .slice(0, fillAt)
+      .map((c) => c.method)
+      .lastIndexOf('clip')
+    expect(clipAt).toBeGreaterThan(0)
+    const pathStart = calls
+      .slice(0, clipAt)
+      .map((c) => c.method)
+      .lastIndexOf('beginPath')
+    const xs: number[] = []
+    const ys: number[] = []
+    for (const c of calls.slice(pathStart, clipAt)) {
+      if (c.method === 'rect') {
+        const [x, y, w, h] = c.args as number[]
+        xs.push(x, x + w)
+        ys.push(y, y + h)
+      } else if (c.method === 'moveTo' || c.method === 'lineTo') {
+        xs.push(c.args[0] as number)
+        ys.push(c.args[1] as number)
+      }
+    }
+    // the 20x20 plot clip must have been replaced by the 100x60 region
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(90)
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(50)
   })
 })

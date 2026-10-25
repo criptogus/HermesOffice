@@ -20,6 +20,10 @@ export interface AppMenuLabels extends ContextMenuLabels {
   zoomIn: string
   zoomOut: string
   fullscreen: string
+  help: string
+  about: string
+  checkUpdates: string
+  version: string
 }
 
 type Labels = Omit<AppMenuLabels, keyof ContextMenuLabels>
@@ -40,10 +44,14 @@ const EN: Labels = {
   zoomIn: 'Zoom In',
   zoomOut: 'Zoom Out',
   fullscreen: 'Full Screen',
+  help: 'Help',
+  about: 'About GenOffice',
+  checkUpdates: 'Check for Updates…',
+  version: 'Version',
 }
 
 // Shared table, same rationale as context-menu.ts: one copy instead of
-// 15 keys × 19 languages per app dictionary.
+// 15 keys × 20 languages per app dictionary.
 const LABELS: Record<string, Labels> = {
   zh: {
     window: '窗口',
@@ -61,6 +69,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: '放大',
     zoomOut: '缩小',
     fullscreen: '全屏',
+    help: '帮助',
+    about: '关于 GenOffice',
+    checkUpdates: '检查更新…',
+    version: '版本',
   },
   en: EN,
   ja: {
@@ -79,6 +91,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: '拡大',
     zoomOut: '縮小',
     fullscreen: 'フルスクリーン',
+    help: 'ヘルプ',
+    about: 'GenOffice について',
+    checkUpdates: '更新を確認…',
+    version: 'バージョン',
   },
   ko: {
     window: '창',
@@ -96,6 +112,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: '확대',
     zoomOut: '축소',
     fullscreen: '전체 화면',
+    help: '도움말',
+    about: 'GenOffice 정보',
+    checkUpdates: '업데이트 확인…',
+    version: '버전',
   },
   fr: {
     window: 'Fenêtre',
@@ -113,6 +133,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Zoom avant',
     zoomOut: 'Zoom arrière',
     fullscreen: 'Plein écran',
+    help: 'Aide',
+    about: 'À propos de GenOffice',
+    checkUpdates: 'Rechercher les mises à jour…',
+    version: 'Version',
   },
   de: {
     window: 'Fenster',
@@ -130,6 +154,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Vergrößern',
     zoomOut: 'Verkleinern',
     fullscreen: 'Vollbild',
+    help: 'Hilfe',
+    about: 'Über GenOffice',
+    checkUpdates: 'Nach Updates suchen…',
+    version: 'Version',
   },
   es: {
     window: 'Ventana',
@@ -147,6 +175,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Acercar',
     zoomOut: 'Alejar',
     fullscreen: 'Pantalla completa',
+    help: 'Ayuda',
+    about: 'Acerca de GenOffice',
+    checkUpdates: 'Buscar actualizaciones…',
+    version: 'Versión',
   },
   th: {
     window: 'หน้าต่าง',
@@ -164,6 +196,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'ขยาย',
     zoomOut: 'ย่อ',
     fullscreen: 'เต็มหน้าจอ',
+    help: 'วิธีใช้',
+    about: 'เกี่ยวกับ GenOffice',
+    checkUpdates: 'ตรวจหาการอัปเดต…',
+    version: 'เวอร์ชัน',
   },
   id: {
     window: 'Jendela',
@@ -181,6 +217,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Perbesar',
     zoomOut: 'Perkecil',
     fullscreen: 'Layar Penuh',
+    help: 'Bantuan',
+    about: 'Tentang GenOffice',
+    checkUpdates: 'Periksa Pembaruan…',
+    version: 'Versi',
   },
   ru: {
     window: 'Окно',
@@ -198,6 +238,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Увеличить',
     zoomOut: 'Уменьшить',
     fullscreen: 'Полноэкранный режим',
+    help: 'Справка',
+    about: 'О GenOffice',
+    checkUpdates: 'Проверить обновления…',
+    version: 'Версия',
   },
   ar: {
     window: 'نافذة',
@@ -215,6 +259,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'تكبير',
     zoomOut: 'تصغير العرض',
     fullscreen: 'ملء الشاشة',
+    help: 'تعليمات',
+    about: 'حول GenOffice',
+    checkUpdates: 'التحقق من التحديثات…',
+    version: 'الإصدار',
   },
   pt: {
     window: 'Janela',
@@ -232,6 +280,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Ampliar',
     zoomOut: 'Reduzir',
     fullscreen: 'Tela Cheia',
+    help: 'Ajuda',
+    about: 'Sobre o GenOffice',
+    checkUpdates: 'Procurar atualizações…',
+    version: 'Versão',
   },
   it: {
     window: 'Finestra',
@@ -249,6 +301,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Ingrandisci',
     zoomOut: 'Riduci',
     fullscreen: 'Schermo intero',
+    help: 'Aiuto',
+    about: 'Informazioni su GenOffice',
+    checkUpdates: 'Controlla aggiornamenti…',
+    version: 'Versione',
   },
   pl: {
     window: 'Okno',
@@ -266,6 +322,31 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Powiększ',
     zoomOut: 'Pomniejsz',
     fullscreen: 'Pełny ekran',
+    help: 'Pomoc',
+    about: 'O programie GenOffice',
+    checkUpdates: 'Sprawdź aktualizacje…',
+    version: 'Wersja',
+  },
+  cs: {
+    window: 'Okno',
+    minimize: 'Minimalizovat',
+    closeWindow: 'Zavřít okno',
+    edit: 'Úpravy',
+    undo: 'Zpět',
+    redo: 'Znovu',
+    delete: 'Odstranit',
+    view: 'Zobrazení',
+    reload: 'Znovu načíst',
+    forceReload: 'Vynutit znovunačtení',
+    toggleDevTools: 'Nástroje pro vývojáře',
+    actualSize: 'Skutečná velikost',
+    zoomIn: 'Přiblížit',
+    zoomOut: 'Oddálit',
+    fullscreen: 'Celá obrazovka',
+    help: 'Nápověda',
+    about: 'O aplikaci GenOffice',
+    checkUpdates: 'Zkontrolovat aktualizace…',
+    version: 'Verze',
   },
   nl: {
     window: 'Venster',
@@ -283,6 +364,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Inzoomen',
     zoomOut: 'Uitzoomen',
     fullscreen: 'Volledig scherm',
+    help: 'Help',
+    about: 'Over GenOffice',
+    checkUpdates: 'Controleren op updates…',
+    version: 'Versie',
   },
   ms: {
     window: 'Tetingkap',
@@ -300,6 +385,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'Zum Masuk',
     zoomOut: 'Zum Keluar',
     fullscreen: 'Skrin Penuh',
+    help: 'Bantuan',
+    about: 'Perihal GenOffice',
+    checkUpdates: 'Semak Kemas Kini…',
+    version: 'Versi',
   },
   he: {
     window: 'חלון',
@@ -317,6 +406,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'הגדל',
     zoomOut: 'הקטן',
     fullscreen: 'מסך מלא',
+    help: 'עזרה',
+    about: 'אודות GenOffice',
+    checkUpdates: 'בדוק עדכונים…',
+    version: 'גרסה',
   },
   hi: {
     window: 'विंडो',
@@ -334,6 +427,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: 'ज़ूम इन',
     zoomOut: 'ज़ूम आउट',
     fullscreen: 'पूर्ण स्क्रीन',
+    help: 'सहायता',
+    about: 'GenOffice के बारे में',
+    checkUpdates: 'अपडेट जांचें…',
+    version: 'संस्करण',
   },
   'zh-TW': {
     window: '視窗',
@@ -351,6 +448,10 @@ const LABELS: Record<string, Labels> = {
     zoomIn: '放大',
     zoomOut: '縮小',
     fullscreen: '全螢幕',
+    help: '說明',
+    about: '關於 GenOffice',
+    checkUpdates: '檢查更新…',
+    version: '版本',
   },
 }
 
@@ -442,6 +543,69 @@ export function viewMenuTemplate(labels: AppMenuLabels): MenuItemConstructorOpti
       { role: 'zoomOut', label: labels.zoomOut },
       { type: 'separator' },
       { role: 'togglefullscreen', label: labels.fullscreen },
+    ],
+  }
+}
+
+/** The manual update check lives in the shell (electron-updater and its
+ * result dialogs), while the menus that expose it are built here — the shell
+ * injects the check at startup. Read at click time, so registration order
+ * relative to menu construction doesn't matter; until registered the menu
+ * entry no-ops and the About dialog doesn't offer the button. */
+let updateCheckInvoker: (() => void) | null = null
+
+export function setUpdateCheckInvoker(invoke: (() => void) | null): void {
+  updateCheckInvoker = invoke
+}
+
+/** Help > Check for Updates…: user-triggered update check (sits right above
+ * About, like Word). The shell-injected check owns all feedback: the update
+ * window when newer exists, "you're up to date (version x)" otherwise. */
+export function checkUpdatesMenuItem(labels: AppMenuLabels): MenuItemConstructorOptions {
+  return {
+    label: labels.checkUpdates,
+    click: () => updateCheckInvoker?.(),
+  }
+}
+
+/** Help > About: a native dialog with the app version — every window's menu
+ * gets one, so users can report the exact build they run. */
+export function aboutMenuItem(labels: AppMenuLabels): MenuItemConstructorOptions {
+  return {
+    label: labels.about,
+    click: async () => {
+      const { app, dialog, clipboard } = await import('electron')
+      const version = app.getVersion()
+      const canCheck = updateCheckInvoker !== null
+      const { response } = await dialog.showMessageBox({
+        type: 'info',
+        title: 'GenOffice',
+        message: 'GenOffice',
+        detail: `${labels.version} ${version}`,
+        buttons: ['OK', labels.copy, ...(canCheck ? [labels.checkUpdates] : [])],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      if (response === 1) clipboard.writeText(`GenOffice ${version}`)
+      if (response === 2) updateCheckInvoker?.()
+    },
+  }
+}
+
+/** Help menu with Check for Updates… + About; extra app-specific items go
+ * before the separator. */
+export function helpMenuTemplate(
+  labels: AppMenuLabels,
+  extraItems: MenuItemConstructorOptions[] = [],
+): MenuItemConstructorOptions {
+  return {
+    role: 'help',
+    label: labels.help,
+    submenu: [
+      ...extraItems,
+      ...(extraItems.length > 0 ? [{ type: 'separator' } as const] : []),
+      checkUpdatesMenuItem(labels),
+      aboutMenuItem(labels),
     ],
   }
 }

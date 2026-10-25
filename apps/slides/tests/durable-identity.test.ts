@@ -14,7 +14,7 @@ import {
   type OpenedPptx,
   type TextElement,
 } from '@hermesoffice/pptx-engine'
-import { runTxn, elementDurableId, slideDurableId } from '../src/main/ops'
+import { runTxn, elementDurableId, slideDurableId } from '@hermesoffice/pptx-ops'
 import { elementCNvPrId, groupChildDurableId, patchSlideXml } from '@hermesoffice/pptx-engine'
 
 let opened: OpenedPptx

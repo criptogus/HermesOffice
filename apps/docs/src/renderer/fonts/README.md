@@ -12,11 +12,15 @@ freely redistributable with the app. Licenses: Carlito and Liberation are
 | Liberation Serif | OFL 1.1    | Times New Roman                    |
 | Liberation Sans  | OFL 1.1    | Arial                              |
 | Liberation Mono  | OFL 1.1    | Courier New                        |
+| Aptos GO         | OFL 1.1    | Aptos (Carlito, size-adjusted)     |
+| Aptos Display GO | OFL 1.1    | Aptos Display (Carlito, adjusted)  |
 
 "Carlito GO" (`Carlito-*.ttf`) is a derivative of Carlito 1.103: a build-time patch
 (`tools/patch-carlito-vi.py`) rebuilds Vietnamese precomposed glyphs whose above mark
 (circumflex/breve) was dropped (Ậ/Ệ/Ộ in Regular/Bold); advance widths are unchanged.
-Renamed per OFL 1.1 §2 — "Carlito" is a Reserved Font Name.
+Renamed per OFL 1.1 §2 — "Carlito" is a Reserved Font Name. The files live in
+`packages/ui/src/fonts/` (shared with sheets and slides, which alias Calibri/Aptos
+to the same faces) and are referenced here as `@hermesoffice/ui/fonts/Carlito-*.ttf`.
 
 Purpose: when a Word font declared by the document is missing on this machine, the
 browser's silent fallback (Helvetica etc.) changes glyph widths, so line-break points
@@ -25,6 +29,15 @@ canvas line breaking aligned with Word, and stays consistent with the offline
 pagination model (`tests/helpers/lo-fonts.ts` measures the same set of files).
 
 Registration lives in `fonts.css`; family-name mapping in `cssFontFamily()` of `line-metrics.ts`.
+
+"Aptos GO" / "Aptos Display GO" are not separate files: they are `size-adjust`ed
+views of the Carlito faces (Word probe 2026-09-03 against Word's bundled Aptos).
+Aptos letters run ~6.8% wider than Carlito's, digits +5.4%, the space 10%
+narrower, so each weight registers three faces (general, `U+0030-0039`,
+`U+0020/00A0`) — later faces win inside their unicode-range. Aptos Display is
+close to Carlito for letters but shares the narrow space. Pitch stays Calibri's
+1.22 (`lineHeightFactor`). `tests/aptos-alias-metrics.test.ts` holds the probed
+sentence widths.
 
 ## CJK fallback
 
@@ -100,6 +113,43 @@ Basic Latin/punctuation/fullwidth forms), advances **unmodified**
 Reserved Font Names include "Nanum" and "NanumGothic"; subsetting is a
 modification). The exact NHN copyright/Reserved Font Name notice and the full
 OFL 1.1 text are in `LICENSE-OFL.txt`.
+
+### HermesOffice UI Kana JP
+
+| Font                                         | Role                                                |
+| -------------------------------------------- | --------------------------------------------------- |
+| HermesOffice UI Kana JP (Regular/Bold woff2) | Meiryo UI-advance kana/JP punctuation for the alias |
+
+Source: Noto Sans JP variable font from [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)
+(SIL OFL 1.1), instanced at wght 400/700. Word for Mac renders Meiryo UI with
+its private copy whose kana are proportional (Word probe 2026-09-03: あ
+0.816em, う 0.639em, ア 0.754em, ideographic space and 、。 0.664em, corner
+brackets and ・ 0.5em) at full glyph height; the Hiragino fallback keeps them
+at 1em, and a size-adjust alias shrinks height along with width. Subset to
+U+3000-30FF code points whose Meiryo UI advance differs from 1em, each glyph
+given that exact advance (`tools/meiryo-ui-kana-advances.json`) with the
+outline condensed horizontally to fit; vertical metrics set to the Hiragino
+class (0.88/-0.12) the glyphs sit next to (`tools/build-meiryo-ui-kana-font.py`).
+Renamed per OFL ("Source" is a Reserved Font Name of the upstream and the
+outlines are modified).
+
+## Poppins (M365 cloud font)
+
+| Font                                | Role                                 |
+| ----------------------------------- | ------------------------------------ |
+| HermesOffice Poppins (subset woff2) | real face for Poppins-declaring docs |
+
+Source: Poppins Regular/Bold from [google/fonts](https://github.com/google/fonts/tree/main/ofl/poppins)
+(SIL OFL 1.1). Poppins is an M365 cloud font: Word downloads the real face and
+lays out with its metrics (line box hhea = typo = 1.500em; Word probe
+2026-09-01 measured factor exactly 1.500 at 10/12/16/28pt, regular and bold,
+with the PDF embedding Poppins-Regular/Bold), while the Helvetica-class
+fallback runs ~12.6% narrower per line and 1.172-spaced — a 13-page document
+paginated as 11. Subset to Latin + Latin Extended + punctuation/currency,
+advances and vertical metrics **unmodified** (`tools/build-poppins-font.py`),
+checked in as `HermesOfficePoppins-{Regular,Bold}-subset.woff2`. Renamed (no
+Reserved Font Name upstream) so a locally installed Poppins wins by chain
+order. Italic synthesizes oblique from these faces.
 
 ## Tamil fallback
 

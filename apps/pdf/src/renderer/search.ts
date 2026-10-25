@@ -1,4 +1,5 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { foldCase } from '@hermesoffice/ui'
 
 /** One hit: original page + PDF user-space rects (multiple when spanning several text items) */
 export interface SearchMatch {
@@ -69,14 +70,14 @@ export async function buildSearchIndex(doc: PDFDocumentProxy): Promise<SearchInd
       }
       if (it.hasEOL) text += '\n'
     }
-    entries.push({ text, lower: text.toLowerCase(), items })
+    entries.push({ text, lower: foldCase(text), items })
   }
   return entries
 }
 
 /** Case-insensitive full-text search; rects linearly interpolated within items by char ratio (approximate; bounding box for rotated glyphs) */
 export function searchInIndex(index: SearchIndex, query: string): SearchMatch[] {
-  const q = query.toLowerCase()
+  const q = foldCase(query)
   if (!q) return []
   const matches: SearchMatch[] = []
   for (let pageIndex = 0; pageIndex < index.length; pageIndex++) {

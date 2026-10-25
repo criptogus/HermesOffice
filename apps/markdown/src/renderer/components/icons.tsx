@@ -11,6 +11,7 @@ export {
   IconBullets,
   IconCaret,
   IconNumbered,
+  IconOutlineView,
   IconIndentDec,
   IconIndentInc,
   IconTable,
@@ -20,6 +21,8 @@ export {
   IconUndo,
   IconRedo,
   IconCopy,
+  IconSearch,
+  IconSpellcheck,
 } from '../../../../docs/src/renderer/components/icons'
 
 interface IconProps {

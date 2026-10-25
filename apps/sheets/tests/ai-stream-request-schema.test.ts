@@ -37,6 +37,18 @@ describe('aiStreamRequestSchema', () => {
     expect('sessionId' in aiStreamRequestSchema.parse(request)).toBe(false)
   })
 
+  it('accepts an unsaved document session ID', () => {
+    expect(
+      aiStreamRequestSchema.parse(streamRequest({ sessionId: 'unsaved-workbook-1' })).sessionId,
+    ).toBe('unsaved-workbook-1')
+  })
+
+  it('rejects oversized session IDs', () => {
+    expect(() =>
+      aiStreamRequestSchema.parse(streamRequest({ sessionId: 'x'.repeat(257) })),
+    ).toThrow()
+  })
+
   it('rejects an empty sessionId', () => {
     expect(() => aiStreamRequestSchema.parse(streamRequest({ sessionId: '' }))).toThrow()
   })

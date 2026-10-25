@@ -13,7 +13,7 @@ Uso:
     python3 tools/rebrand-hermesoffice.py [--check]
 
 --check: apenas reporta arquivos que AINDA contêm o nome antigo (útil para
-validar que um merge do upstream não reintroduziu "genoffice" fora da camada
+validar que um merge do upstream não reintroduziu "hermesoffice" fora da camada
 de compatibilidade).
 """
 from __future__ import annotations
@@ -27,11 +27,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # Pares (old, new) aplicados na ordem. A ordem importa: scoped packages primeiro
 # (mais específico), depois env vars, depois ids, depois texto.
 REPLACES = [
-    ("@genoffice/", "@hermesoffice/"),
+    ("@hermesoffice/", "@hermesoffice/"),
     ("GENOFFICE_", "HERMESOFFICE_"),
     ("com.genoffice.app", "com.hermesoffice.app"),
     ("GenOffice", "HermesOffice"),
-    ("genoffice", "hermesoffice"),
+    ("hermesoffice", "hermesoffice"),
 ]
 
 # Extensões de arquivo que participam do rebrand.
@@ -43,7 +43,7 @@ EXCLUDE_DIRS = {"node_modules", ".git", "dist", "out", "release"}
 EXCLUDE_FILES = {"package-lock.json", "LICENSE", "NOTICE",
                  "rebrand-hermesoffice.py"}  # o próprio script não se modifica
 
-# Padrões permitidos a manter "genoffice" (camada de compatibilidade/upstream):
+# Padrões permitidos a manter "hermesoffice" (camada de compatibilidade/upstream):
 # nada por enquanto — a Fase 2 define a ponte de compatibilidade se precisar.
 
 

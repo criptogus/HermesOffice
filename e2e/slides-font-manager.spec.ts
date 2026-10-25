@@ -12,7 +12,7 @@ import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
  */
 async function buildRubikFixture(): Promise<string> {
   const out = join(
-    await mkdtemp(join(tmpdir(), 'hermesoffice-font-manager-')),
+    await mkdtemp(join(tmpdir(), 'genoffice-font-manager-')),
     'font-manager-rubik.pptx',
   )
   execFileSync('zip', ['-X', '-q', '-r', out, '.'], {
@@ -34,7 +34,7 @@ test('font download UI follows CDN configuration', async () => {
     openFile: await buildRubikFixture(),
   })
   try {
-    const editorPage = await waitForPageWithUrl(launched.app, 'slides/out')
+    const editorPage = await waitForPageWithUrl(launched.app, '://slides/')
     await editorPage.waitForSelector('.stage-wrap canvas', { timeout: 30_000 })
 
     const banner = editorPage.locator('.font-missing-banner')

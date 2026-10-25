@@ -173,7 +173,7 @@ function removeUnreferencedOwnedParts(
     }
   }
 
-  // HermesOffice's simplified 3D placeholder records the model path in cNvPr@descr
+  // GenOffice's simplified 3D placeholder records the model path in cNvPr@descr
   // rather than an OOXML relationship, so include those direct references.
   for (const [path, bytes] of archive.entries) {
     if (!path.endsWith('.xml') || closure.has(path)) continue

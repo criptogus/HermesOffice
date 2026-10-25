@@ -3,6 +3,7 @@
  */
 import React, {
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -28,11 +29,14 @@ import type {
   RenderFill,
   ShapeRenderNode,
   TableRenderNode,
+  ChartRenderNode,
   PictureRenderNode,
   GroupRenderNode,
 } from '@hermesoffice/pptx-render'
 import { boxPivotProps, fillToKonva, isEditableText } from './konva-adapter'
-import { tableCellAtPoint, tableLocalPointFromStage } from './table-hit'
+import { tableCellAtPoint, tableCellOverlayBox, tableLocalPointFromStage } from './table-hit'
+import { isPromptPlaceholder, textHitAtPoint } from './text-hit-area'
+import type { EditCaret } from './action-context'
 import {
   computeSnap,
   computeSpacingSnap,
@@ -58,17 +62,24 @@ function isConnectorNode(node: RenderNode): boolean {
   return (node.type === 'shape' || node.type === 'text') && !!(node as ShapeRenderNode).line
 }
 
-/** Perceived luminance (0..1) of a CSS color (#rgb/#rrggbb[aa]/rgb[a]()); null when unparseable. */
-function colorLuminance(color: string): number | null {
+/** Luminance (0..1) + alpha (0..1) pair — the unit the background-darkness composite works in. */
+type LumAlpha = { lum: number; alpha: number }
+
+/** Perceived luminance and alpha of a CSS color (#rgb/#rrggbb[aa]/rgb[a]()); null when
+ * unparseable. Alpha must survive parsing: a transparent full-page overlay otherwise
+ * reads as its base color and flips the chrome to white on a white slide. */
+function colorLumAlpha(color: string): LumAlpha | null {
   const c = color.trim()
   let r: number, g: number, b: number
-  const hex6 = /^#([0-9a-f]{6})/i.exec(c)
+  let a = 1
+  const hex6 = /^#([0-9a-f]{6})([0-9a-f]{2})?/i.exec(c)
   const hex3 = /^#([0-9a-f]{3})$/i.exec(c)
-  const rgb = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(c)
+  const rgb = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+%?))?/i.exec(c)
   if (hex6) {
     r = parseInt(hex6[1]!.slice(0, 2), 16)
     g = parseInt(hex6[1]!.slice(2, 4), 16)
     b = parseInt(hex6[1]!.slice(4, 6), 16)
+    if (hex6[2]) a = parseInt(hex6[2], 16) / 255
   } else if (hex3) {
     r = parseInt(hex3[1]![0]! + hex3[1]![0]!, 16)
     g = parseInt(hex3[1]![1]! + hex3[1]![1]!, 16)
@@ -77,19 +88,26 @@ function colorLuminance(color: string): number | null {
     r = Number(rgb[1])
     g = Number(rgb[2])
     b = Number(rgb[3])
+    if (rgb[4]) a = rgb[4].endsWith('%') ? Number(rgb[4].slice(0, -1)) / 100 : Number(rgb[4])
   } else {
     return null
   }
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  if (!Number.isFinite(a)) a = 1
+  return {
+    lum: (0.299 * r + 0.587 * g + 0.114 * b) / 255,
+    alpha: Math.max(0, Math.min(1, a)),
+  }
 }
 
-/** Average luminance of an image (8×8 downsample), cached per element; null while not loaded. */
-const imageLumCache = new WeakMap<HTMLImageElement, number | null>()
-function imageLuminance(img: HTMLImageElement | undefined): number | null {
+/** Alpha-weighted average luminance + mean coverage of an image (8×8 downsample), cached
+ * per element; null while not loaded. Transparent pixels must not count as black — a
+ * mostly-transparent decor PNG is (near-)invisible, not a dark background. */
+const imageLumCache = new WeakMap<HTMLImageElement, LumAlpha | null>()
+function imageLumAlpha(img: HTMLImageElement | undefined): LumAlpha | null {
   if (!img || !img.complete || !img.naturalWidth) return null
   const hit = imageLumCache.get(img)
   if (hit !== undefined) return hit
-  let lum: number | null
+  let out: LumAlpha | null
   try {
     const c = document.createElement('canvas')
     c.width = 8
@@ -98,59 +116,164 @@ function imageLuminance(img: HTMLImageElement | undefined): number | null {
     ctx.drawImage(img, 0, 0, 8, 8)
     const d = ctx.getImageData(0, 0, 8, 8).data
     let sum = 0
-    for (let i = 0; i < d.length; i += 4)
-      sum += 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!
-    lum = sum / (d.length / 4) / 255
+    let cover = 0
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3]! / 255
+      sum += ((0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!) / 255) * a
+      cover += a
+    }
+    out = cover > 0 ? { lum: sum / cover, alpha: cover / (d.length / 4) } : { lum: 1, alpha: 0 }
   } catch {
-    lum = null // tainted canvas etc. — treat as unknown
+    out = null // tainted canvas etc. — treat as unknown
   }
-  imageLumCache.set(img, lum)
-  return lum
+  imageLumCache.set(img, out)
+  return out
 }
 
-/** Luminance of a render fill; gradients average their stops, images sample the bitmap. */
-function fillLuminance(fill: RenderFill, images: Map<string, HTMLImageElement>): number | null {
-  if (fill.kind === 'solid') return colorLuminance(fill.color)
+/** Luminance/alpha of a render fill; gradients alpha-weight their stops, images sample the bitmap. */
+function fillLumAlpha(fill: RenderFill, images: Map<string, HTMLImageElement>): LumAlpha | null {
+  if (fill.kind === 'solid') return colorLumAlpha(fill.color)
   if (fill.kind === 'gradient') {
-    const vals = fill.stops
-      .map((s) => colorLuminance(s.color))
-      .filter((v): v is number => v != null)
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+    const stops = fill.stops
+      .map((s) => colorLumAlpha(s.color))
+      .filter((v): v is LumAlpha => v != null)
+    if (!stops.length) return null
+    const cover = stops.reduce((acc, s) => acc + s.alpha, 0)
+    return {
+      lum: cover > 0 ? stops.reduce((acc, s) => acc + s.lum * s.alpha, 0) / cover : 1,
+      alpha: cover / stops.length,
+    }
   }
-  if (fill.kind === 'image')
-    return imageLuminance(fill.dataUrl ? images.get(fill.dataUrl) : undefined)
+  if (fill.kind === 'image') {
+    const la = imageLumAlpha(fill.dataUrl ? images.get(fill.dataUrl) : undefined)
+    return la && { lum: la.lum, alpha: la.alpha * (fill.alpha ?? 1) }
+  }
   return null
 }
 
 /** Whether the slide's effective background is dark (selection chrome flips to white on it).
- * Full-page background-like nodes paint over the slide background, so the topmost one wins. */
+ * The slide background, full-page master/layout decorations and background-flagged elements
+ * composite bottom-up, each blended by its alpha over an assumed light page — so a
+ * transparent or lightly-tinted overlay can't flip the verdict with its base color, while
+ * an opaque or heavy dark scrim still does. Unknown layers (unloaded images, unparseable
+ * colors) are skipped and keep whatever is below. */
 function slideBackgroundIsDark(slide: RenderSlide, images: Map<string, HTMLImageElement>): boolean {
   let lum: number | null = null
-  for (const n of slide.nodes) {
-    if (!n.background) continue
-    const l =
-      n.type === 'picture'
-        ? imageLuminance(
-            (n as PictureRenderNode).dataUrl
-              ? images.get((n as PictureRenderNode).dataUrl!)
-              : undefined,
-          )
-        : n.type === 'shape' || n.type === 'text'
-          ? fillLuminance((n as ShapeRenderNode).fill, images)
-          : null
-    if (l != null) lum = l
+  const blend = (la: LumAlpha | null) => {
+    if (!la || la.alpha <= 0) return
+    lum = la.alpha >= 1 ? la.lum : la.lum * la.alpha + (lum ?? 1) * (1 - la.alpha)
   }
-  if (lum == null) lum = fillLuminance(slide.background, images)
+  const tol = 2
+  const coversPage = (n: RenderNode, ox: number, oy: number): boolean =>
+    !n.box.rotationDeg &&
+    ox + n.box.x <= tol &&
+    oy + n.box.y <= tol &&
+    ox + n.box.x + n.box.w >= slide.widthPx - tol &&
+    oy + n.box.y + n.box.h >= slide.heightPx - tol
+  // Group children are in group-local coords; a master plate nested in a decoration group
+  // still paints the page, so walk into covering groups with the group's offset applied.
+  const visit = (nodes: RenderNode[], ox: number, oy: number, inherited: boolean) => {
+    for (const n of nodes) {
+      const flagged = inherited || !!n.background || !!n.decoration
+      if (!n.background && !(flagged && coversPage(n, ox, oy))) continue
+      if (n.type === 'group') {
+        if (!n.box.rotationDeg)
+          visit((n as GroupRenderNode).children, ox + n.box.x, oy + n.box.y, true)
+        continue
+      }
+      if (n.type === 'picture') {
+        const pic = n as PictureRenderNode
+        const la = imageLumAlpha(pic.dataUrl ? images.get(pic.dataUrl) : undefined)
+        blend(la && { lum: la.lum, alpha: la.alpha * (pic.opacity ?? 1) })
+      } else if (n.type === 'shape' || n.type === 'text') {
+        blend(fillLumAlpha((n as ShapeRenderNode).fill, images))
+      }
+    }
+  }
+  blend(fillLumAlpha(slide.background, images))
+  visit(slide.nodes, 0, 0, false)
   return (lum ?? 1) < 0.5
 }
 
-/** Selection/edit chrome color for a slide: white on dark backgrounds, near-black otherwise
- * (shared with the text-edit overlay so the edit frame matches the selection frame). */
+/** Whether the slide looks dark UNDER a specific region: composite the slide background
+ * plus every node whose box overlaps the region, bottom-up in z-order, each blended by
+ * alpha × the fraction of the region it covers. The page-average verdict fails the most
+ * common template — a colored page with a white content plate: a text box ON the plate
+ * needs dark chrome even though the page itself is dark. Rotation is
+ * approximated by the unrotated box; tables blend their cell fills (the cell-edit overlay
+ * samples one cell), charts their chart-space and plot-area fills; unknown layers
+ * (unloaded images) are skipped and keep whatever is below. */
+function regionIsDark(
+  slide: RenderSlide,
+  images: Map<string, HTMLImageElement>,
+  region: { x: number; y: number; w: number; h: number },
+): boolean {
+  const area = region.w * region.h
+  if (!(area > 0)) return slideBackgroundIsDark(slide, images)
+  let lum: number | null = null
+  const blend = (la: LumAlpha | null, cover: number) => {
+    if (!la || la.alpha <= 0 || cover <= 0) return
+    const a = Math.min(1, la.alpha * cover)
+    lum = a >= 1 ? la.lum : la.lum * a + (lum ?? 1) * (1 - a)
+  }
+  const coverage = (x: number, y: number, w: number, h: number): number => {
+    const ix = Math.max(0, Math.min(x + w, region.x + region.w) - Math.max(x, region.x))
+    const iy = Math.max(0, Math.min(y + h, region.y + region.h) - Math.max(y, region.y))
+    return (ix * iy) / area
+  }
+  // Group children are in group-local coords (same walk as slideBackgroundIsDark)
+  const visit = (nodes: RenderNode[], ox: number, oy: number) => {
+    for (const n of nodes) {
+      const cover = coverage(ox + n.box.x, oy + n.box.y, n.box.w, n.box.h)
+      // a rotated table's cells can lie outside its unrotated box; they gate themselves below
+      if (cover <= 0 && n.type !== 'table') continue
+      if (n.type === 'group') {
+        if (!n.box.rotationDeg) visit((n as GroupRenderNode).children, ox + n.box.x, oy + n.box.y)
+        continue
+      }
+      if (n.type === 'picture') {
+        const pic = n as PictureRenderNode
+        const la = imageLumAlpha(pic.dataUrl ? images.get(pic.dataUrl) : undefined)
+        blend(la && { lum: la.lum, alpha: la.alpha * (pic.opacity ?? 1) }, cover)
+      } else if (n.type === 'shape' || n.type === 'text') {
+        blend(fillLumAlpha((n as ShapeRenderNode).fill, images), cover)
+      } else if (n.type === 'table') {
+        const tbl = n as TableRenderNode
+        if (tbl.bgFill && cover > 0) blend(fillLumAlpha(tbl.bgFill, images), cover)
+        // same placement as the cell-edit overlay, so a rotated or flipped table samples the edited cell
+        const placed = { ...n.box, x: ox + n.box.x, y: oy + n.box.y }
+        for (const c of tbl.cells) {
+          const cb = tableCellOverlayBox(placed, c)
+          blend(fillLumAlpha(c.fill, images), coverage(cb.x, cb.y, cb.w, cb.h))
+        }
+      } else if (n.type === 'chart') {
+        const chart = n as ChartRenderNode
+        if (chart.bgFill) blend(fillLumAlpha(chart.bgFill, images), cover)
+        const plot = chart.plotRect
+        if (plot?.fill) {
+          const px = ox + n.box.x + plot.x
+          const py = oy + n.box.y + plot.y
+          blend(fillLumAlpha(plot.fill, images), coverage(px, py, plot.w, plot.h))
+        }
+      }
+    }
+  }
+  blend(fillLumAlpha(slide.background, images), 1)
+  visit(slide.nodes, 0, 0)
+  return (lum ?? 1) < 0.5
+}
+
+/** Selection/edit chrome color: white on dark backgrounds, near-black otherwise (shared
+ * with the text-edit overlay so the edit frame matches the selection frame). With a
+ * region (the selection's bounding box in slide px) the verdict samples what is actually
+ * painted under it; without one it falls back to the whole-page verdict. */
 export function selectionChromeColor(
   slide: RenderSlide,
   images: Map<string, HTMLImageElement>,
+  region?: { x: number; y: number; w: number; h: number } | null,
 ): string {
-  return slideBackgroundIsDark(slide, images) ? '#ffffff' : '#232425'
+  const dark = region ? regionIsDark(slide, images, region) : slideBackgroundIsDark(slide, images)
+  return dark ? '#ffffff' : '#232425'
 }
 
 /** PowerPoint-style rotate handle: white disc with a clockwise circular arrow.
@@ -199,6 +322,11 @@ function getRotaterIcon(): HTMLCanvasElement {
   ctx.fill()
   rotaterIcon = c
   return c
+}
+
+const setStageCursor = (e: Konva.KonvaEventObject<Event>, cursor: string) => {
+  const st = e.target.getStage()
+  if (st) st.container().style.cursor = cursor
 }
 
 /** Hover cursor for the rotate anchor: the same clockwise-arrow glyph as the
@@ -252,12 +380,18 @@ function findNodeDeep(nodes: RenderNode[], id: string): RenderNode | undefined {
   return undefined
 }
 
+export interface SlideCanvasHandle {
+  /** Start dragging a node from a press that landed outside the stage (the text-edit overlay's frame). */
+  startNodeDrag: (sourceId: string, ev: MouseEvent) => void
+}
+
 interface Props {
+  ref?: React.Ref<SlideCanvasHandle>
   slide: RenderSlide
   selectedIds: string[]
   onSelect: (sourceId: string | null, additive?: boolean) => void
   /** caret = viewport coordinates of the double-click (editor places the caret/selects the word there; defaults to caret at end) */
-  onEditText: (sourceId: string, caret?: { x: number; y: number }) => void
+  onEditText: (sourceId: string, caret?: EditCaret) => void
   /** preview=true: live preview commit during drag (not added to undo history, see EditTransformOp.preview);
    * groupId: geometry commit for a child while editing inside a group (box is in group-local coordinates) */
   onTransform: (
@@ -323,10 +457,10 @@ interface Props {
  */
 export const CANVAS_BLEED = 160
 
-/* Screenshot-automation hook (fidelity-compare): window.__hermesofficeHidePhPrompts = true +
- * dispatching 'hermesoffice:hide-ph-prompts' hides empty-placeholder hints on the edit canvas. */
+/* Screenshot-automation hook (fidelity-compare): window.__genofficeHidePhPrompts = true +
+ * dispatching 'genoffice:hide-ph-prompts' hides empty-placeholder hints on the edit canvas. */
 const hidePhPromptsListeners = new Set<() => void>()
-window.addEventListener('hermesoffice:hide-ph-prompts', () => {
+window.addEventListener('genoffice:hide-ph-prompts', () => {
   for (const l of hidePhPromptsListeners) l()
 })
 const subscribeHidePhPrompts = (cb: () => void) => {
@@ -336,7 +470,7 @@ const subscribeHidePhPrompts = (cb: () => void) => {
   }
 }
 const getHidePhPrompts = () =>
-  !!(window as { __hermesofficeHidePhPrompts?: boolean }).__hermesofficeHidePhPrompts
+  !!(window as { __genofficeHidePhPrompts?: boolean }).__genofficeHidePhPrompts
 
 /** Default rotate-handle snapping: lock onto 45° multiples (Shift switches to 15° steps) */
 const ROTATION_SNAPS = [0, 45, 90, 135, 180, 225, 270, 315]
@@ -531,10 +665,23 @@ export function SlideCanvas({
   onDrawCommit,
   onDrawCancel,
   onAdjust,
+  ref,
 }: Props) {
   const trRef = useRef<Konva.Transformer>(null)
   const layerRef = useRef<Konva.Layer>(null)
   const stageRef = useRef<Konva.Stage>(null)
+
+  useImperativeHandle(ref, () => ({
+    startNodeDrag(sourceId, ev) {
+      const stage = stageRef.current
+      const n = stage?.findOne<Konva.Node>(`#node_${sourceId}`)
+      if (!stage || !n?.draggable()) return
+      // Same path as a real press on the node: Konva's own mousedown listener arms the drag and
+      // the window mousemove handler starts it once the pointer travels dragDistance
+      stage.setPointersPositions(ev)
+      n.fire('mousedown', { evt: ev, type: 'mousedown', target: n, currentTarget: n }, false)
+    },
+  }))
 
   const nodeCount = useMemo(() => countNodes(slide.nodes), [slide])
   const dense = nodeCount >= DENSE_SLIDE_NODE_COUNT
@@ -602,7 +749,8 @@ export function SlideCanvas({
   const sizeMatchKeyRef = useRef('')
   // A marquee drag just ended on this gesture: swallow the trailing click so it doesn't select the node under the cursor
   const suppressClickRef = useRef(false)
-  // Full-page background-like nodes: click-selectable but not draggable; marquee drags may start on them
+  // Full-page background-like nodes: a drag on one that is not yet selected rubber-bands
+  // instead of moving it; once selected it drags like any other node (PowerPoint)
   const backgroundIds = useMemo(
     () => new Set(slide.nodes.filter((n) => n.background).map((n) => n.sourceId)),
     [slide],
@@ -625,8 +773,27 @@ export function SlideCanvas({
     [chromeScale],
   )
 
-  // Selection chrome flips to white on dark slide backgrounds so the frame stays visible
-  const selStroke = useMemo(() => selectionChromeColor(slide, images), [slide, images])
+  // Selection chrome flips to white on dark backgrounds so the frame stays visible —
+  // judged under the selection itself (a text box on a white plate over a colored page
+  // needs dark chrome), falling back to the page verdict when nothing is selected or a
+  // selected id lives inside a group (group-local coords).
+  const selStroke = useMemo(() => {
+    const boxes = selectedIds
+      .map((id) => slide.nodes.find((n) => n.sourceId === id)?.box)
+      .filter((b): b is NonNullable<typeof b> => !!b)
+    let region: { x: number; y: number; w: number; h: number } | null = null
+    if (boxes.length === selectedIds.length && boxes.length > 0) {
+      const x = Math.min(...boxes.map((b) => b.x))
+      const y = Math.min(...boxes.map((b) => b.y))
+      region = {
+        x,
+        y,
+        w: Math.max(...boxes.map((b) => b.x + b.w)) - x,
+        h: Math.max(...boxes.map((b) => b.y + b.h)) - y,
+      }
+    }
+    return selectionChromeColor(slide, images, region)
+  }, [slide, images, selectedIds])
 
   // Hairline width for the current zoom + raster resolution (canvas px)
   const hairline = useMemo(() => chromeHairline(zoom, nodeCount), [zoom, nodeCount])
@@ -776,7 +943,8 @@ export function SlideCanvas({
           e.target === e.target.getStage() ||
           (typeof e.target.name === 'function' && e.target.name() === 'slide-bg')
         const hitId = isBlank ? null : nodeIdFromTarget(e.target)
-        const onBackground = hitId != null && backgroundIds.has(hitId)
+        const onBackground =
+          hitId != null && backgroundIds.has(hitId) && !selectedIds.includes(hitId)
         if (!isBlank && !onBackground) return
         if (isBlank) onSelect(null)
         // Mouse-down on blank area -> start rubber-band selection (on release, elements fully inside the rectangle are selected)
@@ -1369,10 +1537,6 @@ function ConnectorEndpointHandles({
     }
     return best
   }
-  const setCursor = (e: Konva.KonvaEventObject<MouseEvent>, cursor: string) => {
-    const st = e.target.getStage()
-    if (st) st.container().style.cursor = cursor
-  }
   const handle = (which: 'start' | 'end', p: { x: number; y: number }) => (
     <Circle
       key={which}
@@ -1384,8 +1548,8 @@ function ConnectorEndpointHandles({
       strokeWidth={1.5 * hairline}
       hitStrokeWidth={12 / z}
       draggable
-      onMouseEnter={(e) => setCursor(e, 'crosshair')}
-      onMouseLeave={(e) => setCursor(e, 'default')}
+      onMouseEnter={(e) => setStageCursor(e, 'crosshair')}
+      onMouseLeave={(e) => setStageCursor(e, 'default')}
       onDragMove={(e) => {
         const t = e.target
         const snap = nearestAnchor(t.x(), t.y())
@@ -1451,7 +1615,7 @@ function bgFill(slide: RenderSlide, images: Map<string, HTMLImageElement>) {
 interface NodeProps {
   node: RenderNode
   onSelect: (id: string | null, additive?: boolean) => void
-  onEditText: (id: string, caret?: { x: number; y: number }) => void
+  onEditText: (id: string, caret?: EditCaret) => void
   onTransform: Props['onTransform']
   onEditTableCell: Props['onEditTableCell']
   onPlayMedia?: Props['onPlayMedia']
@@ -1595,8 +1759,10 @@ function NodeView({
   if (node.decoration) return <StaticNode node={node} images={images} />
 
   // Chips are select-only; tables/charts support p:xfrm patch persistence, so they can be dragged/resized.
-  // Full-page backgrounds stay in place: a drag on them rubber-bands (Stage-level marquee) instead of moving them.
-  const draggable = node.type !== 'placeholder-chip' && !node.background
+  // An unselected full-page background rubber-bands on drag (Stage-level marquee); selecting it first
+  // makes it movable, so a full-bleed picture can still be repositioned like in PowerPoint.
+  const selected = !!selectedIds?.includes(node.sourceId)
+  const draggable = node.type !== 'placeholder-chip' && (!node.background || selected)
   // Rotation/flip pivot on the box center (boxPivotProps): the Konva position IS the box
   // center, so model x/y = position − half size — including mid-gesture, since the offset
   // point stays the drawn box's center under any scale.
@@ -1609,16 +1775,34 @@ function NodeView({
     // default 3px threshold is too sensitive, and once it becomes a drag, onDragMove snapping amplifies it into a visible 6px+ jump that commits to the model.
     // The threshold's semantics are "6 screen px": Konva compares in canvas coordinates, so divide by the canvas CSS zoom.
     dragDistance: 6 / Math.max(zoom, 0.1),
+    // Over the text of an editable shape the pointer is an I-beam (a click there places the caret);
+    // anywhere else on a movable node it is the move cursor, like PowerPoint/WPS
+    onMouseMove: (e: Konva.KonvaEventObject<MouseEvent>) =>
+      setStageCursor(e, !draggable ? '' : editable && clickOnText() ? 'text' : 'move'),
+    onMouseLeave: (e: Konva.KonvaEventObject<MouseEvent>) => setStageCursor(e, ''),
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
       if (suppressClickRef?.current) {
         suppressClickRef.current = false
         return
       }
-      onSelect(node.sourceId, e.evt.shiftKey || e.evt.metaKey)
+      // Konva fires click for every button, and on Windows the DOM contextmenu event
+      // arrives only after mouseup — selecting here on a right click would collapse a
+      // multi-selection before the menu reads it (menu built without Group, second
+      // frame visibly dropped). Right-click selection is owned by onContextMenu, whose
+      // guard keeps an existing multi-selection.
+      if (e.evt.button !== 0) return
+      const additive = e.evt.shiftKey || e.evt.metaKey
+      onSelect(node.sourceId, additive)
+      // Single left click on the text itself starts editing with the caret at the click
+      // (PowerPoint/WPS); the frame around the text only selects, so it stays the drag grip.
+      if (!additive && editable && clickOnText())
+        onEditText(node.sourceId, { x: e.evt.clientX, y: e.evt.clientY })
     },
     onTap: () => onSelect(node.sourceId),
-    onDragStart: () => {
+    onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
       dragPosRef.current = null
+      // Konva stops routing mousemove to shapes while dragging: pin the move cursor here
+      setStageCursor(e, 'move')
       if (!(onDuplicateTo && !multiDrag && !insideGroupId)) return
       const onKey = (ev: KeyboardEvent) => setAltDrag(ev.altKey)
       window.addEventListener('keydown', onKey)
@@ -1801,6 +1985,7 @@ function NodeView({
               livePreview={false}
               zoom={zoom}
               multiDrag={(selectedIds?.length ?? 0) > 1 && !!selectedIds?.includes(c.sourceId)}
+              selectedIds={selectedIds}
               insideGroupId={node.sourceId}
               allowChildTextEdit={plain}
               suppressClickRef={suppressClickRef}
@@ -1814,6 +1999,15 @@ function NodeView({
   }
 
   const editable = isEditableText(node) && (!insideGroupId || allowChildTextEdit)
+  const clickOnText = (): boolean => {
+    const g = groupRef.current
+    const pos = g?.getStage()?.getPointerPosition()
+    if (!g || !pos) return false
+    const local = g.getAbsoluteTransform().copy().invert().point(pos)
+    // NodeBody counter-flips the text, so mirror the point back into text coordinates
+    const p = { x: box.flipH ? box.w - local.x : local.x, y: box.flipV ? box.h - local.y : local.y }
+    return textHitAtPoint(node as ShapeRenderNode, box, p, 4 / Math.max(zoom, 0.1))
+  }
   // Double-click a group = enter in-group editing and select the child hit by the double-click (pointer converted to group-local coordinates, bounding-box hit)
   const onGroupDblClick = (e: Konva.KonvaEventObject<Event>) => {
     if (!onEnterGroup) return
@@ -1851,10 +2045,9 @@ function NodeView({
     if (hidePhPrompts) return null
     if (node.type !== 'shape' && node.type !== 'text') return null
     const sh = node as ShapeRenderNode
-    const kind = sh.placeholder
-    if (!kind || !['title', 'ctrTitle', 'subTitle', 'body'].includes(kind)) return null
-    if (sh.text?.lines.some((l) => l.runs.some((r) => !r.isBullet && r.text.trim()))) return null
+    if (!isPromptPlaceholder(sh)) return null
     if (editingText && editingText.sourceId === node.sourceId) return null
+    const kind = sh.placeholder
     return t(
       kind === 'subTitle'
         ? 'appPhPromptSubtitle'
@@ -1875,7 +2068,7 @@ function NodeView({
         {...(editable
           ? {
               onDblClick: (e: Konva.KonvaEventObject<MouseEvent>) =>
-                onEditText(node.sourceId, { x: e.evt.clientX, y: e.evt.clientY }),
+                onEditText(node.sourceId, { x: e.evt.clientX, y: e.evt.clientY, select: 'word' }),
               onDblTap: () => onEditText(node.sourceId),
             }
           : node.type === 'group' && !insideGroupId && onEnterGroup
@@ -1889,6 +2082,17 @@ function NodeView({
                   }
                 : {})}
       >
+        {/* The selection frame is grabbable a few screen px around the box: half of the hairline border
+            lies outside the shape, so a pointer on it would otherwise miss and fall back to the arrow */}
+        {selected && draggable && !isConnectorNode(node) && (
+          <Rect
+            width={box.w}
+            height={box.h}
+            stroke="transparent"
+            strokeWidth={0}
+            hitStrokeWidth={8 / Math.max(zoom, 0.1)}
+          />
+        )}
         {/* group children don't take hits (listening=false); add a transparent hit area so the whole group can be selected/dragged */}
         {node.type === 'group' && <Rect width={box.w} height={box.h} fill="transparent" />}
         <NodeBody

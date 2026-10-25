@@ -3,6 +3,7 @@ import {
   emuToPx,
   ptToPx,
   rotToDeg,
+  rotToRad,
   makeViewport,
   rectToPx,
   placeTransform,
@@ -41,6 +42,15 @@ describe('2.1 coordinate system', () => {
     expect(px.y).toBeCloseTo(25, 4)
     expect(px.w).toBeCloseTo(100, 4)
     expect(px.h).toBeCloseTo(50, 4)
+  })
+
+  it('returns 0 for non-finite coordinate inputs', () => {
+    expect(emuToPx(NaN)).toBe(0)
+    expect(emuToPx(Infinity)).toBe(0)
+    expect(ptToPx(NaN)).toBe(0)
+    expect(ptToPx(12, Infinity)).toBe(0)
+    expect(rotToDeg(NaN)).toBe(0)
+    expect(rotToRad(Infinity)).toBe(0)
   })
 
   it('placeTransform: computes center + rotation + parent offset', () => {

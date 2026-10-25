@@ -159,6 +159,65 @@ describe('loadWorkbookSkeleton', () => {
       columnCount: 26,
     })
   })
+
+  it('maps an unfrozen axis to the -1 sentinel on open', () => {
+    const openWithFreeze = (freeze: { frozenRows: number; frozenColumns: number } | null) => {
+      const created: Array<{ sheets: Record<string, { freeze?: unknown }> }> = []
+      const runtime = {
+        univer: undoStub,
+        univerAPI: {
+          getActiveWorkbook: () => null,
+          disposeUnit: () => undefined,
+          createWorkbook: (config: (typeof created)[number]) => {
+            created.push(config)
+            return { getSheetBySheetId: () => null, setActiveSheet: () => undefined }
+          },
+        },
+      }
+      const file = {
+        sha256: 'frozen',
+        name: 'Frozen.xlsx',
+        visuals: [],
+        sheets: [
+          {
+            id: 'sheet-1',
+            name: 'Sheet1',
+            rowCount: 10,
+            columnCount: 5,
+            hidden: false,
+            showGridLines: true,
+            tabColor: null,
+            defaultRowHeight: null,
+            defaultColumnWidth: null,
+            freeze,
+            columnWidths: [],
+          },
+        ],
+      }
+      loadWorkbookSkeleton(runtime as never, file as never)
+      return created[0]?.sheets['sheet-1'] as { freeze?: unknown }
+    }
+
+    expect(openWithFreeze({ frozenRows: 1, frozenColumns: 0 }).freeze).toEqual({
+      xSplit: 0,
+      ySplit: 1,
+      startRow: 1,
+      startColumn: -1,
+    })
+    expect(openWithFreeze({ frozenRows: 0, frozenColumns: 1 }).freeze).toEqual({
+      xSplit: 1,
+      ySplit: 0,
+      startRow: -1,
+      startColumn: 1,
+    })
+    expect(openWithFreeze({ frozenRows: 2, frozenColumns: 3 }).freeze).toEqual({
+      xSplit: 3,
+      ySplit: 2,
+      startRow: 2,
+      startColumn: 3,
+    })
+    expect(openWithFreeze(null)).not.toHaveProperty('freeze')
+  })
 })
 
 interface Range {
@@ -195,6 +254,8 @@ function streamedState(options: {
     loadingKeys: new Map(),
     retryTimers: new Map(),
     decorationsPendingSheets: new Set(),
+    hiddenFileRows: new Map(),
+    hiddenRowsCoveredThrough: new Map(),
     editJournal: {
       structuralOps: new Map(options.ops ? [['sheet-1', options.ops]] : []),
       cells: new Map(

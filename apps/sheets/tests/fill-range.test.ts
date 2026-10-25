@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { offsetFormulaRefs } from '../src/domain/formula-shift'
+import { offsetFormulaRefs } from '@hermesoffice/xlsx-gateway/domain/formula-shift'
 import {
   expandToPrimitiveOps,
   MAX_EXPANDED_CELL_OPS,
   type WorkbookCommandBatch,
-} from '../src/domain/workbook-dsl'
-import { InMemoryWorkbookAdapter } from '../src/domain/in-memory-workbook'
+} from '@hermesoffice/xlsx-gateway/domain/workbook-dsl'
+import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
 import { buildLazyChangePlan } from '../src/renderer/lazy-plan'
 import { fillFormulaCostError } from '../src/renderer/formula-cost'
 
@@ -39,6 +39,13 @@ describe('offsetFormulaRefs (fill/copy reference semantics)', () => {
     expect(offsetFormulaRefs('=SUM(B:B)', 0, 1)).toBe('=SUM(C:C)')
     expect(offsetFormulaRefs('=SUM($B:$B)', 0, 1)).toBe('=SUM($B:$B)')
     expect(offsetFormulaRefs('=SUM(B:B)', 5, 0)).toBe('=SUM(B:B)')
+  })
+
+  it('shifts whole-row spans on fill-down and leaves them alone on fill-right', () => {
+    expect(offsetFormulaRefs('=SUM(2:4)', 1, 0)).toBe('=SUM(3:5)')
+    expect(offsetFormulaRefs('=SUM($2:$4)', 1, 0)).toBe('=SUM($2:$4)')
+    expect(offsetFormulaRefs('=SUM(2:4)', 0, 1)).toBe('=SUM(2:4)')
+    expect(offsetFormulaRefs('=SUM(1:2)', -1, 0)).toBe('=SUM(#REF!)')
   })
 
   it('does not mangle function names that look like references', () => {

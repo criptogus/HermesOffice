@@ -7,7 +7,8 @@
  * right-aligned dot-leader tab and a TOC pStyle.
  *
  * Only unambiguous lines convert: a non-empty title, at least four leader
- * dots, and a trailing arabic/roman page number.
+ * dots (or underscores, as some producers emit), and a trailing
+ * arabic/roman page number.
  */
 import type { Line, PdfChar, Span, TextBlock } from '../ir'
 import { analyzeChars } from './chars'
@@ -15,15 +16,19 @@ import { firstStrongDir } from './rtl'
 import type { LineUnit } from './units'
 import { clusterUnitRows } from './units'
 
-/** title ... leader dots ... page number */
-const TOC_LINE_RE = /^(.*?[^\s.])\s*([.·]\s*){4,}\s*([0-9]+|[ivxlcdm]+)\s*$/i
+/** title ... leader dots/underscores/dashes ... page number (arabic ≤4 digits
+    like the leaderless PAGENUM_UNIT_RE below, so years/zip codes stay out;
+    roman ≤6 chars) */
+const TOC_LINE_RE = /^(.*?[^\s._\-–—])\s*([.·_\-–—]\s*){4,}\s*([0-9]{1,4}|[ivxlcdm]{1,6})\s*$/i
 /** each this many points of extra indent nests the entry one level deeper */
 const LEVEL_INDENT_PT = 14
 const MAX_TOC_LEVEL = 9
 
 // ── leaderless entries ("ACKNOWLEDGEMENTS        iv") — unit-row based ──
-/** a page number unit: bare arabic (≤3 digits) or roman page number */
-const PAGENUM_UNIT_RE = /^(?:[0-9]{1,3}|[ivxlcdm]{1,6})$/i
+/** a page number unit: bare arabic (≤4 digits, so 1000+ page manuals convert)
+    or roman page number. Five digits and up stay rejected (years, zip codes);
+    the run-level ascending + right-align checks further screen collisions. */
+const PAGENUM_UNIT_RE = /^(?:[0-9]{1,4}|[ivxlcdm]{1,6})$/i
 /** at least this many consecutive rows make a leaderless TOC run */
 const TOC_RUN_MIN_ROWS = 3
 /** page-number right edges must line up within this many ems */
@@ -47,17 +52,53 @@ export const LEADER_PAGE_MIN_SHARE = 0.3
 export function hasDotLeaderRun(chars: readonly PdfChar[]): boolean {
   let run = 0
   let armed = false
-  for (const c of chars) {
-    if (c.text === '.' || c.text === '·') {
+  let i = 0
+  while (i < chars.length) {
+    const c = chars[i]!
+    if (
+      c.text === '.' ||
+      c.text === '·' ||
+      c.text === '_' ||
+      c.text === '-' ||
+      c.text === '–' ||
+      c.text === '—'
+    ) {
       run++
       if (run >= LEADER_RUN_MIN_DOTS) armed = true
+      i++
     } else if (c.text === ' ' || c.code === 0x20) {
-      continue
+      i++
     } else if (armed && c.text >= '0' && c.text <= '9') {
-      return true
+      // Possible arabic page number ("Intro .... 28"): gather the digits and
+      // accept them only when they run to the end of the line, mirroring the
+      // anchored TOC_LINE_RE — a mid-line year ("Intro .... 12 apples") must
+      // not read as an index entry. Capped at 4 digits like PAGENUM_UNIT_RE.
+      let j = i
+      while (j < chars.length && chars[j]!.text >= '0' && chars[j]!.text <= '9') j++
+      const restBlank = chars.slice(j).every((d) => d.text === ' ' || d.code === 0x20)
+      if (restBlank && j - i >= 1 && j - i <= 4) return true
+      run = 0
+      armed = false
+      i = j
+    } else if (armed && /[ivxlcdm]/i.test(c.text)) {
+      // Possible roman page number (front-matter entries like "Intro .... iv"):
+      // gather the whole trailing token and accept it only when it runs to the
+      // end of the line, mirroring the anchored TOC_LINE_RE.
+      let j = i
+      while (j < chars.length && /[0-9a-zA-Z]/.test(chars[j]!.text)) j++
+      const token = chars
+        .slice(i, j)
+        .map((d) => d.text)
+        .join('')
+      const restBlank = chars.slice(j).every((d) => d.text === ' ' || d.code === 0x20)
+      if (restBlank && /^(?:[0-9]{1,4}|[ivxlcdm]{1,6})$/i.test(token)) return true
+      run = 0
+      armed = false
+      i = j
     } else {
       run = 0
       armed = false
+      i++
     }
   }
   return false

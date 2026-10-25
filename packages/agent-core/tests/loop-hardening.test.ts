@@ -166,6 +166,52 @@ describe('AgentLoop request shaping', () => {
     expect(transport.requests.every((r) => r.sessionId === 'live-session')).toBe(true)
   })
 
+  it('waits for the document ID before the first request and reuses it on follow-ups', async () => {
+    const transport = recordingTransport([answer('first'), answer('second')])
+    let release!: () => void
+    const identity: { id?: string } = {}
+    const resolved = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const loop = new AgentLoop({
+      transport,
+      skill: makeSkill(),
+      waitForSession: () => resolved,
+      sessionId: () => identity.id,
+    })
+    loop.run('fast first send')
+    await flush()
+    expect(transport.requests).toHaveLength(0)
+    identity.id = 'a'.repeat(64)
+    release()
+    await flush()
+    loop.run('follow up')
+    await flush()
+    expect(transport.requests.map((r) => r.sessionId)).toEqual([identity.id, identity.id])
+  })
+
+  it('does not start a request cancelled while document identity is resolving', async () => {
+    const transport = recordingTransport([answer('unused')])
+    let release!: () => void
+    const resolved = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const onDone = vi.fn()
+    const loop = new AgentLoop({
+      transport,
+      skill: makeSkill(),
+      waitForSession: () => resolved,
+      events: { onDone },
+    })
+    loop.run('pending')
+    loop.cancel()
+    release()
+    await flush()
+    expect(transport.requests).toHaveLength(0)
+    expect(loop.busy).toBe(false)
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ cancelled: true }))
+  })
+
   it('appends systemSuffix to the skill prompt on every turn', async () => {
     const transport = recordingTransport([answer('a')])
     const loop = new AgentLoop({
@@ -175,7 +221,8 @@ describe('AgentLoop request shaping', () => {
     })
     loop.run('x')
     await flush()
-    expect(transport.requests[0]!.system).toBe('SYSTEM\nSUFFIX')
+    expect(transport.requests[0]!.system).toContain('SYSTEM\nSUFFIX')
+    expect(transport.requests[0]!.system).toMatch(/Today's date is \d{4}-\d{2}-\d{2}/)
   })
 
   it('uses formatUserMessage to combine instruction and skill context', async () => {

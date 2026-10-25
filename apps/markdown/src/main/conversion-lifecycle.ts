@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export const MARKDOWN_CONVERSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
-const SESSION_MARKER = '.hermesoffice-markdown-conversion.json'
+const SESSION_MARKER = '.genoffice-markdown-conversion.json'
 
 interface ConversionSessionMarker {
   version: 1
@@ -62,7 +62,7 @@ async function readSessionMarker(directory: string): Promise<ConversionSessionMa
 }
 
 /**
- * Removes only marked HermesOffice session directories older than the TTL.
+ * Removes only marked GenOffice session directories older than the TTL.
  * Unknown files/directories under the cache root are deliberately ignored.
  */
 export async function cleanupStaleMarkdownConversions(

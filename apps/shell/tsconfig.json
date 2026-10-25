@@ -10,11 +10,17 @@
     "paths": {
       "@hermesoffice/docx-engine": ["../../packages/docx-engine/src/index.ts"],
       "@hermesoffice/font-metrics": ["../../packages/font-metrics/src/index.ts"],
+      "@hermesoffice/electron-utils/headless-export": [
+        "../../packages/electron-utils/src/headless-export.ts"
+      ],
       "@hermesoffice/electron-utils": ["../../packages/electron-utils/src/index.ts"],
       "@hermesoffice/ai-provider": ["../../packages/ai-provider/src/index.ts"],
       "@hermesoffice/i18n": ["../../packages/i18n/src/index.ts"],
       "@hermesoffice/ui": ["../../packages/ui/src/index.ts"],
-      "@hermesoffice/pptx-engine": ["../../packages/pptx-engine/src/index.ts"]
+      "@hermesoffice/pptx-engine": ["../../packages/pptx-engine/src/index.ts"],
+      "@hermesoffice/cli/install": ["../../packages/cli/src/install.ts"],
+      "@hermesoffice/cli/agent-skills": ["../../packages/cli/src/agent-skills.ts"],
+      "@hermesoffice/cli/control-protocol": ["../../packages/cli/src/control-protocol.ts"]
     }
   },
   "include": [
@@ -22,6 +28,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "../slides/src/main/env.d.ts",
-    "../../packages/pdf2docx/src/bidi-js.d.ts"
+    "../../packages/pdf2docx/src/bidi-js.d.ts",
+    "../../packages/html2docx/src/raw.d.ts"
   ]
 }

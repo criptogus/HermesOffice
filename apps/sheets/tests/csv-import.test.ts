@@ -9,8 +9,10 @@ import {
   decodeCsvBuffer,
   isNumericCell,
   parseCsv,
+  resolveImportDelimiter,
   sniffDelimiter,
-} from '../src/gateway/csv-import'
+  splitSepDeclaration,
+} from '@hermesoffice/xlsx-gateway/gateway/csv-import'
 
 describe('decodeCsvBuffer', () => {
   const rows = '城市,人口\n东京,37\n'
@@ -27,6 +29,16 @@ describe('decodeCsvBuffer', () => {
     expect(decodeCsvBuffer(Buffer.from(`\uFEFF${rows}`, 'utf16le'))).toBe(rows)
     const be = Buffer.from(`\uFEFF${rows}`, 'utf16le').swap16()
     expect(decodeCsvBuffer(be)).toBe(rows)
+  })
+
+  it('reads BOM-less UTF-16 instead of keeping NUL garbage', () => {
+    const ascii = 'a,b\n1,2\n'
+    const le = Buffer.from(ascii, 'utf16le')
+    expect(decodeCsvBuffer(le)).toBe(ascii)
+    const be = Buffer.from(ascii, 'utf16le').swap16()
+    expect(decodeCsvBuffer(be)).toBe(ascii)
+    const leRows = Buffer.from(rows, 'utf16le')
+    expect(decodeCsvBuffer(leRows)).toBe(rows)
   })
 
   it('falls back to the legacy charset Excel actually writes', () => {
@@ -73,6 +85,33 @@ function encodeWith(text: string, charset: string): Buffer {
 const gbkBytes = (text: string): Buffer => encodeWith(text, 'gb18030')
 const shiftJisBytes = (text: string): Buffer => encodeWith(text, 'shift_jis')
 
+describe('sep= declaration', () => {
+  it('names the delimiter and is never a data row', () => {
+    const text = 'sep=;\nname;qty\nApple;3\n'
+    expect(splitSepDeclaration(text)).toEqual({ text: 'name;qty\nApple;3\n', delimiter: ';' })
+    expect(sniffDelimiter(text)).toBe(';')
+    expect(parseCsv(text)).toEqual([
+      ['name', 'qty'],
+      ['Apple', '3'],
+    ])
+    expect(sniffDelimiter('\ufeffsep=\t\na\tb\n')).toBe('\t')
+    expect(splitSepDeclaration('separator,x\n1,2\n').delimiter).toBeUndefined()
+  })
+
+  it('overrides the prose guard on the import path', () => {
+    const prose = 'sep=;\nnotes\nhello; world\nplain text\n'
+    expect(resolveImportDelimiter(prose)).toBe(';')
+    expect(resolveImportDelimiter(prose.slice('sep=;\n'.length))).toBe(',')
+  })
+
+  it('is stripped by the workbook import too', async () => {
+    const zip = await JSZip.loadAsync(await csvToXlsxBuffer('sep=;\na;b\n1;2\n'))
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')!.async('string')
+    expect(sheet).not.toContain('sep=')
+    expect(sheet).toContain('<c r="B2"><v>2</v></c>')
+  })
+})
+
 describe('parseCsv', () => {
   it('handles quotes, embedded delimiters, escaped quotes, and CRLF', () => {
     const rows = parseCsv('a,"b,1","say ""hi""",c\r\nd,,e,')
@@ -99,11 +138,60 @@ describe('parseCsv', () => {
     ])
   })
 
+  it('ignores delimiters inside escaped quotes when sniffing', () => {
+    // The "" escape keeps the field quoted: all five inner ; must not count,
+    // or they outvote the two true commas and the columns mis-split.
+    expect(sniffDelimiter('a,"; ""; ""; ""; """,d')).toBe(',')
+    expect(parseCsv('a,"; ""; ""; ""; """,d')).toEqual([['a', '; "; "; "; "', 'd']])
+  })
+
+  it('ignores delimiters inside multiline quoted fields when sniffing', () => {
+    // The quoted field spans lines: without carried quote state the three
+    // inner ; would outvote the two true commas and the columns mis-split.
+    const text = 'a,b\n"x\ny;z;w;v",q\n'
+    expect(sniffDelimiter(text)).toBe(',')
+    expect(parseCsv(text, ',')).toEqual([
+      ['a', 'b'],
+      ['x\ny;z;w;v', 'q'],
+    ])
+  })
+
   it('drops the trailing empty row from a final newline', () => {
     expect(parseCsv('a,b\n1,2\n')).toEqual([
       ['a', 'b'],
       ['1', '2'],
     ])
+  })
+})
+
+describe('resolveImportDelimiter', () => {
+  it('keeps single-column prose with stray semicolons in one column', () => {
+    const notes = 'Notes\nhello; world\nfoo; bar; baz\n'
+    expect(sniffDelimiter(notes)).toBe(';')
+    expect(resolveImportDelimiter(notes)).toBe(',')
+    expect(parseCsv(notes, resolveImportDelimiter(notes))).toEqual([
+      ['Notes'],
+      ['hello; world'],
+      ['foo; bar; baz'],
+    ])
+  })
+
+  it('keeps genuine semicolon tables split', () => {
+    expect(resolveImportDelimiter('a;b;c\n1;2;3')).toBe(';')
+    expect(resolveImportDelimiter('a;b\nc')).toBe(';')
+  })
+
+  it('keeps a comma-free table split when a title row precedes uniform body rows', () => {
+    expect(resolveImportDelimiter('Sales 2026\na;b;c\n1;2;3\n4;5;6')).toBe(';')
+    expect(resolveImportDelimiter('Report\n\na\tb\n1\t2\n3\t4\n')).toBe('\t')
+    // one wide row among prose lines is not a table
+    expect(resolveImportDelimiter('Notes\nhello; world\nfoo bar\nbaz qux\nx; y')).toBe(',')
+  })
+
+  it('keeps the sniffed delimiter when comma is equally ragged', () => {
+    // header opens single-field under ';' but commas appear irregularly too:
+    // forcing comma would trade one mis-split for another, so stay put
+    expect(resolveImportDelimiter('Notes\nhello; world; x, y\nfoo;bar')).toBe(';')
   })
 })
 
@@ -117,6 +205,21 @@ describe('isNumericCell', () => {
   it('keeps codes, dates, and padded numbers as text', () => {
     for (const value of ['007', '2025-06-01', '1,234', '+86', '', ' 5']) {
       expect(isNumericCell(value), value).toBe(false)
+    }
+  })
+
+  it('keeps integers past Excel precision as text so long IDs survive', () => {
+    expect(isNumericCell('123456789012345')).toBe(true)
+    expect(isNumericCell('1234567890123456')).toBe(false)
+    expect(isNumericCell('12345678901234567890')).toBe(false)
+    expect(buildWorksheetXml([['12345678901234567890']])).toContain('t="inlineStr"')
+    for (const value of [
+      '0.3333333333333333',
+      '1.4142135623730951',
+      '0.30000000000000004',
+      '3.14159265358979',
+    ]) {
+      expect(isNumericCell(value), value).toBe(true)
     }
   })
 })
@@ -137,6 +240,7 @@ describe('csvToXlsxBuffer', () => {
   it('rejects an empty file and escapes XML metacharacters', async () => {
     await expect(csvToXlsxBuffer('')).rejects.toThrow('no data rows')
     expect(buildWorksheetXml([['<b>&"']])).toContain('&lt;b&gt;&amp;&quot;')
+    expect(buildWorksheetXml([['a\rb_x000D_']])).toContain('>a_x000D_b_x005F_x000D_<')
   })
 })
 

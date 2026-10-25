@@ -34,6 +34,7 @@ const TYPES = {
   pptx: 'file-pptx.svg',
   pdf: 'file-pdf.svg',
   md: 'file-md.svg',
+  html: 'file-html.svg',
 }
 
 // macOS icons carry the standard app-icon grid margin (824/1024 content, same
@@ -90,7 +91,7 @@ async function renderPng(page, svgDataUrl, canvasSize, contentSize) {
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
 const page = await browser.newPage({ deviceScaleFactor: 1 })
-const tmp = mkdtempSync(join(tmpdir(), 'hermesoffice-file-icons-'))
+const tmp = mkdtempSync(join(tmpdir(), 'genoffice-file-icons-'))
 
 try {
   for (const [type, svgName] of Object.entries(TYPES)) {

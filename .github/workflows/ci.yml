@@ -51,6 +51,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install OOXML schema validator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version
+
       - name: Check dependency licenses
         run: npm run licenses
 
@@ -102,6 +108,12 @@ jobs:
       - name: Check committed fixtures match the generator
         run: git diff --exit-code -- fixtures/generated
 
+      # CLI XLSX tests run before the Sheets workspace tests in npm test.
+      - name: Prepare Sheets engine and fixtures for CLI tests
+        run: |
+          npm run native:build -w @hermesoffice/sheets
+          npm run fixtures -w @hermesoffice/sheets
+
       - name: Test
         run: npm test
 
@@ -140,6 +152,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Runner images already provide Chromium shared libraries. Installing
+      # Playwright's extra font packages changes the document fallback faces
+      # and invalidates the pinned visual baseline font stack below.
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
 
       - name: Build apps
         run: npm run build:all

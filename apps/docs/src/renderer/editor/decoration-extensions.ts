@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
+import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { isInTable } from '@tiptap/pm/tables'
@@ -15,6 +15,11 @@ import { type TabStop } from '@hermesoffice/docx-engine'
 import { SearchHighlight } from './extensions'
 import { revisionDisplayState } from './marks'
 import { borderMergeFlags, type ParaBorderAttrs } from './para-border-merge'
+import { rangeSlot } from '../dom-range'
+import { PHASED_CONTENT_SETTLED_EVENT, isPhasedContentPending } from '../phased-content'
+import { appendsAtEnd, touchedTopLevelBlocks } from './touched-blocks'
+
+const alignRange = rangeSlot()
 
 export const searchPluginKey = new PluginKey<DecorationSet>('docSearch')
 
@@ -133,6 +138,54 @@ export const ResolvedCommentsExtension = Extension.create({
   },
 })
 
+/**
+ * Plugin state for inline decorations that are a pure function of each text
+ * node: a full scan at init, then only the top-level blocks a transaction
+ * touched recompute (a `decorations` prop rescanned the whole document on
+ * every view update — tens of ms per keystroke on a 10k-paragraph file).
+ */
+function textDecorationState(
+  key: PluginKey<DecorationSet>,
+  decosOf: (node: ProseMirrorNode, pos: number, out: Decoration[]) => void,
+) {
+  const scan = (root: ProseMirrorNode, base: number, out: Decoration[]) =>
+    root.descendants((node, pos) => {
+      if (node.isText) decosOf(node, base + pos, out)
+    })
+  const full = (doc: ProseMirrorNode) => {
+    const decos: Decoration[] = []
+    scan(doc, 0, decos)
+    return decos.length > 0 ? DecorationSet.create(doc, decos) : DecorationSet.empty
+  }
+  return {
+    key,
+    state: {
+      init: (_config: unknown, state: EditorState) => full(state.doc),
+      apply(tr: Transaction, old: DecorationSet) {
+        if (!tr.docChanged) return old
+        const touched = touchedTopLevelBlocks(tr)
+        if (!touched) return full(tr.doc)
+        let set = appendsAtEnd(tr) ? old : old.map(tr.mapping, tr.doc)
+        const decos: Decoration[] = []
+        for (const offset of touched) {
+          const node = tr.doc.nodeAt(offset)
+          if (!node) continue
+          const end = offset + node.nodeSize
+          const stale = set.find(offset, end).filter((d) => d.from >= offset && d.to <= end)
+          if (stale.length) set = set.remove(stale)
+          scan(node, offset + 1, decos)
+        }
+        return decos.length ? set.add(tr.doc, decos) : set
+      },
+    },
+    props: {
+      decorations(state: EditorState) {
+        return key.getState(state)
+      },
+    },
+  }
+}
+
 // ---- tab stop rendering extension ----
 
 const tabStopPluginKey = new PluginKey<DecorationSet>('tabStops')
@@ -160,9 +213,119 @@ interface MeasuredTab {
   /** run carries the underline mark: browsers do not draw text-decoration
    *  across a tab advance, so the gap gets a border-bottom line instead */
   underlined?: boolean
-  /** no room left on the line: render at a hair's width (font-size 0 lifts
-   *  Chromium's one-space minimum tab advance) */
+  /** no room left on the line: render at half a space (the smallest advance
+   *  Chromium honours without skipping to the next stop) */
   collapsed?: boolean
+  /** right/center/decimal tab whose short segment fits at the stop:
+   *  white-space:pre glues the tab to the word after it so a rounding
+   *  overflow cannot strand the segment on the next line */
+  glue?: boolean
+  /** first-line tab inside the hanging area: rendered as a box of this width
+   *  (layout px) because no tab-size can express its advance (see measureParagraph) */
+  fixed?: number
+}
+
+export interface TabTargetInput {
+  /** tab position in tab-origin space (layout px) */
+  x: number
+  minAdv: number
+  segWidth: number
+  /** this tab's segment plus everything after it up to a hard break */
+  restWidth: number
+  paraW: number
+  stops: Array<{ x: number; val: TabStop['val']; leader?: string }>
+  /** default tab grid (layout px); 0 = zero-width default tabs */
+  gridPx: number
+  /** left indent (tab-origin px) of a paragraph whose first line starts before
+   *  it (w:hanging); only passed for tabs on that first line */
+  hangingX?: number
+  /** the segment can wrap on its own (spaces / CJK): Word keeps the stop and
+   *  wraps a segment overflowing the edge by more than a space (probe 2026-09-17) */
+  segBreakable?: boolean
+}
+
+export interface TabTarget {
+  target: number
+  val: TabStop['val']
+  leader?: string
+  collapsed: boolean
+  glue: boolean
+}
+
+/**
+ * Where a tab at `x` lands: the next custom stop, else the default grid.
+ * On the first line of a hanging indent Word treats the left indent as an
+ * implicit stop: a tab before it lands there unless a custom stop sits in
+ * between, and custom stops beyond it are not considered for that tab.
+ * Right/decimal/center stops place the segment's end/middle at the stop.
+ * A stop that would push the segment past the paragraph width pins it flush
+ * to the right edge (Word never wraps such TOC-style lines; Chromium would).
+ * In-column left stops advance to the stop and let a segment too wide for
+ * the trailing space wrap naturally — but a left stop past the right edge
+ * pins too (TOC page numbers), and so does a short segment that still fits
+ * flush right of the tab: wrapping it makes non-last lines justify-stretch,
+ * whose inflated measurements feed back into ever-larger targets
+ * (three-column signature rows). Pinning reserves room for everything after
+ * this tab (restWidth), so a run of trailing tabs packs against the edge
+ * instead of spilling over. The 1px slack keeps the 0.5px cssSize round-up
+ * from re-triggering wrap.
+ *
+ * Chromium breaks a line after a tab like after a space, so a right-ish tab
+ * whose short segment fits at the stop is glued to it (white-space:pre on the
+ * tab span: the boundary from a pre tab to the following text is not a break
+ * opportunity) and the segment cannot be stranded on the next line by a
+ * rounding overflow. A segment that no longer fits before its stop is not
+ * glued: Word collapses the tab to zero width and lets the text flow on from
+ * the tab's position, wrapping only at the margin — it never pulls the word
+ * before the tab down to keep the segment at the stop. Tabs whose remaining
+ * line content exceeds half the column keep Chromium's own wrapping.
+ */
+export function resolveTabTarget(input: TabTargetInput): TabTarget {
+  const { x, minAdv, segWidth, restWidth, paraW, gridPx, hangingX } = input
+  // Word takes any custom stop strictly ahead, however close: a stop nearer
+  // than the minimum advance collapses below instead of being skipped
+  let next = input.stops.find((s) => s.x > x + 0.5)
+  const inHang = hangingX !== undefined && x < hangingX
+  if (inHang && !(next && next.x <= hangingX)) next = { x: hangingX, val: 'left' }
+  let target: number
+  let val: TabStop['val'] = 'left'
+  let leader: string | undefined
+  if (next) {
+    target = next.x
+    val = next.val
+    leader = next.leader
+  } else if (gridPx > 0) {
+    target = (Math.floor((x + minAdv) / gridPx) + 1) * gridPx
+  } else {
+    // defaultTabStop 0: Word advances the caret imperceptibly (tdf#168607)
+    target = x + minAdv
+  }
+  // decimal is approximated as right (no '.'-splitting)
+  if (val === 'right' || val === 'decimal') target -= segWidth
+  else if (val === 'center') target -= segWidth / 2
+  // no flush-right pin inside the hanging area: Word wraps the first-line
+  // text on to the left indent rather than stranding the label
+  const overflow = target + segWidth - (paraW - 1)
+  if (
+    overflow > 0 &&
+    (val !== 'left' ||
+      target > paraW - 1 ||
+      (!inHang && paraW - segWidth - 1 > x && !(input.segBreakable && overflow > minAdv)))
+  )
+    target = paraW - 1 - restWidth
+  let collapsed = false
+  if (target < x + minAdv) {
+    // no room before the edge: Word collapses the tab to zero width. Chromium
+    // skips a tab whose distance to its stop is under half the paragraph
+    // font's space width to the *next* stop (a whole tab-size, pushing the
+    // segment onto the next line), so the smallest safe advance is half a
+    // space plus slack (minAdv = space + 1); font-size 0 does not lift it
+    collapsed = true
+    target = x + minAdv / 2 + 0.5
+  }
+  const glue =
+    !collapsed && val !== 'left' && val !== 'bar' && segWidth > 0 && restWidth <= paraW / 2
+  return { target, val, leader, collapsed, glue }
 }
 
 /**
@@ -188,6 +351,40 @@ const paraHasTabCache = new WeakMap<ProseMirrorNode, boolean>()
 
 let spaceMeasureCtx: CanvasRenderingContext2D | null | undefined
 /** width of a space glyph in the paragraph's computed font (px, layout space) */
+type LineCoords = { left: number; top: number; bottom: number }
+
+/**
+ * Width of the text after a tab up to the next tab / paragraph end, for the
+ * pin decision below. A segment whose end sits on a later line has wrapped: the
+ * endpoints no longer measure it, and being at least the column wide it can
+ * never be pinned flush right (prod 013: a claim whose last line ended near the
+ * right edge measured a bogus 522px "segment" and pinned its tab to a space).
+ */
+export function tabSegmentWidth(
+  start: LineCoords,
+  end: LineCoords,
+  paraW: number,
+  zoom: number,
+): number {
+  if (!sameVisualLine(start, end)) return paraW
+  return Math.max(0, (end.left - start.left) / zoom)
+}
+
+/**
+ * Two caret rects sit on one line when either's vertical middle falls inside
+ * the other: a plain overlap test also matched consecutive lines whose boxes
+ * overlap under a tight line rule (line=177 auto: 20px boxes 15px apart), which
+ * read the next line's tab as a same-line continuation.
+ */
+export function sameVisualLine(
+  a: { top: number; bottom: number },
+  b: { top: number; bottom: number },
+): boolean {
+  const midA = (a.top + a.bottom) / 2
+  const midB = (b.top + b.bottom) / 2
+  return (midA > b.top && midA < b.bottom) || (midB > a.top && midB < a.bottom)
+}
+
 function spaceWidthPx(cs: CSSStyleDeclaration): number {
   if (spaceMeasureCtx === undefined)
     spaceMeasureCtx = document.createElement('canvas').getContext('2d')
@@ -197,6 +394,19 @@ function spaceWidthPx(cs: CSSStyleDeclaration): number {
   // 20% headroom: run-level fonts/sizes inside the paragraph may shape wider
   return Math.max(1, w * 1.2)
 }
+
+function tabGlyphLeft(view: EditorView, pos: number): number | null {
+  const { node, offset } = view.domAtPos(pos, 1)
+  if (node.nodeType !== Node.TEXT_NODE || node.nodeValue?.[offset] !== '\t') return null
+  const range = document.createRange()
+  range.setStart(node, offset)
+  range.setEnd(node, offset + 1)
+  const rect = range.getClientRects()[0]
+  return rect ? rect.left : null
+}
+
+/** inner whitespace or CJK text: a wrap opportunity inside the tab segment */
+const SEG_BREAKABLE_RE = /\s|[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/
 
 const MEASURE_RETRY_MAX = 10
 /**
@@ -223,6 +433,10 @@ class TabLayoutView {
     this.invalidate()
     this.measure()
   }
+  private onPhasedSettled = () => {
+    this.invalidate()
+    this.measure()
+  }
 
   constructor(
     private view: EditorView,
@@ -230,6 +444,7 @@ class TabLayoutView {
   ) {
     this.measure()
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
+    document.addEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
     if (typeof ResizeObserver !== 'undefined') {
       // width-only trigger: height changes on every keystroke
       this.resizeObserver = new ResizeObserver(() => {
@@ -264,6 +479,7 @@ class TabLayoutView {
 
   destroy() {
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
+    document.removeEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
     this.resizeObserver?.disconnect()
     if (this.retryRaf) cancelAnimationFrame(this.retryRaf)
   }
@@ -284,6 +500,8 @@ class TabLayoutView {
       this.retryRaf = 0
     }
     const { view } = this
+    // a streamed tail is still landing: measured once, when it has (settled event)
+    if (isPhasedContentPending()) return
     if (!view.dom.isConnected) {
       this.scheduleRetry()
       return
@@ -301,19 +519,24 @@ class TabLayoutView {
       return false
     })
 
-    const paraRanges: Array<{ from: number; to: number; flattenJustify?: boolean }> = []
+    const paraRanges: Array<{ from: number; to: number }> = []
     const tabs: MeasuredTab[] = []
     let measurable = false
-    for (const para of paras) {
-      const measured = this.measureParagraph(para.node, para.pos)
-      if (!measured) continue
-      measurable = true
-      paraRanges.push({
-        from: para.pos,
-        to: para.pos + para.node.nodeSize,
-        ...(measured.flattenJustify ? { flattenJustify: true } : {}),
-      })
-      tabs.push(...measured.tabs)
+    // Chromium lays tabs out in left-aligned space and only then justifies the
+    // line (Word order too), so justified paragraphs are measured with their
+    // justification suspended: the stretched spaces would otherwise inflate
+    // every later tab's x and segment width and feed back into the targets
+    if (paras.length > 0) view.dom.classList.add('doc-tabs-measuring')
+    try {
+      for (const para of paras) {
+        const measured = this.measureParagraph(para.node, para.pos)
+        if (!measured) continue
+        measurable = true
+        paraRanges.push({ from: para.pos, to: para.pos + para.node.nodeSize })
+        tabs.push(...measured)
+      }
+    } finally {
+      view.dom.classList.remove('doc-tabs-measuring')
     }
 
     if (paras.length > 0 && !measurable) {
@@ -341,19 +564,18 @@ class TabLayoutView {
 
     const decos: Decoration[] = []
     for (const r of paraRanges)
-      decos.push(
-        Decoration.node(r.from, r.to, {
-          class: r.flattenJustify ? 'has-tab-stops tab-stops-no-justify' : 'has-tab-stops',
-        }),
-      )
+      decos.push(Decoration.node(r.from, r.to, { class: 'has-tab-stops' }))
     for (const t of tabs) {
       const leader = t.leader && t.leader !== 'none' ? ` doc-tab-leader-${t.leader}` : ''
       const underline = t.underlined ? ' doc-tab-underline' : ''
-      const collapse = t.collapsed ? ' doc-tab-collapse' : ''
+      const fixed = t.fixed !== undefined
+      const collapse = t.collapsed && !fixed ? ' doc-tab-collapse' : ''
+      const glue = t.glue && !fixed ? ' doc-tab-glue' : ''
+      const box = fixed ? ' doc-tab-fixed' : ''
       decos.push(
         Decoration.inline(t.pos, t.pos + 1, {
-          class: `doc-tab${leader}${underline}${collapse}`,
-          style: `tab-size:${t.cssSize}px`,
+          class: `doc-tab${leader}${underline}${collapse}${glue}${box}`,
+          style: fixed ? `width:${t.fixed}px` : `tab-size:${t.cssSize}px`,
         }),
       )
     }
@@ -361,10 +583,7 @@ class TabLayoutView {
   }
 
   /** null = paragraph not measurable right now (hidden, not mounted...) */
-  private measureParagraph(
-    node: ProseMirrorNode,
-    pos: number,
-  ): { tabs: MeasuredTab[]; flattenJustify: boolean } | null {
+  private measureParagraph(node: ProseMirrorNode, pos: number): MeasuredTab[] | null {
     const { view } = this
     const el = view.nodeDOM(pos)
     if (!(el instanceof HTMLElement) || el.offsetWidth === 0) return null
@@ -397,17 +616,13 @@ class TabLayoutView {
     // converges (TOC page numbers scatter). Subtract the line's shift: visual
     // line start minus the layout-space start (content edge, plus the first
     // line's text-indent).
-    // Intended alignment: the tab-stops-no-justify decoration forces computed
-    // textAlign to left, so reading it back would clear the flatten flag and
-    // oscillate. The paragraph attr wins; an already-flattened element with no
-    // attr keeps counting as justified (its pre-flatten computed value).
-    const attrAlign = node.attrs?.align as string | null
-    const align =
-      attrAlign ?? (el.classList.contains('tab-stops-no-justify') ? 'justify' : cs.textAlign)
+    // the doc-tabs-measuring suspension forces computed textAlign to left on
+    // already-decorated paragraphs, so the paragraph attr is read first
+    const align = (node.attrs?.align as string | null) ?? cs.textAlign
     let lineRects: DOMRect[] | null = null
     let firstLineTop = Infinity
     if (align === 'center' || align === 'right' || align === 'end') {
-      const range = document.createRange()
+      const range = alignRange()
       range.selectNodeContents(el)
       lineRects = Array.from(range.getClientRects())
       for (const r of lineRects) if (r.height > 0) firstLineTop = Math.min(firstLineTop, r.top)
@@ -457,7 +672,13 @@ class TabLayoutView {
     // doc positions of every tab char in this paragraph
     const tabPositions: number[] = []
     const tabUnderlined = new Map<number, boolean>()
+    const breakPositions: number[] = []
     node.forEach((child, offset) => {
+      if (child.type.name === 'hardBreak') {
+        // a break the CSS hides (page/column breaks inside cells) keeps the line
+        const dom = view.nodeDOM(pos + 1 + offset) as Element | null
+        if (!dom || dom.getClientRects().length > 0) breakPositions.push(pos + 1 + offset)
+      }
       if (!child.isText || !child.text) return
       const underlined = child.marks.some((m) => m.type.name === 'underline')
       for (let i = 0; i < child.text.length; i++) {
@@ -473,21 +694,35 @@ class TabLayoutView {
     // measured from the tab's END so it excludes the tab's current advance —
     // otherwise the computed target depends on the layout being measured and
     // re-measure never reaches a fixed point.
+    const endsAtBreak: boolean[] = []
+    const segBreakable: boolean[] = []
     const segWidths = tabPositions.map((tabPos, i) => {
       const segStart = tabPos + 1
-      const segEnd = i + 1 < tabPositions.length ? tabPositions[i + 1] : paraEnd
+      const nextTab = i + 1 < tabPositions.length ? tabPositions[i + 1] : paraEnd
+      // a hard break ends the segment on its own line; it is not a wrap
+      const nextBreak = breakPositions.find((b) => b >= segStart && b < nextTab)
+      endsAtBreak[i] = nextBreak !== undefined
+      const segEnd = nextBreak ?? nextTab
       if (segEnd <= segStart) return 0
+      segBreakable[i] = SEG_BREAKABLE_RE.test(
+        node.textBetween(segStart - pos - 1, segEnd - pos - 1).trim(),
+      )
       try {
-        const startCoords = view.coordsAtPos(segStart, 1)
-        const endCoords = view.coordsAtPos(segEnd, -1)
-        return Math.max(0, (endCoords.left - startCoords.left) / zoom)
+        return tabSegmentWidth(
+          view.coordsAtPos(segStart, 1),
+          view.coordsAtPos(segEnd, -1),
+          paraW,
+          zoom,
+        )
       } catch {
         return 0
       }
     })
-    // total width of this tab's segment plus everything after it
+    // total width of this tab's segment plus everything after it on the line
     const restWidths = [...segWidths]
-    for (let i = restWidths.length - 2; i >= 0; i--) restWidths[i] += restWidths[i + 1]
+    for (let i = restWidths.length - 2; i >= 0; i--) {
+      if (!endsAtBreak[i]) restWidths[i] += restWidths[i + 1]
+    }
     const out: MeasuredTab[] = []
     // analytic chain: x of a tab following another tab on the same visual line
     // is the previous target + segment width. DOM positions of later tabs
@@ -503,68 +738,41 @@ class TabLayoutView {
       let coords: { left: number; top: number; bottom: number }
       try {
         coords = view.coordsAtPos(tabPos, 1)
+        // coordsAtPos measures whitespace with an empty-range caret rect, which
+        // drifts inside line-height:0 runs (doc-ws-run); the glyph's own rect is exact
+        const glyphLeft = tabGlyphLeft(view, tabPos)
+        if (glyphLeft !== null) coords = { ...coords, left: glyphLeft }
       } catch {
         continue
       }
       const measuredX = (coords.left - alignShiftAt(coords) - originX) / zoom
-      const sameLine =
-        prevLine != null && coords.top < prevLine.bottom && coords.bottom > prevLine.top
+      const sameLine = prevLine != null && sameVisualLine(coords, prevLine)
       const x = sameLine ? prevEnd : measuredX
       prevLine = { top: coords.top, bottom: coords.bottom }
 
-      const next = stopsPx.find((s) => s.x > x + minAdv)
-      let target: number
-      let val: TabStop['val'] = 'left'
-      let leader: string | undefined
-      if (next) {
-        target = next.x
-        val = next.val
-        leader = next.leader
-      } else {
-        const gridTwips = this.storage.defaultTabStopTwips ?? DEFAULT_TAB_TWIPS
-        if (gridTwips > 0) {
-          const grid = gridTwips / TWIPS_PER_PX
-          target = (Math.floor((x + minAdv) / grid) + 1) * grid
-        } else {
-          // defaultTabStop 0: Word advances the caret imperceptibly (tdf#168607)
-          target = x + minAdv
-        }
-      }
-
       const segWidth = segWidths[i]
-      // right/decimal/center align the segment at the stop; decimal is
-      // approximated as right (no '.'-splitting)
-      if (val === 'right' || val === 'decimal') target -= segWidth
-      else if (val === 'center') target -= segWidth / 2
-      // A right/center/decimal stop that would push the segment past the
-      // paragraph width pins it flush to the right edge (Word never wraps such
-      // TOC-style lines; Chromium would). In-column left stops advance to the
-      // stop and let a segment too wide for the trailing space wrap naturally —
-      // but a left stop past the right edge pins too (TOC page numbers), and so
-      // does a short segment that still fits flush right of the tab: wrapping
-      // it makes non-last lines justify-stretch, whose inflated measurements
-      // feed back into ever-larger targets (three-column signature rows).
-      // Pinning reserves room for everything after this tab (restWidths), so a
-      // run of trailing tabs packs against the edge instead of spilling over.
-      // The 1px slack keeps the 0.5px cssSize round-up from re-triggering wrap.
-      if (
-        target + segWidth > paraW - 1 &&
-        (val !== 'left' || target > paraW - 1 || paraW - segWidth - 1 > x)
-      )
-        target = paraW - 1 - restWidths[i]
-      let collapsed = false
-      if (target < x + minAdv) {
-        // no room before the edge: a normal tab would still advance a space
-        // width (Chromium's minimum), overflowing the line — collapse it to a
-        // hair's width instead (font-size 0 lifts the minimum)
-        collapsed = true
-        target = x + 0.6
-      }
+      const gridTwips = this.storage.defaultTabStopTwips ?? DEFAULT_TAB_TWIPS
+      // first-line tab inside the hanging area (negative text-indent)
+      const inHang = textIndent < 0 && x < contentEdge
+      const { target, leader, collapsed, glue } = resolveTabTarget({
+        x,
+        minAdv,
+        segWidth,
+        restWidth: restWidths[i],
+        paraW,
+        stops: stopsPx,
+        gridPx: gridTwips > 0 ? gridTwips / TWIPS_PER_PX : 0,
+        hangingX: inHang ? contentEdge : undefined,
+        segBreakable: segBreakable[i],
+      })
       // convert the Word-space target to a CSS tab-size: the next multiple of
       // it past the tab's position must be the target itself, so it needs to
       // stay greater than the tab's content-edge-relative x (by the minimum
-      // rendered advance, or Chromium skips to the following multiple)
-      const cssSize = Math.max(target - contentEdge, x - contentEdge + 0.6, 0.5)
+      // rendered advance, or Chromium skips to the following multiple).
+      // Chromium counts 0 (the content edge) as a multiple too, so a tab left
+      // of the edge can neither cross it nor reach an arbitrary point before
+      // it; such tabs become a box of the exact advance instead
+      const cssSize = inHang ? 0 : Math.max(target - contentEdge, x - contentEdge + 0.6, 0.5)
       prevEnd = target + segWidth
       // 0.5px rounding damps measure→decorate→re-measure oscillation
       out.push({
@@ -573,12 +781,11 @@ class TabLayoutView {
         leader,
         underlined: tabUnderlined.get(tabPos),
         collapsed,
+        glue,
+        fixed: inHang ? Math.round((target - x) * 2) / 2 : undefined,
       })
     }
-    // Word keeps tab segments at their stops on justified lines; Chromium
-    // justify-stretches them (and the stretched positions would feed back into
-    // the measurements), so tabbed justified paragraphs lay out left-aligned
-    return { tabs: out, flattenJustify: align === 'justify' || align === 'distribute' }
+    return out
   }
 }
 
@@ -592,7 +799,7 @@ export const TabStopExtension = Extension.create({
     // stops, or the paragraph's custom w:tabs). Lists indent and tables move
     // to the next cell — those handlers live on DocListItem / NativeTableSupport
     // and run after this one returns false. An unhandled Tab would leave the
-    // editor and cycle the ribbon buttons (github.com/genspark-ai/hermesoffice/issues/101).
+    // editor and cycle the ribbon buttons (github.com/genspark-ai/genoffice/issues/101).
     const insertTab = () => {
       if (!this.editor.isEditable) return false
       if (this.editor.isActive('docListItem')) return false
@@ -705,26 +912,66 @@ export const WsRunLineHeightExtension = Extension.create({
   name: 'wsRunLineHeight',
   addProseMirrorPlugins() {
     return [
-      new Plugin({
-        key: wsRunPluginKey,
-        props: {
-          decorations(state) {
-            const decos: Decoration[] = []
-            state.doc.descendants((node, pos) => {
-              if (!node.isText || !node.text) return
-              if (!/^[ \t]+$/.test(node.text)) return
-              // only runs with a font-size source can inflate the line
-              const styled = node.marks.some(
-                (m) =>
-                  m.type.name === 'docTextStyle' && (m.attrs.sizeHalfPoints || m.attrs.styleId),
-              )
-              if (!styled) return
-              decos.push(Decoration.inline(pos, pos + node.nodeSize, { class: 'doc-ws-run' }))
-            })
-            return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
-          },
-        },
-      }),
+      new Plugin(
+        textDecorationState(wsRunPluginKey, (node, pos, decos) => {
+          if (!node.text || !/^[ \t]+$/.test(node.text)) return
+          // only runs with a font-size source can inflate the line
+          const styled = node.marks.some(
+            (m) => m.type.name === 'docTextStyle' && (m.attrs.sizeHalfPoints || m.attrs.styleId),
+          )
+          if (!styled) return
+          decos.push(Decoration.inline(pos, pos + node.nodeSize, { class: 'doc-ws-run' }))
+        }),
+      ),
+    ]
+  },
+})
+
+// ---- hinted East Asian curly quotes (w:hint="eastAsia") ----
+
+const eaHintQuotesPluginKey = new PluginKey<DecorationSet>('eaHintQuotes')
+
+/** the run's own w:rFonts carries w:hint="eastAsia" (revision snapshots inside w:rPrChange don't count) */
+const EA_HINT_RE = /<w:rFonts\b[^>]*\bw:hint="eastAsia"/
+
+const EA_QUOTES_RE = /[‘’“”]+/g
+
+/** quote ranges of `text` that Word renders with the East Asian font; exported for tests */
+export function eaHintQuoteRanges(
+  rawRPr: string | null | undefined,
+  text: string,
+): Array<{ from: number; to: number }> {
+  if (!rawRPr || !text || !/[‘’“”]/.test(text)) return []
+  if (!EA_HINT_RE.test(rawRPr.replace(/<w:rPrChange[\s\S]*?<\/w:rPrChange>/, ''))) return []
+  const ranges: Array<{ from: number; to: number }> = []
+  for (const m of text.matchAll(EA_QUOTES_RE)) {
+    ranges.push({ from: m.index, to: m.index + m[0].length })
+  }
+  return ranges
+}
+
+/**
+ * Curly quotes U+2018/2019/201C/201D are dual-width codepoints: Word renders
+ * them with the run's East Asian font (fullwidth advance) iff the run's
+ * w:rFonts carries w:hint="eastAsia" — surrounding text and w:lang play no
+ * part (Word for Mac probe 2026-09-01). Chromium resolves them through the
+ * Latin head of the font chain (halfwidth), so hinted quotes get a
+ * display-only decoration whose bundled CJK face restores the 1em advance.
+ */
+export const EaHintQuotesExtension = Extension.create({
+  name: 'eaHintQuotes',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin(
+        textDecorationState(eaHintQuotesPluginKey, (node, pos, decos) => {
+          if (!node.text) return
+          const style = node.marks.find((m) => m.type.name === 'docTextStyle')
+          const raw = style?.attrs.rawRPr as string | null | undefined
+          for (const r of eaHintQuoteRanges(raw, node.text)) {
+            decos.push(Decoration.inline(pos + r.from, pos + r.to, { class: 'doc-ea-quotes' }))
+          }
+        }),
+      ),
     ]
   },
 })

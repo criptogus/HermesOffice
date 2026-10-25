@@ -5,7 +5,7 @@ import {
   applyPrintAreas,
   buildHeaderFooterXml,
   PageSetupError,
-} from '../src/gateway/xlsx-page-setup'
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-page-setup'
 
 const BARE = '<worksheet><sheetData/></worksheet>'
 const WITH_VIEW =
@@ -97,6 +97,22 @@ describe('applyPageSetupState', () => {
     )
   })
 
+  it('writes zoomScale and zoomScaleNormal, dropping both at 100% (r165)', () => {
+    const zoomed = applyPageSetupState(WITH_VIEW, { sheetName: 'S', zoomScale: 85 })
+    expect(zoomed).toContain('zoomScale="85"')
+    expect(zoomed).toContain('zoomScaleNormal="85"')
+    const reset = applyPageSetupState(zoomed, { sheetName: 'S', zoomScale: 100 })
+    expect(reset).not.toContain('zoomScale')
+    expect(reset).not.toContain('zoomScaleNormal')
+  })
+
+  it('creates sheetViews for a non-default zoom when missing', () => {
+    const xml = applyPageSetupState(BARE, { sheetName: 'S', zoomScale: 130 })
+    expect(xml).toContain('<sheetViews><sheetView ')
+    expect(xml).toContain('zoomScale="130"')
+    expect(xml).toContain('zoomScaleNormal="130"')
+  })
+
   it('toggles sheetView@showGridLines, creating sheetViews when missing', () => {
     const hidden = applyPageSetupState(WITH_VIEW, { sheetName: 'S', showGridlines: false })
     expect(hidden).toContain('<sheetView showGridLines="0" workbookViewId="0"/>')
@@ -170,6 +186,18 @@ describe('applyPageSetupState headerFooter', () => {
     expect(patched).not.toContain('Old')
   })
 
+  it('keeps "$" sequences in header text literal when overwriting an existing element', () => {
+    const xml =
+      '<worksheet><sheetData/><headerFooter>' +
+      '<oddHeader>&amp;LOld</oddHeader></headerFooter></worksheet>'
+    const patched = applyPageSetupState(xml, {
+      sheetName: 'S',
+      header: { left: "Revenue $'000", right: 'Ref $& $1 $$' },
+    })
+    expect(patched).toContain("<oddHeader>&amp;LRevenue $'000&amp;RRef $&amp; $1 $$</oddHeader>")
+    expect(patched).not.toContain('Old')
+  })
+
   it('removes the element when header and footer both clear', () => {
     const xml =
       '<worksheet><sheetData/>' +
@@ -178,6 +206,67 @@ describe('applyPageSetupState headerFooter', () => {
     expect(cleared).toBe('<worksheet><sheetData/></worksheet>')
     // No element to remove is a no-op, not an insertion of an empty one.
     expect(applyPageSetupState(BARE, { sheetName: 'S', header: null, footer: null })).toBe(BARE)
+  })
+
+  const VARIANTS =
+    '<headerFooter differentOddEven="1" differentFirst="1" scaleWithDoc="0" alignWithMargins="0">' +
+    '<oddHeader>&amp;L&amp;G&amp;COdd</oddHeader><oddFooter>&amp;P</oddFooter>' +
+    '<evenHeader>&amp;CEven</evenHeader><evenFooter>&amp;R&amp;G</evenFooter>' +
+    '<firstHeader>&amp;CFirst</firstHeader><firstFooter>&amp;L&amp;D</firstFooter>' +
+    '</headerFooter>'
+
+  it('leaves an untouched headerFooter with variants byte-identical', () => {
+    const xml = `<worksheet><sheetData/><pageSetup paperSize="1"/>${VARIANTS}</worksheet>`
+    const patched = applyPageSetupState(xml, {
+      sheetName: 'S',
+      orientation: 'landscape',
+      fitToWidth: 1,
+      fitToHeight: 0,
+      fitToPage: true,
+    })
+    expect(patched).toContain(VARIANTS)
+    expect(patched).toContain('<pageSetup fitToHeight="0" orientation="landscape" paperSize="1"/>')
+  })
+
+  it('rewrites only the odd sections, keeping flags and even/first variants', () => {
+    const xml = `<worksheet><sheetData/>${VARIANTS}</worksheet>`
+    const patched = applyPageSetupState(xml, {
+      sheetName: 'S',
+      header: { center: 'New odd' },
+      footer: null,
+    })
+    expect(patched).toBe(
+      '<worksheet><sheetData/>' +
+        '<headerFooter differentOddEven="1" differentFirst="1" scaleWithDoc="0" alignWithMargins="0">' +
+        '<oddHeader>&amp;CNew odd</oddHeader>' +
+        '<evenHeader>&amp;CEven</evenHeader><evenFooter>&amp;R&amp;G</evenFooter>' +
+        '<firstHeader>&amp;CFirst</firstHeader><firstFooter>&amp;L&amp;D</firstFooter>' +
+        '</headerFooter></worksheet>',
+    )
+  })
+
+  it('inserts missing odd sections ahead of the variants in schema order', () => {
+    const xml =
+      '<worksheet><sheetData/><headerFooter differentFirst="1">' +
+      '<firstHeader>&amp;CFirst</firstHeader></headerFooter></worksheet>'
+    const patched = applyPageSetupState(xml, {
+      sheetName: 'S',
+      header: { left: 'H' },
+      footer: { right: 'F' },
+    })
+    expect(patched).toBe(
+      '<worksheet><sheetData/><headerFooter differentFirst="1">' +
+        '<oddHeader>&amp;LH</oddHeader><oddFooter>&amp;RF</oddFooter>' +
+        '<firstHeader>&amp;CFirst</firstHeader></headerFooter></worksheet>',
+    )
+  })
+
+  it('keeps the flags on an element whose odd sections were cleared', () => {
+    const xml =
+      '<worksheet><sheetData/><headerFooter differentOddEven="1">' +
+      '<oddHeader>&amp;COdd</oddHeader></headerFooter></worksheet>'
+    const patched = applyPageSetupState(xml, { sheetName: 'S', header: null })
+    expect(patched).toBe('<worksheet><sheetData/><headerFooter differentOddEven="1"/></worksheet>')
   })
 })
 
@@ -193,6 +282,35 @@ describe('applyPrintAreas', () => {
     expect(xml).toContain(
       '<definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">' +
         "'Sheet1'!$A$1:$C$10</definedName></definedNames>",
+    )
+  })
+
+  it('fills a self-closing <definedNames/> (Google Sheets export) instead of appending after it', () => {
+    const exported =
+      '<workbook><workbookPr/><sheets>' +
+      '<sheet state="visible" name="Form Responses 1" sheetId="1" r:id="rId5"/>' +
+      '</sheets><definedNames/><calcPr fullCalcOnLoad="1"/></workbook>'
+    const xml = applyPrintAreas(exported, [{ sheetName: 'Form Responses 1', printArea: 'A1:B2' }])
+    expect(xml.match(/<definedNames\b/g)).toHaveLength(1)
+    expect(xml).not.toContain('<definedNames/>')
+    expect(xml).toContain(
+      '</sheets><definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">' +
+        "'Form Responses 1'!$A$1:$B$2</definedName></definedNames><calcPr",
+    )
+    const cleared = applyPrintAreas(xml, [{ sheetName: 'Form Responses 1', printArea: null }])
+    expect(cleared).toBe(exported.replace('<definedNames/>', ''))
+  })
+
+  it('creates the container after externalReferences and before calcPr when absent', () => {
+    const workbook =
+      '<workbook><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>' +
+      '<externalReferences><externalReference r:id="rId2"/></externalReferences>' +
+      '<calcPr/></workbook>'
+    const xml = applyPrintAreas(workbook, [{ sheetName: 'Sheet1', printArea: 'A1:B2' }])
+    expect(xml.match(/<definedNames\b/g)).toHaveLength(1)
+    expect(xml).toContain(
+      '</externalReferences><definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">' +
+        "'Sheet1'!$A$1:$B$2</definedName></definedNames><calcPr/>",
     )
   })
 

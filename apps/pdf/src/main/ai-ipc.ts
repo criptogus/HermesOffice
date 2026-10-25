@@ -67,20 +67,12 @@ export function registerPdfAiIpc(): void {
     const controller = new AbortController()
     activeAiStreams.set(requestId, controller)
     try {
-      await streamForProvider(
-        provider,
-        config,
-        system,
-        messages,
-        tools,
-        maxTokens,
-        {
-          signal: controller.signal,
-          onDelta: (text) => send({ requestId, type: 'delta', text }),
-          onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
-        },
-        request.sessionId,
-      )
+      await streamForProvider(provider, config, system, messages, tools, maxTokens, {
+        ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+        signal: controller.signal,
+        onDelta: (text) => send({ requestId, type: 'delta', text }),
+        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+      })
       send({ requestId, type: 'done' })
     } catch (err) {
       if (controller.signal.aborted) {

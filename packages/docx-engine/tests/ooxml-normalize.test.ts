@@ -156,6 +156,16 @@ describe('strict OOXML normalization', () => {
     expect(out).toContain('w:header="720" w:footer="720" w:gutter="0"')
   })
 
+  it('keeps overflowing measures as original bytes instead of Infinity', () => {
+    const out = normalizeOoxmlXml(
+      `<w:document xmlns:w="${W_STRICT}"><w:body>` +
+        `<w:p><w:pPr><w:ind w:start="${'9'.repeat(400)}in"/></w:pPr></w:p>` +
+        '</w:body></w:document>',
+    )
+    expect(out).not.toContain('Infinity')
+    expect(out).toContain(`${'9'.repeat(400)}in`)
+  })
+
   it('leaves plain numeric values and non-w namespaces untouched', () => {
     const src =
       `<w:document xmlns:w="${W_STRICT}" xmlns:x="http://example.com/x"><w:body>` +

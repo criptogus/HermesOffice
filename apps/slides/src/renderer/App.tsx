@@ -9,6 +9,7 @@ import type {
   PictureRenderNode,
   TableRenderNode,
 } from '@hermesoffice/pptx-render'
+import { handleSlidesControl, type ControlRequest } from './control'
 import type {
   AiSettings,
   AnimEffectKind,
@@ -30,7 +31,7 @@ import type {
   SlideComment,
   TransitionKind,
 } from '../shared/ipc'
-import { SlideCanvas, selectionChromeColor } from './SlideCanvas'
+import { SlideCanvas, selectionChromeColor, type SlideCanvasHandle } from './SlideCanvas'
 import { tableCellOverlayBox } from './table-hit'
 import { ZOOM_PREVIEW_EVENT } from './zoom-preview'
 import { createWheelPager } from './wheel-page-flip'
@@ -46,6 +47,7 @@ import {
 } from './TextEditOverlay'
 import { CropOverlay } from './CropOverlay'
 import { createImageLoader } from './image-loader'
+import { runHeadlessPdfExport } from './headless-export'
 import { syncPrivateFonts } from './doc-fonts'
 import { toPickerHex } from './color-input'
 import { InkOverlay } from './InkOverlay'
@@ -84,7 +86,7 @@ import { AnimationPane } from './components/AnimationPane'
 import { AnimPreviewOverlay } from './components/AnimatedSlide'
 import { EquationDialog, HeaderFooterDialog, LinkDialog } from './components/InsertDialogs'
 import { CutoutDialog } from './components/CutoutDialog'
-import type { WordArtPreset } from '@hermesoffice/ui'
+import { useAutoSavePref, type AiScopeQuoteData, type WordArtPreset } from '@hermesoffice/ui'
 import type { ChartPresetDef, IconDef, SmartArtDef } from './insert-presets'
 import { HermesMark, IconAiBeautify, IconAiFactCheck, IconAiImage } from './components/icons'
 import { ToastHost } from './components/toast'
@@ -100,6 +102,7 @@ import type {
   CtxMenuState,
   CutoutTargetState,
   EditingCellState,
+  EditCaret,
   EditingState,
   HfDialogState,
   LinkDialogState,
@@ -213,11 +216,16 @@ function collectFontRuns(
 }
 
 /** Per-paragraph bullet chars of one laid-out text body for the ribbon bullet gallery: '' for a
- * paragraph with no bullet, '#num' for numbered (matches no preset tile). Lines group into
+ * paragraph with no bullet, '#img' for a picture bullet, '#num:<scheme>' for numbered. Lines group into
  * paragraphs on paraStart so wrap continuations don't count. */
 function collectBodyBulletChars(
   text:
-    | { lines: Array<{ runs: Array<{ text: string; isBullet?: boolean }>; paraStart?: boolean }> }
+    | {
+        lines: Array<{
+          runs: Array<{ text: string; isBullet?: boolean; image?: string; numType?: string }>
+          paraStart?: boolean
+        }>
+      }
     | undefined,
   out: Set<string>,
 ) {
@@ -233,7 +241,15 @@ function collectBodyBulletChars(
       .slice(i, j)
       .flatMap((l) => l.runs)
       .find((r) => r.isBullet)
-    out.add(bullet ? (/^\d/.test(bullet.text) ? '#num' : bullet.text.trim()) : '')
+    out.add(
+      bullet
+        ? bullet.image
+          ? '#img'
+          : bullet.numType
+            ? `#num:${bullet.numType}`
+            : bullet.text.trim()
+        : '',
+    )
     i = j
   }
 }
@@ -404,11 +420,8 @@ export function App() {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
-  const [autoSave, setAutoSave] = useState(
-    () => localStorage.getItem('ai-slides-auto-save') === '1',
-  )
+  const [autoSave, setAutoSave] = useAutoSavePref('ai-slides-auto-save', window.slidesApi)
   useEffect(() => {
-    localStorage.setItem('ai-slides-auto-save', autoSave ? '1' : '0')
     window.slidesApi.setAutoSavePref?.(autoSave)
   }, [autoSave])
   const [showAi, setShowAi] = useState(() => localStorage.getItem('ai-slides-show-ai') !== '0')
@@ -625,7 +638,11 @@ export function App() {
   /** Last auto-fit value: if current zoom still equals it → treated as "fit mode", re-fit on size changes */
   const lastFitRef = useRef<number | null>(null)
   const zoomLiveRef = useRef(1)
-  useEffect(() => {
+  // Layout effect, not passive: committing a zoom step past fit makes scrollbars
+  // appear, and the fit-keeper ResizeObserver fires BEFORE passive effects run.
+  // With a stale ref it still reads the old fit value, decides "fit mode", and
+  // snaps the fresh zoom straight back — a single +/− step from fit never sticks.
+  useLayoutEffect(() => {
     zoomLiveRef.current = zoom
   }, [zoom])
   const slideLiveRef = useRef<RenderSlide | undefined>(undefined)
@@ -842,7 +859,7 @@ export function App() {
   const askOpenRef = useRef(false)
 
   const save = useCallback(
-    (quiet = false): Promise<boolean> => fileActions.save(ctxRef.current, quiet),
+    (quiet = false): Promise<boolean> => fileActions.save(() => ctxRef.current, quiet),
     [],
   )
 
@@ -913,9 +930,39 @@ export function App() {
     }
   }, [autoSave, path, editing, editingCell, save])
 
-  const saveAs = useCallback(() => fileActions.saveAs(ctxRef.current), [])
+  const saveAs = useCallback(() => fileActions.saveAs(() => ctxRef.current), [])
   const exportImages = useCallback(() => fileActions.exportImages(ctxRef.current), [])
-  const exportPdf = useCallback(() => fileActions.exportPdf(ctxRef.current), [])
+  const exportPdf = useCallback(() => void fileActions.exportPdf(ctxRef.current), [])
+
+  // Headless export mode (--headless-export): this renderer lives in a hidden
+  // window whose only job is to run the File menu's PDF export against a path
+  // the CLI chose, then report back so the main process can quit.
+  const headlessExportStartedRef = useRef(false)
+  useEffect(() => {
+    if (headlessExportStartedRef.current) return
+    headlessExportStartedRef.current = true
+    void (async () => {
+      const outPath = await window.slidesApi.consumeHeadlessExport()
+      if (!outPath) return
+      const report = await runHeadlessPdfExport(
+        outPath,
+        () => {
+          // A failed open falls back to an untitled blank deck (path ''), and
+          // exporting that would hand the CLI a blank PDF and call it success.
+          const deck = ctxRef.current
+          const fromFile = typeof deck?.path === 'string' && deck.path !== ''
+          return {
+            slideCount: fromFile ? deck.slides.length : 0,
+            // no loader yet = the deck's image effect has not run; -1 keeps waiting
+            pendingImages: imageLoaderRef.current?.pending() ?? -1,
+            failed: deck?.path === '',
+          }
+        },
+        (target) => fileActions.exportPdf(ctxRef.current, target),
+      )
+      window.slidesApi.headlessExportDone(report)
+    })()
+  }, [])
 
   const [printDlgOpen, setPrintDlgOpen] = useState(false)
 
@@ -1123,8 +1170,17 @@ export function App() {
     return off
   }, [applyOpen, newBlank])
 
-  // File renamed externally (shell Home list rename) → sync the title-bar path (content unchanged, dirty untouched)
-  useEffect(() => window.slidesApi.onRenamed((p) => setPath(p)), [])
+  // Path changed outside this renderer (shell Home list rename, or an MCP save that
+  // wrote the session to disk) → sync the title-bar path and ask the session
+  // whether it is still dirty rather than assuming
+  useEffect(
+    () =>
+      window.slidesApi.onRenamed((p) => {
+        setPath(p)
+        void window.slidesApi.isDirty().then(setDirty)
+      }),
+    [],
+  )
 
   useEffect(() => {
     void window.slidesApi.getAiSettings().then(setAiSettings)
@@ -1149,6 +1205,7 @@ export function App() {
       displayText?: string,
       attachments?: AttachmentMeta[],
       slideShot?: boolean,
+      scope?: AiScopeQuoteData,
     ) => {
       setShowAi(() => {
         localStorage.setItem('ai-slides-show-ai', '1')
@@ -1161,6 +1218,7 @@ export function App() {
         displayText,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(slideShot ? { slideShot } : {}),
+        ...(scope ? { scope } : {}),
       })
     },
     [],
@@ -1190,6 +1248,17 @@ export function App() {
       return node ? [{ id: anchorId(node), sourceId: node.sourceId, desc: describeNode(node) }] : []
     })
   }, [askState, findNodeCtx])
+  /** what a Send-now bubble quotes: the page, the element count and their leading text */
+  const askScopeQuote = (): AiScopeQuoteData => {
+    const text = askTargets
+      .map((target) => target.desc.text?.trim() ?? '')
+      .filter(Boolean)
+      .join(' / ')
+    return {
+      label: `${t('aiScopeSlide', { n: current + 1 })} · ${t('aiScopeSelection', { count: askTargets.length })}`,
+      ...(text ? { text } : {}),
+    }
+  }
 
   /** Viewport rect of a set of element ids; re-measured while the canvas scrolls or zooms */
   const selectionRect = useCallback(
@@ -1382,6 +1451,11 @@ export function App() {
     setSelectedIds([])
     setEditing(null)
     setDirty(true)
+    // The deck is the new truth: drop an in-progress notes draft (same as undo) so a stale
+    // draft can't overwrite what the AI batch wrote via setNotes on the next flush, then
+    // re-fetch notes/comments, which aren't part of RenderSlide.
+    notesDraftRef.current = null
+    setAnnotationsNonce((n) => n + 1)
   }, [])
 
   const addSlide = useCallback(() => slideActions.addSlide(ctxRef.current), [])
@@ -1738,6 +1812,7 @@ export function App() {
   )
   const cancelCrop = useCallback(() => pictureEditActions.cancelCrop(ctxRef.current), [])
   const startCutout = useCallback(() => pictureEditActions.startCutout(ctxRef.current), [])
+  const replacePicture = useCallback(() => pictureEditActions.replacePicture(ctxRef.current), [])
   const applyCutout = useCallback(
     (pngDataUrl: string) => pictureEditActions.applyCutout(ctxRef.current, pngDataUrl),
     [],
@@ -1751,6 +1826,10 @@ export function App() {
   )
   const flipSelected = useCallback(
     (axis: 'h' | 'v') => arrangeActions.flipSelected(ctxRef.current, axis),
+    [],
+  )
+  const rotateSelected = useCallback(
+    (deltaDeg: number) => arrangeActions.rotateSelected(ctxRef.current, deltaDeg),
     [],
   )
 
@@ -2096,14 +2175,25 @@ export function App() {
     const addFillUrl = (fill: RenderFill | undefined) => {
       if (fill && fill.kind === 'image' && fill.dataUrl) urls.add(fill.dataUrl)
     }
+    const addBulletUrls = (
+      text: { lines: Array<{ runs: Array<{ image?: string }> }> } | undefined,
+    ) => {
+      for (const l of text?.lines ?? []) for (const r of l.runs) if (r.image) urls.add(r.image)
+    }
     const walk = (nodes: readonly RenderNode[]) => {
       for (const n of nodes) {
         if (n.type === 'picture' && n.dataUrl) urls.add(n.dataUrl)
-        if ((n.type === 'shape' || n.type === 'text') && n.fill) addFillUrl(n.fill)
+        if (n.type === 'shape' || n.type === 'text') {
+          if (n.fill) addFillUrl(n.fill)
+          addBulletUrls(n.text)
+        }
         if (n.type === 'chart') addFillUrl((n as { bgFill?: RenderFill }).bgFill)
         if (n.type === 'group' && Array.isArray(n.children)) walk(n.children)
         if (n.type === 'table' && Array.isArray(n.cells)) {
-          for (const c of n.cells) if (c.fill) addFillUrl(c.fill)
+          for (const c of n.cells) {
+            if (c.fill) addFillUrl(c.fill)
+            addBulletUrls(c.text)
+          }
         }
       }
     }
@@ -2132,6 +2222,7 @@ export function App() {
     [],
   )
 
+  const canvasRef = useRef<SlideCanvasHandle>(null)
   const editNode = useMemo(() => {
     if (!editing || !slide) return null
     // In-group-editing children: compose the group offset into an absolute box (the canvas only allows text editing when the group is unrotated/unflipped/unscaled)
@@ -2149,11 +2240,12 @@ export function App() {
   }, [editing, slide])
 
   const startEdit = useCallback(
-    (sourceId: string, caret?: { x: number; y: number }) => {
+    (sourceId: string, caret?: EditCaret) => {
+      if (brushMode) return // the click already applied the format brush
       const isChild = enteredGroupNode?.children.some((c) => c.sourceId === sourceId)
       setEditing({ sourceId, caret, ...(isChild ? { groupId: enteredGroupNode!.sourceId } : {}) })
     },
-    [enteredGroupNode],
+    [enteredGroupNode, brushMode],
   )
 
   // Audio/video playback overlay: triggered by double-clicking a media element, closed on page switch/Escape
@@ -2257,9 +2349,23 @@ export function App() {
         }
         return
       }
+      if (target.kind === 'action') {
+        // Show-only actions (last viewed / end show) have no editor meaning
+        const last = slides.length - 1
+        const to = {
+          nextslide: Math.min(current + 1, last),
+          previousslide: Math.max(current - 1, 0),
+          firstslide: 0,
+          lastslide: last,
+          lastslideviewed: null,
+          endshow: null,
+        }[target.action]
+        if (to != null) setCurrent(to)
+        return
+      }
       window.open(target.url, '_blank', 'noreferrer')
     },
-    [slides.length],
+    [slides.length, current],
   )
 
   const onTransform = useCallback(
@@ -2701,6 +2807,7 @@ export function App() {
     setBrushMode,
     inkTool,
     setInkTool,
+    viewMode,
     animations,
     setAnimations,
     selAnim,
@@ -2788,6 +2895,20 @@ export function App() {
   const clearInk = useCallback(() => arrangeActions.clearInk(ctxRef.current), [])
 
   const _fileName = slide ? path?.split('/').pop() || t('appUntitledPresentation') : undefined
+
+  // hermesoffice CLI (`open --slide/--el`, `selection`): the shell evaluates this hook
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).__genofficeControl = (req: ControlRequest) =>
+      handleSlidesControl(req, {
+        slides,
+        path,
+        current,
+        selectedIds,
+        setCurrent,
+        setSelectedIds,
+        clearEditing: () => setEditing(null),
+      })
+  })
 
   return (
     <div className="app">
@@ -3102,6 +3223,8 @@ export function App() {
         onPictureCrop={startCrop}
         cropActive={cropTarget != null}
         onPictureCutout={startCutout}
+        onPictureReplace={() => void replacePicture()}
+        onPictureRotate={(delta) => void rotateSelected(delta)}
         onPictureOpacity={(opacity) => {
           if (!selectedNode || selectedNode.type !== 'picture') return
           void window.slidesApi
@@ -3143,17 +3266,7 @@ export function App() {
                   setPath(p)
                   setDirty(false)
                 }}
-                onSetSpeakerNotes={(i, text) =>
-                  flushNotes()
-                    .then(() => window.slidesApi.setNotes({ slideIndex: i, text }))
-                    .then((ok) => {
-                      if (ok) {
-                        setDirty(true)
-                        setAnnotationsNonce((n) => n + 1)
-                      }
-                      return ok
-                    })
-                }
+                onBeforeRun={flushNotes}
                 currentFilePath={path}
                 editQueue={editQueue}
                 onQueueEditInstruction={(key, instruction) =>
@@ -3606,6 +3719,7 @@ export function App() {
                             }}
                           >
                             <SlideCanvas
+                              ref={canvasRef}
                               slide={slide}
                               selectedIds={selectedIds}
                               onSelect={handleCanvasSelect}
@@ -3723,8 +3837,13 @@ export function App() {
                                 onCommit={commitEdit}
                                 onCancel={() => setEditing(null)}
                                 onFollowLink={followRunLink}
-                                frameColor={selectionChromeColor(slide, images)}
+                                frameColor={selectionChromeColor(slide, images, editNode.box)}
                                 zoom={zoom}
+                                onFrameDrag={(ev) => {
+                                  // Drop the overlay now; the text commit above lands via setSlides on its own
+                                  setEditing(null)
+                                  canvasRef.current?.startNodeDrag(editing.sourceId, ev)
+                                }}
                               />
                             )}
                             {editingCell && cellEditNode && (
@@ -3735,7 +3854,7 @@ export function App() {
                                 onCancel={() => setEditingCell(null)}
                                 onTabNav={(paragraphs, dir) => void navigateCell(paragraphs, dir)}
                                 onFollowLink={followRunLink}
-                                frameColor={selectionChromeColor(slide, images)}
+                                frameColor={selectionChromeColor(slide, images, cellEditNode.box)}
                                 zoom={zoom}
                               />
                             )}
@@ -4147,6 +4266,9 @@ export function App() {
                     buildSelectionInstruction(current, askTargets, instruction),
                     true,
                     instruction,
+                    undefined,
+                    undefined,
+                    askScopeQuote(),
                   )
                 }
           }

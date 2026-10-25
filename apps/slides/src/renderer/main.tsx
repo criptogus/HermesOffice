@@ -9,8 +9,12 @@ import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
+import '@hermesoffice/ui/ribbon-collapse.css'
+import '@hermesoffice/ui/markdown.css'
+import '@hermesoffice/ui/ai-panel-prefs.css'
+import '@hermesoffice/ui/ai-scope-quote.css'
 import './styles.css'
-import { installScreenTips } from '@hermesoffice/ui'
+import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
 
 installScreenTips()
 
@@ -53,6 +57,11 @@ async function bootstrap(): Promise<void> {
   if (mode !== 'audience') {
     applyTheme(theme)
     window.slidesApi?.onThemeChanged(applyTheme)
+    void window.slidesApi
+      ?.getAiPanelPrefs?.()
+      .then(applyAiPanelPrefs)
+      .catch(() => {})
+    window.slidesApi?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   }
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

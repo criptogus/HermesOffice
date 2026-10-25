@@ -25,7 +25,7 @@ function hugePagePdf(): Buffer {
 }
 
 test('image-sized PDF opens at true fit-to-width, not the old 50% zoom floor', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-pdf-fit-'))
+  const dir = await mkdtemp(join(tmpdir(), 'genoffice-pdf-fit-'))
   const pdfPath = join(dir, 'huge.pdf')
   await writeFile(pdfPath, hugePagePdf())
 
@@ -35,7 +35,7 @@ test('image-sized PDF opens at true fit-to-width, not the old 50% zoom floor', a
     openFile: pdfPath,
   })
   try {
-    const editorPage = await waitForPageWithUrl(launched.app, 'pdf/out')
+    const editorPage = await waitForPageWithUrl(launched.app, '://pdf/')
     await expect(editorPage.locator('.pdf-page').first()).toBeVisible()
 
     await expect

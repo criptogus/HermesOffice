@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IRange } from '@univerjs/core'
-import { FindModel, IFindReplaceService, type IFindMatch } from '@univerjs/find-replace'
+import {
+  FindModel,
+  IFindReplaceService,
+  type IFindMatch,
+  type IFindMoveParams,
+} from '@univerjs/find-replace'
 import { Subject } from 'rxjs'
 
 import {
   buildLazyCellTest,
+  coerceReplaceValue,
   collectJournalMatches,
   coveredByWindow,
   extraComparator,
@@ -594,6 +600,81 @@ describe('installLazyFindBridge', () => {
     bridge.dispose()
   })
 
+  it('visits every same-row match in order and wraps (issue #220)', async () => {
+    // Issue #220's repro: the same word in A10, C10, F10 and H10 of one row
+    // must each surface as an individual stop, with Next cycling through
+    // every occurrence instead of reporting one match per row.
+    const harness = facade(state({}))
+    const inner = new CursorInnerModel([
+      match('s1', 9, 0),
+      match('s1', 9, 2),
+      match('s1', 9, 5),
+      match('s1', 9, 7),
+      match('s1', 12, 1),
+    ])
+    inner.onFocus = (row, column) => {
+      harness.active.row = row
+      harness.active.column = column
+    }
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+
+    mockRead.mockResolvedValue(mapped([]))
+
+    const models = await harnessLookup(harness)(query({ findString: 'Example' }))
+    const model = models[0]!
+    await vi.waitFor(() => expect(model.getMatches()).toHaveLength(5))
+
+    const move = () => model.moveToNextMatch({ loop: true }) as LazyCellMatch | null
+    const posOf = (m: LazyCellMatch | null) =>
+      `${m!.range.range.startRow}:${m!.range.range.startColumn}`
+    expect(posOf(move())).toBe('9:0')
+    expect(posOf(move())).toBe('9:2')
+    expect(posOf(move())).toBe('9:5')
+    expect(posOf(move())).toBe('9:7')
+    expect(posOf(move())).toBe('12:1')
+    // Full cycle wraps back to the first same-row hit.
+    expect(posOf(move())).toBe('9:0')
+    bridge.dispose()
+  })
+
+  it('walks Previous through every same-row match in reverse (issue #220)', async () => {
+    const harness = facade(state({}))
+    const inner = new CursorInnerModel([
+      match('s1', 9, 0),
+      match('s1', 9, 2),
+      match('s1', 9, 5),
+      match('s1', 9, 7),
+      match('s1', 12, 1),
+    ])
+    inner.onFocus = (row, column) => {
+      harness.active.row = row
+      harness.active.column = column
+    }
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+
+    mockRead.mockResolvedValue(mapped([]))
+
+    const models = await harnessLookup(harness)(query({ findString: 'Example' }))
+    const model = models[0]!
+    await vi.waitFor(() => expect(model.getMatches()).toHaveLength(5))
+
+    const move = () => model.moveToPreviousMatch({ loop: true }) as LazyCellMatch | null
+    const posOf = (m: LazyCellMatch | null) =>
+      `${m!.range.range.startRow}:${m!.range.range.startColumn}`
+    expect(posOf(move())).toBe('12:1')
+    expect(posOf(move())).toBe('9:7')
+    expect(posOf(move())).toBe('9:5')
+    expect(posOf(move())).toBe('9:2')
+    expect(posOf(move())).toBe('9:0')
+    // Full cycle wraps back to the last hit.
+    expect(posOf(move())).toBe('12:1')
+    bridge.dispose()
+  })
+
   it('keeps file matches findable under style-only journal edits', async () => {
     const journalCells = new Map([
       [
@@ -703,6 +784,62 @@ describe('installLazyFindBridge', () => {
     expect(harness.worksheet.scrollToCell).not.toHaveBeenCalled()
     expect(mockEnsure).not.toHaveBeenCalled()
     bridge.dispose()
+  })
+
+  it('replaceAll on out-of-window hits writes numbers back as numbers', async () => {
+    const harness = facade(state({}))
+    const inner = new FakeInnerModel([])
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+
+    mockRead.mockResolvedValue(mapped([{ row: 500, column: 3, value: 123 }]))
+
+    const models = await harnessLookup(harness)(query({ findString: '2' }))
+    const model = models[0]!
+    await settle(model)
+    await model.replaceAll('9')
+    // 123 → "193" → numeric 193, so SUM keeps counting it (was text "193" before)
+    expect(harness.setValues).toHaveBeenCalledWith([[{ v: 193 }]])
+    bridge.dispose()
+  })
+
+  it('replaceAll on out-of-window hits writes booleans back as booleans', async () => {
+    const harness = facade(state({}))
+    const inner = new FakeInnerModel([])
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+
+    mockRead.mockResolvedValue(mapped([{ row: 500, column: 3, value: true }]))
+
+    const models = await harnessLookup(harness)(query({ findString: '1' }))
+    const model = models[0]!
+    await settle(model)
+    await model.replaceAll('0')
+    expect(harness.setValues).toHaveBeenCalledWith([[{ v: false }]])
+    bridge.dispose()
+  })
+})
+
+describe('coerceReplaceValue', () => {
+  it('keeps numbers numeric, falling back to text when the result is not a number', () => {
+    expect(coerceReplaceValue(123, '193')).toBe(193)
+    expect(coerceReplaceValue(123, 'abc')).toBe('abc')
+    expect(coerceReplaceValue(123, '')).toBe('')
+  })
+
+  it('maps 1/0 back to booleans, leaving anything else as text', () => {
+    expect(coerceReplaceValue(true, '0')).toBe(false)
+    expect(coerceReplaceValue(false, '1')).toBe(true)
+    expect(coerceReplaceValue(true, 'TRUE')).toBe(true)
+    expect(coerceReplaceValue(true, 'yes')).toBe('yes')
+  })
+
+  it('leaves strings, nullish and formula-missing raws as text', () => {
+    expect(coerceReplaceValue('abc', 'abd')).toBe('abd')
+    expect(coerceReplaceValue(null, 'x')).toBe('x')
+    expect(coerceReplaceValue(undefined, 'x')).toBe('x')
   })
 })
 
@@ -840,6 +977,124 @@ describe('service-level dispatch (Univer semantics)', () => {
 })
 
 /** Runs a find through the provider the bridge registered (last registration). */
+describe('research cursor stability (r167)', () => {
+  beforeEach(() => {
+    mockRead.mockReset()
+    mockEnsure.mockReset()
+    mockEnsure.mockResolvedValue(true)
+  })
+
+  it('stayIfOnMatch keeps the focused extra instead of advancing', async () => {
+    const harness = facade(state({}))
+    const inner = new FakeInnerModel([])
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+    mockRead.mockResolvedValue(
+      mapped([
+        { row: 500, column: 3, value: 'deep needle' },
+        { row: 700, column: 3, value: 'deeper needle' },
+      ]),
+    )
+    const model = (await harnessLookup(harness)(query()))[0]!
+    await settle(model)
+
+    const first = model.moveToNextMatch() as LazyCellMatch
+    expect(first.range.range.startRow).toBe(500)
+    vi.mocked(harness.worksheet.scrollToCell).mockClear()
+
+    // Streamed grid patches re-run the search; the service re-establishes the
+    // current match with stayIfOnMatch + noFocus. Advancing here walked the
+    // cursor (and the reveal scroll) between the extras on every patch.
+    for (let i = 0; i < 3; i += 1) {
+      const stay = model.moveToNextMatch({
+        stayIfOnMatch: true,
+        noFocus: true,
+      } as IFindMoveParams) as LazyCellMatch
+      expect(stay.range.range.startRow).toBe(500)
+    }
+    expect(harness.worksheet.scrollToCell).not.toHaveBeenCalled()
+    bridge.dispose()
+  })
+
+  it('hands the cursor to the inner session once the extra materializes', async () => {
+    const lazyState = state({})
+    const harness = facade(lazyState)
+    const innerList: IFindMatch[] = []
+    const inner = new FakeInnerModel(innerList)
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+    mockRead.mockResolvedValue(mapped([{ row: 500, column: 3, value: 'deep needle' }]))
+    const model = (await harnessLookup(harness)(query()))[0]!
+    await settle(model)
+
+    const first = model.moveToNextMatch() as LazyCellMatch
+    expect(first.range.range.startRow).toBe(500)
+
+    // The jump loaded the region: the window now covers the hit and the inner
+    // session owns it. The research re-establishment must return the inner
+    // match at the same position, not step to a neighbouring extra.
+    lazyState.loadedRanges.set('s1', { startRow: 0, endRow: 999, startColumn: 0, endColumn: 9 })
+    innerList.push(match('s1', 500, 3))
+    const innerMove = vi.spyOn(inner, 'moveToNextMatch')
+    const stay = model.moveToNextMatch({
+      stayIfOnMatch: true,
+      noFocus: true,
+    } as IFindMoveParams)
+    expect(stay).toBe(innerList[0])
+    // the handover must run THROUGH the inner model so its own cursor moves
+    expect(innerMove).toHaveBeenCalledWith(
+      expect.objectContaining({ stayIfOnMatch: true, noFocus: true }),
+    )
+    bridge.dispose()
+  })
+
+  it('walks the inner cursor to the cell when the selection is elsewhere', async () => {
+    const lazyState = state({})
+    const harness = facade(lazyState)
+    // index-cursor inner model with two in-window hits; the taken-over cell
+    // is the SECOND one, so the walk must step past the first
+    const innerList: IFindMatch[] = [match('s1', 100, 2), match('s1', 500, 3)]
+    const inner = new CursorInnerModel(innerList)
+    const builtin = { find: vi.fn().mockResolvedValue([inner]), terminate: vi.fn() }
+    harness.providers.add(builtin)
+    const bridge = installLazyFindBridge(harness)
+    mockRead.mockResolvedValue(mapped([{ row: 500, column: 3, value: 'deep needle' }]))
+    const model = (await harnessLookup(harness)(query()))[0]!
+    await vi.waitFor(() => expect(mockRead).toHaveBeenCalled())
+
+    // put the segmented cursor on the extra WITHOUT focusing (research-style
+    // establishment): grid selection never lands on the hit
+    ;(model as unknown as { lastFocusedExtra: unknown }).lastFocusedExtra = {
+      ...match('s1', 500, 3),
+      replaceable: true,
+    }
+    expect(harness.active).toEqual({ row: 0, column: 0 })
+
+    // the region materializes (window covers row 500): re-establishment must
+    // align the INNER cursor onto the cell by walking — not hold a ghost,
+    // not advance to another extra
+    lazyState.loadedRanges.set('s1', { startRow: 0, endRow: 600, startColumn: 0, endColumn: 9 })
+    const innerMove = vi.spyOn(inner, 'moveToNextMatch')
+    const walked = model.moveToNextMatch({
+      stayIfOnMatch: true,
+      noFocus: true,
+    } as IFindMoveParams) as LazyCellMatch
+    expect(walked).toBe(innerList[1])
+    // walk steps must not carry stayIfOnMatch: with the selection on another
+    // in-window hit the inner model would re-anchor there forever
+    for (const call of innerMove.mock.calls) {
+      expect((call[0] as { stayIfOnMatch?: boolean } | undefined)?.stayIfOnMatch).toBe(false)
+    }
+    // the inner index cursor now sits on the cell: a user Next wraps to the
+    // list start (inner exhausted → extras empty → wrap re-entry)
+    const next = model.moveToNextMatch({ loop: true } as IFindMoveParams) as LazyCellMatch
+    expect(next.range.range.startRow).toBe(100)
+    bridge.dispose()
+  })
+})
+
 function harnessLookup(harness: ReturnType<typeof facade>): (q: unknown) => Promise<FindModel[]> {
   const registration = harness.registrations[harness.registrations.length - 1]!
   const wrapper = registration.provider as { find: (q: unknown) => Promise<FindModel[]> }

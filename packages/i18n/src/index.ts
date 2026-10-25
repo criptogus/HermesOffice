@@ -13,6 +13,7 @@ export type Lang =
   | 'pt'
   | 'it'
   | 'pl'
+  | 'cs'
   | 'nl'
   | 'ms'
   | 'he'
@@ -34,6 +35,7 @@ export const LANGS: readonly Lang[] = [
   'pt',
   'it',
   'pl',
+  'cs',
   'nl',
   'ms',
   'he',
@@ -52,7 +54,8 @@ export function normalizeLang(raw: string | null | undefined): Lang {
   // traditional-script Chinese variants must win over the generic 'zh' prefix
   if (/^zh[-_](tw|hk|mo|hant)/.test(value)) return 'zh-TW'
   for (const lang of LANGS) {
-    if (lang !== 'en' && lang !== 'zh-TW' && value.startsWith(lang)) return lang
+    if (lang === 'en' || lang === 'zh-TW') continue
+    if (value === lang || value.startsWith(`${lang}-`) || value.startsWith(`${lang}_`)) return lang
   }
   // 'in' is the legacy ISO code for Indonesian still reported by some systems
   if (/^in\b/.test(value) || /^in[-_]/.test(value)) return 'id'
@@ -76,6 +79,7 @@ const HTML_LANGS: Record<Lang, string> = {
   pt: 'pt-BR',
   it: 'it-IT',
   pl: 'pl-PL',
+  cs: 'cs-CZ',
   nl: 'nl-NL',
   ms: 'ms-MY',
   he: 'he-IL',
@@ -143,7 +147,7 @@ export type Params = Record<string, string | number>
 export function format(template: string, params?: Params): string {
   if (!params) return template
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
-    name in params ? String(params[name]) : match,
+    Object.hasOwn(params, name) ? String(params[name]) : match,
   )
 }
 

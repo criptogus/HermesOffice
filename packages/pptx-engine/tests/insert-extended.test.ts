@@ -580,6 +580,35 @@ describe('setElementLink / getElementLink', () => {
     expect(last.anchor.originalXml).toContain('ppaction://hlinksldjump')
   })
 
+  it('named show action writes hlinkshowjump with an empty r:id and no relationship', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const slide = opened.deck.slides[0]!
+    const relsBefore = opened.archive.readText(relsPathFor(slide.path))
+    const el = addElement(slide, { kind: 'rect', offset: { ...OFF } })
+    const s1 = setElementLink(opened, 0, el.id, { kind: 'action', action: 'nextslide' })!
+    expect(s1.elements.at(-1)!.anchor.originalXml).toContain(
+      '<a:hlinkClick xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="" action="ppaction://hlinkshowjump?jump=nextslide"/>',
+    )
+    expect(opened.archive.readText(relsPathFor(slide.path))).toBe(relsBefore)
+
+    const reopened = await openPptx(await savePptx(opened))
+    const last = reopened.deck.slides[0]!.elements.at(-1)!
+    expect(getElementLink(reopened, 0, last.id)).toEqual({ kind: 'action', action: 'nextslide' })
+    expect(getSlideLinks(reopened, 0)).toContainEqual({
+      elementId: last.id,
+      target: { kind: 'action', action: 'nextslide' },
+    })
+
+    // Replacing with a url and clearing both work on an action link
+    const s2 = setElementLink(reopened, 0, last.id, { kind: 'action', action: 'endshow' })!
+    expect(getElementLink(reopened, 0, s2.elements.at(-1)!.id)).toEqual({
+      kind: 'action',
+      action: 'endshow',
+    })
+    const s3 = setElementLink(reopened, 0, s2.elements.at(-1)!.id, null)!
+    expect(s3.elements.at(-1)!.anchor.originalXml).not.toContain('hlinkClick')
+  })
+
   it('clearing the link removes hlinkClick', async () => {
     const opened = await openPptx(fx('01_standard_business.pptx'))
     const slide = opened.deck.slides[0]!
@@ -871,5 +900,47 @@ describe('3-D chart kinds survive insert and edit round-trips', () => {
     el = reopened.deck.slides[0]!.elements.at(-1) as ChartElement
     expect(el.chart.pseudo3D).toBe(true)
     expect(el.chart.categories).toEqual(['A', 'B', 'C'])
+  })
+})
+
+describe('editChartElement doughnut hole preservation', () => {
+  it('a custom holeSizePct survives a data-only rebuild and is patchable', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const r = addChart(opened, 0, {
+      kind: 'doughnut',
+      categories: ['A', 'B'],
+      series: [{ name: 'S', values: [1, 2] }],
+      offset: { ...OFF },
+      holeSizePct: 72,
+    })!
+    const chartXml = (path: string) => {
+      const rels = opened.archive.readText(relsPathFor('ppt/slides/slide1.xml'))!
+      const target = /Target="([^"]*chart\d+\.xml)"/.exec(rels)![1]!
+      return opened.archive.readText(path || `ppt/charts/${target.split('/').pop()}`)!
+    }
+    expect(chartXml('')).toContain('<c:holeSize val="72"/>')
+    // Data-only edit: the hole used to reset to the build default (50)
+    expect(editChartElement(opened, 0, r.elementId, { categories: ['A', 'B', 'C'] })).toBe(true)
+    expect(chartXml('')).toContain('<c:holeSize val="72"/>')
+    // Explicit patch wins
+    expect(editChartElement(opened, 0, r.elementId, { holeSizePct: 30 })).toBe(true)
+    expect(chartXml('')).toContain('<c:holeSize val="30"/>')
+  })
+})
+
+describe('pie → doughnut type switch (Bugbot: parsed pie holePct 0 must not clamp to a 1% hole)', () => {
+  it('switching a pie to doughnut gets the default 50% hole', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const r = addChart(opened, 0, {
+      kind: 'pie',
+      categories: ['A', 'B'],
+      series: [{ name: 'S', values: [1, 2] }],
+      offset: { ...OFF },
+    })!
+    expect(editChartElement(opened, 0, r.elementId, { kind: 'doughnut' })).toBe(true)
+    const rels = opened.archive.readText(relsPathFor('ppt/slides/slide1.xml'))!
+    const target = /Target="([^"]*chart\d+\.xml)"/.exec(rels)![1]!
+    const xml = opened.archive.readText(`ppt/charts/${target.split('/').pop()}`)!
+    expect(xml).toContain('<c:holeSize val="50"/>')
   })
 })

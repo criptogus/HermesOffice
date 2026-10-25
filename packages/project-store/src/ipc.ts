@@ -6,12 +6,21 @@ import type {
   ChatAttachment,
   ChatMessage,
   ChatMeta,
+  ChatScope,
   ProjectSummary,
   TimelineEntry,
   ToolActivity,
 } from './types.js'
 
-export type { ChatAttachment, ChatMessage, ChatMeta, ProjectSummary, TimelineEntry, ToolActivity }
+export type {
+  ChatAttachment,
+  ChatMessage,
+  ChatMeta,
+  ChatScope,
+  ProjectSummary,
+  TimelineEntry,
+  ToolActivity,
+}
 
 export interface AppendChatArgs {
   projectId: string
@@ -20,6 +29,7 @@ export interface AppendChatArgs {
   text: string
   tools?: ToolActivity[]
   attachments?: ChatAttachment[]
+  scope?: ChatScope
 }
 
 export interface LoadChatArgs {
@@ -53,31 +63,6 @@ export interface RebindChatArgs {
   sessionId?: string
 }
 
-// ── P1 extensions ──────────────────────────────────────────
-
-export interface CreateProjectArgs {
-  name: string
-}
-
-export interface RenameProjectArgs {
-  id: string
-  name: string
-}
-
-export interface DeleteProjectArgs {
-  id: string
-}
-
-export interface MoveFileArgs {
-  filePath: string
-  projectId: string
-}
-
-export interface GetTimelineArgs {
-  projectId: string
-  limit?: number
-}
-
 /** Project storage API the main process exposes to the renderer */
 export interface ProjectApi {
   /**
@@ -91,17 +76,4 @@ export interface ProjectApi {
   loadChat(args: LoadChatArgs): Promise<ChatMessage[]>
   /** Renames the JSONL file (called after the file first hits disk); returns the new projectId/chatId */
   rebindChat(args: RebindChatArgs): Promise<ResolveChatResult>
-  // ── P1 extensions ──
-  /** Lists all projects (with file count + last active time) */
-  listProjects(): Promise<ProjectSummary[]>
-  /** Creates a project */
-  createProject(args: CreateProjectArgs): Promise<ProjectSummary>
-  /** Renames a project */
-  renameProject(args: RenameProjectArgs): Promise<void>
-  /** Soft-deletes a project (directory moved into .trash) */
-  deleteProject(args: DeleteProjectArgs): Promise<void>
-  /** Moves a file into the given project */
-  moveFile(args: MoveFileArgs): Promise<void>
-  /** Gets the project timeline */
-  getTimeline(args: GetTimelineArgs): Promise<TimelineEntry[]>
 }

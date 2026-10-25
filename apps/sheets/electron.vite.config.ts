@@ -17,6 +17,8 @@ export default defineConfig({
           '@hermesoffice/file-parse',
           '@hermesoffice/electron-utils',
           '@hermesoffice/i18n',
+          '@hermesoffice/pptx-render',
+          '@hermesoffice/xlsx-gateway',
         ],
       }),
     ],

@@ -11,7 +11,12 @@ export default defineConfig({
     alias: {
       '@hermesoffice/docx-engine': local('../../packages/docx-engine/src/index.ts'),
       '@hermesoffice/font-metrics': local('../../packages/font-metrics/src/index.ts'),
+      // subpath before the bare name: string aliases are prefix replacements
+      '@hermesoffice/electron-utils/headless-export': local(
+        '../../packages/electron-utils/src/headless-export.ts',
+      ),
       '@hermesoffice/electron-utils': local('../../packages/electron-utils/src/index.ts'),
+      '@hermesoffice/ai-provider/browser': local('../../packages/ai-provider/src/browser.ts'),
       '@hermesoffice/ai-provider': local('../../packages/ai-provider/src/index.ts'),
       '@hermesoffice/i18n': local('../../packages/i18n/src/index.ts'),
       '@hermesoffice/ui': local('../../packages/ui/src/index.ts'),

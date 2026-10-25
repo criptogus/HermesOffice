@@ -1,9 +1,10 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
+import { useI18n } from './i18n/locale'
 import type { UniverRuntime, UniverWorksheet } from './univer-state'
 
-const DROPDOWN_COMPONENT_KEY = 'hermesoffice-active-data-validation-dropdown'
-const INPUT_MESSAGE_COMPONENT_KEY = 'hermesoffice-active-data-validation-input-message'
+const DROPDOWN_COMPONENT_KEY = 'genoffice-active-data-validation-dropdown'
+const INPUT_MESSAGE_COMPONENT_KEY = 'genoffice-active-data-validation-input-message'
 const SHOW_DROPDOWN_COMMAND = 'sheet.operation.show-data-validation-dropdown'
 const DROPDOWN_SIZE = 14
 const INPUT_MESSAGE_WIDTH = 108
@@ -136,11 +137,12 @@ function DataValidationDropdownButton({
 }: {
   readonly runtime: UniverRuntime
 }): React.JSX.Element {
+  const { t } = useI18n()
   return (
     <button
       type="button"
       className="data-validation-dropdown-button"
-      aria-label="Open dropdown"
+      aria-label={t('appDataValidation')}
       tabIndex={-1}
       onPointerDown={(event) => openActiveDataValidationDropdown(runtime, event)}
     >

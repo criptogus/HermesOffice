@@ -7,6 +7,9 @@ import {
   fixFormattedValue,
   formatGeneral,
   generalCharBudget,
+  hostLocalePattern,
+  isCalendarDatePattern,
+  mergedSpanWidth,
   yenLiteralDisplay,
 } from '../src/renderer/numfmt-fix'
 
@@ -42,6 +45,23 @@ describe('expandAsteriskFill', () => {
     const text = expandAsteriskFill(escapedSpace, 683638, 30, measure)
     expect(text).toBe(`${NBSP_CHAR}$${NBSP_CHAR}${NBSP_CHAR.repeat(14)}683,638${NBSP_CHAR}`)
   })
+
+  it('renders [$sym-LCID] currency tokens in the prefix', () => {
+    const usd = '_-[$$-409]* #,##0.00_ ;_-[$$-409]* \\-#,##0.00\\ ;_-[$$-409]* "-"??_ ;_-@_ '
+    expect(expandAsteriskFill(usd, 18500, 25, measure)).toBe(
+      `${NBSP_CHAR}$${NBSP_CHAR.repeat(8)}18,500.00${NBSP_CHAR}`,
+    )
+    const eur = '_-[$€-2]\\ * #,##0.00_-;\\-[$€-2]\\ * #,##0.00_-;_-[$€-2]\\ * "-"??_-;_-@_-'
+    expect(expandAsteriskFill(eur, 1234.5, 30, measure)).toBe(
+      `${NBSP_CHAR}€${NBSP_CHAR}${NBSP_CHAR.repeat(13)}1,234.50${NBSP_CHAR}`,
+    )
+  })
+
+  it('skips color tokens and bails on elapsed-time placeholders', () => {
+    const red = '[Red]"$"* #,##0'
+    expect(expandAsteriskFill(red, 5, 15, measure)).toBe(`$${NBSP_CHAR.repeat(8)}5`)
+    expect(expandAsteriskFill('[h]* 0', 5, 25, measure)).toBeNull()
+  })
 })
 
 describe('yenLiteralDisplay', () => {
@@ -61,6 +81,15 @@ describe('yenLiteralDisplay', () => {
     expect(yenLiteralDisplay(JIS_YEN, '\\5', 'Calibri')).toBeNull()
     expect(yenLiteralDisplay(JIS_YEN, '\\5', undefined)).toBeNull()
     expect(yenLiteralDisplay('#,##0', '5', 'Meiryo')).toBeNull()
+  })
+
+  it('maps the [$\\-LCID] currency token by primary language id', () => {
+    const jis = '[$\\-411]#,##0;[Red]"¥"\\-[$\\-411]#,##0'
+    expect(yenLiteralDisplay(jis, '\\1,500,400', 'Calibri')).toBe('¥1,500,400')
+    expect(yenLiteralDisplay(jis, '¥-\\1,500,400', undefined)).toBe('¥-¥1,500,400')
+    expect(yenLiteralDisplay('[$\\-412]#,##0', '\\5', undefined)).toBe('₩5')
+    // en LCID: 0x5C is a real backslash, leave it.
+    expect(yenLiteralDisplay('[$\\-409]#,##0', '\\5', undefined)).toBeNull()
   })
 })
 
@@ -198,6 +227,30 @@ describe('formatGeneral', () => {
   })
 })
 
+describe('mergedSpanWidth', () => {
+  // prod_037 Z6:AE6: anchor 30px, AA-AC hidden, AD/AE 31px each.
+  const sheet = {
+    getMergedCell: (row: number, col: number) =>
+      row === 5 && col >= 25 && col <= 30 ? { startColumn: 25, endColumn: 30 } : null,
+    getColumnWidth: (col: number) => (col === 25 ? 30 : 31),
+    getColVisible: (col: number) => col < 26 || col > 28,
+  }
+
+  it('sums the visible columns of the merged span', () => {
+    expect(mergedSpanWidth(sheet, 5, 25)).toBe(92)
+  })
+
+  it('returns null outside a merge', () => {
+    expect(mergedSpanWidth(sheet, 4, 25)).toBeNull()
+  })
+
+  it('fits General against the span, not the anchor column (prod_037)', () => {
+    // Anchor-only budget forced 23566 into scientific; the span shows it.
+    expect(formatGeneral(23566, generalCharBudget(30))).toBe('2E+04')
+    expect(formatGeneral(23566, generalCharBudget(92))).toBe('23566')
+  })
+})
+
 describe('decimal half-way rounding (Excel rounds the decimal literal)', () => {
   it('rounds 1.005 up under 0.00 like Excel', () => {
     expect(fixFormattedValue('0.00_ ', 1.005, `1.00${NBSP}`)).toBe(`1.01${NBSP}`)
@@ -222,5 +275,76 @@ describe('decimal half-way rounding (Excel rounds the decimal literal)', () => {
     expect(decimalRoundForPattern('yyyy-mm-dd', 1.005)).toBeNull()
     expect(decimalRoundForPattern('# ?/?', 1.005)).toBeNull()
     expect(decimalRoundForPattern('0.00E+00', 1.005)).toBeNull()
+  })
+})
+
+describe('hostLocalePattern — [$sym-LCID] keeps host separators', () => {
+  const BRL = '_-[$R$-416]\\ * #,##0_-;\\-[$R$-416]\\ * #,##0_-;_-[$R$-416]\\ * "-"??_-;_-@_-'
+  const ARS = '[$$-2C0A]\\ #,##0.00;\\-[$$-2C0A]\\ #,##0.00'
+
+  it('drops the LCID but keeps the symbol', () => {
+    expect(hostLocalePattern(ARS)).toBe('[$$]\\ #,##0.00;\\-[$$]\\ #,##0.00')
+    expect(hostLocalePattern('[$€-x-euro2]#,##0.00')).toBe('[$€]#,##0.00')
+  })
+
+  it('leaves bare [$-LCID] tags and date patterns alone', () => {
+    expect(hostLocalePattern('[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy')).toBe(
+      '[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy',
+    )
+    expect(hostLocalePattern('[$€-410]dddd')).toBe('[$€-410]dddd')
+    expect(hostLocalePattern('#,##0.00')).toBe('#,##0.00')
+  })
+
+  it('pt-BR tag: 62175 renders R$ 62,175 on an en-US host', () => {
+    expect(fixFormattedValue(BRL, 62175, `${NBSP}R$ 62.175${NBSP}`)).toBe(
+      `${NBSP}R$${NBSP}62,175${NBSP}`,
+    )
+    expect(expandAsteriskFill(BRL, 62175, 20, (text) => text.length)).toBe(
+      `${NBSP}R$${NBSP.repeat(5)}62,175${NBSP}`,
+    )
+  })
+
+  it('es-AR tag: 5782059.91 renders 5,782,059.91 on an en-US host', () => {
+    expect(fixFormattedValue(ARS, 5782059.91, '$ 5.782.059,91')).toBe(`$${NBSP}5,782,059.91`)
+    expect(fixFormattedValue(ARS, -5782059.91, '-$ 5.782.059,91')).toBe(`-$${NBSP}5,782,059.91`)
+  })
+
+  it('is a no-op when Univer already matches', () => {
+    expect(fixFormattedValue(ARS, 5782059.91, `$${NBSP}5,782,059.91`)).toBeNull()
+  })
+
+  it('keeps the legacy yen tag working for the 0x5C swap', () => {
+    expect(fixFormattedValue('[$\\-411]#,##0', 1234, '\\1,234')).toBeNull()
+    expect(yenLiteralDisplay('[$\\-411]#,##0', '\\1,234', undefined)).toBe('¥1,234')
+  })
+
+  it('drops an empty [$] token: Excel prints nothing for it', () => {
+    expect(hostLocalePattern('[$]hh:mm;@')).toBe('hh:mm;@')
+    expect(hostLocalePattern('[$]#,##0.00')).toBe('#,##0.00')
+    // numfmt rejects `[$]` and Univer shows its ###### error text.
+    expect(fixFormattedValue('[$]hh:mm;@', 0.2083333333333333, '######')).toBe('05:00')
+    expect(fixFormattedValue('[$]hh:mm;@', 0.25, '0.25')).toBe('06:00')
+    expect(fixFormattedValue('[$]hh:mm;@', 0, '0')).toBe('00:00')
+    expect(fixFormattedValue('[$]hh:mm;@', 'late', 'late')).toBeNull()
+    expect(isCalendarDatePattern('[$]hh:mm;@')).toBe(false)
+    expect(isCalendarDatePattern('[$]dd/mm/yyyy')).toBe(true)
+  })
+
+  it('normalises [$] before the half-way rounding and exponential repairs', () => {
+    expect(fixFormattedValue('[$]0.00', 1.005, '######')).toBe('1.01')
+    expect(fixFormattedValue('[$]0.00', 1.005, '######')).toBe(
+      fixFormattedValue('0.00', 1.005, '1.00'),
+    )
+    expect(fixFormattedValue('[$]0.0000000000', 1.8744045912597986e-8, '######')).toBe(
+      '0.0000000187',
+    )
+    expect(fixFormattedValue('[$]0.00E+00', 1234.5, '######')).toBe('1.23E+03')
+  })
+
+  it('leaves locale-only and symbol-only tags to numfmt', () => {
+    expect(hostLocalePattern('[$-409]hh:mm;@')).toBe('[$-409]hh:mm;@')
+    expect(fixFormattedValue('[$-409]hh:mm;@', 0.25, '06:00')).toBeNull()
+    expect(hostLocalePattern('[$€]#,##0.00')).toBe('[$€]#,##0.00')
+    expect(fixFormattedValue('[$€]#,##0.00', 0.25, '€0.25')).toBeNull()
   })
 })

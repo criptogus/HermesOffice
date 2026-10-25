@@ -7,11 +7,20 @@ import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
+import '@hermesoffice/ui/ribbon-collapse.css'
+import '@hermesoffice/ui/markdown.css'
+import '@hermesoffice/ui/ai-panel-prefs.css'
+import '@hermesoffice/ui/ai-scope-quote.css'
+import '@hermesoffice/ui/image-viewer.css'
 import './styles.css'
 import './fonts/fonts.css'
-import { installScreenTips } from '@hermesoffice/ui'
+import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
+import { setAltChunkHtmlConverter } from '@hermesoffice/docx-engine'
 
 installScreenTips()
+if (window.desktop?.convertAltChunkHtml) {
+  setAltChunkHtmlConverter((html) => window.desktop.convertAltChunkHtml(html))
+}
 
 function applyTheme(theme: UiTheme): void {
   if (theme === 'system') document.documentElement.removeAttribute('data-theme')
@@ -35,6 +44,11 @@ async function bootstrap(): Promise<void> {
   document.documentElement.lang = htmlLang(lang)
   applyTheme(theme)
   window.desktop?.onThemeChanged(applyTheme)
+  void window.desktop
+    ?.getAiPanelPrefs?.()
+    .then(applyAiPanelPrefs)
+    .catch(() => {})
+  window.desktop?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   createRoot(document.getElementById('root')!).render(
     <LocaleProvider initial={lang}>
       <App />

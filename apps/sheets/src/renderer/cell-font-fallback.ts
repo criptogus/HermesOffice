@@ -11,11 +11,14 @@
  * names always fall to sans, matching Excel's substitution.
  */
 
+import carlitoBoldUrl from '@hermesoffice/ui/fonts/Carlito-Bold.ttf?url'
+import carlitoRegularUrl from '@hermesoffice/ui/fonts/Carlito-Regular.ttf?url'
+
 const GENERIC_FAMILY =
   /(?:^|[\s,])(?:serif|sans-serif|monospace|cursive|fantasy|system-ui|math|ui-serif|ui-sans-serif|ui-monospace|ui-rounded)$/i
 
 const SERIF_INTENT =
-  /mincho|明朝|simsun|songti|宋体|宋體|mingliu|明體|細明|batang|바탕|myeongjo|명조|roman|georgia|garamond|cambria|constantia|palatino|antiqua|didot|bodoni|baskerville|caslon|goudy|bookman|(?<!sans[-\s])serif/i
+  /mincho|明朝|simsun|songti|宋体|宋體|mingliu|明體|細明|kozmin|batang|바탕|myeongjo|명조|roman|playfair|merriweather|\blora\b|georgia|garamond|cambria|constantia|palatino|antiqua|didot|bodoni|baskerville|caslon|goudy|bookman|(?<!sans[-\s])serif/i
 
 /// Generic families never cover emoji code points on the canvas — without an
 /// explicit color-emoji face at the end of every chain, U+274C & friends draw
@@ -143,6 +146,9 @@ export interface CellFontAlias {
     readonly bold?: readonly string[]
     readonly sizeAdjust?: string
     readonly boldSizeAdjust?: string
+    /// Overrides the default U+0-2CFF span — Thai sits inside it, so Thai
+    /// aliases carve their own block out and keep it on the base face.
+    readonly unicodeRange?: string
   }
 }
 
@@ -152,7 +158,6 @@ const JP_SERIF = ['Hiragino Mincho ProN', 'HiraMinProN-W3'] as const
 const JP_SERIF_BOLD = ['HiraMinProN-W6', 'Hiragino Mincho ProN W6'] as const
 const YU_GOTHIC = ['Yu Gothic Regular', 'YuGothic-Regular', 'YuGothic Medium', 'YuGo-Medium']
 const YU_GOTHIC_BOLD = ['Yu Gothic Bold', 'YuGothic-Bold', 'YuGothic Bold', 'YuGo-Bold']
-const YU_GOTHIC_ALL_BOLD = [...YU_GOTHIC_BOLD, ...JP_SANS_BOLD]
 const YU_MINCHO = ['Yu Mincho Regular', 'YuMincho-Regular', 'YuMincho Medium', 'YuMin-Medium']
 const YU_MINCHO_BOLD = ['Yu Mincho Demibold', 'YuMincho-Demibold', 'YuMin-Demibold']
 const YU_MINCHO_ALL_BOLD = [...YU_MINCHO_BOLD, ...JP_SERIF_BOLD]
@@ -162,60 +167,256 @@ const KAI = ['KaiTi', 'Kaiti SC', 'STKaitiSC-Regular', 'STKaiti']
 const MING_TC = ['PMingLiU', 'Songti TC', 'Apple LiSung']
 const KR_SANS = ['Malgun Gothic', 'Apple SD Gothic Neo', 'AppleGothic']
 /// Carlito is bundled, not installed — local() alone can never resolve it.
-const CARLITO_SRC = [
-  'Carlito',
-  `url(${new URL('./fonts/Carlito-Regular.ttf', import.meta.url).href})`,
-]
-const CARLITO_BOLD_SRC = [
-  'Carlito Bold',
-  `url(${new URL('./fonts/Carlito-Bold.ttf', import.meta.url).href})`,
-]
+const CARLITO_SRC = ['Carlito', `url(${carlitoRegularUrl})`]
+const CARLITO_BOLD_SRC = ['Carlito Bold', `url(${carlitoBoldUrl})`]
 /// Malgun Gothic prints hangul at 1.0em — exactly AppleGothic — but digits at
 /// 0.6em vs AppleGothic's 0.68em, so number tails clipped while hangul was
 /// perfect. Latin/digit runs go to width-corrected Helvetica Neue instead.
+/// AppleGothic has no bold face, and Chromium picks a family's weight-700
+/// faces before consulting unicode-range, so without a base bold face bold
+/// hangul left the alias for the system fallback (Apple SD Gothic Neo Bold,
+/// 0.865em). Pin that face and scale it to Malgun's 1.0em; bold digits are
+/// 0.5796em (malgunbd.ttf hmtx) over Helvetica Neue Bold's 0.556em.
+const KR_SANS_BOLD = ['Apple SD Gothic Neo Bold', 'AppleSDGothicNeo-Bold']
+const KR_SANS_BOLD_ADJUST = '115.6%'
 const MALGUN_ALIAS: Omit<CellFontAlias, 'family'> = {
   regular: ['Malgun Gothic', 'AppleGothic'],
+  bold: KR_SANS_BOLD,
+  boldSizeAdjust: KR_SANS_BOLD_ADJUST,
   skipIfLocal: ['Malgun Gothic', 'MalgunGothic'],
   latin: {
     regular: ['Helvetica Neue'],
     sizeAdjust: '104%',
     bold: ['Helvetica Neue Bold'],
-    boldSizeAdjust: '109.4%',
+    boldSizeAdjust: '104.2%',
   },
 }
 const KR_SERIF = ['Batang', 'AppleMyungjo', 'Nanum Myeongjo']
 const TIMES_BOLD = ['Times New Roman Bold', 'TimesNewRomanPS-BoldMT']
 
-function jpGothic(family: string, genuine: readonly string[]): CellFontAlias {
-  return { family, regular: [...genuine, ...JP_SANS], bold: [...JP_SANS_BOLD] }
+type LatinSubFace = NonNullable<CellFontAlias['latin']>
+
+/// Width-corrected Latin/digit sub-face on Helvetica Neue (the design closest
+/// to the Office sans faces' Latin, and the face the other aliases use).
+function helveticaLatin(sizeAdjust: string, boldSizeAdjust: string): LatinSubFace {
+  return {
+    regular: ['Helvetica Neue'],
+    sizeAdjust,
+    bold: ['Helvetica Neue Bold'],
+    boldSizeAdjust,
+  }
+}
+
+// JP gothic substitutes. Kanji are 1.0em on both the Windows faces and
+// Hiragino Sans, so the base face needs no correction, but the Windows faces
+// keep much narrower Latin: MS (P/UI) Gothic digits are 0.5em (JIS
+// half-width) and Yu Gothic's 0.556em against Hiragino Sans' 0.657em, so
+// Latin/digit tails clipped in columns Excel had fitted. Ratios are
+// hmtx-exact (msgothic.ttc / YuGoth*.ttc / meiryo.ttc as shipped with Mac
+// Office) weighted by the Latin character mix of the ja prod refs (prod_022 /
+// prod_037 / prod_047 / prod_038 MS PGothic runs, 2191 non-space chars).
+// Known limit: MS PGothic / MS UI Gothic / Meiryo UI kana are proportional
+// (0.74-0.90em) while Hiragino kana stay 1.0em — kana-heavy strings remain
+// wider than Excel's; only the Latin range is corrected here.
+/// MS PGothic / MS UI Gothic: 0.5em digits vs Helvetica Neue 0.556em. The
+/// family has no bold face and Excel's synthetic bold keeps the regular
+/// advances, so the bold sub-face targets the same widths.
+const MS_GOTHIC_LATIN = helveticaLatin('90.9%', '90.1%')
+/// MS Gothic's Latin is half-width monospace (every glyph 0.5em); the
+/// proportional substitute pins digits — the alignment-critical class — at
+/// exactly 0.5em and lets letters average out around it.
+const MS_GOTHIC_MONO_LATIN = helveticaLatin('89.9%', '89.9%')
+/// Yu Gothic's Latin is metrically a Helvetica Neue clone (digits 0.5562em vs
+/// 0.556em); the bold face runs 3% wider.
+const YU_GOTHIC_LATIN = helveticaLatin('100.8%', '103.3%')
+const YU_GOTHIC_UI_LATIN = helveticaLatin('95.7%', '94.6%')
+/// Meiryo's Latin is the Verdana design (digits 0.621em vs Verdana 0.636em,
+/// uniform 97-98% across digits / capitals / lowercase), so Verdana keeps its
+/// look as well as its widths.
+const MEIRYO_LATIN: LatinSubFace = {
+  regular: ['Verdana'],
+  sizeAdjust: '97.6%',
+  bold: ['Verdana Bold', 'Verdana-Bold'],
+  boldSizeAdjust: '95.2%',
+}
+
+/// Hiragino base for kana/kanji plus a corrected Latin sub-face, registered
+/// only where the genuine face is absent; `genuine` doubles as the plain
+/// rename map (no correction) when it exists, since Chromium on macOS never
+/// matches localized family names ('ＭＳ Ｐゴシック' → 'MS PGothic').
+function jpGothic(
+  family: string,
+  genuine: readonly string[],
+  latin: LatinSubFace,
+  genuineBold?: readonly string[],
+): CellFontAlias {
+  return {
+    family,
+    regular: [...JP_SANS],
+    bold: [...JP_SANS_BOLD],
+    skipIfLocal: genuine,
+    whenGenuine: genuineBold ? { regular: genuine, bold: genuineBold } : { regular: genuine },
+    latin,
+  }
 }
 
 function jpMincho(family: string, genuine: readonly string[]): CellFontAlias {
   return { family, regular: [...genuine, ...JP_SERIF], bold: [...JP_SERIF_BOLD] }
 }
 
+// BIZ UD (Morisawa universal-design faces bundled with Windows 10+; macOS
+// offers BIZ UDGothic / UDMincho as downloadable assets). Chromium on macOS
+// never matches the localized spellings, so the English family is listed
+// first and the plain JP chain closes the gap where the asset is absent.
+const BIZ_UD_GOTHIC = ['BIZ UDGothic', 'BIZUDGothic-Regular']
+const BIZ_UD_GOTHIC_BOLD = ['BIZ UDGothic Bold', 'BIZUDGothic-Bold']
+const BIZ_UD_MINCHO = ['BIZ UDMincho', 'BIZUDMincho-Regular']
+
+// Office-for-Mac HG faces (Ricoh; app-private DFonts Chromium cannot see).
+// The heavy-by-name families (UB / E) are authored without <b/>, so the
+// regular slot itself comes from a heavy Hiragino weight; W0-W9 ship with
+// macOS, the W6 tail covers older hosts.
+const HIRAGINO_W7 = ['Hiragino Sans W7', 'HiraginoSans-W7', ...JP_SANS_BOLD]
+const HIRAGINO_W8 = ['Hiragino Sans W8', 'HiraginoSans-W8', ...JP_SANS_BOLD]
+const HIRAGINO_W9 = ['Hiragino Sans W9', 'HiraginoSans-W9']
+const HIRAGINO_MARU = ['Hiragino Maru Gothic ProN', 'HiraMaruProN-W4']
+
+function hgHeavy(
+  family: string,
+  genuine: string,
+  regular: readonly string[],
+  bold?: readonly string[],
+): CellFontAlias {
+  return bold
+    ? { family, regular: [genuine, ...regular], bold }
+    : { family, regular: [genuine, ...regular] }
+}
+
+// Fixed-pitch twins of the Windows Korean faces (GulimChe / DotumChe /
+// BatangChe): hangul is 1.0em like AppleGothic, every Latin glyph is
+// half-width (0.5em, gulim.ttc / batang.ttc hmtx), so the Latin sub-face
+// reuses the MS Gothic digit pinning and Times New Roman's exact 0.5em
+// digits stand in for the serif twin.
+function krFixedPitch(family: string, genuine: string, serif = false): CellFontAlias {
+  const base = {
+    family,
+    skipIfLocal: [genuine],
+    whenGenuine: { regular: [genuine] },
+  }
+  if (serif) return { ...base, regular: KR_SERIF, latin: { regular: ['Times New Roman'] } }
+  return {
+    ...base,
+    regular: ['AppleGothic', 'Apple SD Gothic Neo'],
+    bold: KR_SANS_BOLD,
+    boldSizeAdjust: KR_SANS_BOLD_ADJUST,
+    latin: MS_GOTHIC_MONO_LATIN,
+  }
+}
+
+/// Adobe Kozuka Mincho PostScript names as written by PDF-derived workbooks.
+function kozukaMincho(base: string): CellFontAlias[] {
+  return [
+    jpMincho(`${base}-Regular`, [`${base}-Regular`]),
+    jpMincho(`${base}-Medium`, [`${base}-Medium`]),
+    { family: `${base}-Bold`, regular: [`${base}-Bold`, ...JP_SERIF_BOLD] },
+  ]
+}
+
+// Thai Office faces (Cordia New / Angsana New / TH Sarabun; the UPC spellings
+// are the same designs under the Thai-codepage names) are absent on macOS.
+// Their glyphs sit very small in the em box — Cordia New digits are 0.3645em
+// and its Thai consonants ~0.30em weighted — while Thonburi, the macOS Thai
+// face, draws Thai at ~0.44em and digits at 0.666em, so table headers Excel
+// had fitted clipped by a third (prod_066). Thai glyphs go to Thonburi and
+// the Latin/digit range to a Latin face, each with its own size-adjust; Thai
+// combining marks are zero-width on both sides. Ratios are hmtx-exact from
+// the font files Mac Office ships app-private (cordia.ttc / angsa.ttf /
+// thsarabun.ttf) weighted by prod_066's character mix (3376 Thai / 7434
+// Latin chars, 4531 of them digits), and agree with the glyph positions of
+// its Excel reference print within 0.4%.
+const THAI_SANS = ['Thonburi']
+const THAI_SANS_BOLD = ['Thonburi-Bold', 'Thonburi Bold']
+/// Thai aliases keep U+0E00-0E7F on the base face.
+const LATIN_RANGE_EXCLUDING_THAI = 'U+0-DFF, U+E80-2CFF'
+
+interface ThaiAliasMetrics {
+  /// Thonburi size-adjust for the Thai block (regular / bold).
+  readonly thai: string
+  readonly thaiBold: string
+  readonly latin: LatinSubFace
+}
+
+function thaiAlias(
+  family: string,
+  skipIfLocal: readonly string[],
+  metrics: ThaiAliasMetrics,
+): CellFontAlias {
+  return {
+    family,
+    regular: THAI_SANS,
+    sizeAdjust: metrics.thai,
+    bold: THAI_SANS_BOLD,
+    boldSizeAdjust: metrics.thaiBold,
+    skipIfLocal,
+    latin: { ...metrics.latin, unicodeRange: LATIN_RANGE_EXCLUDING_THAI },
+  }
+}
+
+/// Cordia New: Thai 0.2975em (bold 0.3505em) vs Thonburi 0.4423em; Latin
+/// 0.3267em vs Helvetica Neue 0.5029em. Helvetica Neue at 65% also lands
+/// Cordia's cap height (0.714 × 0.65 = 0.464em vs 0.469em).
+const CORDIA_METRICS: ThaiAliasMetrics = {
+  thai: '67.3%',
+  thaiBold: '74.1%',
+  latin: helveticaLatin('65%', '66%'),
+}
+/// Angsana New's Latin is Times New Roman scaled to 66% — every class
+/// (digits / capitals / lowercase) gives the same ratio — so it keeps its
+/// serif look; Thai 0.2972em vs Thonburi 0.4449em.
+const ANGSANA_METRICS: ThaiAliasMetrics = {
+  thai: '66.8%',
+  thaiBold: '66.9%',
+  latin: {
+    regular: ['Times New Roman'],
+    sizeAdjust: '66%',
+    bold: TIMES_BOLD,
+    boldSizeAdjust: '66%',
+  },
+}
+/// TH SarabunPSK: Thai 0.2882em (bold 0.3007em) vs Thonburi 0.4449em; Latin
+/// 0.3252em (bold 0.3406em) vs Helvetica Neue 0.5013em (bold 0.5068em). TH
+/// Sarabun New is the SIPA re-release of the same design with the same
+/// advance widths.
+const SARABUN_METRICS: ThaiAliasMetrics = {
+  thai: '64.8%',
+  thaiBold: '67.6%',
+  latin: helveticaLatin('64.9%', '67.2%'),
+}
+
 export const CELL_FONT_ALIASES: readonly CellFontAlias[] = [
   // JP gothic (sans intent), incl. fullwidth spellings
-  jpGothic('ＭＳ Ｐゴシック', ['MS PGothic']),
-  jpGothic('ＭＳ ゴシック', ['MS Gothic']),
-  jpGothic('MS PGothic', ['MS PGothic']),
-  jpGothic('MS Gothic', ['MS Gothic']),
-  jpGothic('MS UI Gothic', ['MS UI Gothic']),
-  { family: 'メイリオ', regular: ['Meiryo', ...JP_SANS], bold: ['Meiryo Bold', ...JP_SANS_BOLD] },
-  { family: 'Meiryo', regular: ['Meiryo', ...JP_SANS], bold: ['Meiryo Bold', ...JP_SANS_BOLD] },
-  {
-    family: 'Meiryo UI',
-    regular: ['Meiryo UI', ...JP_SANS],
-    bold: ['Meiryo UI Bold', ...JP_SANS_BOLD],
-  },
-  { family: '游ゴシック', regular: [...YU_GOTHIC, ...JP_SANS], bold: YU_GOTHIC_ALL_BOLD },
-  { family: '游ゴシック体', regular: [...YU_GOTHIC, ...JP_SANS], bold: YU_GOTHIC_ALL_BOLD },
-  { family: 'Yu Gothic', regular: [...YU_GOTHIC, ...JP_SANS], bold: YU_GOTHIC_ALL_BOLD },
-  {
-    family: 'Yu Gothic UI',
-    regular: ['Yu Gothic UI', ...YU_GOTHIC, ...JP_SANS],
-    bold: ['Yu Gothic UI Bold', ...YU_GOTHIC_ALL_BOLD],
-  },
+  jpGothic('ＭＳ Ｐゴシック', ['MS PGothic', 'MS-PGothic'], MS_GOTHIC_LATIN),
+  jpGothic('ＭＳ ゴシック', ['MS Gothic', 'MS-Gothic'], MS_GOTHIC_MONO_LATIN),
+  jpGothic('MS PGothic', ['MS PGothic', 'MS-PGothic'], MS_GOTHIC_LATIN),
+  jpGothic('MS Gothic', ['MS Gothic', 'MS-Gothic'], MS_GOTHIC_MONO_LATIN),
+  jpGothic('MS UI Gothic', ['MS UI Gothic', 'MS-UIGothic'], MS_GOTHIC_LATIN),
+  jpGothic('メイリオ', ['Meiryo'], MEIRYO_LATIN, ['Meiryo Bold', 'Meiryo-Bold']),
+  jpGothic('Meiryo', ['Meiryo'], MEIRYO_LATIN, ['Meiryo Bold', 'Meiryo-Bold']),
+  jpGothic('Meiryo UI', ['Meiryo UI', 'MeiryoUI'], MEIRYO_LATIN, [
+    'Meiryo UI Bold',
+    'MeiryoUI-Bold',
+  ]),
+  // Yu Gothic: the genuine gate also accepts the optional macOS YuGothic
+  // faces (Medium stands in for Regular, as before).
+  jpGothic('游ゴシック', ['Yu Gothic', ...YU_GOTHIC], YU_GOTHIC_LATIN, YU_GOTHIC_BOLD),
+  jpGothic('游ゴシック体', ['Yu Gothic', ...YU_GOTHIC], YU_GOTHIC_LATIN, YU_GOTHIC_BOLD),
+  jpGothic('Yu Gothic', ['Yu Gothic', ...YU_GOTHIC], YU_GOTHIC_LATIN, YU_GOTHIC_BOLD),
+  jpGothic(
+    'Yu Gothic UI',
+    ['Yu Gothic UI', 'YuGothicUI-Regular', ...YU_GOTHIC],
+    YU_GOTHIC_UI_LATIN,
+    ['Yu Gothic UI Bold', 'YuGothicUI-Bold', ...YU_GOTHIC_BOLD],
+  ),
   // JP mincho (serif intent — keep serif under the sans last-resort)
   jpMincho('ＭＳ 明朝', ['MS Mincho']),
   jpMincho('ＭＳ Ｐ明朝', ['MS PMincho']),
@@ -223,6 +424,57 @@ export const CELL_FONT_ALIASES: readonly CellFontAlias[] = [
   jpMincho('MS PMincho', ['MS PMincho']),
   { family: '游明朝', regular: [...YU_MINCHO, ...JP_SERIF], bold: YU_MINCHO_ALL_BOLD },
   { family: 'Yu Mincho', regular: [...YU_MINCHO, ...JP_SERIF], bold: YU_MINCHO_ALL_BOLD },
+  ...kozukaMincho('KozMinPro'),
+  ...kozukaMincho('KozMinPr6N'),
+  // BIZ UD Gothic / UDP Gothic / UD Mincho / UDP Mincho (localized spellings)
+  {
+    family: 'BIZ UD\u30b4\u30b7\u30c3\u30af',
+    regular: [...BIZ_UD_GOTHIC, ...JP_SANS],
+    bold: [...BIZ_UD_GOTHIC_BOLD, ...JP_SANS_BOLD],
+  },
+  {
+    family: 'BIZ UDP\u30b4\u30b7\u30c3\u30af',
+    regular: ['BIZ UDPGothic', 'BIZUDPGothic-Regular', ...BIZ_UD_GOTHIC, ...JP_SANS],
+    bold: ['BIZ UDPGothic Bold', 'BIZUDPGothic-Bold', ...BIZ_UD_GOTHIC_BOLD, ...JP_SANS_BOLD],
+  },
+  { family: 'BIZ UD\u660e\u671d', regular: [...BIZ_UD_MINCHO, ...JP_SERIF], bold: JP_SERIF_BOLD },
+  {
+    family: 'BIZ UDP\u660e\u671d',
+    regular: ['BIZ UDPMincho', 'BIZUDPMincho-Regular', ...BIZ_UD_MINCHO, ...JP_SERIF],
+    bold: JP_SERIF_BOLD,
+  },
+  // HG Soei Kaku Gothic UB (HGP / HGS / HG spellings)
+  hgHeavy(
+    'HGP\u5275\u82f1\u89d2\uff7a\uff9e\uff7c\uff6f\uff78UB',
+    'HGPSoeiKakugothicUB',
+    HIRAGINO_W8,
+    HIRAGINO_W9,
+  ),
+  hgHeavy(
+    'HGS\u5275\u82f1\u89d2\uff7a\uff9e\uff7c\uff6f\uff78UB',
+    'HGSSoeiKakugothicUB',
+    HIRAGINO_W8,
+    HIRAGINO_W9,
+  ),
+  hgHeavy(
+    'HG\u5275\u82f1\u89d2\uff7a\uff9e\uff7c\uff6f\uff78UB',
+    'HGSoeiKakugothicUB',
+    HIRAGINO_W8,
+    HIRAGINO_W9,
+  ),
+  // HG Gothic E
+  hgHeavy('HGP\uff7a\uff9e\uff7c\uff6f\uff78E', 'HGPGothicE', HIRAGINO_W7, HIRAGINO_W9),
+  hgHeavy('HGS\uff7a\uff9e\uff7c\uff6f\uff78E', 'HGSGothicE', HIRAGINO_W7, HIRAGINO_W9),
+  hgHeavy('HG\uff7a\uff9e\uff7c\uff6f\uff78E', 'HGGothicE', HIRAGINO_W7, HIRAGINO_W9),
+  // HG Mincho E (serif intent; Hiragino Mincho has no weight above W6)
+  hgHeavy('HGP\u660e\u671dE', 'HGPMinchoE', JP_SERIF_BOLD),
+  hgHeavy('HGS\u660e\u671dE', 'HGSMinchoE', JP_SERIF_BOLD),
+  hgHeavy('HG\u660e\u671dE', 'HGMinchoE', JP_SERIF_BOLD),
+  // HG Maru Gothic M-PRO (rounded, medium weight)
+  {
+    family: 'HG\u4e38\uff7a\uff9e\uff7c\uff6f\uff78M-PRO',
+    regular: ['HGMaruGothicMPRO', ...HIRAGINO_MARU, ...JP_SANS],
+  },
   // Simplified CJK
   { family: '宋体', regular: SONG, bold: SONG_BOLD },
   { family: 'SimSun', regular: SONG, bold: SONG_BOLD },
@@ -263,6 +515,14 @@ export const CELL_FONT_ALIASES: readonly CellFontAlias[] = [
   { family: '바탕', regular: KR_SERIF },
   { family: 'Gungsuh', regular: ['Gungsuh', 'AppleMyungjo'] },
   { family: '궁서', regular: ['Gungsuh', 'AppleMyungjo'] },
+  krFixedPitch('GulimChe', 'GulimChe'),
+  krFixedPitch('\uad74\ub9bc\uccb4', 'GulimChe'),
+  krFixedPitch('DotumChe', 'DotumChe'),
+  krFixedPitch('\ub3cb\uc6c0\uccb4', 'DotumChe'),
+  krFixedPitch('BatangChe', 'BatangChe', true),
+  krFixedPitch('\ubc14\ud0d5\uccb4', 'BatangChe', true),
+  { family: 'GungsuhChe', regular: ['GungsuhChe', 'Gungsuh', 'AppleMyungjo'] },
+  { family: '\uad81\uc11c\uccb4', regular: ['GungsuhChe', 'Gungsuh', 'AppleMyungjo'] },
   // Office Latin serif faces absent on macOS (serif intent)
   {
     family: 'Cambria',
@@ -277,12 +537,52 @@ export const CELL_FONT_ALIASES: readonly CellFontAlias[] = [
   },
   { family: 'Palatino Linotype', regular: ['Palatino Linotype', 'Palatino', 'Book Antiqua'] },
   { family: 'Book Antiqua', regular: ['Book Antiqua', 'Palatino'] },
+  // Office-for-Mac DFonts Chromium cannot see: the stock macOS design stands
+  // in. Baskerville Old Face has no genuine bold anywhere, so its bold chain
+  // stays macOS-only and the Windows path keeps synthetic bold.
+  {
+    family: 'Baskerville Old Face',
+    regular: ['Baskerville Old Face', 'BaskOldFace', 'Baskerville', 'Times New Roman'],
+    bold: ['Baskerville Bold', 'Baskerville-Bold'],
+  },
   {
     family: 'Times New Roman',
     regular: ['Times New Roman', 'Times', 'Georgia'],
     bold: TIMES_BOLD,
   },
   { family: 'PT Serif', regular: ['PT Serif', 'Times New Roman', 'Georgia'] },
+  // Google serif faces Office fetches as cloud fonts (Excel draws the real
+  // serif; nothing local on macOS): a stock serif of the same class stands in.
+  {
+    family: 'Playfair Display',
+    regular: ['Playfair Display', 'Didot', 'Georgia'],
+    bold: ['Playfair Display Bold', 'Didot Bold', 'Didot-Bold', 'Georgia Bold'],
+  },
+  {
+    family: 'EB Garamond',
+    regular: ['EB Garamond', 'Garamond', 'Times New Roman'],
+    bold: ['EB Garamond Bold', 'Garamond Bold', ...TIMES_BOLD],
+  },
+  {
+    family: 'Merriweather',
+    regular: ['Merriweather', 'Georgia', 'Times New Roman'],
+    bold: ['Merriweather Bold', 'Georgia Bold', ...TIMES_BOLD],
+  },
+  {
+    family: 'Lora',
+    regular: ['Lora', 'Georgia', 'Times New Roman'],
+    bold: ['Lora Bold', 'Georgia Bold', ...TIMES_BOLD],
+  },
+  {
+    family: 'Libre Baskerville',
+    regular: ['Libre Baskerville', 'Baskerville', 'Times New Roman'],
+    bold: ['Libre Baskerville Bold', 'Baskerville Bold', 'Baskerville-Bold', ...TIMES_BOLD],
+  },
+  {
+    family: 'Gill Sans MT',
+    regular: ['Gill Sans MT', 'GillSansMT', 'Gill Sans', 'GillSans'],
+    bold: ['Gill Sans MT Bold', 'GillSansMT-Bold', 'Gill Sans Bold', 'GillSans-Bold'],
+  },
   // Width-corrected substitutes for fonts absent on macOS. Excel sized the
   // author's columns for the original font; a substitute with different
   // advances clips tail characters or wraps an extra line. size-adjust values
@@ -337,6 +637,13 @@ export const CELL_FONT_ALIASES: readonly CellFontAlias[] = [
     family: 'Avenir Next LT Pro Light',
     regular: ['AvenirNextLTPro-Lt', 'Helvetica Neue'],
   },
+  // Thai Office faces (see THAI_SANS above)
+  thaiAlias('Cordia New', ['Cordia New', 'CordiaNew'], CORDIA_METRICS),
+  thaiAlias('CordiaUPC', ['CordiaUPC'], CORDIA_METRICS),
+  thaiAlias('Angsana New', ['Angsana New', 'AngsanaNew'], ANGSANA_METRICS),
+  thaiAlias('AngsanaUPC', ['AngsanaUPC'], ANGSANA_METRICS),
+  thaiAlias('TH SarabunPSK', ['TH SarabunPSK', 'THSarabunPSK'], SARABUN_METRICS),
+  thaiAlias('TH Sarabun New', ['TH Sarabun New', 'THSarabunNew'], SARABUN_METRICS),
 ]
 
 const ALIAS_FAMILY_NAMES: ReadonlySet<string> = new Set(
@@ -372,7 +679,7 @@ function faceSrc(items: readonly string[]): string {
 
 function genuineLocalExists(names: readonly string[]): Promise<boolean> {
   const probes = names.map((n) =>
-    new FontFace('__hermesoffice-font-probe', `local('${n}')`).load().then(
+    new FontFace('__genoffice-font-probe', `local('${n}')`).load().then(
       () => true,
       () => false,
     ),
@@ -390,7 +697,7 @@ function addFace(
   loads: Promise<unknown>[],
 ): void {
   try {
-    const face = new FontFace(family, faceSrc(src), descriptors)
+    const face = new FontFace(family, faceSrc(src), { display: 'block', ...descriptors })
     document.fonts.add(face)
     loads.push(face.load().catch(() => {}))
   } catch {
@@ -409,17 +716,18 @@ function registerAlias(alias: CellFontAlias, loads: Promise<unknown>[]): void {
     addFace(family, alias.bold, { weight: '700', sizeAdjust: alias.boldSizeAdjust }, loads)
   const latin = alias.latin
   if (!latin) return
+  const unicodeRange = latin.unicodeRange ?? LATIN_RANGE
   addFace(
     family,
     latin.regular,
-    { weight: '400', sizeAdjust: latin.sizeAdjust, unicodeRange: LATIN_RANGE },
+    { weight: '400', sizeAdjust: latin.sizeAdjust, unicodeRange },
     loads,
   )
   if (latin.bold)
     addFace(
       family,
       latin.bold,
-      { weight: '700', sizeAdjust: latin.boldSizeAdjust, unicodeRange: LATIN_RANGE },
+      { weight: '700', sizeAdjust: latin.boldSizeAdjust, unicodeRange },
       loads,
     )
 }

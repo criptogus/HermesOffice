@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { growPivotDefinition, recomputePivotData } from '../src/domain/pivot-engine'
-import { createBufferEntrySource, planCellEditsToXlsx } from '../src/gateway/xlsx-gateway'
-import type { SheetPivotAddition } from '../src/gateway/xlsx-gateway'
-import { parsePivotDefinition } from '../src/gateway/xlsx-pivot'
+import {
+  growPivotDefinition,
+  recomputePivotData,
+} from '@hermesoffice/xlsx-gateway/domain/pivot-engine'
+import {
+  createBufferEntrySource,
+  planCellEditsToXlsx,
+} from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import type { SheetPivotAddition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-gateway'
+import { parsePivotDefinition } from '@hermesoffice/xlsx-gateway/gateway/xlsx-pivot'
 import { buildEditFixture } from './fixture-builder'
 
 function pivotAddition(overrides: Partial<SheetPivotAddition> = {}): SheetPivotAddition {

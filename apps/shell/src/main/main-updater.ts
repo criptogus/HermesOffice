@@ -337,6 +337,14 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
   showUpdateWindow(getWindow(), initialState(newVersion), actions)
 }
 
+/** Manual checks obey the same source-build opt-in as automatic checks. */
+export async function checkMainUpdatesNow(getWindow: () => BrowserWindow | null): Promise<void> {
+  if (!app.isPackaged || process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE !== '1') return
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return
+  dismissedCommit = null
+  await checkForUpdate(getWindow)
+}
+
 export function initMainUpdater(getWindow: () => BrowserWindow | null): void {
   if (started) return
   started = true

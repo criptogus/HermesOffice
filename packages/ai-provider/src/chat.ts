@@ -1,6 +1,7 @@
 import { chatAnthropic } from './protocols/anthropic'
 import { chatGemini } from './protocols/gemini'
 import { chatOpenAiCompatible } from './protocols/openai-compatible'
+import { chatCodexAppServer } from './codex-app-server'
 import { getProviderAdapter, type ResolvedEndpoint } from './registry'
 import type { AiChatResponse, AiProviderConfig, AiProviderId } from './types'
 import { AI_CHAT_RESPONSE_TIMEOUT_MS, createStreamWatchdog } from './watchdog'
@@ -29,15 +30,19 @@ export async function chatForProvider(
       })
     }
     switch (endpoint.protocol) {
+      case 'codex-app-server':
+        return chatCodexAppServer(config, system, user, wd.signal)
       case 'anthropic':
         return chatAnthropic(wd, config, system, user, endpoint.baseUrl)
       case 'gemini':
-        return chatGemini(wd, config, system, user, endpoint.baseUrl)
+        return chatGemini(wd, config, system, user, endpoint.baseUrl, {
+          omitTemperature: endpoint.omitTemperature,
+        })
       case 'openai-compatible':
         return chatOpenAiCompatible(wd, endpoint.baseUrl, config, system, user, {
           omitTemperature: endpoint.omitTemperature,
           bodyExtras: endpoint.bodyExtras,
-          ...(sessionId ? { extraHeaders: { 'X-Hermes-Session-Id': sessionId } } : {}),
+          extraHeaders: sessionId ? { 'X-Hermes-Session-Id': sessionId } : {},
         })
     }
   })
