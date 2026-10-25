@@ -302,7 +302,7 @@ import { isUpdateChannel, type UpdateChannel } from '../shared/update-api'
 // run silently quits and forwards its argv to the running installed HermesOffice.
 // HERMESOFFICE_USER_DATA: test drivers point this at a scratch dir so an
 // automated instance can run alongside the dev instance (separate lock).
-if (!app.isPackaged)
+if (process.env.HERMESOFFICE_USER_DATA || !app.isPackaged)
   app.setPath(
     'userData',
     process.env.HERMESOFFICE_USER_DATA ?? join(app.getPath('appData'), 'HermesOffice Dev'),
