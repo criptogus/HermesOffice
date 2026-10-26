@@ -64,6 +64,7 @@ import {
   checkUpdatesMenuItem,
   setUpdateCheckInvoker,
   installRendererProtocol,
+  safeExternalUrl,
 } from '@hermesoffice/electron-utils'
 import { readAppSettings, writeAppSetting, writeAppSettings } from './app-settings'
 import { OPEN_DOCUMENTS_FILE, clearOpenDocuments, publishOpenDocuments } from './open-documents'
@@ -3937,7 +3938,8 @@ function registerHomeIpc(): void {
   ipcMain.handle(HOME_CHANNELS.cloudProjects, () => syncCloudProjects(cloudProjectsStorePath()))
 
   ipcMain.handle(HOME_CHANNELS.openCloudProject, (_event, projectUrl: unknown) => {
-    const url = cloudProjectExternalUrl(projectUrl)
+    const rawUrl = cloudProjectExternalUrl(projectUrl)
+    const url = safeExternalUrl(rawUrl)
     if (url) void shell.openExternal(url)
   })
 }
