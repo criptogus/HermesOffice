@@ -11,7 +11,7 @@
  */
 import { closeSync, openSync } from 'node:fs'
 
-import { getFontIndex, norm, readTable, readTableDir, styleScore } from './sfnt'
+import { bestStyleMatch, getFontIndex, norm, readTable, readTableDir } from './sfnt'
 import type { FaceRef } from './sfnt'
 
 export interface AdvanceStyle {
@@ -193,20 +193,22 @@ export function advanceWidths(
   const candidates = getFontIndex().byFamily.get(norm(family))
   if (!candidates?.length) return null
   const want = styleTokensOf(style)
-  const face = [...candidates].sort((a, b) => styleScore(b, want) - styleScore(a, want))[0]!
+  const face = bestStyleMatch(candidates, want)
+  if (!face) return null
   const parsed = faceAdvances(face)
   if (!parsed) return null
   const scale = (sizePt * 20) / parsed.unitsPerEm
   const out: number[] = []
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!
     const glyph = glyphOf(parsed, cp)
     if (glyph === 0 && cp !== 0) {
       out.push(NaN)
-      continue
+    } else {
+      const aw = parsed.advances[Math.min(glyph, parsed.advances.length - 1)]!
+      out.push(aw * scale)
     }
-    const aw = parsed.advances[Math.min(glyph, parsed.advances.length - 1)]!
-    out.push(aw * scale)
+    i += cp > 0xffff ? 2 : 1
   }
   return out
 }

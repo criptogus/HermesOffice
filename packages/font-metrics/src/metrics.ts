@@ -10,7 +10,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { getFontIndex, norm, readTable, readTableDir, styleScore } from './sfnt'
+import { bestStyleMatch, getFontIndex, norm, readTable, readTableDir } from './sfnt'
 
 export interface FaceVerticalMetrics {
   unitsPerEm: number
@@ -120,9 +120,7 @@ export function familyVerticalMetrics(family: string): FaceVerticalMetrics | nul
   if (hit && cacheValid(hit)) return hit.m
 
   const candidates = getFontIndex().byFamily.get(key)
-  const face = candidates?.length
-    ? [...candidates].sort((a, b) => styleScore(b, []) - styleScore(a, []))[0]
-    : undefined
+  const face = candidates?.length ? bestStyleMatch(candidates, []) : undefined
   if (!face) {
     misses.add(key)
     if (hit) {
