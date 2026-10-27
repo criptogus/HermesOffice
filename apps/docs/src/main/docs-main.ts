@@ -80,6 +80,7 @@ import {
   isAiNetworkError,
   isAiOverloadedError,
   chatForProvider,
+  activeProvider,
   defaultAiSettings,
   testMediaProvider,
   type AiMediaProviderConfig,
@@ -2893,7 +2894,8 @@ export function registerAiIpc(): void {
       writeJson(SETTINGS_PATH(), stored)
     }
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // Preserve the explicitly selected backend; Hermes remains the default.
+    // Honor usable saved providers; incomplete configurations fall back to Hermes.
+    settings.provider = activeProvider(settings)
     return settings
   })
 

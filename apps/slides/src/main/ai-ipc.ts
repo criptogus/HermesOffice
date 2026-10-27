@@ -21,6 +21,7 @@ import {
   AiTimeoutError,
   isAiNetworkError,
   isAiOverloadedError,
+  activeProvider,
   defaultAiSettings,
   maxOutputTokensOf,
   resolveAiSettings,
@@ -109,7 +110,8 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // Preserve the explicitly selected backend; Hermes remains the default.
+    // Honor usable saved providers; incomplete configurations fall back to Hermes.
+    settings.provider = activeProvider(settings)
     return settings
   })
 
