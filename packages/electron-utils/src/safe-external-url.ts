@@ -17,10 +17,15 @@ const DEFAULT_PROTOCOLS: readonly string[] = ['http:', 'https:']
  * input. Trims because the WHATWG parser silently strips surrounding
  * whitespace, so validating the raw input but returning it verbatim would
  * hand `shell.openExternal` a URL that fails there.
+ * Rejects strings containing unencoded ASCII control characters (\x00-\x1f, \x7f)
+ * to prevent CRLF/tab injection or scheme parser bypasses when opening externally.
  */
 export function safeExternalUrl(url: unknown, options?: SafeExternalUrlOptions): string | null {
   if (typeof url !== 'string') return null
   const text = url.trim()
+  // Reject embedded unencoded control characters (e.g. tabs, newlines, null bytes)
+  // eslint-disable-next-line no-control-regex -- intentionally reject raw ASCII controls
+  if (/[\x00-\x1f\x7f]/.test(text)) return null
   let parsed: URL
   try {
     parsed = new URL(text)
