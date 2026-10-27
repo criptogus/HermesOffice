@@ -63,6 +63,7 @@ import {
   isAiNetworkError,
   isAiOverloadedError,
   chatForProvider,
+  activeProvider,
   defaultAiSettings,
   maxOutputTokensOf,
   resolveAiSettings,
@@ -3250,8 +3251,8 @@ export function registerSheetsAiIpc(): void {
     sessionFor(event)
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
-    settings.provider = 'hermes'
+    // Honor usable saved providers; incomplete configurations fall back to Hermes.
+    settings.provider = activeProvider(settings)
     return settings
   })
 
