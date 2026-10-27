@@ -16,18 +16,36 @@ import { buildNumberingConfig } from './numbering'
 import { spacerParagraph } from './word-utils'
 import zlib from 'node:zlib'
 
+// Optimized partitionIr: single-pass O(N) traversal to partition intermediate representation (IR) nodes.
+// Reduces array scans from 5 passes (4x find + 1x filter) to 1 pass.
 function partitionIr(ir) {
-  const docSettings = ir.find((node) => node.type === 'docsettings')
-  const pageBgNode = ir.find((node) => node.type === 'pagebg')
-  const headerNode = ir.find((node) => node.type === 'headerpart')
-  const footerNode = ir.find((node) => node.type === 'footerpart')
-  const bodyIr = ir.filter(
-    (node) =>
-      node.type !== 'docsettings' &&
-      node.type !== 'pagebg' &&
-      node.type !== 'headerpart' &&
-      node.type !== 'footerpart',
-  )
+  let docSettings
+  let pageBgNode
+  let headerNode
+  let footerNode
+  const bodyIr = []
+
+  for (let i = 0; i < ir.length; i++) {
+    const node = ir[i]
+    switch (node.type) {
+      case 'docsettings':
+        if (!docSettings) docSettings = node
+        break
+      case 'pagebg':
+        if (!pageBgNode) pageBgNode = node
+        break
+      case 'headerpart':
+        if (!headerNode) headerNode = node
+        break
+      case 'footerpart':
+        if (!footerNode) footerNode = node
+        break
+      default:
+        bodyIr.push(node)
+        break
+    }
+  }
+
   return { bodyIr, docSettings, footerNode, headerNode, pageBgNode }
 }
 
