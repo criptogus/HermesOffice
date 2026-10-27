@@ -73,7 +73,7 @@ export interface AgentLoopOptions<TSnapshot = unknown> {
    * A getter is evaluated at request time so re-opened panels reuse the id.
    */
   sessionId?: string | (() => string | undefined)
-  /** Resolve document identity before any request; transcript loading need not block the run. */
+  /** Resolve document identity and restore its transcript before any request. */
   waitForSession?(): Promise<unknown>
 }
 
@@ -244,6 +244,8 @@ export class AgentLoop<TSnapshot = unknown> {
     this.options = options
   }
 
+  private waitingForSession = false
+
   get busy(): boolean {
     return this.running
   }
@@ -255,12 +257,17 @@ export class AgentLoop<TSnapshot = unknown> {
   /**
    * Seed the conversation with restored history (e.g. transcript reloaded from
    * disk when a document reopens), so follow-up instructions keep their context.
-   * No-op unless the loop is idle with an empty history.
+   * No-op unless history is empty and the loop is idle or waiting for restoration.
    * Old messages over the compaction budget fold into a mechanical digest
    * (no LLM request on restore, guaranteeing zero latency).
    */
   restore(messages: readonly AgentMessage[]): void {
-    if (this.running || this.history.length > 0 || messages.length === 0) return
+    if (
+      (this.running && !this.waitingForSession) ||
+      this.history.length > 0 ||
+      messages.length === 0
+    )
+      return
     // Edits-only runs persist an assistant message with no text; give it a placeholder
     // so the turn stays paired and providers never see an empty assistant content block.
     // Turn-limit notes persisted by older builds are stripped: they are stale
@@ -324,6 +331,7 @@ export class AgentLoop<TSnapshot = unknown> {
   /** Compact (if needed), push the user message, then start the turn. Compaction failure doesn't block the run. */
   private async beginRun(userMsg: AgentMessage): Promise<void> {
     const generation = this.generation
+    this.waitingForSession = !!this.options.waitForSession
     try {
       if (this.options.waitForSession) await this.options.waitForSession()
     } catch (error) {
@@ -335,6 +343,8 @@ export class AgentLoop<TSnapshot = unknown> {
         this.options.events?.onError?.(error instanceof Error ? error.message : String(error))
       }
       return
+    } finally {
+      if (generation === this.generation) this.waitingForSession = false
     }
     if (generation !== this.generation) return
     try {

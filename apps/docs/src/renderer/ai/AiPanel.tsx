@@ -567,7 +567,6 @@ export function AiPanel({
     const tempChatId = `unsaved-${Date.now()}`
     const pendingChat = api.resolveChat({ filePath: filePath ?? null, tempChatId })
     sessionReadyRef.current = pendingChat
-    void pendingChat
       .then((ids) => {
         chatRefIds.current = ids
         return api.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
@@ -600,8 +599,9 @@ export function AiPanel({
         loopRef.current?.restore(msgs.map((m) => ({ role: m.role, text: m.text })))
       })
       .catch(() => {
-        /* history load failures are silent */
+        throw new Error('Could not restore this document history. Reopen the document and retry.')
       })
+    void sessionReadyRef.current.catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -633,27 +633,31 @@ export function AiPanel({
     attachments?: AttachmentMeta[],
     scope?: AiScopeQuoteData,
   ) => {
-    const ids = chatRefIds.current
+    const idsAtSend = chatRefIds.current
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
-    if (!ids || !api) return
-    void api
-      .appendChat({
-        projectId: ids.projectId,
-        chatId: ids.chatId,
-        role,
-        text,
-        ...(tools && tools.length > 0 ? { tools } : {}),
-        ...(attachments && attachments.length > 0
-          ? {
-              attachments: attachments.map((a) => ({
-                name: a.name,
-                path: a.path,
-                ext: a.ext,
-                sizeBytes: a.sizeBytes,
-              })),
-            }
-          : {}),
-        ...(scope ? { scope } : {}),
+    if (!api) return
+    void (sessionReadyRef.current ?? Promise.resolve())
+      .then(() => {
+        const ids = idsAtSend ?? chatRefIds.current
+        if (!ids) return
+        return api.appendChat({
+          projectId: ids.projectId,
+          chatId: ids.chatId,
+          role,
+          text,
+          ...(tools && tools.length > 0 ? { tools } : {}),
+          ...(attachments && attachments.length > 0
+            ? {
+                attachments: attachments.map((a) => ({
+                  name: a.name,
+                  path: a.path,
+                  ext: a.ext,
+                  sizeBytes: a.sizeBytes,
+                })),
+              }
+            : {}),
+          ...(scope ? { scope } : {}),
+        })
       })
       .catch(() => {
         /* silent */
@@ -877,20 +881,21 @@ export function AiPanel({
           })
           // Signed-out failures get an inline sign-in button; detected via
           // gsk status rather than matching the localized error text
-          void window.desktop
-            .aiGskStatus()
-            .then((status) => {
-              if (status.loggedIn) return
-              setChat((prev) => {
-                const next = [...prev]
-                const last = next.at(-1)
-                if (last?.role === 'assistant' && last.error) {
-                  next[next.length - 1] = { ...last, loginRequired: true }
-                }
-                return next
+          if (settingsRef.current.provider === 'genspark')
+            void window.desktop
+              .aiGskStatus()
+              .then((status) => {
+                if (status.loggedIn) return
+                setChat((prev) => {
+                  const next = [...prev]
+                  const last = next.at(-1)
+                  if (last?.role === 'assistant' && last.error) {
+                    next[next.length - 1] = { ...last, loginRequired: true }
+                  }
+                  return next
+                })
               })
-            })
-            .catch(() => {})
+              .catch(() => {})
           setBusy(false)
         },
       },

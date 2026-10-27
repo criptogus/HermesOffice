@@ -9,10 +9,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
+import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  FolderWatcher,
   collectTreeFiles,
   createFolder,
   describeRoot,
@@ -52,7 +54,26 @@ afterEach(() => {
 })
 
 describe('listFolder', () => {
-  it('lists sub-folders first (natural order) and supported files newest first, skipping junk', () => {
+  it('keeps the event loop responsive while a directory read is pending', async () => {
+    let release!: (entries: never[]) => void
+    const read = vi.spyOn(fs.promises, 'readdir').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }) as ReturnType<typeof fs.promises.readdir>,
+    )
+    try {
+      const pending = listFolder(root, new Set())
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(read).toHaveBeenCalledWith(root, { withFileTypes: true })
+      release([])
+      await expect(pending).resolves.toEqual({ dir: root, folders: [], files: [] })
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('lists sub-folders first (natural order) and supported files newest first, skipping junk', async () => {
     mkdirSync(join(root, 'Clients'))
     mkdirSync(join(root, 'archive 10'))
     mkdirSync(join(root, 'archive 2'))
@@ -65,32 +86,32 @@ describe('listFolder', () => {
     touch('.DS_Store')
     touch('Thumbs.db')
 
-    const listing = listFolder(root, new Set([join(root, 'notes.md')]))
+    const listing = await listFolder(root, new Set([join(root, 'notes.md')]))
     expect(listing.folders.map((f) => f.name)).toEqual(['archive 2', 'archive 10', 'Clients'])
     expect(listing.files.map((f) => f.name).sort()).toEqual(['notes.md', 'report.docx'])
     expect(listing.files.find((f) => f.name === 'notes.md')?.starred).toBe(true)
     expect(listing.folders.every((f) => f.hasSubfolders === false)).toBe(true)
   })
 
-  it('hides the Markdown assets folder only when it holds the asset manifest', () => {
+  it('hides the Markdown assets folder only when it holds the asset manifest', async () => {
     mkdirSync(join(root, 'assets'))
     expect(isHiddenEntry(root, 'assets', true)).toBe(false)
     touch('assets/.genoffice-assets.json', '{}')
     expect(isHiddenEntry(root, 'assets', true)).toBe(true)
-    expect(listFolder(root, new Set()).folders).toEqual([])
+    expect((await listFolder(root, new Set())).folders).toEqual([])
   })
 
-  it('reports whether a folder has visible sub-folders', () => {
+  it('reports whether a folder has visible sub-folders', async () => {
     mkdirSync(join(root, 'a', 'b'), { recursive: true })
     mkdirSync(join(root, 'c', '.git'), { recursive: true })
-    const listing = listFolder(root, new Set())
+    const listing = await listFolder(root, new Set())
     expect(listing.folders.find((f) => f.name === 'a')?.hasSubfolders).toBe(true)
     expect(listing.folders.find((f) => f.name === 'c')?.hasSubfolders).toBe(false)
   })
 
-  it('returns an empty listing for a directory that vanished', () => {
+  it('returns an empty listing for a directory that vanished', async () => {
     const gone = join(root, 'gone')
-    expect(listFolder(gone, new Set())).toEqual({
+    expect(await listFolder(gone, new Set())).toEqual({
       dir: gone,
       folders: [],
       files: [],
@@ -280,5 +301,31 @@ describe('helpers', () => {
   it('describeRoot reports a path blocked by a file as unusable', () => {
     const blocked = touch('blocked')
     expect(describeRoot(blocked).usable).toBe(false)
+  })
+})
+
+describe('FolderWatcher', () => {
+  it('reports nested external changes and stops after close', async () => {
+    const nested = join(root, 'nested')
+    mkdirSync(nested)
+    const changed = vi.fn()
+    const watcher = new FolderWatcher(root, changed)
+    try {
+      await vi.waitFor(
+        () => {
+          writeFileSync(join(nested, 'external.docx'), String(Date.now()))
+          expect(changed).toHaveBeenCalledWith(expect.arrayContaining([nested]))
+        },
+        { interval: 400, timeout: 5000 },
+      )
+      watcher.close()
+      expect(watcher.active).toBe(false)
+      changed.mockClear()
+      writeFileSync(join(nested, 'after-close.docx'), 'closed')
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      expect(changed).not.toHaveBeenCalled()
+    } finally {
+      watcher.close()
+    }
   })
 })

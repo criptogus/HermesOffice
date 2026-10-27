@@ -427,12 +427,12 @@ describe('appendChatMessage opening buffer', () => {
   const chatFile = (chatId: string) =>
     join(tmpDir, 'projects', 'default', 'chats', `${chatId}.jsonl`)
 
-  it('no file is created with only user messages, but loadChat still reads the buffer', () => {
+  it('writes opening user messages immediately so failures survive restart', () => {
     store.appendChatMessage('default', 'unsaved-buf', {
       role: 'user',
       text: 'question without answer',
     })
-    expect(existsSync(chatFile('unsaved-buf'))).toBe(false)
+    expect(existsSync(chatFile('unsaved-buf'))).toBe(true)
     expect(store.loadChat('default', 'unsaved-buf').map((m) => m.text)).toEqual([
       'question without answer',
     ])

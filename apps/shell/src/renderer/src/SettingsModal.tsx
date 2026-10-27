@@ -299,7 +299,7 @@ function AiModelPane({ t }: { t: TFunc }) {
       }
       setSettings(s)
       const codex = s.providers.codex
-      if (codex) {
+      if (s.provider === 'codex' && codex) {
         void refreshCodexModels(codex.cliPath ?? '', codex.model).catch(() => undefined)
       }
     })
@@ -348,6 +348,10 @@ function AiModelPane({ t }: { t: TFunc }) {
       provider: id,
       ...(id === 'genspark' ? { gskToolsEnabled: true } : {}),
     })
+    if (id === 'codex') {
+      const codex = settings.providers.codex
+      void refreshCodexModels(codex?.cliPath ?? '', codex?.model ?? '').catch(() => undefined)
+    }
     touch()
   }
   const save = () => {

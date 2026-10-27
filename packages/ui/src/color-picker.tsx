@@ -150,6 +150,8 @@ export function ColorPicker({
       type="button"
       className={`gcp-swatch ${isSelected(hex) ? 'selected' : ''}`}
       title={title}
+      aria-label={title}
+      aria-pressed={isSelected(hex)}
       style={{ background: `#${hex}` }}
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => onPick(`#${hex}`)}
@@ -162,6 +164,7 @@ export function ColorPicker({
         <button
           type="button"
           className={`gcp-auto ${!current ? 'selected' : ''}`}
+          aria-pressed={!current}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => onPick(null)}
         >

@@ -9,9 +9,9 @@ import {
   renameSync,
   rmSync,
   statSync,
-  watch,
-  type FSWatcher,
 } from 'node:fs'
+import { promises as fs } from 'node:fs'
+import { Worker } from 'node:worker_threads'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import type {
   FolderEntry,
@@ -23,7 +23,6 @@ import type {
   RenameResult,
 } from '../shared/home-api'
 import { isValidRenameName } from './rename-validation'
-import { statPathEntries } from './recent-files'
 
 /** files the home tree shows; mirrors the shell's open-dialog filter */
 export const TREE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
@@ -102,44 +101,71 @@ export function describeRoot(root: string): FolderRoot {
   return { path: root, name: basename(root) || root, usable }
 }
 
-function hasVisibleSubfolder(dir: string): boolean {
+async function isHiddenListingEntry(dir: string, name: string, isDir: boolean): Promise<boolean> {
+  if (isDir && name.toLowerCase() === 'assets') {
+    try {
+      await fs.access(join(dir, name, MD_ASSET_MANIFEST))
+      return true
+    } catch {
+      return false
+    }
+  }
+  return isHiddenEntry(dir, name, isDir)
+}
+
+async function hasVisibleSubfolder(dir: string): Promise<boolean> {
   try {
-    return readdirSync(dir, { withFileTypes: true }).some(
-      (d) => d.isDirectory() && !isHiddenEntry(dir, d.name, true),
-    )
+    for (const d of await fs.readdir(dir, { withFileTypes: true })) {
+      if (d.isDirectory() && !(await isHiddenListingEntry(dir, d.name, true))) return true
+    }
+    return false
   } catch {
     return false
   }
 }
 
-export function listFolder(dir: string, starredPaths: ReadonlySet<string>): FolderListing {
+/** Directory and metadata reads must not block the main process on cloud folders or OS prompts. */
+export async function listFolder(
+  dir: string,
+  starredPaths: ReadonlySet<string>,
+): Promise<FolderListing> {
   const folders: FolderEntry[] = []
-  const filePaths: string[] = []
+  const files: RecentEntry[] = []
   let dirents: import('node:fs').Dirent[]
   try {
-    dirents = readdirSync(dir, { withFileTypes: true })
+    dirents = await fs.readdir(dir, { withFileTypes: true })
   } catch {
     return { dir, folders: [], files: [], missing: true }
   }
   for (const d of dirents) {
     const path = join(dir, d.name)
-    if (d.isDirectory()) {
-      if (isHiddenEntry(dir, d.name, true)) continue
-      let mtimeMs: number
-      try {
-        mtimeMs = statSync(path).mtimeMs
-      } catch {
-        continue
+    if (await isHiddenListingEntry(dir, d.name, d.isDirectory())) continue
+    if (!d.isDirectory() && !(d.isFile() && isSupportedTreeFile(d.name))) continue
+    try {
+      const stat = await fs.stat(path)
+      if (d.isDirectory()) {
+        folders.push({
+          path,
+          name: d.name,
+          mtimeMs: stat.mtimeMs,
+          hasSubfolders: await hasVisibleSubfolder(path),
+        })
+      } else {
+        files.push({
+          path,
+          name: d.name,
+          ext: extname(path).slice(1).toLowerCase(),
+          mtimeMs: stat.mtimeMs,
+          sizeBytes: stat.size,
+          starred: starredPaths.has(path),
+        })
       }
-      folders.push({ path, name: d.name, mtimeMs, hasSubfolders: hasVisibleSubfolder(path) })
-    } else if (d.isFile() && !isHiddenEntry(dir, d.name, false) && isSupportedTreeFile(d.name)) {
-      filePaths.push(path)
+    } catch {
+      // Files can disappear or become unavailable between enumeration and metadata reads.
     }
   }
   folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-  const files: RecentEntry[] = statPathEntries(filePaths, starredPaths)
-    .filter((e) => !e.missing)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs)
   return { dir, folders, files }
 }
 
@@ -337,7 +363,7 @@ const WATCH_DEBOUNCE_MS = 250
  * show up in the tree the same way as our own edits.
  */
 export class FolderWatcher {
-  private watcher: FSWatcher | null = null
+  private watcher: Worker | null = null
   private pending = new Set<string>()
   private timer: NodeJS.Timeout | null = null
 
@@ -351,16 +377,31 @@ export class FolderWatcher {
     private readonly onChange: (dirs: string[]) => void,
   ) {
     try {
-      this.watcher = watch(root, { recursive: true, persistent: false }, (_event, filename) => {
-        this.note(filename)
+      // Recursive watch startup can synchronously enumerate cloud/permission-gated folders.
+      // Keep that native work off Electron's main thread, including initial setup.
+      this.watcher = new Worker(
+        `const { parentPort, workerData } = require('node:worker_threads');
+         const { watch } = require('node:fs');
+         try {
+           const watcher = watch(workerData, { recursive: true }, (_event, filename) => {
+             parentPort.postMessage(filename == null ? null : String(filename));
+           });
+           watcher.on('error', () => process.exit(1));
+         } catch { process.exit(1); }`,
+        { eval: true, workerData: root },
+      )
+      this.watcher.on('message', (filename: string | null) => {
+        void this.note(filename)
       })
+      this.watcher.on('exit', () => this.close())
+      this.watcher.unref()
       this.watcher.on('error', () => this.close())
     } catch {
       this.watcher = null
     }
   }
 
-  private note(filename: string | Buffer | null): void {
+  private async note(filename: string | null): Promise<void> {
     const rel = filename == null ? '' : filename.toString()
     const changed = rel ? join(this.root, rel) : this.root
     // a created/removed folder changes its parent's listing; a file inside
@@ -368,10 +409,11 @@ export class FolderWatcher {
     this.pending.add(dirname(changed))
     let isDir: boolean
     try {
-      isDir = statSync(changed).isDirectory()
+      isDir = (await fs.stat(changed)).isDirectory()
     } catch {
       isDir = false
     }
+    if (!this.watcher) return
     if (isDir) this.pending.add(changed)
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
@@ -385,7 +427,7 @@ export class FolderWatcher {
   close(): void {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
-    this.watcher?.close()
+    void this.watcher?.terminate()
     this.watcher = null
   }
 }

@@ -190,6 +190,31 @@ describe('AgentLoop request shaping', () => {
     expect(transport.requests.map((r) => r.sessionId)).toEqual([identity.id, identity.id])
   })
 
+  it('restores document history before a fast first send reaches the provider', async () => {
+    const transport = recordingTransport([answer('remembered')])
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const loop = new AgentLoop({ transport, skill: makeSkill(), waitForSession: () => ready })
+    loop.run('What was my marker?')
+    await flush()
+    expect(transport.requests).toHaveLength(0)
+    loop.restore([
+      { role: 'user', text: 'My marker is ALPHA-42.' },
+      { role: 'assistant', text: 'I will remember ALPHA-42.' },
+    ])
+    release()
+    await flush()
+    expect(
+      transport.requests[0]!.messages.map((m) => (m.role === 'tool' ? 'tool' : m.text)),
+    ).toEqual([
+      'My marker is ALPHA-42.',
+      'I will remember ALPHA-42.',
+      expect.stringContaining('What was my marker?'),
+    ])
+  })
+
   it('does not start a request cancelled while document identity is resolving', async () => {
     const transport = recordingTransport([answer('unused')])
     let release!: () => void
