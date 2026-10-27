@@ -726,7 +726,7 @@ const CODEX_PERMISSION_PROFILE = 'hermesoffice'
  * Codex keeps its own shell tool even when told not to use it, and the plain
  * read-only sandbox still lets that tool read the whole disk. A permission
  * profile confines reads to platform paths plus our temp dir. An explicit
- * `sandbox` would disable the profile, so it is only used in the fallback.
+ * `sandbox` would disable the profile, so unsupported runtimes fail closed.
  */
 export function codexThreadStartParams(
   config: AiProviderConfig,
