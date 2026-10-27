@@ -24,6 +24,7 @@ export function safeExternalUrl(url: unknown, options?: SafeExternalUrlOptions):
   if (typeof url !== 'string') return null
   const text = url.trim()
   // Reject embedded unencoded control characters (e.g. tabs, newlines, null bytes)
+  // eslint-disable-next-line no-control-regex -- intentionally reject raw ASCII controls
   if (/[\x00-\x1f\x7f]/.test(text)) return null
   let parsed: URL
   try {

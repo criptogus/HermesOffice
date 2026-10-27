@@ -50,5 +50,6 @@ describe('safeExternalUrl', () => {
     expect(safeExternalUrl('h\tttps://example.com')).toBeNull()
     expect(safeExternalUrl('http://example.com\r\n/path')).toBeNull()
     expect(safeExternalUrl('http://example.com/foo\0bar')).toBeNull()
+    expect(safeExternalUrl('https://example.com/foo\x7fbar')).toBeNull()
   })
 })
