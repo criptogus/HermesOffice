@@ -8,6 +8,8 @@ import {
   clearCloudProjectsStore,
   readCloudProjectsStore,
   syncCloudProjects,
+  cloudProjectExternalUrl,
+  GENSPARK_ORIGIN,
 } from '../src/main/cloud-projects'
 
 vi.mock('@hermesoffice/ai-search', async (importOriginal) => {
@@ -86,6 +88,26 @@ describe('cloud projects store account binding', () => {
     clearCloudProjectsStore(storePath)
     expect(existsSync(storePath)).toBe(false)
     clearCloudProjectsStore(storePath)
+  })
+})
+
+describe('cloudProjectExternalUrl security validation', () => {
+  it('returns formatted URL for valid relative paths', () => {
+    expect(cloudProjectExternalUrl('/agents?id=123')).toBe(`${GENSPARK_ORIGIN}/agents?id=123`)
+  })
+
+  it('rejects non-string inputs', () => {
+    expect(cloudProjectExternalUrl(null)).toBeNull()
+    expect(cloudProjectExternalUrl(undefined)).toBeNull()
+    expect(cloudProjectExternalUrl(123)).toBeNull()
+    expect(cloudProjectExternalUrl({})).toBeNull()
+  })
+
+  it('rejects non-relative, absolute or protocol-relative URLs', () => {
+    expect(cloudProjectExternalUrl('https://evil.example.com')).toBeNull()
+    expect(cloudProjectExternalUrl('//evil.example.com')).toBeNull()
+    expect(cloudProjectExternalUrl('javascript:alert(1)')).toBeNull()
+    expect(cloudProjectExternalUrl('file:///etc/passwd')).toBeNull()
   })
 })
 

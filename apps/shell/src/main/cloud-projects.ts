@@ -1,6 +1,7 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { gskApiKey, gskListPastProjects, hasGskAuth } from '@hermesoffice/ai-search'
+import { safeExternalUrl } from '@hermesoffice/electron-utils'
 import type { CloudProjectEntry, CloudProjectKind, CloudProjectsSnapshot } from '../shared/home-api'
 
 const SYNC_PAGE = 100
@@ -158,5 +159,5 @@ async function doSync(storePath: string, owner: string): Promise<CloudProjectsSn
 export function cloudProjectExternalUrl(projectUrl: unknown): string | null {
   if (typeof projectUrl !== 'string') return null
   if (!projectUrl.startsWith('/') || projectUrl.startsWith('//')) return null
-  return `${GENSPARK_ORIGIN}${projectUrl}`
+  return safeExternalUrl(`${GENSPARK_ORIGIN}${projectUrl}`)
 }
