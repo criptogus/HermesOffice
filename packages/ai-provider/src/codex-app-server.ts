@@ -12,7 +12,7 @@ import type {
 } from '@hermesoffice/agent-core'
 import type { AiChatResponse, AiProviderConfig, CodexModelCatalog } from './types'
 import { parseToolInput, type StreamCallbacks } from './protocols/shared'
-import { createStreamWatchdog } from './watchdog'
+import { AiTimeoutError, createStreamWatchdog } from './watchdog'
 
 interface CodexAppServerTurn {
   text: string
@@ -65,9 +65,9 @@ const REQUEST_TIMEOUT_MS = 30_000
 const IDLE_SHUTDOWN_MS = 120_000
 const MAX_NATIVE_SESSIONS = 64
 const MAX_MODEL_PAGES = 10
-const CODEX_TEMP_PREFIX = 'genoffice-codex-app-server-'
+const CODEX_TEMP_PREFIX = 'hermesoffice-codex-app-server-'
 const CODEX_BASE_INSTRUCTIONS =
-  'You are the language-model backend embedded in GenOffice. Never inspect or modify local files, run shell commands, browse, call MCP, use apps, or invoke any built-in Codex tool. The caller supplies the complete relevant conversation and a JSON Schema. Return exactly one assistant response matching that schema; GenOffice itself executes document tools.'
+  'You are the language-model backend embedded in HermesOffice. Never inspect or modify local files, run shell commands, browse, call MCP, use apps, or invoke any built-in Codex tool. The caller supplies the complete relevant conversation and a JSON Schema. Return exactly one assistant response matching that schema; HermesOffice itself executes document tools.'
 
 function cleanCliPath(value: string | undefined): string {
   const trimmed = (value ?? '').trim()
@@ -86,6 +86,7 @@ interface CodexCliResolutionOptions {
   managedInstallRoot?: string | undefined
   env?: NodeJS.ProcessEnv | undefined
   platform?: NodeJS.Platform | undefined
+  bundledAppDirs?: string[] | undefined
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -220,6 +221,9 @@ export async function resolveCodexCliPath(
     if (!managed) {
       if (!isAbsolute(configuredExecutable)) return configuredExecutable
       if (await fileExists(configuredExecutable)) return configuredExecutable
+      throw new Error(
+        'Configured Codex CLI was not found. Choose an existing executable or clear the path for automatic discovery.',
+      )
     }
   }
 
@@ -229,6 +233,22 @@ export async function resolveCodexCliPath(
   }
   const fromPath = await codexOnPath(platform, env)
   if (fromPath) return fromPath
+  if (platform === 'darwin') {
+    const apps = options.bundledAppDirs ?? [
+      '/Applications',
+      ...(env.HOME ? [join(env.HOME, 'Applications')] : []),
+    ]
+    for (const folder of apps) {
+      for (const relative of [
+        'Codex.app/Contents/Resources/codex',
+        'Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+        'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+      ]) {
+        const candidate = join(folder, relative)
+        if (await fileExists(candidate)) return candidate
+      }
+    }
+  }
   throw new Error(
     'Codex CLI was not found automatically. Install or open the Codex app, or set a custom codex executable path.',
   )
@@ -706,12 +726,12 @@ const CODEX_PERMISSION_PROFILE = 'hermesoffice'
  * Codex keeps its own shell tool even when told not to use it, and the plain
  * read-only sandbox still lets that tool read the whole disk. A permission
  * profile confines reads to platform paths plus our temp dir. An explicit
- * `sandbox` would disable the profile, so it is only used in the fallback.
+ * `sandbox` would disable the profile, so unsupported runtimes fail closed.
  */
 export function codexThreadStartParams(
   config: AiProviderConfig,
   tempDir: string,
-  mode: 'profile' | 'read-only',
+  nativeToolOverrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const base = {
     ...(config.model.trim() ? { model: config.model.trim() } : {}),
@@ -721,10 +741,10 @@ export function codexThreadStartParams(
     baseInstructions: CODEX_BASE_INSTRUCTIONS,
     ephemeral: true,
   }
-  if (mode === 'read-only') return { ...base, sandbox: 'read-only' }
   return {
     ...base,
     config: {
+      ...nativeToolOverrides,
       default_permissions: CODEX_PERMISSION_PROFILE,
       permissions: {
         [CODEX_PERMISSION_PROFILE]: { filesystem: { ':minimal': 'read', [tempDir]: 'read' } },
@@ -738,33 +758,64 @@ export function activePermissionProfileId(result: unknown): string | undefined {
   return typeof active?.id === 'string' ? active.id : undefined
 }
 
-async function startNativeThread(
-  client: CodexAppServerClient,
+export function requireCodexPermissionProfile(result: unknown): string {
+  if (activePermissionProfileId(result) !== CODEX_PERMISSION_PROFILE) {
+    throw new Error(
+      'Codex did not activate the HermesOffice permission profile. Update the Codex runtime before connecting.',
+    )
+  }
+  return threadIdFrom(result)
+}
+
+export async function startNativeThread(
+  client: Pick<CodexAppServerClient, 'request'>,
   config: AiProviderConfig,
   tempDir: string,
 ): Promise<string> {
-  let profileResult: unknown
-  try {
-    profileResult = await client.request(
-      'thread/start',
-      codexThreadStartParams(config, tempDir, 'profile'),
-    )
-    if (activePermissionProfileId(profileResult) === CODEX_PERMISSION_PROFILE) {
-      return threadIdFrom(profileResult)
-    }
-  } catch {
-    // Older Codex builds reject the profile keys; fall through to the sandbox.
-    profileResult = undefined
-  }
-  // A user config.toml sandbox_mode or an older Codex ignored the profile. Discard
-  // that thread before falling back so it does not linger under looser permissions.
-  const abandoned = optionalThreadId(profileResult)
-  if (abandoned) {
-    await client.request('thread/delete', { threadId: abandoned }).catch(() => undefined)
-  }
-  return threadIdFrom(
-    await client.request('thread/start', codexThreadStartParams(config, tempDir, 'read-only')),
+  // The embedded model must not inherit the user's coding tools or wait for
+  // unrelated MCP/plugin startup. Overrides apply only to this Office thread.
+  const effective = objectValue(
+    await client.request('config/read', { includeLayers: false, cwd: tempDir }),
   )
+  const runtimeConfig = objectValue(effective?.config)
+  if (!runtimeConfig || Array.isArray(runtimeConfig))
+    throw new Error(
+      'Codex did not return its effective configuration. Update the runtime before connecting.',
+    )
+  const disabledEntries = (value: unknown): Record<string, { enabled: false }> => {
+    const entries = objectValue(value)
+    if (value != null && (!entries || Array.isArray(value)))
+      throw new Error('Codex returned unsupported native integration configuration.')
+    return Object.fromEntries(
+      Object.keys(entries ?? {}).map((name) => [name, { enabled: false as const }]),
+    )
+  }
+  const overrides = {
+    features: {
+      apps: false,
+      plugins: false,
+      remote_plugin: false,
+      shell_tool: false,
+      image_generation: false,
+      browser_use: false,
+      computer_use: false,
+    },
+    web_search: 'disabled',
+    mcp_servers: disabledEntries(runtimeConfig.mcp_servers),
+    plugins: disabledEntries(runtimeConfig.plugins),
+  }
+  const result = await client.request(
+    'thread/start',
+    codexThreadStartParams(config, tempDir, overrides),
+  )
+  try {
+    return requireCodexPermissionProfile(result)
+  } catch (error) {
+    const abandoned = optionalThreadId(result)
+    if (abandoned)
+      await client.request('thread/delete', { threadId: abandoned }).catch(() => undefined)
+    throw error
+  }
 }
 
 export interface CodexTurnTransport {
@@ -801,9 +852,9 @@ export async function waitForTurn(
     const unsubscribe = client.onNotification((message) => {
       const params = objectValue(message.params)
       if (params?.threadId !== threadId) return
-      cb.onActivity?.()
       const eventTurnId = typeof params.turnId === 'string' ? params.turnId : ''
       if (turnId && eventTurnId && eventTurnId !== turnId) return
+      cb.onActivity?.()
       if (message.method === 'turn/started') {
         const turn = objectValue(params.turn)
         if (typeof turn?.id === 'string') turnId = turn.id
@@ -911,17 +962,28 @@ export async function streamCodexAppServer(
   maxTokens: number,
   cb: StreamCallbacks,
 ): Promise<void> {
-  const wd = createStreamWatchdog(cb.signal)
-  return wd.guard(() =>
-    runCodexAppServer(config, system, messages, tools, maxTokens, {
-      ...cb,
-      signal: wd.signal,
-      onActivity: () => {
-        wd.touch()
-        cb.onActivity?.()
-      },
-    }),
-  )
+  let retriedTimeout = false
+  for (;;) {
+    const wd = createStreamWatchdog(cb.signal)
+    try {
+      return await wd.guard(() =>
+        runCodexAppServer(config, system, messages, tools, maxTokens, {
+          ...cb,
+          signal: wd.signal,
+          onActivity: () => {
+            wd.touch()
+            cb.onActivity?.()
+          },
+        }),
+      )
+    } catch (error) {
+      // Preserve the generous shared watchdog. Only after it aborts a silent
+      // turn, replay once in a fresh native thread. Nothing reaches Office
+      // until a complete structured response, so prior edits are not rerun.
+      if (!(error instanceof AiTimeoutError) || retriedTimeout || cb.signal.aborted) throw error
+      retriedTimeout = true
+    }
+  }
 }
 
 export async function chatCodexAppServer(
@@ -933,7 +995,7 @@ export async function chatCodexAppServer(
   let content = ''
   // No sessionId: a one-shot chat/connection test is not reused, so it runs as
   // an ephemeral turn whose thread and temp dir are dropped when it ends.
-  await runCodexAppServer(config, system, [{ role: 'user', text: user }], [], 1024, {
+  await streamCodexAppServer(config, system, [{ role: 'user', text: user }], [], 1024, {
     signal,
     onDelta: (text) => {
       content += text

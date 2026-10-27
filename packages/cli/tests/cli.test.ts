@@ -115,7 +115,10 @@ describe('hermesoffice cli', () => {
 
   it('open fails with exit code 4 when no app binary is available', async () => {
     const r = await run(['open', DOCX, '--json'], {
-      env: { HERMESOFFICE_APP_BIN: '/nonexistent/HermesOffice' },
+      env: {
+        HERMESOFFICE_APP_BIN: '/nonexistent/HermesOffice',
+        HERMESOFFICE_USER_DATA: tempDir(),
+      },
     })
     expect(r.code).toBe(4)
   })

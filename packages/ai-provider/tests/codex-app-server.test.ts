@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os'
 import type { AgentToolDef } from '@hermesoffice/agent-core'
 import {
   activePermissionProfileId,
+  startNativeThread,
   buildCodexAppServerPrompt,
   codexAppServerLaunchArgs,
   codexAppServerOutputSchema,
   codexThreadStartParams,
   parseCodexAppServerTurn,
   resolveCodexCliPath,
+  requireCodexPermissionProfile,
   waitForTurn,
   type CodexTurnTransport,
   type RpcMessage,
@@ -104,7 +106,7 @@ describe('Codex app-server bridge', () => {
 
   it('confines Codex tool reads to the temp dir through a permission profile', () => {
     const config = { apiKey: '', model: 'gpt-5.6-terra' }
-    const params = codexThreadStartParams(config, '/tmp/genoffice-codex-x', 'profile')
+    const params = codexThreadStartParams(config, '/tmp/genoffice-codex-x')
     expect(params).not.toHaveProperty('sandbox')
     expect(params.approvalPolicy).toBe('never')
     expect(params.config).toEqual({
@@ -115,9 +117,15 @@ describe('Codex app-server bridge', () => {
         },
       },
     })
-    expect(codexThreadStartParams(config, '/tmp/genoffice-codex-x', 'read-only')).toMatchObject({
-      sandbox: 'read-only',
-    })
+    expect(() => requireCodexPermissionProfile({ thread: { id: 'wrong' } })).toThrow(
+      'permission profile',
+    )
+    expect(
+      requireCodexPermissionProfile({
+        thread: { id: 'safe' },
+        activePermissionProfile: { id: 'hermesoffice' },
+      }),
+    ).toBe('safe')
     expect(activePermissionProfileId({ activePermissionProfile: { id: 'hermesoffice' } })).toBe(
       'hermesoffice',
     )
@@ -235,5 +243,116 @@ describe('Codex app-server bridge', () => {
         noopCallbacks,
       ),
     ).rejects.toThrow('boom')
+  })
+})
+
+it('discovers the macOS bundled CLI with a Finder-style PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'office-macos-codex-'))
+  try {
+    const bin = join(root, 'ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS')
+    await mkdir(bin, { recursive: true })
+    await writeFile(join(bin, 'codex'), '')
+    expect(
+      await resolveCodexCliPath('', {
+        platform: 'darwin',
+        env: { PATH: '' },
+        bundledAppDirs: [root],
+      }),
+    ).toBe(join(bin, 'codex'))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+it('does not silently replace a missing explicit CLI path with another runtime', async () => {
+  await expect(
+    resolveCodexCliPath('/nonexistent/office-codex', { platform: 'darwin', env: {} }),
+  ).rejects.toThrow('Configured Codex CLI')
+})
+
+describe('Codex model-only thread isolation', () => {
+  it('disables inherited integrations before starting a document thread without changing the user configuration', async () => {
+    const effective = {
+      config: {
+        mcp_servers: { slow_external: { command: 'private-local-command', enabled: true } },
+        plugins: { 'optional-plugin@store': { enabled: true } },
+      },
+    }
+    const original = JSON.stringify(effective)
+    const calls: Array<{ method: string; params: unknown }> = []
+    const client = {
+      request: async (method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === 'config/read') return effective
+        return { thread: { id: 'office-thread' }, activePermissionProfile: { id: 'hermesoffice' } }
+      },
+    }
+    await expect(
+      startNativeThread(client, { apiKey: '', model: 'chosen-model' }, '/tmp/office-thread'),
+    ).resolves.toBe('office-thread')
+    expect(calls.map((c) => c.method)).toEqual(['config/read', 'thread/start'])
+    expect(calls[0]!.params).toEqual({ includeLayers: false, cwd: '/tmp/office-thread' })
+    expect(calls[1]!.params).toMatchObject({
+      model: 'chosen-model',
+      ephemeral: true,
+      config: {
+        mcp_servers: { slow_external: { enabled: false } },
+        plugins: { 'optional-plugin@store': { enabled: false } },
+        features: {
+          apps: false,
+          plugins: false,
+          remote_plugin: false,
+          shell_tool: false,
+          image_generation: false,
+          browser_use: false,
+          computer_use: false,
+        },
+        web_search: 'disabled',
+        default_permissions: 'hermesoffice',
+      },
+    })
+    expect(JSON.stringify(effective)).toBe(original)
+    expect(JSON.stringify(calls[1]!.params)).not.toContain('private-local-command')
+  })
+
+  it('refuses a thread when effective configuration cannot be read', async () => {
+    const methods: string[] = []
+    const client = {
+      request: async (method: string) => {
+        methods.push(method)
+        throw Error('config unavailable')
+      },
+    }
+    await expect(
+      startNativeThread(client, { apiKey: '', model: '' }, '/tmp/office-thread'),
+    ).rejects.toThrow('config unavailable')
+    expect(methods).toEqual(['config/read'])
+  })
+
+  it('refuses an unsupported integration inventory instead of leaving inherited servers enabled', async () => {
+    const methods: string[] = []
+    const client = {
+      request: async (method: string) => {
+        methods.push(method)
+        return { config: { mcp_servers: ['unsupported-shape'] } }
+      },
+    }
+    await expect(
+      startNativeThread(client, { apiKey: '', model: '' }, '/tmp/office-thread'),
+    ).rejects.toThrow('integration configuration')
+    expect(methods).toEqual(['config/read'])
+  })
+
+  it('refuses an invalid configuration response instead of inheriting unknown tools', async () => {
+    const methods: string[] = []
+    const client = {
+      request: async (method: string) => {
+        methods.push(method)
+        return {}
+      },
+    }
+    await expect(
+      startNativeThread(client, { apiKey: '', model: '' }, '/tmp/office-thread'),
+    ).rejects.toThrow('configuration')
+    expect(methods).toEqual(['config/read'])
   })
 })

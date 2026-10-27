@@ -54,6 +54,7 @@ describe.each([
   'docs/src/main/docs-main.ts',
   'sheets/src/main/sheets-main.ts',
   'slides/src/main/ai-ipc.ts',
+  'pdf/src/main/ai-ipc.ts',
 ])('%s provider selection', (module) => {
   it('honors Codex without requiring an API key or explicit model', () => {
     const { result, writes } = settingsHandler(module, {

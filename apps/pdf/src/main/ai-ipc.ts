@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, ipcMain } from 'electron'
 import {
+  activeProvider,
   defaultAiSettings,
   resolveAiSettings,
   streamForProvider,
@@ -37,8 +38,8 @@ export function registerPdfAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // AI features all go through Hermes; stored settings that chose another provider are normalized back
-    settings.provider = 'hermes'
+    // Honor usable saved providers; incomplete configurations fall back to Hermes.
+    settings.provider = activeProvider(settings)
     return settings
   })
 
