@@ -44,6 +44,15 @@ it('renders color swatches and auto button with proper aria-label and aria-press
   expect(whiteSwatch).not.toBeNull()
   expect(whiteSwatch.getAttribute('aria-label')).toBe('White')
   expect(whiteSwatch.getAttribute('aria-pressed')).toBe('false')
+
+  act(() => {
+    ;(redSwatch as HTMLButtonElement).click()
+  })
+  expect(onPick).toHaveBeenCalledWith('#FF0000')
+  act(() => {
+    ;(autoBtn as HTMLButtonElement).click()
+  })
+  expect(onPick).toHaveBeenLastCalledWith(null)
 })
 
 it('sets aria-pressed on auto button when no color value is selected', () => {
