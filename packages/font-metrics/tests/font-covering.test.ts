@@ -24,7 +24,7 @@ describe('findFontCovering', () => {
   })
 
   it('returns null for unassigned codepoints no real font maps', () => {
-    expect(findFontCovering('\u0378')).toBeNull()
+    expect(findFontCovering('\u{10FFF0}')).toBeNull()
   })
 
   it('never picks a color-emoji face', () => {
