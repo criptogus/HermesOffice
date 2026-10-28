@@ -30,6 +30,8 @@ interface ParsedFace {
   advances: Uint16Array
   /** raw cmap subtable (format 4 or 12), looked up per codepoint via binary search */
   cmapFormat: 4 | 12
+  cmapNumGroups: number
+  cmapSegCountX2: number
   cmap: Buffer
 }
 
@@ -67,9 +69,8 @@ function parseCmap(buf: Buffer): { format: 4 | 12; sub: Buffer } | null {
 function glyphOf(face: ParsedFace, cp: number): number {
   const sub = face.cmap
   if (face.cmapFormat === 12) {
-    const nGroups = sub.readUInt32BE(12)
     let lo = 0
-    let hi = nGroups - 1
+    let hi = face.cmapNumGroups - 1
     while (lo <= hi) {
       const mid = (lo + hi) >> 1
       const g = 16 + 12 * mid
@@ -84,13 +85,13 @@ function glyphOf(face: ParsedFace, cp: number): number {
   }
   // format 4: BMP only
   if (cp > 0xffff) return 0
-  const segCountX2 = sub.readUInt16BE(6)
+  const segCountX2 = face.cmapSegCountX2
   const endBase = 14
   const startBase = endBase + segCountX2 + 2
   const deltaBase = startBase + segCountX2
   const rangeBase = deltaBase + segCountX2
   let lo = 0
-  let hi = segCountX2 / 2 - 1
+  let hi = (segCountX2 >> 1) - 1
   while (lo <= hi) {
     const mid = (lo + hi) >> 1
     if (endBase + 2 * mid + 2 > sub.length) return 0
@@ -131,7 +132,16 @@ function parseFaceAdvances(fd: number, offset: number): ParsedFace | null {
   if (!cmap) return null
   const advances = new Uint16Array(numberOfHMetrics)
   for (let i = 0; i < numberOfHMetrics; i++) advances[i] = hmtx.readUInt16BE(4 * i)
-  return { unitsPerEm, advances, cmapFormat: cmap.format, cmap: cmap.sub }
+  const cmapNumGroups = cmap.format === 12 && cmap.sub.length >= 16 ? cmap.sub.readUInt32BE(12) : 0
+  const cmapSegCountX2 = cmap.format === 4 && cmap.sub.length >= 8 ? cmap.sub.readUInt16BE(6) : 0
+  return {
+    unitsPerEm,
+    advances,
+    cmapFormat: cmap.format,
+    cmapNumGroups,
+    cmapSegCountX2,
+    cmap: cmap.sub,
+  }
 }
 
 const styleTokensOf = (style: AdvanceStyle): string[] => [
@@ -193,13 +203,25 @@ export function advanceWidths(
   const candidates = getFontIndex().byFamily.get(norm(family))
   if (!candidates?.length) return null
   const want = styleTokensOf(style)
-  const face = [...candidates].sort((a, b) => styleScore(b, want) - styleScore(a, want))[0]!
+  let face = candidates[0]!
+  if (candidates.length > 1) {
+    let bestScore = styleScore(face, want)
+    for (let i = 1; i < candidates.length; i++) {
+      const candidate = candidates[i]!
+      const score = styleScore(candidate, want)
+      if (score > bestScore) {
+        bestScore = score
+        face = candidate
+      }
+    }
+  }
   const parsed = faceAdvances(face)
   if (!parsed) return null
   const scale = (sizePt * 20) / parsed.unitsPerEm
   const out: number[] = []
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
     const glyph = glyphOf(parsed, cp)
     if (glyph === 0 && cp !== 0) {
       out.push(NaN)
