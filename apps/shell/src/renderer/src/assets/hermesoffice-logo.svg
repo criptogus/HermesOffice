@@ -1,16 +1,7 @@
 <svg width="1096" height="240" viewBox="0 0 1096 240" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="hermes-office-logo-grad" x1="30" y1="30" x2="210" y2="210" gradientUnits="userSpaceOnUse">
-      <stop stopColor="#6E4FF6"/>
-      <stop offset="0.55" stopColor="#5A3DE0"/>
-      <stop offset="1" stopColor="#14B8A6"/>
-    </linearGradient>
-  </defs>
-  <!-- Hermes H icon (rounded gradient, H monogram + comet) -->
-  <rect x="1" y="1" width="238" height="238" rx="54" fill="url(#hermes-office-logo-grad)"/>
+<rect x="1" y="1" width="238" height="238" rx="54" fill="#000000"/>
   <path d="M72 72v96M168 72v96M72 120h96" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
   <circle cx="196" cy="50" r="10" fill="#ffffff" opacity="0.9"/>
   <circle cx="214" cy="34" r="6" fill="#ffffff" opacity="0.6"/>
-  <!-- HermesOffice wordmark (rendered with system sans, matches product lockup style) -->
-  <text x="330" y="160" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="116" font-weight="700" fill="#1a1a1a" letter-spacing="-2">HermesOffice</text>
+<text x="330" y="160" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="116" font-weight="700" fill="#1a1a1a" letter-spacing="-2">HermesOffice</text>
 </svg>

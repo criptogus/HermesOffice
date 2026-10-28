@@ -245,7 +245,9 @@ const config = {
     output: process.env.BUILD_DIR || 'release',
   },
   files: ['out/**'],
+  icon: 'build/icon',
   extraResources: [
+    { from: 'build/icon.png', to: 'icon.png' },
     // build-info.json — the commit/version the bundle was built from, written
     // by tools/write-build-info.mjs (run from the dist:* scripts, right before
     // electron-builder). The GitHub-main updater reads it at runtime to decide
