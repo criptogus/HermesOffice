@@ -59,6 +59,7 @@ import {
   type HeadlessArgvParse,
   showOpenDialogWithMemory,
   showSaveDialogWithMemory,
+  safeExternalUrl,
   windowMenuTemplate,
   aboutMenuItem,
   checkUpdatesMenuItem,
@@ -3449,7 +3450,10 @@ function registerHomeIpc(): void {
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-    if (pendingLoginUrl) void shell.openExternal(pendingLoginUrl)
+    if (pendingLoginUrl) {
+      const validated = safeExternalUrl(pendingLoginUrl, { allowedProtocols: ['http:', 'https:'] })
+      if (validated) void shell.openExternal(validated)
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {

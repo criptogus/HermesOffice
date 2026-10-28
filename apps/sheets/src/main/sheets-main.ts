@@ -3269,7 +3269,10 @@ export function registerSheetsAiIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.aiGskLogin, () => {
-    ensureGenofficeLogin((url) => void shell.openExternal(url))
+    ensureGenofficeLogin((url) => {
+      const validated = safeExternalUrl(url, { allowedProtocols: ['http:', 'https:'] })
+      if (validated) void shell.openExternal(validated)
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.aiSetSettings, (event, input: unknown) => {

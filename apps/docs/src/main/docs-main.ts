@@ -2911,7 +2911,10 @@ export function registerAiIpc(): void {
   )
 
   ipcMain.handle('ai:gsk-login', () => {
-    ensureGenofficeLogin((url) => void shell.openExternal(url))
+    ensureGenofficeLogin((url) => {
+      const validated = safeExternalUrl(url, { allowedProtocols: ['http:', 'https:'] })
+      if (validated) void shell.openExternal(validated)
+    })
   })
 
   ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
