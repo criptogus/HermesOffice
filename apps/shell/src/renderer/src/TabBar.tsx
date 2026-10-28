@@ -257,7 +257,7 @@ export function TabBar() {
           </svg>
         </button>
       )}
-      <div className={dragVisual ? 'tab-strip dragging' : 'tab-strip'} ref={stripRef}>
+      <div className={dragVisual ? 'tab-strip dragging' : 'tab-strip'} ref={stripRef} role="tablist">
         {tabs.map((tab, index) => {
           // live transforms: the grabbed tab tracks the pointer; tabs between
           // the origin and the current target slide aside by the grabbed width
@@ -275,10 +275,19 @@ export function TabBar() {
             <div
               key={tab.id}
               className={`tab-item ${tab.kind === 'home' ? 'tab-home' : ''} ${tab.active ? 'active' : ''} ${dragVisual?.id === tab.id ? 'drag-source' : ''}`}
+              role="tab"
+              aria-selected={tab.active}
+              tabIndex={tab.active ? 0 : -1}
               // long file names ellipsize in the strip — hover reveals the
               // full title (the close button's own tooltip still wins there)
               title={tab.title}
               style={dragStyle}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  if (!tab.active) void window.aiOfficeTabs.activate(tab.id)
+                }
+              }}
               onPointerDown={(event) => {
                 if (event.button !== 0) return
                 if ((event.target as HTMLElement).closest('.tab-close')) return
@@ -371,7 +380,7 @@ export function TabBar() {
                 <button
                   className="tab-close"
                   title={t('closeTab')}
-                  aria-label={t('closeTab')}
+                  aria-label={`${t('closeTab')} - ${tab.title}`}
                   onClick={(event) => {
                     event.stopPropagation()
                     void window.aiOfficeTabs.close(tab.id)
