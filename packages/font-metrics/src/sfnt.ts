@@ -199,7 +199,12 @@ function indexFile(path: string, index: FontIndex): void {
       for (const p of names.ps) if (!index.byPs.has(norm(p))) index.byPs.set(norm(p), face)
       for (const f of names.families) {
         const k = norm(f)
-        index.byFamily.set(k, [...(index.byFamily.get(k) ?? []), face])
+        let list = index.byFamily.get(k)
+        if (!list) {
+          list = []
+          index.byFamily.set(k, list)
+        }
+        list.push(face)
       }
     }
   } catch {
@@ -249,4 +254,20 @@ export function styleScore(face: FaceRef, want: string[]): number {
   const extras = have.filter((t) => !wanted.includes(t)).length
   const regularBonus = want.length === 0 && have.some((t) => REGULARISH.includes(t)) ? 1 : 0
   return hits * 4 - extras + regularBonus
+}
+
+/** Find the face in `candidates` with the highest style score for `want` */
+export function bestStyleMatch(candidates: FaceRef[], want: string[]): FaceRef | undefined {
+  if (candidates.length === 0) return undefined
+  let bestFace = candidates[0]!
+  let bestScore = styleScore(bestFace, want)
+  for (let i = 1; i < candidates.length; i++) {
+    const face = candidates[i]!
+    const score = styleScore(face, want)
+    if (score > bestScore) {
+      bestScore = score
+      bestFace = face
+    }
+  }
+  return bestFace
 }

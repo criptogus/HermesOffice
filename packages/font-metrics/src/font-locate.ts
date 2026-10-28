@@ -5,6 +5,7 @@
 import { closeSync, openSync, readFileSync } from 'node:fs'
 
 import {
+  bestStyleMatch,
   getFontIndex,
   norm,
   readTable,
@@ -65,7 +66,7 @@ export function findSystemFont(psName: string, family: string): Buffer | null {
     const candidates = index.byFamily.get(norm(family))
     if (candidates?.length) {
       const want = styleTokens(psName)
-      face = [...candidates].sort((a, b) => styleScore(b, want) - styleScore(a, want))[0]
+      face = bestStyleMatch(candidates, want)
     }
   }
   return face ? faceBytes(face) : null
