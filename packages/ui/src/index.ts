@@ -95,3 +95,5 @@ export {
   type AutoSaveDefault,
   type AutoSaveDefaultApi,
 } from './auto-save-pref'
+
+export { HermesMark } from './hermes-mark'

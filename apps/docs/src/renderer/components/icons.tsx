@@ -1,3 +1,4 @@
+import { HermesMark as OfficeMark } from '@hermesoffice/ui'
 /** Small monochrome SVG icons approximating Word's ribbon glyphs. */
 
 import type { ReactNode } from 'react'
@@ -1742,38 +1743,7 @@ export function IconClose(props: IconProps) {
   )
 }
 
-/** Hermes brand mark (rounded-square sparkle badge), inline so it renders
- * crisply at device resolution instead of going through <img> rasterization */
+/** Shared monochrome HermesOffice identity. */
 export function HermesMark({ size = 26 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <defs>
-        <linearGradient
-          id="hermes-mark-grad"
-          x1="0"
-          y1="0"
-          x2="24"
-          y2="24"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#6E4FF6" />
-          <stop offset="1" stopColor="#2DD4BF" />
-        </linearGradient>
-      </defs>
-      <rect x="0.75" y="0.75" width="22.5" height="22.5" rx="6" fill="url(#hermes-mark-grad)" />
-      <path
-        d="M7.25 6.25v11.5M16.75 6.25v11.5M7.25 12h9.5"
-        stroke="#ffffff"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
+  return <OfficeMark size={size} />
 }

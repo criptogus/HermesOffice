@@ -4956,7 +4956,7 @@ export function startDocsStandalone(): void {
     setUiLang(normalizeLang(process.env.HERMESOFFICE_LANG ?? app.getLocale()))
     // packaged builds get the Dock icon from icon.icns; dev shows Electron's default
     if (isDev && process.platform === 'darwin') {
-      app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
+      app.dock?.setIcon(join(app.getAppPath(), 'build/icon-mac.png'))
     }
     buildDocsMenu()
     createDocsWindow()

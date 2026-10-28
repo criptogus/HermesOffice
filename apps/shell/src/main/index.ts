@@ -2755,6 +2755,9 @@ function createShellWindow(): void {
     minWidth: 720,
     minHeight: 550,
     title: 'HermesOffice',
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(app.getAppPath(), 'build/icon.png'),
     // vibrancy: editor modules punch translucent regions (e.g. the slides
     // thumbnail pane) through to the desktop
     ...(process.platform === 'darwin'
@@ -5053,6 +5056,9 @@ async function runHeadlessExportEntry(
 }
 
 app.whenReady().then(async () => {
+  if (!app.isPackaged && process.platform === 'darwin') {
+    app.dock?.setIcon(join(app.getAppPath(), 'build/icon-mac.png'))
+  }
   installRendererProtocol({
     docs: join(DOCS_OUT, 'renderer'),
     sheets: join(SHEETS_OUT, 'renderer'),
