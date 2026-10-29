@@ -151,6 +151,7 @@ export function ImageViewer({
       className={`gs-imgview-btn${active ? ' active' : ''}`}
       aria-label={label}
       title={label}
+      aria-pressed={active}
       onClick={onClick}
     >
       {icon}
