@@ -4,6 +4,7 @@
  * to avoid renderer CORS), search tools, and the slides-only ai:* channels
  * (image generation, media analysis, style templates).
  */
+import { safeExternalUrl } from '@hermesoffice/electron-utils'
 import { app, ipcMain, nativeImage, net, shell } from 'electron'
 import {
   appendFileSync,
@@ -127,7 +128,10 @@ export function registerAiIpc(): void {
   )
 
   ipcMain.handle('ai:gsk-login', () => {
-    ensureGenofficeLogin((url) => void shell.openExternal(url))
+    ensureGenofficeLogin((url) => {
+      const target = safeExternalUrl(url)
+      if (target) void shell.openExternal(target)
+    })
   })
 
   ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {

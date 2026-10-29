@@ -1,3 +1,4 @@
+import { safeExternalUrl } from '@hermesoffice/electron-utils'
 import { execSync, spawn } from 'node:child_process'
 import {
   copyFileSync,
@@ -3452,7 +3453,10 @@ function registerHomeIpc(): void {
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-    if (pendingLoginUrl) void shell.openExternal(pendingLoginUrl)
+    if (pendingLoginUrl) {
+      const target = safeExternalUrl(pendingLoginUrl)
+      if (target) void shell.openExternal(target)
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {
