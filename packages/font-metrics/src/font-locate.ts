@@ -173,16 +173,36 @@ export function findFontCovering(text: string): Buffer | null {
 }
 
 function findFontCoveringUncached(text: string): Buffer | null {
-  const cps = [...new Set([...text.replace(/[\r\n]/g, '')].map((c) => c.codePointAt(0)!))]
+  const cps: number[] = []
+  const seenCps = new Set<number>()
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
+    if (cp === 10 || cp === 13) continue // skip \n and \r
+    if (!seenCps.has(cp)) {
+      seenCps.add(cp)
+      cps.push(cp)
+    }
+  }
   if (cps.length === 0) return null
+
   const index = getFontIndex()
   const seen = new Set<string>()
   const faces: FaceRef[] = []
-  for (const face of [...index.byPs.values(), ...[...index.byFamily.values()].flat()]) {
+  const addFace = (face: FaceRef) => {
     const key = `${face.path}#${face.offset}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    faces.push(face)
+    if (!seen.has(key)) {
+      seen.add(key)
+      faces.push(face)
+    }
+  }
+  for (const face of index.byPs.values()) {
+    addFace(face)
+  }
+  for (const list of index.byFamily.values()) {
+    for (let i = 0; i < list.length; i++) {
+      addFace(list[i]!)
+    }
   }
   faces.sort((a, b) => styleScore(b, []) - styleScore(a, []))
   for (const face of faces) {
