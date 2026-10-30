@@ -173,19 +173,20 @@ export function findFontCovering(text: string): Buffer | null {
 }
 
 function findFontCoveringUncached(text: string): Buffer | null {
-  const cps = [...new Set([...text.replace(/[\r\n]/g, '')].map((c) => c.codePointAt(0)!))]
-  if (cps.length === 0) return null
-  const index = getFontIndex()
-  const seen = new Set<string>()
-  const faces: FaceRef[] = []
-  for (const face of [...index.byPs.values(), ...[...index.byFamily.values()].flat()]) {
-    const key = `${face.path}#${face.offset}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    faces.push(face)
+  // Extract unique codepoints without string replace, array spread, or Set allocations
+  const cps: number[] = []
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
+    if (cp === 13 || cp === 10) continue // skip \r and \n
+    if (!cps.includes(cp)) cps.push(cp)
   }
-  faces.sort((a, b) => styleScore(b, []) - styleScore(a, []))
-  for (const face of faces) {
+  if (cps.length === 0) return null
+
+  // Use pre-sorted, pre-deduplicated system font faces from getFontIndex()
+  // to avoid O(N log N) sorting and array allocation on every lookup miss
+  const index = getFontIndex()
+  for (const face of index.allFaces) {
     let fd: number
     try {
       fd = openSync(face.path, 'r')
