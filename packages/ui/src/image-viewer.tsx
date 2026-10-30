@@ -145,11 +145,18 @@ export function ImageViewer({
     }
   }, [dragging])
 
-  const button = (label: string, onClick: () => void, icon: ReactNode, active = false) => (
+  const button = (
+    label: string,
+    onClick: () => void,
+    icon: ReactNode,
+    active = false,
+    isToggle = false,
+  ) => (
     <button
       type="button"
       className={`gs-imgview-btn${active ? ' active' : ''}`}
       aria-label={label}
+      aria-pressed={isToggle ? active : undefined}
       title={label}
       onClick={onClick}
     >
@@ -162,6 +169,7 @@ export function ImageViewer({
       className="gs-imgview-mask"
       role="dialog"
       aria-modal="true"
+      aria-label={alt && alt.trim() ? alt : labels.fitToWindow}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -194,6 +202,7 @@ export function ImageViewer({
           },
           <span className="gs-imgview-11">1:1</span>,
           !fit && scale === 1,
+          true,
         )}
         {button(
           labels.fitToWindow,
@@ -202,6 +211,7 @@ export function ImageViewer({
             <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" />
           </Svg>,
           fit,
+          true,
         )}
         {onSave && (
           <>
