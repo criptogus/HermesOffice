@@ -5,7 +5,7 @@ import type { BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateInfo } from 'electron-updater'
 import { createI18n, getUiLang, htmlLang } from '@hermesoffice/i18n'
-import { GITHUB_REPO_URL } from '@hermesoffice/electron-utils'
+import { GITHUB_REPO_URL, safeExternalUrl } from '@hermesoffice/electron-utils'
 import type {
   UpdateChannel,
   UpdatePhase,
@@ -527,7 +527,10 @@ export async function checkForUpdatesNow(): Promise<void> {
         defaultId: 0,
         cancelId: 0,
       })
-      if (response === 1) void shell.openExternal(DOWNLOAD_PAGE_URL)
+      if (response === 1) {
+        const target = safeExternalUrl(DOWNLOAD_PAGE_URL)
+        if (target) void shell.openExternal(target)
+      }
       return
     }
     let result
@@ -645,7 +648,8 @@ export function initAutoUpdater(
       closeUpdateWindow()
     },
     onOpenDownload: () => {
-      void shell.openExternal(manualDownloadUrl ?? DOWNLOAD_PAGE_URL)
+      const target = safeExternalUrl(manualDownloadUrl ?? DOWNLOAD_PAGE_URL)
+      if (target) void shell.openExternal(target)
     },
   }
 
