@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
-const getFontIndex = vi.hoisted(() => vi.fn(() => ({ byPs: new Map(), byFamily: new Map() })))
+const getFontIndex = vi.hoisted(() => vi.fn(() => ({ byPs: new Map(), byFamily: new Map(), allFaces: [] })))
 vi.mock('../src/sfnt', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/sfnt')>()),
   getFontIndex,
