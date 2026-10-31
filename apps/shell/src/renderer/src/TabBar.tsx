@@ -257,7 +257,11 @@ export function TabBar() {
           </svg>
         </button>
       )}
-      <div className={dragVisual ? 'tab-strip dragging' : 'tab-strip'} ref={stripRef} role="tablist">
+      <div
+        className={dragVisual ? 'tab-strip dragging' : 'tab-strip'}
+        ref={stripRef}
+        role="tablist"
+      >
         {tabs.map((tab, index) => {
           // live transforms: the grabbed tab tracks the pointer; tabs between
           // the origin and the current target slide aside by the grabbed width
