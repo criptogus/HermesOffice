@@ -64,6 +64,7 @@ import {
   checkUpdatesMenuItem,
   setUpdateCheckInvoker,
   installRendererProtocol,
+  safeExternalUrl,
 } from '@hermesoffice/electron-utils'
 import { readAppSettings, writeAppSetting, writeAppSettings } from './app-settings'
 import { OPEN_DOCUMENTS_FILE, clearOpenDocuments, publishOpenDocuments } from './open-documents'
@@ -3452,7 +3453,10 @@ function registerHomeIpc(): void {
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLoginOpenUrl, () => {
-    if (pendingLoginUrl) void shell.openExternal(pendingLoginUrl)
+    if (pendingLoginUrl) {
+      const target = safeExternalUrl(pendingLoginUrl)
+      if (target) void shell.openExternal(target)
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.accountLogout, async () => {
@@ -3908,21 +3912,30 @@ function registerHomeIpc(): void {
   })
 
   ipcMain.handle(HOME_CHANNELS.openGenTeam, () => {
-    shell.openExternal(GENTEAM_URL).catch(() => {
-      // no browser handler available; nothing actionable for the user here
-    })
+    const target = safeExternalUrl(GENTEAM_URL)
+    if (target) {
+      shell.openExternal(target).catch(() => {
+        // no browser handler available; nothing actionable for the user here
+      })
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.openCreditUsage, () => {
-    shell.openExternal(CREDIT_USAGE_URL).catch(() => {
-      // no browser handler available; nothing actionable for the user here
-    })
+    const target = safeExternalUrl(CREDIT_USAGE_URL)
+    if (target) {
+      shell.openExternal(target).catch(() => {
+        // no browser handler available; nothing actionable for the user here
+      })
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.openGitHubRepo, () => {
-    shell.openExternal(GITHUB_REPO_URL).catch(() => {
-      // no browser handler available; nothing actionable for the user here
-    })
+    const target = safeExternalUrl(GITHUB_REPO_URL)
+    if (target) {
+      shell.openExternal(target).catch(() => {
+        // no browser handler available; nothing actionable for the user here
+      })
+    }
   })
 
   ipcMain.handle(HOME_CHANNELS.githubStars, () => fetchGithubStars())
