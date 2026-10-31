@@ -77,7 +77,8 @@ describe('ExternalWatchRegistry', () => {
     const states = new Map<number, DiskFileState>()
     const notifications: Array<string> = []
     const hooks: ExternalWatchHooks = {
-      probeFile: async (): Promise<WatchFileProbe> => (stamp ? { current: stamp, hash } : { current: null, hash: null }),
+      probeFile: async (): Promise<WatchFileProbe> =>
+        stamp ? { current: stamp, hash } : { current: null, hash: null },
       baseline: (wcId) => states.get(wcId),
       notify: (wcId, path) => notifications.push(`${wcId}:${path}`),
     }
