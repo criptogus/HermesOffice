@@ -165,13 +165,12 @@ describe('ExternalWatchRegistry', () => {
 
   it('never reports content read for a path superseded while the stat was pending', async () => {
     const notifications: string[] = []
-    let registry!: ReturnType<typeof createExternalWatchRegistry>
     const probeFile = vi.fn(async () => {
       // the tab navigates to another file while the stat is in flight
       registry.track(1, '/tmp/b.docx', 10_000)
       return { current: { mtimeMs: 2000, size: 43 }, hash: 'bbb' }
     })
-    registry = createExternalWatchRegistry({
+    const registry = createExternalWatchRegistry({
       probeFile,
       baseline: () => baseline,
       notify: (_wcId, path) => notifications.push(path),
