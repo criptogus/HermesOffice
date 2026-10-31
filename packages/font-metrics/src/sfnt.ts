@@ -139,6 +139,8 @@ export interface FaceRef {
 export interface FontIndex {
   byPs: Map<string, FaceRef>
   byFamily: Map<string, FaceRef[]>
+  /** Unique faces pre-deduplicated and pre-sorted plainest-style-first for fast font-covering scans */
+  allFaces: FaceRef[]
 }
 
 function* fontFiles(dir: string, depth: number): Generator<string> {
@@ -218,8 +220,20 @@ let index: FontIndex | null = null
 
 export function getFontIndex(): FontIndex {
   if (!index) {
-    index = { byPs: new Map(), byFamily: new Map() }
+    index = { byPs: new Map(), byFamily: new Map(), allFaces: [] }
     for (const dir of fontDirs()) for (const path of fontFiles(dir, 2)) indexFile(path, index)
+    // Pre-deduplicate and pre-sort unique faces once at index build, plainest style
+    // first, so every font-covering scan reuses the same cached ordered list
+    const seen = new Set<string>()
+    const faces: FaceRef[] = []
+    for (const face of [...index.byPs.values(), ...[...index.byFamily.values()].flat()]) {
+      const key = `${face.path}#${face.offset}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      faces.push(face)
+    }
+    faces.sort((a, b) => styleScore(b, []) - styleScore(a, []))
+    index.allFaces = faces
   }
   return index
 }

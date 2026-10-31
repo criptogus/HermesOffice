@@ -10,7 +10,6 @@ import {
   norm,
   readTable,
   readTableDir,
-  styleScore,
   styleTokens,
   OTTO_TAG,
   TTC_TAG,
@@ -117,28 +116,54 @@ function mapsCodepoint(cmap: Buffer, sub: { off: number; format: number }, cp: n
   const o = sub.off
   if (sub.format === 12) {
     const groups = cmap.readUInt32BE(o + 12)
-    for (let i = 0; i < groups; i++) {
-      const g = o + 16 + i * 12
+    let lo = 0
+    let hi = groups - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const g = o + 16 + mid * 12
       if (g + 12 > cmap.length) return false
-      if (cp < cmap.readUInt32BE(g)) return false // groups sorted ascending
-      if (cp <= cmap.readUInt32BE(g + 4))
-        return cmap.readUInt32BE(g + 8) + (cp - cmap.readUInt32BE(g)) !== 0
+      const start = cmap.readUInt32BE(g)
+      if (cp < start) {
+        hi = mid - 1
+      } else {
+        const end = cmap.readUInt32BE(g + 4)
+        if (cp > end) {
+          lo = mid + 1
+        } else {
+          return cmap.readUInt32BE(g + 8) + (cp - start) !== 0
+        }
+      }
     }
     return false
   }
   if (cp > 0xffff) return false
   const segX2 = cmap.readUInt16BE(o + 6)
+  const segCount = segX2 / 2
   const ends = o + 14
   const starts = ends + segX2 + 2
   const deltas = starts + segX2
   const rangeOffs = deltas + segX2
-  for (let s = 0; s < segX2; s += 2) {
-    if (cp > cmap.readUInt16BE(ends + s)) continue
-    if (cp < cmap.readUInt16BE(starts + s)) return false
-    const ro = cmap.readUInt16BE(rangeOffs + s)
-    if (ro === 0) return ((cp + cmap.readInt16BE(deltas + s)) & 0xffff) !== 0
-    const gi = cmap.readUInt16BE(rangeOffs + s + ro + (cp - cmap.readUInt16BE(starts + s)) * 2)
-    return gi !== 0 && ((gi + cmap.readInt16BE(deltas + s)) & 0xffff) !== 0
+  let lo = 0
+  let hi = segCount - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (ends + mid * 2 + 2 > cmap.length) return false
+    const end = cmap.readUInt16BE(ends + mid * 2)
+    if (cp > end) {
+      lo = mid + 1
+    } else {
+      const start = cmap.readUInt16BE(starts + mid * 2)
+      if (cp < start) {
+        hi = mid - 1
+      } else {
+        const ro = cmap.readUInt16BE(rangeOffs + mid * 2)
+        if (ro === 0) return ((cp + cmap.readInt16BE(deltas + mid * 2)) & 0xffff) !== 0
+        const gi = rangeOffs + mid * 2 + ro + (cp - start) * 2
+        if (gi + 2 > cmap.length) return false
+        const glyph = cmap.readUInt16BE(gi)
+        return glyph !== 0 && ((glyph + cmap.readInt16BE(deltas + mid * 2)) & 0xffff) !== 0
+      }
+    }
   }
   return false
 }
@@ -173,19 +198,20 @@ export function findFontCovering(text: string): Buffer | null {
 }
 
 function findFontCoveringUncached(text: string): Buffer | null {
-  const cps = [...new Set([...text.replace(/[\r\n]/g, '')].map((c) => c.codePointAt(0)!))]
+  const cps: number[] = []
+  const seen = new Set<number>()
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
+    if (cp === 10 || cp === 13) continue
+    if (!seen.has(cp)) {
+      seen.add(cp)
+      cps.push(cp)
+    }
+  }
   if (cps.length === 0) return null
   const index = getFontIndex()
-  const seen = new Set<string>()
-  const faces: FaceRef[] = []
-  for (const face of [...index.byPs.values(), ...[...index.byFamily.values()].flat()]) {
-    const key = `${face.path}#${face.offset}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    faces.push(face)
-  }
-  faces.sort((a, b) => styleScore(b, []) - styleScore(a, []))
-  for (const face of faces) {
+  for (const face of index.allFaces) {
     let fd: number
     try {
       fd = openSync(face.path, 'r')
