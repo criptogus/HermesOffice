@@ -124,6 +124,7 @@ export function AiComposer({
         )}
         {busy ? (
           <button
+            type="button"
             className="ai-send-btn ai-stop-btn"
             onClick={onStop}
             title={stopLabel}
@@ -134,6 +135,7 @@ export function AiComposer({
           </button>
         ) : (
           <button
+            type="button"
             className="ai-send-btn"
             onClick={onSend}
             disabled={!canSend}
