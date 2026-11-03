@@ -52,4 +52,17 @@ describe('safeExternalUrl', () => {
     expect(safeExternalUrl('http://example.com/foo\0bar')).toBeNull()
     expect(safeExternalUrl('https://example.com/foo\x7fbar')).toBeNull()
   })
+
+  it('rejects URLs containing unencoded backslashes', () => {
+    expect(safeExternalUrl('https://example.com\\evil.com')).toBeNull()
+    expect(safeExternalUrl('https://example.com/path\\to\\file')).toBeNull()
+    expect(safeExternalUrl('https:\\\\example.com')).toBeNull()
+  })
+
+  it('rejects URLs containing embedded user credentials', () => {
+    expect(safeExternalUrl('https://user:password@example.com')).toBeNull()
+    expect(safeExternalUrl('https://user@example.com')).toBeNull()
+    expect(safeExternalUrl('https://:password@example.com')).toBeNull()
+    expect(safeExternalUrl('https://google.com:443@attacker.com')).toBeNull()
+  })
 })

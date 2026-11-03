@@ -19,6 +19,10 @@ const DEFAULT_PROTOCOLS: readonly string[] = ['http:', 'https:']
  * hand `shell.openExternal` a URL that fails there.
  * Rejects strings containing unencoded ASCII control characters (\x00-\x1f, \x7f)
  * to prevent CRLF/tab injection or scheme parser bypasses when opening externally.
+ * Rejects unencoded backslashes (\) to prevent shell/browser authority confusion
+ * where WHATWG normalizes \ to / but host OS handlers interpret them differently.
+ * Rejects embedded credentials (username/password) to prevent credential leakage
+ * and userinfo-based destination spoofing (e.g. https://trusted.com@attacker.com).
  */
 export function safeExternalUrl(url: unknown, options?: SafeExternalUrlOptions): string | null {
   if (typeof url !== 'string') return null
@@ -26,12 +30,16 @@ export function safeExternalUrl(url: unknown, options?: SafeExternalUrlOptions):
   // Reject embedded unencoded control characters (e.g. tabs, newlines, null bytes)
   // eslint-disable-next-line no-control-regex -- intentionally reject raw ASCII controls
   if (/[\x00-\x1f\x7f]/.test(text)) return null
+  // Reject unencoded backslashes that parser rewrites to / but shell receives verbatim
+  if (text.includes('\\')) return null
   let parsed: URL
   try {
     parsed = new URL(text)
   } catch {
     return null
   }
+  // Reject embedded userinfo (credentials)
+  if (parsed.username || parsed.password) return null
   const allowed = options?.allowedProtocols ?? DEFAULT_PROTOCOLS
   return allowed.includes(parsed.protocol) ? text : null
 }
