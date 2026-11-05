@@ -588,18 +588,6 @@ html.genoffice-popover-open .ribbon-tabs {
   box-shadow: var(--docs-shadow-badge);
 }
 
-/* Hermes brand logo (Ribbon AI button and AI panel title) */
-.genspark-badge {
-  display: block;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-}
-
-.ai-panel-title .genspark-badge {
-  width: 18px;
-  height: 18px;
-}
 /* ---- ribbon body ---- */
 
 .ribbon-body {

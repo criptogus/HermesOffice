@@ -1849,18 +1849,6 @@ button.check-item:hover {
   box-shadow: var(--sheets-shadow-badge);
 }
 
-/* Hermes brand logo (shared by the collapse button and the AI panel title) */
-.genspark-badge {
-  display: block;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-}
-
-.ai-panel-title .genspark-badge {
-  width: 18px;
-  height: 18px;
-}
 
 .ai-panel-header-actions {
   display: flex;

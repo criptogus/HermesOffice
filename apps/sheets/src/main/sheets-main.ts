@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import {
   app,
@@ -53,6 +53,7 @@ import {
   installRendererProtocol,
   registerRendererScheme,
   rendererUrl,
+  uniquePathIn,
 } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang, type Lang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
 import { ProjectStore } from '@hermesoffice/project-store'
@@ -181,6 +182,7 @@ const tMain = createI18n({
     errParseFailed: '文件解析失败',
     errImageNoText: '图片附件不提供文本,已作为图像随用户消息发送,直接看图即可',
     errNotImage: '不是支持的图片类型',
+    errAttachmentNotGranted: '该文件未作为附件添加，无法读取',
     errGskNotLoggedIn: '未登录 Genspark:请点击下方「登录 Genspark」完成登录后重试',
     errNoApiKey: '未配置 {provider} 的 API Key',
     errAiBusy: 'AI 服务当前繁忙，请稍后重试',
@@ -238,6 +240,7 @@ const tMain = createI18n({
     errParseFailed: 'Failed to parse file',
     errImageNoText: 'Image attachments have no text; the image is sent along with the user message',
     errNotImage: 'not a supported image type',
+    errAttachmentNotGranted: 'File was not granted as an attachment and cannot be read',
     errGskNotLoggedIn:
       'Not signed in to Genspark: click “Sign in to Genspark” below, sign in, then retry',
     errNoApiKey: 'No API key configured for {provider}',
@@ -299,6 +302,7 @@ const tMain = createI18n({
     errImageNoText:
       '画像添付にはテキストがありません。画像はユーザー メッセージと一緒に送信されるため、そのまま画像をご確認ください',
     errNotImage: 'サポートされていない画像形式です',
+    errAttachmentNotGranted: 'このファイルは添付ファイルとして許可されていないため読み取れません',
     errGskNotLoggedIn:
       'Genspark にサインインしていません。下の「Genspark にサインイン」からサインインして再試行してください',
     errNoApiKey: '{provider} の API キーが設定されていません',
@@ -362,6 +366,7 @@ const tMain = createI18n({
     errImageNoText:
       '이미지 첨부에는 텍스트가 없습니다. 이미지는 사용자 메시지와 함께 전송되므로 이미지를 직접 확인하세요',
     errNotImage: '지원되는 이미지 형식이 아닙니다',
+    errAttachmentNotGranted: '첨부 파일로 허용되지 않아 읽을 수 없습니다',
     errGskNotLoggedIn:
       'Genspark에 로그인되어 있지 않습니다. 아래 "Genspark 로그인"을 눌러 로그인한 뒤 다시 시도하세요',
     errNoApiKey: '{provider}의 API 키가 설정되지 않았습니다',
@@ -425,6 +430,7 @@ const tMain = createI18n({
     errImageNoText:
       "Les images jointes n'ont pas de texte ; l'image est envoyée avec le message de l'utilisateur",
     errNotImage: "type d'image non pris en charge",
+    errAttachmentNotGranted: "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
     errGskNotLoggedIn:
       'Non connecté à Genspark : cliquez sur « Se connecter à Genspark » ci-dessous, connectez-vous puis réessayez',
     errNoApiKey: 'Aucune clé API configurée pour {provider}',
@@ -489,6 +495,7 @@ const tMain = createI18n({
     errImageNoText:
       'Bildanlagen enthalten keinen Text; das Bild wird zusammen mit der Benutzernachricht gesendet',
     errNotImage: 'kein unterstützter Bildtyp',
+    errAttachmentNotGranted: 'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
     errGskNotLoggedIn:
       'Nicht bei Genspark angemeldet: Klicken Sie unten auf „Bei Genspark anmelden“, melden Sie sich an und versuchen Sie es erneut',
     errNoApiKey: 'Kein API-Schlüssel für {provider} konfiguriert',
@@ -552,6 +559,7 @@ const tMain = createI18n({
     errImageNoText:
       'Las imágenes adjuntas no tienen texto; la imagen se envía junto con el mensaje del usuario',
     errNotImage: 'no es un tipo de imagen compatible',
+    errAttachmentNotGranted: 'Este archivo no está autorizado como adjunto y no se puede leer',
     errGskNotLoggedIn:
       'No has iniciado sesión en Genspark: pulsa «Iniciar sesión en Genspark» abajo, inicia sesión y vuelve a intentarlo',
     errNoApiKey: 'No hay clave de API configurada para {provider}',
@@ -615,6 +623,7 @@ const tMain = createI18n({
     errImageNoText:
       'รูปภาพแนบไม่มีข้อความ รูปภาพจะถูกส่งไปพร้อมข้อความของผู้ใช้ ให้ดูที่รูปภาพโดยตรง',
     errNotImage: 'ไม่ใช่ชนิดรูปภาพที่รองรับ',
+    errAttachmentNotGranted: 'ไฟล์นี้ไม่ได้รับอนุญาตเป็นไฟล์แนบ จึงไม่สามารถอ่านได้',
     errGskNotLoggedIn:
       'ยังไม่ได้ลงชื่อเข้าใช้ Genspark: แตะ “ลงชื่อเข้าใช้ Genspark” ด้านล่าง แล้วลองอีกครั้ง',
     errNoApiKey: 'ยังไม่ได้ตั้งค่า API Key ของ {provider}',
@@ -676,6 +685,7 @@ const tMain = createI18n({
     errParseFailed: 'Gagal mengurai file',
     errImageNoText: 'Lampiran gambar tidak memiliki teks; gambar dikirim bersama pesan pengguna',
     errNotImage: 'bukan jenis gambar yang didukung',
+    errAttachmentNotGranted: 'File ini tidak diizinkan sebagai lampiran dan tidak dapat dibaca',
     errGskNotLoggedIn: 'Belum masuk ke Genspark: klik “Masuk ke Genspark” di bawah, lalu coba lagi',
     errNoApiKey: 'API Key untuk {provider} belum dikonfigurasi',
     errAiBusy: 'Layanan AI sedang sibuk — silakan coba lagi sebentar lagi',
@@ -737,6 +747,7 @@ const tMain = createI18n({
     errImageNoText:
       'Вложенные изображения не содержат текста; изображение отправляется вместе с сообщением пользователя',
     errNotImage: 'неподдерживаемый тип изображения',
+    errAttachmentNotGranted: 'Этот файл не разрешён как вложение и не может быть прочитан',
     errGskNotLoggedIn:
       'Вы не вошли в Genspark: нажмите «Войти в Genspark» ниже, войдите и повторите попытку',
     errNoApiKey: 'API-ключ для {provider} не настроен',
@@ -798,6 +809,7 @@ const tMain = createI18n({
     errParseFailed: 'فشل تحليل الملف',
     errImageNoText: 'مرفقات الصور لا تحتوي على نص؛ تُرسل الصورة مع رسالة المستخدم',
     errNotImage: 'نوع صورة غير مدعوم',
+    errAttachmentNotGranted: 'لم يتم السماح بهذا الملف كمرفق ولا يمكن قراءته',
     errGskNotLoggedIn:
       'لم تسجّل الدخول إلى Genspark: انقر على «تسجيل الدخول إلى Genspark» أدناه ثم أعد المحاولة',
     errNoApiKey: 'لم يتم تكوين مفتاح API لـ {provider}',
@@ -858,6 +870,7 @@ const tMain = createI18n({
     errImageNoText:
       'Anexos de imagem não têm texto; a imagem é enviada junto com a mensagem do usuário',
     errNotImage: 'não é um tipo de imagem suportado',
+    errAttachmentNotGranted: 'Este ficheiro não foi autorizado como anexo e não pode ser lido',
     errGskNotLoggedIn:
       'Não conectado ao Genspark: clique em “Entrar no Genspark” abaixo, entre e tente novamente',
     errNoApiKey: 'Nenhuma chave de API configurada para {provider}',
@@ -920,6 +933,7 @@ const tMain = createI18n({
     errImageNoText:
       "Gli allegati immagine non hanno testo; l'immagine viene inviata insieme al messaggio dell'utente",
     errNotImage: 'tipo di immagine non supportato',
+    errAttachmentNotGranted: 'Questo file non è autorizzato come allegato e non può essere letto',
     errGskNotLoggedIn:
       'Accesso a Genspark non effettuato: fai clic su “Accedi a Genspark” qui sotto, accedi e riprova',
     errNoApiKey: 'Nessuna chiave API configurata per {provider}',
@@ -983,6 +997,7 @@ const tMain = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika',
     errNotImage: 'nieobsługiwany typ obrazu',
+    errAttachmentNotGranted: 'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
     errGskNotLoggedIn:
       'Nie zalogowano do Genspark: kliknij „Zaloguj się do Genspark” poniżej, zaloguj się i spróbuj ponownie',
     errNoApiKey: 'Nie skonfigurowano klucza API dla {provider}',
@@ -1045,6 +1060,7 @@ const tMain = createI18n({
     errImageNoText:
       'Obrázkové přílohy neobsahují text; obrázek se odesílá spolu se zprávou uživatele',
     errNotImage: 'nepodporovaný typ obrázku',
+    errAttachmentNotGranted: 'Tento soubor není autorizován jako příloha a nelze jej přečíst',
     errGskNotLoggedIn:
       'Nejste přihlášeni ke Genspark: klikněte níže na „Přihlásit se ke Genspark“, přihlaste se a zkuste to znovu',
     errNoApiKey: 'Pro {provider} není nakonfigurován žádný klíč API',
@@ -1107,6 +1123,7 @@ const tMain = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden',
     errNotImage: 'geen ondersteund afbeeldingstype',
+    errAttachmentNotGranted: 'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
     errGskNotLoggedIn:
       'Niet aangemeld bij Genspark: klik hieronder op “Aanmelden bij Genspark”, meld u aan en probeer het opnieuw',
     errNoApiKey: 'Geen API-sleutel geconfigureerd voor {provider}',
@@ -1169,6 +1186,7 @@ const tMain = createI18n({
     errParseFailed: 'Gagal menghurai fail',
     errImageNoText: 'Lampiran imej tiada teks; imej dihantar bersama mesej pengguna',
     errNotImage: 'bukan jenis imej yang disokong',
+    errAttachmentNotGranted: 'Fail ini tidak dibenarkan sebagai lampiran dan tidak boleh dibaca',
     errGskNotLoggedIn:
       'Belum log masuk ke Genspark: klik “Log masuk ke Genspark” di bawah, kemudian cuba lagi',
     errNoApiKey: 'Kunci API untuk {provider} belum dikonfigurasikan',
@@ -1231,6 +1249,7 @@ const tMain = createI18n({
     errParseFailed: 'ניתוח הקובץ נכשל',
     errImageNoText: 'קבצים מצורפים מסוג תמונה אינם מכילים טקסט; התמונה נשלחת יחד עם הודעת המשתמש',
     errNotImage: 'סוג תמונה שאינו נתמך',
+    errAttachmentNotGranted: 'הקובץ לא אושר כקובץ מצורף ולא ניתן לקרוא אותו',
     errGskNotLoggedIn: 'לא מחובר ל-Genspark: לחץ על "התחבר ל-Genspark" למטה, התחבר ונסה שוב',
     errNoApiKey: 'לא הוגדר מפתח API עבור {provider}',
     errAiBusy: 'שירות ה-AI עמוס כרגע — נסו שוב בעוד רגע',
@@ -1289,6 +1308,7 @@ const tMain = createI18n({
     errParseFailed: 'फ़ाइल पार्स करने में विफल',
     errImageNoText: 'छवि अनुलग्नक में टेक्स्ट नहीं होता; छवि उपयोगकर्ता संदेश के साथ भेजी जाती है',
     errNotImage: 'समर्थित छवि प्रकार नहीं है',
+    errAttachmentNotGranted: 'यह फ़ाइल अनुलग्नक के रूप में अधिकृत नहीं है और पढ़ी नहीं जा सकती',
     errGskNotLoggedIn:
       'Genspark में साइन इन नहीं है: नीचे “Genspark में साइन इन करें” पर क्लिक करें, साइन इन करें और फिर से कोशिश करें',
     errNoApiKey: '{provider} के लिए कोई API कुंजी कॉन्फ़िगर नहीं है',
@@ -1351,6 +1371,7 @@ const tMain = createI18n({
     errParseFailed: '檔案解析失敗',
     errImageNoText: '圖片附件不提供文字,已作為影像隨使用者訊息傳送,直接看圖即可',
     errNotImage: '不是支援的圖片類型',
+    errAttachmentNotGranted: '此檔案未作為附件新增，無法讀取',
     errGskNotLoggedIn: '未登入 Genspark:請點擊下方「登入 Genspark」完成登入後重試',
     errNoApiKey: '未設定 {provider} 的 API Key',
     errAiBusy: 'AI 服務目前繁忙，請稍後重試',
@@ -1491,15 +1512,8 @@ export function sanitizeGeneratedFileBase(title: string): string {
   return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
 }
 
-/** first free path for fileName inside dir: name.ext, name-2.ext, name-3.ext… */
-export function uniquePathIn(dir: string, fileName: string): string {
-  const dot = fileName.lastIndexOf('.')
-  const base = dot > 0 ? fileName.slice(0, dot) : fileName
-  const ext = dot > 0 ? fileName.slice(dot) : ''
-  let candidate = join(dir, fileName)
-  for (let i = 2; existsSync(candidate); i++) candidate = join(dir, `${base}-${i}${ext}`)
-  return candidate
-}
+// shared hardened implementation lives in @hermesoffice/electron-utils
+export { uniquePathIn }
 
 /** Standalone-window fallback for AI docx/pdf/md/html creation (mirrors pdf-main's
  * createStandaloneDocument): pdf renders in a hidden sandboxed window, md/html
@@ -1619,6 +1633,8 @@ function registerSheetsSession(webContents: WebContents, client: XlsxSidecarClie
   webContents.once('destroyed', () => {
     const entry = sheetsTabs.get(webContents.id)
     sheetsTabs.delete(webContents.id)
+    attachmentReadablePaths.delete(webContents.id)
+    mcpWritablePaths.delete(webContents.id)
     if (entry) {
       // Free pending chunked-save uploads with the tab (the sweep timer's
       // closure would otherwise keep them reachable until the idle expiry).
@@ -1686,6 +1702,21 @@ export function authorizeMcpSheetWrite(wcId: number, filePath: string): void {
 
 function canMcpSheetWrite(wcId: number, filePath: string): boolean {
   return mcpWritablePaths.get(wcId)?.has(filePath) === true
+}
+
+/** per-renderer chat-attachment paths granted via the picker, drag-drop/paste
+ * registration or a pasted-image temp file — files:read* only serves these, so
+ * renderer/agent code cannot read arbitrary filesystem paths */
+const attachmentReadablePaths = new Map<number, Set<string>>()
+
+function grantAttachmentRead(wcId: number, filePath: string): void {
+  const set = attachmentReadablePaths.get(wcId) ?? new Set<string>()
+  set.add(resolve(filePath))
+  attachmentReadablePaths.set(wcId, set)
+}
+
+function canReadAttachment(wcId: number, filePath: string): boolean {
+  return attachmentReadablePaths.get(wcId)?.has(resolve(filePath)) === true
 }
 
 /** Sanitize an AI-provided sheet name into a safe filename base: strip illegal path chars, collapse whitespace, cap length; null if invalid. (Mirrors slides' draft naming.) */
@@ -3161,12 +3192,15 @@ export function registerSheetsIpc(): void {
       properties: ['openFile', 'multiSelections'],
     })
     if (selection.canceled || selection.filePaths.length === 0) return null
+    for (const p of selection.filePaths) grantAttachmentRead(event.sender.id, p)
     return collectAttachments(selection.filePaths)
   })
 
   ipcMain.handle(IPC_CHANNELS.filesAdd, (event, paths: unknown): AttachmentAddResult => {
     sessionFor(event)
-    return collectAttachments(z.array(z.string().min(1).max(1024)).max(50).parse(paths))
+    const list = z.array(z.string().min(1).max(1024)).max(50).parse(paths)
+    for (const p of list) grantAttachmentRead(event.sender.id, p)
+    return collectAttachments(list)
   })
 
   ipcMain.handle(
@@ -3179,6 +3213,9 @@ export function registerSheetsIpc(): void {
     ): Promise<AttachmentReadResult> => {
       sessionFor(event)
       const validatedPath = z.string().min(1).max(1024).parse(filePath)
+      if (!canReadAttachment(event.sender.id, validatedPath)) {
+        return { ok: false, error: tm('errAttachmentNotGranted') }
+      }
       const name = basename(validatedPath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
@@ -3207,6 +3244,9 @@ export function registerSheetsIpc(): void {
   ipcMain.handle(IPC_CHANNELS.filesReadImage, (event, filePath: unknown): AttachmentImageResult => {
     sessionFor(event)
     const validatedPath = z.string().min(1).max(1024).parse(filePath)
+    if (!canReadAttachment(event.sender.id, validatedPath)) {
+      return { ok: false, error: tm('errAttachmentNotGranted') }
+    }
     const name = basename(validatedPath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]
@@ -3229,6 +3269,7 @@ export function registerSheetsIpc(): void {
     (event, data: unknown, ext: unknown): AttachmentAddResult => {
       sessionFor(event)
       const filePath = savePastedImage(data, ext)
+      if (filePath) grantAttachmentRead(event.sender.id, filePath)
       return filePath
         ? collectAttachments([filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }

@@ -3,6 +3,7 @@ import type { Editor, JSONContent } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import {
   SHAPE_GALLERY_GROUPS,
+  appConfirmDialog,
   useDismissablePopover,
   wordArtSolidColor,
   type WordArtPreset,
@@ -699,9 +700,10 @@ export function ReviewTab({
   // One-time acknowledgement before whole-document AI rewrites:
   // Editor / Translate send the full document to the agent, consume credits and
   // may rewrite everything — say so once before the first run.
-  const confirmAiRewrite = () => {
+  const confirmAiRewrite = async () => {
     if (localStorage.getItem(AI_REWRITE_ACK_KEY) === '1') return true
-    if (!window.confirm(t('ribbonAiRewriteConfirm'))) return false
+    const confirmed = await appConfirmDialog({ message: t('ribbonAiRewriteConfirm') })
+    if (!confirmed) return false
     localStorage.setItem(AI_REWRITE_ACK_KEY, '1')
     return true
   }
@@ -716,9 +718,9 @@ export function ReviewTab({
             className="rb-big"
             disabled={!hasDoc}
             data-tip={`${t('ribbonEditorTip')} — ${t('ribbonAiCreditNote')}`}
-            onClick={() => {
+            onClick={async () => {
               if (hasRangeSelection()) onAiPreset(t('ribbonEditorSelectionPrompt'))
-              else if (confirmAiRewrite()) onAiPreset(t('ribbonEditorPrompt'))
+              else if (await confirmAiRewrite()) onAiPreset(t('ribbonEditorPrompt'))
             }}
           >
             <span className="rb-big-icon">
@@ -767,11 +769,11 @@ export function ReviewTab({
                 {TRANSLATE_TARGETS.map((lang) => (
                   <button
                     key={lang.labelKey}
-                    onClick={() => {
+                    onClick={async () => {
                       setDropdown(() => null)
                       if (hasRangeSelection()) {
                         onAiPreset(t('ribbonTranslateSelectionPrompt', { lang: t(lang.labelKey) }))
-                      } else if (confirmAiRewrite()) {
+                      } else if (await confirmAiRewrite()) {
                         onAiPreset(t('ribbonTranslatePrompt', { lang: t(lang.labelKey) }))
                       }
                     }}

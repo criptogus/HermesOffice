@@ -629,18 +629,6 @@ button {
   box-shadow: var(--slides-shadow-badge-soft);
 }
 
-/* Hermes brand logo (Ribbon AI button / AI panel title / collapsed entry) */
-.genspark-badge {
-  display: block;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-}
-
-.ai-panel-title .genspark-badge {
-  width: 18px;
-  height: 18px;
-}
 /* ---- ribbon body ---- */
 
 .ribbon-body {
@@ -5616,11 +5604,6 @@ body.vib .slide-list {
   flex-shrink: 0;
   /* AI feature glyphs match the ribbon's blue */
   color: var(--color-brand-secondary);
-}
-
-/* the brand mark uses currentColor and keeps the button's ink, not the blue */
-.stage-ai-btn svg.genspark-mark {
-  color: var(--slides-stagebar-ink);
 }
 
 /* Notes pane (bottom, PowerPoint style) */

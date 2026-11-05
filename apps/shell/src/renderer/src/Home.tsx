@@ -19,7 +19,9 @@ import type {
   RecentEntry,
 } from '../../shared/home-api'
 import type { IntegrationsApi } from '../../shared/integrations-api'
-import { useDismissablePopover } from '@hermesoffice/ui'
+import { useDismissablePopover,
+  appAlertDialog,
+} from '@hermesoffice/ui'
 import { fileCountKey, visiblePageCount } from './counts'
 import { useI18n } from './locale'
 import type { I18n, StringKey } from './locale'
@@ -407,7 +409,7 @@ function FolderPicker({
     if (!parent || !name) return
     const result = await window.aiOffice.createFolder(parent, name)
     if (!result.ok) {
-      window.alert(result.error ?? t('renameFailed'))
+      void appAlertDialog({ message: result.error ?? t('renameFailed') })
       return
     }
     load(parent, true)
@@ -1773,7 +1775,7 @@ export function Home() {
     if (!value || value === baseName(entry)) return
     const newName = entry.ext ? `${value}.${entry.ext}` : value
     void window.aiOffice.renameFile(entry.path, newName).then((result) => {
-      if (!result.ok) window.alert(result.error ?? t('renameFailed'))
+      if (!result.ok) void appAlertDialog({ message: result.error ?? t('renameFailed') })
       refresh()
     })
   }
@@ -1804,7 +1806,7 @@ export function Home() {
     if (!pending || !name) return
     const result = await window.aiOffice.createFolder(pending.parent, name)
     if (!result.ok) {
-      window.alert(result.error ?? t('renameFailed'))
+      void appAlertDialog({ message: result.error ?? t('renameFailed') })
       return
     }
     invalidateFolders([pending.parent])
@@ -1825,7 +1827,7 @@ export function Home() {
     if (!value || value === fileName(pending.path)) return
     const result = await window.aiOffice.renameFolder(pending.path, value)
     if (!result.ok) {
-      window.alert(result.error ?? t('renameFailed'))
+      void appAlertDialog({ message: result.error ?? t('renameFailed') })
       return
     }
     if (result.path) {
@@ -1870,7 +1872,7 @@ export function Home() {
       }
     }
     refresh()
-    if (result.failed.length > 0) window.alert(result.failed[0].error)
+    if (result.failed.length > 0) void appAlertDialog({ message: result.failed[0].error })
     if (result.conflicts.length > 0) setConflict({ paths: result.conflicts, targetDir })
   }
 

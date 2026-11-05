@@ -5,7 +5,7 @@ import {
   type MarkdownSourceSnapshot,
 } from './markdown/roundtripSerializer'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ImageViewer, useAutoSavePref } from '@hermesoffice/ui'
+import { ImageViewer, ToastHost, useAutoSavePref } from '@hermesoffice/ui'
 import {
   pollUntilReady,
   runHeadlessRendererExport,
@@ -34,7 +34,6 @@ import { dirOf, setImageBaseDir, VIEW_IMAGE_EVENT } from './editor/localImage'
 import { Ribbon } from './components/Ribbon'
 import { OutlinePane } from './components/OutlinePane'
 import { SlashMenu, type SlashMenuHandle } from './components/SlashMenu'
-import { ToastHost } from './components/toast'
 import { TableMenu } from './components/TableMenu'
 import { FrontmatterPanel } from './components/FrontmatterPanel'
 import { AiAskPopover } from './components/AiAskPopover'

@@ -39,6 +39,7 @@ export {
   resolveDefaultSaveDir,
   type PathProvider,
 } from './default-save-dir'
+export { uniquePathIn } from './safe-file-name'
 export { installNavigationGuard } from './navigation-guard'
 export {
   DROP_OPEN_CHANNEL,

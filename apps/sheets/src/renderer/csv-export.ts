@@ -6,7 +6,7 @@
 import { MAX_CSV_EXPORT_CHARS } from '../shared/ipc-channels'
 import { formulaViewSheets } from './formula-view'
 import { t } from './i18n/locale'
-import { showToast } from './toast-bus'
+import { showToast } from '@hermesoffice/ui'
 import type { LazyWorkbookState, UniverRuntime } from './univer-state'
 
 /// Rows fetched per getDisplayValues call, bounding the facade's allocation.

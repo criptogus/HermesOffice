@@ -110,6 +110,7 @@ import { platformShortcuts } from '@hermesoffice/i18n'
 import {
   Dropdown,
   RibbonCollapseButton,
+  appConfirmDialog,
   useDismissablePopover,
   useRibbonCollapse,
 } from '@hermesoffice/ui'
@@ -3588,7 +3589,7 @@ export default function App() {
     return true
   }
 
-  const requestRedactionSaveAs = () => {
+  const requestRedactionSaveAs = async () => {
     if (redactions.length === 0) return
     const otherPending =
       markups.length > 0 ||
@@ -3608,7 +3609,13 @@ export default function App() {
       showNotice(t('redactSaveFirst'))
       return
     }
-    if (!window.confirm(t('redactConfirm'))) return
+    const confirmed = await appConfirmDialog({
+      message: t('redactConfirm'),
+      confirmLabel: t('ok'),
+      cancelLabel: t('cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
     redactionApplyConfirmedRef.current = true
     setRedactionCopyInFlight(true)
     void window.pdfApi

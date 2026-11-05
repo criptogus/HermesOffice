@@ -7,6 +7,7 @@ import {
   Dropdown,
   aiPanelFontPx,
   clampAiCustomFontSize,
+  appAlertDialog,
 } from '@hermesoffice/ui'
 import type { AiFontSize, AiPanelPrefs, AiPanelSide } from '@hermesoffice/ui'
 import {
@@ -317,7 +318,7 @@ function AiModelPane({ t }: { t: TFunc }) {
     baseUrl: undefined,
     cliPath: undefined,
   }
-  const isHermes = provider === 'genspark'
+  const isGensparkProvider = provider === 'genspark'
   const isCodex = provider === 'codex'
 
   const touch = () => {
@@ -362,7 +363,7 @@ function AiModelPane({ t }: { t: TFunc }) {
         setSaved(true)
       })
       .catch((error) => {
-        window.alert(error instanceof Error ? error.message : String(error))
+        void appAlertDialog({ message: error instanceof Error ? error.message : String(error) })
       })
   }
   const test = () => {
@@ -407,7 +408,7 @@ function AiModelPane({ t }: { t: TFunc }) {
         />
       </div>
       <div className="set-field-desc set-ai-note">
-        {isHermes ? t('setAiHermesHint') : isCodex ? t('setAiCodexHint') : t('setAiByokNote')}
+        {isGensparkProvider ? t('setAiGensparkHint') : isCodex ? t('setAiCodexHint') : t('setAiByokNote')}
       </div>
       <div className="set-field">
         <div className="set-field-text">
@@ -458,7 +459,7 @@ function AiModelPane({ t }: { t: TFunc }) {
             }}
           />
         </div>
-      ) : !isHermes ? (
+      ) : !isGensparkProvider ? (
         <>
           <div className="set-field">
             <div className="set-field-text">
@@ -537,7 +538,7 @@ function AiModelPane({ t }: { t: TFunc }) {
           role="switch"
           aria-checked={settings.gskToolsEnabled !== false}
           aria-label={t('setAiGskTools')}
-          disabled={isHermes}
+          disabled={isGensparkProvider}
           onClick={() => {
             setSettings({ ...settings, gskToolsEnabled: settings.gskToolsEnabled === false })
             touch()
@@ -645,7 +646,7 @@ function AiMediaPane({ t }: { t: TFunc }) {
         setSaved(true)
       })
       .catch((error) => {
-        window.alert(error instanceof Error ? error.message : String(error))
+        void appAlertDialog({ message: error instanceof Error ? error.message : String(error) })
       })
   }
   // every distinct BYOK vendor the four blocks point at is checked once; first failure wins

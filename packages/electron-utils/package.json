@@ -14,7 +14,8 @@
     "./renderer-protocol": "./src/renderer-protocol.ts",
     "./renderer-scheme": "./src/renderer-scheme.ts",
     "./safe-remote-url": "./src/safe-remote-url.ts",
-    "./github-menu": "./src/github-menu.ts"
+    "./github-menu": "./src/github-menu.ts",
+    "./safe-file-name": "./src/safe-file-name.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
