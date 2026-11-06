@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { basename, extname, isAbsolute } from 'node:path'
+import { uniquePathIn } from '@hermesoffice/electron-utils/safe-file-name'
 import { z } from 'zod'
 import { createFileViaCli, readDocxTextViaCli } from '../headless-cli'
 import type { McpToolDefinition } from '../mcp-server'
@@ -75,14 +76,7 @@ export function sanitizeFileBase(title: string): string {
   return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
 }
 
-/** first free path for fileName inside dir: name.docx, name-2.docx, … */
-export function uniquePathIn(dir: string, fileName: string): string {
-  const ext = extname(fileName)
-  const base = fileName.slice(0, fileName.length - ext.length)
-  let candidate = join(dir, fileName)
-  for (let i = 2; existsSync(candidate); i++) candidate = join(dir, `${base}-${i}${ext}`)
-  return candidate
-}
+export { uniquePathIn }
 
 /**
  * Shared output-path policy for every generating tool: sanitize the title into a

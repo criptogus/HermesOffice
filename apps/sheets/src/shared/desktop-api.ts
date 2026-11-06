@@ -2680,6 +2680,9 @@ export interface DesktopApi {
   /// Persists a clipboard-pasted image (no local path) to a temp file and adds it
   /// as an attachment
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
+  /// Stores dropped/pasted file bytes under temp and attaches them — the only
+  /// drop/paste route that earns a read grant (paths can't be proven by the OS)
+  addAttachmentBytes(name: string, data: ArrayBuffer): Promise<AttachmentAddResult>
   /// Reads one chunk of an attachment's extracted text
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /// Reads an image attachment as base64 for multimodal input (≤5MB)

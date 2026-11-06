@@ -39,6 +39,12 @@ export {
   resolveDefaultSaveDir,
   type PathProvider,
 } from './default-save-dir'
+export { uniquePathIn, sanitizeFileName } from './safe-file-name'
+export {
+  saveAttachmentBytes,
+  type SaveAttachmentBytesOptions,
+  type SaveAttachmentBytesResult,
+} from './attachment-upload'
 export { installNavigationGuard } from './navigation-guard'
 export {
   DROP_OPEN_CHANNEL,

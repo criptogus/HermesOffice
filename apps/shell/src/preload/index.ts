@@ -336,6 +336,9 @@ const homeApi: HomeApi = {
   async openCreditUsage() {
     await ipcRenderer.invoke(HOME_CHANNELS.openCreditUsage)
   },
+  async openZeroAgency() {
+    await ipcRenderer.invoke(HOME_CHANNELS.openZeroAgency)
+  },
   async openGitHubRepo() {
     await ipcRenderer.invoke(HOME_CHANNELS.openGitHubRepo)
   },

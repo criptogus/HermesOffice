@@ -464,8 +464,12 @@ export interface DesktopApi {
   }): Promise<{ url?: string; error?: string }>
   /** file picker for chat attachments (multi-select) */
   pickAttachments(): Promise<AttachmentAddResult | null>
-  /** validate dropped paths and return attachment metadata */
+  /** validate dropped paths and return attachment metadata (no read grant —
+   *  renderer-supplied paths are not proof of an OS drop) */
   addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** store dropped/pasted file bytes under temp and attach them (the only
+   *  drop/paste path that earns a read grant) */
+  addAttachmentBytes(name: string, data: ArrayBuffer): Promise<AttachmentAddResult>
   /** persist a pasted clipboard image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
   /** copy an embedded picture to the OS clipboard as a real bitmap + <img>

@@ -145,6 +145,8 @@ export const de = {
   dlgSlicerInsertTitle: 'Datenschnitt einfügen',
   dlgSlicerPickNote:
     'Wählen Sie das Feld für den Datenschnitt; das Klicken auf Elemente im Datenschnitt filtert die PivotTable.',
+  dlgSlicerSessionNote:
+    'Hinweis: Das Segmentfilterfenster ist nur für diese Sitzung verfügbar; die gefilterten PivotTable-Daten werden mit der Datei gespeichert.',
   dlgSlicerAria: 'Datenschnitt {name}',
   dlgSlicerClear: 'Filter löschen (alles auswählen)',
   dlgSlicerRemove: 'Datenschnitt entfernen (alle Elemente wiederherstellen)',

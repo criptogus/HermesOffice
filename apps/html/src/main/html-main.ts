@@ -37,6 +37,7 @@ import {
   type HeadlessExportTarget,
   installRendererProtocol,
   rendererUrl,
+  saveAttachmentBytes,
 } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang } from '@hermesoffice/i18n'
 import { generateImageTool } from '@hermesoffice/ai-search'
@@ -112,6 +113,7 @@ const tDlg = createI18n({
     errParseFailed: '文件解析失败',
     errImageNoText: '图片附件不提供文本,已作为图像随用户消息发送,直接看图即可',
     errNotImage: '不是支持的图片类型',
+    errAttachmentNotGranted: '该文件未作为附件添加，无法读取',
   },
   en: {
     dlgSaveTitle: 'Save HTML Document',
@@ -136,6 +138,7 @@ const tDlg = createI18n({
     errParseFailed: 'Failed to parse file',
     errImageNoText: 'Image attachments have no text; the image is sent along with the user message',
     errNotImage: 'not a supported image type',
+    errAttachmentNotGranted: 'File was not granted as an attachment and cannot be read',
   },
   ja: {
     dlgSaveTitle: 'HTML ドキュメントを保存',
@@ -161,6 +164,7 @@ const tDlg = createI18n({
     errImageNoText:
       '画像の添付ファイルはテキストを提供しません。画像としてユーザーメッセージと一緒に送信されるため、そのまま画像をご確認ください',
     errNotImage: 'サポートされていない画像形式です',
+    errAttachmentNotGranted: 'このファイルは添付ファイルとして許可されていないため読み取れません',
   },
   ko: {
     dlgSaveTitle: 'HTML 문서 저장',
@@ -186,6 +190,7 @@ const tDlg = createI18n({
     errImageNoText:
       '이미지 첨부 파일은 텍스트를 제공하지 않으며, 이미지 형태로 사용자 메시지와 함께 전송되므로 이미지를 직접 확인하면 됩니다',
     errNotImage: '지원되지 않는 이미지 형식입니다',
+    errAttachmentNotGranted: '첨부 파일로 허용되지 않아 읽을 수 없습니다',
   },
   fr: {
     dlgSaveTitle: 'Enregistrer le document HTML',
@@ -211,6 +216,8 @@ const tDlg = createI18n({
     errImageNoText:
       "Les pièces jointes image ne fournissent pas de texte ; l'image est envoyée avec le message de l'utilisateur, consultez-la directement",
     errNotImage: "type d'image non pris en charge",
+    errAttachmentNotGranted:
+      "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
   },
   de: {
     dlgSaveTitle: 'HTML-Dokument speichern',
@@ -236,6 +243,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Bildanlagen liefern keinen Text; das Bild wird mit der Benutzernachricht gesendet und kann direkt betrachtet werden',
     errNotImage: 'kein unterstütztes Bildformat',
+    errAttachmentNotGranted:
+      'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
   },
   es: {
     dlgSaveTitle: 'Guardar documento HTML',
@@ -261,6 +270,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Las imágenes adjuntas no proporcionan texto; la imagen se envía junto con el mensaje del usuario, puedes verla directamente',
     errNotImage: 'no es un tipo de imagen compatible',
+    errAttachmentNotGranted: 'Este archivo no está autorizado como adjunto y no se puede leer',
   },
   th: {
     dlgSaveTitle: 'บันทึกเอกสาร HTML',
@@ -286,6 +296,7 @@ const tDlg = createI18n({
     errImageNoText:
       'สิ่งที่แนบเป็นรูปภาพไม่มีข้อความ รูปจะถูกส่งไปพร้อมข้อความของผู้ใช้ ดูรูปได้โดยตรง',
     errNotImage: 'ไม่ใช่ชนิดรูปภาพที่รองรับ',
+    errAttachmentNotGranted: 'ไฟล์นี้ไม่ได้รับอนุญาตเป็นไฟล์แนบ จึงไม่สามารถอ่านได้',
   },
   id: {
     dlgSaveTitle: 'Simpan dokumen HTML',
@@ -311,6 +322,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Lampiran gambar tidak menyediakan teks; gambar dikirim bersama pesan pengguna dan dapat dilihat langsung',
     errNotImage: 'bukan jenis gambar yang didukung',
+    errAttachmentNotGranted: 'File ini tidak diizinkan sebagai lampiran dan tidak dapat dibaca',
   },
   ru: {
     dlgSaveTitle: 'Сохранить документ HTML',
@@ -336,6 +348,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Вложенные изображения не содержат текста; изображение отправляется вместе с сообщением пользователя, смотрите его напрямую',
     errNotImage: 'неподдерживаемый тип изображения',
+    errAttachmentNotGranted: 'Этот файл не разрешён как вложение и не может быть прочитан',
   },
   ar: {
     dlgSaveTitle: 'حفظ مستند HTML',
@@ -361,6 +374,7 @@ const tDlg = createI18n({
     errImageNoText:
       'مرفقات الصور لا توفر نصًا؛ تُرسل الصورة مع رسالة المستخدم ويمكن الاطلاع عليها مباشرة',
     errNotImage: 'ليس نوع صورة مدعومًا',
+    errAttachmentNotGranted: 'لم يتم السماح بهذا الملف كمرفق ولا يمكن قراءته',
   },
   pt: {
     dlgSaveTitle: 'Salvar documento HTML',
@@ -386,6 +400,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Anexos de imagem não fornecem texto; a imagem é enviada junto com a mensagem do usuário, basta vê-la diretamente',
     errNotImage: 'não é um tipo de imagem suportado',
+    errAttachmentNotGranted: 'Este ficheiro não foi autorizado como anexo e não pode ser lido',
   },
   it: {
     dlgSaveTitle: 'Salva documento HTML',
@@ -411,6 +426,7 @@ const tDlg = createI18n({
     errImageNoText:
       "Gli allegati immagine non forniscono testo; l'immagine viene inviata insieme al messaggio dell'utente, basta guardarla direttamente",
     errNotImage: 'tipo di immagine non supportato',
+    errAttachmentNotGranted: 'Questo file non è autorizzato come allegato e non può essere letto',
   },
   pl: {
     dlgSaveTitle: 'Zapisz dokument HTML',
@@ -436,6 +452,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika, wystarczy na niego spojrzeć',
     errNotImage: 'nieobsługiwany typ obrazu',
+    errAttachmentNotGranted:
+      'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
   },
   cs: {
     dlgSaveTitle: 'Uložit dokument HTML',
@@ -461,6 +479,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Obrázkové přílohy neobsahují text; obrázek se odesílá spolu se zprávou uživatele',
     errNotImage: 'nepodporovaný typ obrázku',
+    errAttachmentNotGranted: 'Tento soubor není autorizován jako příloha a nelze jej přečíst',
   },
   nl: {
     dlgSaveTitle: 'HTML-document opslaan',
@@ -486,6 +505,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden en kan direct worden bekeken',
     errNotImage: 'geen ondersteund afbeeldingstype',
+    errAttachmentNotGranted:
+      'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
   },
   ms: {
     dlgSaveTitle: 'Simpan dokumen HTML',
@@ -511,6 +532,7 @@ const tDlg = createI18n({
     errImageNoText:
       'Lampiran imej tidak menyediakan teks; imej dihantar bersama mesej pengguna dan boleh dilihat terus',
     errNotImage: 'bukan jenis imej yang disokong',
+    errAttachmentNotGranted: 'Fail ini tidak dibenarkan sebagai lampiran dan tidak boleh dibaca',
   },
   he: {
     dlgSaveTitle: 'שמירת מסמך HTML',
@@ -536,6 +558,7 @@ const tDlg = createI18n({
     errImageNoText:
       'קבצים מצורפים מסוג תמונה אינם מספקים טקסט; התמונה נשלחת יחד עם הודעת המשתמש וניתן לצפות בה ישירות',
     errNotImage: 'סוג תמונה שאינו נתמך',
+    errAttachmentNotGranted: 'הקובץ לא אושר כקובץ מצורף ולא ניתן לקרוא אותו',
   },
   hi: {
     dlgSaveTitle: 'HTML दस्तावेज़ सहेजें',
@@ -561,6 +584,7 @@ const tDlg = createI18n({
     errImageNoText:
       'छवि अनुलग्नक टेक्स्ट प्रदान नहीं करते; छवि उपयोगकर्ता संदेश के साथ भेजी जाती है, उसे सीधे देखें',
     errNotImage: 'समर्थित छवि प्रकार नहीं है',
+    errAttachmentNotGranted: 'यह फ़ाइल अनुलग्नक के रूप में अधिकृत नहीं है और पढ़ी नहीं जा सकती',
   },
   'zh-TW': {
     dlgSaveTitle: '儲存 HTML 文件',
@@ -585,6 +609,7 @@ const tDlg = createI18n({
     errParseFailed: '檔案解析失敗',
     errImageNoText: '圖片附件不提供文字,已作為影像隨使用者訊息傳送,直接看圖即可',
     errNotImage: '不是支援的圖片類型',
+    errAttachmentNotGranted: '此檔案未作為附件新增，無法讀取',
   },
 })
 type DlgKey =
@@ -610,6 +635,7 @@ type DlgKey =
   | 'errParseFailed'
   | 'errImageNoText'
   | 'errNotImage'
+  | 'errAttachmentNotGranted'
 const tm = (key: DlgKey, vars?: Record<string, string | number>) => tDlg(getUiLang(), key, vars)
 
 // ---- chat attachments: local files parsed for the agent (same contract as the docs panel) ----
@@ -699,6 +725,29 @@ function collectAttachments(paths: string[]): AttachmentAddResult {
     else if (error) rejected.push(error)
   }
   return { accepted, rejected }
+}
+
+/** per-renderer chat-attachment paths granted via the picker, drag-drop/paste
+ * registration or a pasted-image temp file — files:read* only serves these, so
+ * renderer/agent code cannot read arbitrary filesystem paths */
+const attachmentReadablePaths = new Map<number, Set<string>>()
+const attachmentHookedWcIds = new Set<number>()
+
+function grantAttachmentRead(wc: WebContents, filePath: string): void {
+  if (!attachmentHookedWcIds.has(wc.id)) {
+    attachmentHookedWcIds.add(wc.id)
+    wc.once('destroyed', () => {
+      attachmentReadablePaths.delete(wc.id)
+      attachmentHookedWcIds.delete(wc.id)
+    })
+  }
+  const set = attachmentReadablePaths.get(wc.id) ?? new Set<string>()
+  set.add(resolve(filePath))
+  attachmentReadablePaths.set(wc.id, set)
+}
+
+function canReadAttachment(wc: WebContents, filePath: string): boolean {
+  return attachmentReadablePaths.get(wc.id)?.has(resolve(filePath)) === true
 }
 
 let pastedImageSeq = 0
@@ -1428,17 +1477,51 @@ function registerHtmlIpc(): void {
       properties: ['openFile', 'multiSelections'],
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
+    for (const p of picked.filePaths) grantAttachmentRead(e.sender, p)
     return collectAttachments(picked.filePaths)
   })
 
-  ipcMain.handle(HTML_CHANNELS.filesAdd, (_e, paths: unknown) =>
-    collectAttachments(Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []),
+  ipcMain.handle(HTML_CHANNELS.filesAdd, (e, paths: unknown) => {
+    const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []
+    // Renderer-supplied paths are not proof of an OS drop/paste: collect the
+    // metadata for display, but do NOT grant read access — grants only come
+    // from the picker, pasted-image temp files, and files-add-bytes.
+    return collectAttachments(list)
+  })
+
+  // Dragged/pasted files arrive as bytes: webUtils.getPathForFile strings can
+  // be forged by page script, so main stores the bytes under temp itself and
+  // grants that path — the renderer never names a readable path.
+  ipcMain.handle(
+    HTML_CHANNELS.filesAddBytes,
+    (e, name: unknown, data: unknown): AttachmentAddResult => {
+      const saved = saveAttachmentBytes(data, name, {
+        allowedExts: ATTACHMENT_EXTS,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      })
+      if (!saved.ok) {
+        const ext = typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        return {
+          accepted: [],
+          rejected: [
+            saved.reason === 'too-large'
+              ? tm('errFileTooLarge')
+              : saved.reason === 'bad-ext'
+                ? tm('errUnsupportedExt', { ext })
+                : tm('errUnreadable'),
+          ],
+        }
+      }
+      grantAttachmentRead(e.sender, saved.path)
+      return collectAttachments([saved.path])
+    },
   )
 
   ipcMain.handle(
     HTML_CHANNELS.filesAddPastedImage,
-    (_e, data: unknown, ext: unknown): AttachmentAddResult => {
+    (e, data: unknown, ext: unknown): AttachmentAddResult => {
       const filePath = savePastedImage(data, ext)
+      if (filePath) grantAttachmentRead(e.sender, filePath)
       return filePath
         ? collectAttachments([filePath])
         : { accepted: [], rejected: [tm('errNotImage')] }
@@ -1448,11 +1531,14 @@ function registerHtmlIpc(): void {
   ipcMain.handle(
     HTML_CHANNELS.filesRead,
     async (
-      _e,
+      e,
       filePath: string,
       offset: number,
       maxChars: number,
     ): Promise<AttachmentReadResult> => {
+      if (!canReadAttachment(e.sender, filePath)) {
+        return { ok: false, error: tm('errAttachmentNotGranted') }
+      }
       const name = basename(filePath)
       const ext = name.split('.').pop()?.toLowerCase() ?? ''
       if (!ATTACHMENT_EXTS.has(ext)) return { ok: false, error: tm('errUnsupportedExt', { ext }) }
@@ -1474,7 +1560,10 @@ function registerHtmlIpc(): void {
     },
   )
 
-  ipcMain.handle(HTML_CHANNELS.filesReadImage, (_e, filePath: string): AttachmentImageResult => {
+  ipcMain.handle(HTML_CHANNELS.filesReadImage, (e, filePath: string): AttachmentImageResult => {
+    if (!canReadAttachment(e.sender, filePath)) {
+      return { ok: false, error: tm('errAttachmentNotGranted') }
+    }
     const name = basename(filePath)
     const ext = name.split('.').pop()?.toLowerCase() ?? ''
     const mime = ATTACHMENT_IMAGE_MIME[ext]

@@ -11,7 +11,7 @@ import {
   type SourceInfo,
   type TocEntry,
 } from '@hermesoffice/docx-engine'
-import { Dropdown } from '@hermesoffice/ui'
+import { Dropdown, appAlertDialog } from '@hermesoffice/ui'
 import { PromptModal } from './PromptModal'
 import { collectHeadings } from '../editor/headings'
 import { t, useI18n, type StringKey } from '../i18n/locale'
@@ -90,7 +90,7 @@ function updateTocField(
 ): void {
   const entries = collectTocEntriesWithPages(editor, headingPages)
   if (entries.length === 0) {
-    window.alert(t('ribbonTocNoHeadings'))
+    void appAlertDialog({ message: t('ribbonTocNoHeadings') })
     return
   }
 
@@ -135,7 +135,7 @@ function updateTocField(
   }
 
   if (from === -1 || !found) {
-    window.alert(t('ribbonTocNotFound'))
+    void appAlertDialog({ message: t('ribbonTocNotFound') })
     return
   }
   editor
@@ -372,7 +372,7 @@ export function ReferencesTab({
     // every command lets Zotero rebuild the bibliography from the fields it can see;
     // note citations are not among them yet, so their works would silently drop out
     if (zoteroNoteFields) {
-      window.alert(t('zoteroNoteFieldsUnsupported'))
+      void appAlertDialog({ message: t('zoteroNoteFieldsUnsupported') })
       return
     }
     setZoteroBusy(command)
@@ -380,17 +380,17 @@ export function ReferencesTab({
       const result = await window.desktop.zoteroCommand(command)
       if (!result.ok) {
         console.error('Zotero integration failed', result.error)
-        window.alert(
-          t(
+        void appAlertDialog({
+          message: t(
             result.errorCode === 'connection-refused'
               ? 'zoteroConnectionError'
               : 'zoteroOperationError',
           ),
-        )
+        })
       }
     } catch (error) {
       console.error('Zotero integration failed', error)
-      window.alert(t('zoteroOperationError'))
+      void appAlertDialog({ message: t('zoteroOperationError') })
     } finally {
       setZoteroBusy(null)
     }
@@ -399,7 +399,7 @@ export function ReferencesTab({
   const insertToc = () => {
     const entries = collectTocEntriesWithPages(editor, headingPages)
     if (entries.length === 0) {
-      window.alert(t('ribbonTocNoHeadings'))
+      void appAlertDialog({ message: t('ribbonTocNoHeadings') })
       return
     }
     editor
@@ -420,7 +420,7 @@ export function ReferencesTab({
 
   const insertBibliography = () => {
     if (sources.length === 0) {
-      window.alert(t('ribbonNoSources'))
+      void appAlertDialog({ message: t('ribbonNoSources') })
       return
     }
     const nodes: Array<Record<string, unknown>> = [
@@ -468,7 +468,7 @@ export function ReferencesTab({
       if (node.type.name === 'docXeMark') terms.push(String(node.attrs.term))
     })
     if (terms.length === 0) {
-      window.alert(t('ribbonNoIndexEntries'))
+      void appAlertDialog({ message: t('ribbonNoIndexEntries') })
       return
     }
     const unique = [...new Set(terms.map((t) => t.trim()).filter(Boolean))].sort((a, b) =>

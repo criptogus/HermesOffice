@@ -565,6 +565,33 @@ export async function checkForUpdatesNow(): Promise<void> {
   }
 }
 
+/** Manual-check outcomes for transports without their own result UI (the
+ * source/GitHub-main updater): "you're current" and "couldn't reach the
+ * feed" dialogs, same strings the CDN path uses. */
+export async function showManualCheckUpToDate(): Promise<void> {
+  const lang = getUiLang()
+  await dialog.showMessageBox({
+    type: 'info',
+    title: tUpd(lang, 'updTitle'),
+    message: tUpd(lang, 'updUpToDate', { version: app.getVersion() }),
+    buttons: ['OK'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+}
+
+export async function showManualCheckFailed(): Promise<void> {
+  const lang = getUiLang()
+  await dialog.showMessageBox({
+    type: 'warning',
+    title: tUpd(lang, 'updTitle'),
+    message: tUpd(lang, 'updCheckFailed'),
+    buttons: ['OK'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+}
+
 export function initAutoUpdater(
   getWindow: () => BrowserWindow | null,
   initialChannel: UpdateChannel = 'stable',

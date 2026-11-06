@@ -1,7 +1,7 @@
 import { Image } from '@tiptap/extension-image'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { t } from '../i18n/locale'
-import { showToast } from '../components/toast-bus'
+import { showToast } from '@hermesoffice/ui'
 
 /** Directory of the open .md file; relative image paths resolve against it for display */
 let imageBaseDir: string | null = null

@@ -237,7 +237,7 @@ export function PivotDialog({
             alignItems: 'center',
           }}
         >
-          <span style={{ fontSize: 12, color: '#888', width: 34 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 34 }}>
             {t('dlgPivotLevel', { n: i + 1 })}
           </span>
           <Dropdown
@@ -383,19 +383,19 @@ export function PivotDialog({
                 className="cell-input"
                 value={sourceRange}
                 readOnly
-                style={{ background: '#f5f5f5', cursor: 'default' }}
+                style={{ background: 'var(--bg-hover)', cursor: 'default' }}
               />
             </label>
             <fieldset
               className="dialog-span"
-              style={{ border: '1px solid #ddd', padding: '6px 8px', marginTop: 4 }}
+              style={{ border: '1px solid var(--border)', padding: '6px 8px', marginTop: 4 }}
             >
               <legend style={{ fontWeight: 500, fontSize: 13 }}>{t('dlgPivotRowFields')}</legend>
               {renderAxisFields(rowFieldIndices, setRowFieldIndices, 1)}
             </fieldset>
             <fieldset
               className="dialog-span"
-              style={{ border: '1px solid #ddd', padding: '6px 8px', marginTop: 4 }}
+              style={{ border: '1px solid var(--border)', padding: '6px 8px', marginTop: 4 }}
             >
               <legend style={{ fontWeight: 500, fontSize: 13 }}>{t('dlgPivotColFields')}</legend>
               {colFieldIndices.length === 0 && (
@@ -407,7 +407,7 @@ export function PivotDialog({
             </fieldset>
             <fieldset
               className="dialog-span"
-              style={{ border: '1px solid #ddd', padding: '6px 8px', marginTop: 4 }}
+              style={{ border: '1px solid var(--border)', padding: '6px 8px', marginTop: 4 }}
             >
               <legend style={{ fontWeight: 500, fontSize: 13 }}>{t('dlgPivotValues')}</legend>
               {values.map((spec, i) => (
@@ -433,7 +433,7 @@ export function PivotDialog({
                         onChange={(event) => updateValue(i, { calcName: event.target.value })}
                         style={{ width: 90 }}
                       />
-                      <span style={{ color: '#888' }}>=</span>
+                      <span style={{ color: 'var(--text-muted)' }}>=</span>
                       <input
                         type="text"
                         className="cell-input"
@@ -605,7 +605,7 @@ export function PivotDialog({
           </div>
         )}
         {error && (
-          <p className="dialog-note" role="alert" style={{ color: '#c00' }}>
+          <p className="dialog-note" role="alert" style={{ color: 'var(--danger)' }}>
             {error}
           </p>
         )}

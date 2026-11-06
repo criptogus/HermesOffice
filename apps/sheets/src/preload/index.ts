@@ -577,6 +577,20 @@ const desktopApi: DesktopApi = {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesAdd, paths)
     return parseAttachmentAddResult(result)
   },
+  async addAttachmentBytes(name, data) {
+    if (typeof name !== 'string' || name.length === 0 || name.length > 255) {
+      throw new Error('Invalid attachment name.')
+    }
+    if (
+      !(data instanceof ArrayBuffer) ||
+      data.byteLength === 0 ||
+      data.byteLength > 64 * 1024 * 1024
+    ) {
+      throw new Error('Invalid attachment data.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.filesAddBytes, name, data)
+    return parseAttachmentAddResult(result)
+  },
   async addPastedImage(data, ext) {
     if (
       !(data instanceof ArrayBuffer) ||

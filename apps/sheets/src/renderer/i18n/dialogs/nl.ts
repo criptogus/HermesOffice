@@ -141,6 +141,8 @@ export const nl = {
   dlgSlicerInsertTitle: 'Slicer invoegen',
   dlgSlicerPickNote:
     'Kies het veld voor de slicer; klikken op leden in de slicer filtert de draaitabel.',
+  dlgSlicerSessionNote:
+    'Opmerking: het deelvenster voor slicers is alleen beschikbaar in deze sessie; de gefilterde PivotTable-gegevens worden samen met het bestand opgeslagen.',
   dlgSlicerAria: 'Slicer {name}',
   dlgSlicerClear: 'Filter wissen (alles selecteren)',
   dlgSlicerRemove: 'Slicer verwijderen (alle leden herstellen)',

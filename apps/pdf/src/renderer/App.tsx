@@ -110,6 +110,7 @@ import { platformShortcuts } from '@hermesoffice/i18n'
 import {
   Dropdown,
   RibbonCollapseButton,
+  appConfirmDialog,
   useDismissablePopover,
   useRibbonCollapse,
 } from '@hermesoffice/ui'
@@ -1939,7 +1940,6 @@ export default function App() {
     // The line affordance is just as stale after a reload (it hangs at the last
     // pre-save pointer position until the next mousemove)
     clearLineHover()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc])
 
   /** Cluster paragraph boxes for pages scrolled into view while edit-text mode is on.
@@ -1973,6 +1973,7 @@ export default function App() {
     return () => {
       stale = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveDocFont is recreated per render; including it would loop the effect
   }, [editTextMode, readOnly, doc, visibleRows, rows, pageBlocks, getSearchIndex])
 
   /** Saved markup/note annotations are keyed to the loaded doc; drop them on save-reload */
@@ -3281,6 +3282,7 @@ export default function App() {
     if (!formHasXfa || !filePath || warnedXfaPathRef.current === filePath) return
     warnedXfaPathRef.current = filePath
     showNotice(t('formXfaWarning'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is not referentially stable (see CLAUDE.md)
   }, [filePath, formHasXfa])
 
   /** Localize known structured main-process errors; other messages pass through raw */
@@ -3588,7 +3590,7 @@ export default function App() {
     return true
   }
 
-  const requestRedactionSaveAs = () => {
+  const requestRedactionSaveAs = async () => {
     if (redactions.length === 0) return
     const otherPending =
       markups.length > 0 ||
@@ -3608,7 +3610,13 @@ export default function App() {
       showNotice(t('redactSaveFirst'))
       return
     }
-    if (!window.confirm(t('redactConfirm'))) return
+    const confirmed = await appConfirmDialog({
+      message: t('redactConfirm'),
+      confirmLabel: t('ok'),
+      cancelLabel: t('cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
     redactionApplyConfirmedRef.current = true
     setRedactionCopyInFlight(true)
     void window.pdfApi

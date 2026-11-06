@@ -23,6 +23,8 @@ export async function checkAppUpdatesNow(getWindow: () => BrowserWindow | null):
   if (!app.isPackaged || existsSync(join(process.resourcesPath, 'app-update.yml'))) {
     await checkForUpdatesNow()
   } else {
+    // no CDN feed: the GitHub-main updater owns checks — it now answers
+    // every outcome itself (window / up-to-date / check-failed dialog)
     await checkMainUpdatesNow(getWindow)
   }
 }

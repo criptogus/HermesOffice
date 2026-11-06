@@ -1,6 +1,12 @@
 import { Editor, Mark, Node } from '@tiptap/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { appChoiceDialog } from '@hermesoffice/ui'
 import { ZoteroDocumentController } from '../src/renderer/zotero/controller'
+
+vi.mock('@hermesoffice/ui', () => ({
+  appAlertDialog: vi.fn(async () => {}),
+  appChoiceDialog: vi.fn(),
+}))
 
 const Doc = Node.create({ name: 'doc', topNode: true, content: 'paragraph+' })
 const Paragraph = Node.create({
@@ -236,15 +242,16 @@ describe('ZoteroDocumentController', () => {
     const controller = new ZoteroDocumentController(editor, { get: () => '', set: () => {} })
     const call = (command: string, args: unknown[]) =>
       controller.handle({ requestId: 'test', command, args })
-    const confirm = window.confirm
+    const choice = vi.mocked(appChoiceDialog)
     try {
-      window.confirm = () => true
+      choice.mockResolvedValueOnce('2')
       expect(await call('Document_displayAlert', [1, 'Replace?', 2, 3])).toBe(2)
+      choice.mockResolvedValueOnce('1')
       expect(await call('Document_displayAlert', [1, 'Continue?', 2, 1])).toBe(1)
-      window.confirm = () => false
+      choice.mockResolvedValueOnce(null)
       expect(await call('Document_displayAlert', [1, 'Replace?', 2, 3])).toBe(0)
     } finally {
-      window.confirm = confirm
+      choice.mockReset()
     }
   })
 

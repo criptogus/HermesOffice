@@ -18,6 +18,7 @@ import {
   useRibbonCollapse,
   Dropdown,
   RibbonCollapseButton,
+  appConfirmDialog,
   THEME_COLORS,
   THEME_COLOR_SHADES,
   STANDARD_COLORS,
@@ -1558,9 +1559,10 @@ export function Ribbon({
   // One-time acknowledgement before whole-document AI rewrites:
   // Spelling / Translate send the full deck to the agent, consume credits and may
   // rewrite every slide — say so once before the first run.
-  const confirmAiRewrite = () => {
+  const confirmAiRewrite = async () => {
     if (localStorage.getItem(AI_REWRITE_ACK_KEY) === '1') return true
-    if (!window.confirm(t('ribbonAiRewriteConfirm'))) return false
+    const confirmed = await appConfirmDialog({ message: t('ribbonAiRewriteConfirm') })
+    if (!confirmed) return false
     localStorage.setItem(AI_REWRITE_ACK_KEY, '1')
     return true
   }
@@ -2467,8 +2469,8 @@ export function Ribbon({
                 className="rb-big"
                 disabled={!hasDoc}
                 data-tip={`${t('ribbonSpellCheckTip')} — ${t('ribbonAiCreditNote')}`}
-                onClick={() => {
-                  if (confirmAiRewrite()) onAiPreset(t('ribbonSpellCheckPrompt'))
+                onClick={async () => {
+                  if (await confirmAiRewrite()) onAiPreset(t('ribbonSpellCheckPrompt'))
                 }}
               >
                 <span className="rb-big-icon">
@@ -2502,9 +2504,9 @@ export function Ribbon({
                     {TRANSLATE_TARGETS.map((lang) => (
                       <button
                         key={lang}
-                        onClick={() => {
+                        onClick={async () => {
                           setTranslateOpen(false)
-                          if (confirmAiRewrite()) {
+                          if (await confirmAiRewrite()) {
                             onAiPreset(t('ribbonTranslatePrompt', { lang: t(lang) }))
                           }
                         }}

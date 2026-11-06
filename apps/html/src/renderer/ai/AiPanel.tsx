@@ -379,28 +379,23 @@ export function AiPanel({
     showAttachNotice(result.rejected)
   }
   const pickAttachments = async () => mergeAttachments(await window.htmlApi.pickAttachments())
+  /** Dropped/pasted files are sent as bytes: the renderer cannot prove a path
+   *  came from the OS, so main stores them under temp and grants that path */
+  const addDroppedFile = async (f: File) => {
+    const name = f.name.includes('.')
+      ? f.name
+      : `${f.name || 'pasted'}.${PASTE_MIME_EXT[f.type] ?? 'bin'}`
+    mergeAttachments(await window.htmlApi.addAttachmentBytes(name, await f.arrayBuffer()))
+  }
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.htmlApi.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) mergeAttachments(await window.htmlApi.addAttachmentPaths(paths))
+    for (const f of Array.from(e.dataTransfer.files)) await addDroppedFile(f)
   }
-  /** pasted files with a local path go through the regular route; pure bitmaps (screenshots) hit a temp file first */
+  /** pasted files go through the same bytes path as drops */
   const onPasteFiles = async (files: File[]) => {
-    const paths: string[] = []
-    for (const f of files) {
-      const path = window.htmlApi.getPathForFile(f)
-      if (path) {
-        paths.push(path)
-        continue
-      }
-      const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
-      mergeAttachments(await window.htmlApi.addPastedImage(await f.arrayBuffer(), ext))
-    }
-    if (paths.length > 0) mergeAttachments(await window.htmlApi.addAttachmentPaths(paths))
+    for (const f of files) await addDroppedFile(f)
   }
   /** a pasted base64 image (data: URL or a bare base64 dump) becomes a real attachment, not chat text */
   const onPasteText = (text: string): boolean => {

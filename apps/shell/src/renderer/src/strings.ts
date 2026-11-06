@@ -283,7 +283,7 @@ export const strings = {
     setAiKeyHint: '密钥仅保存在本机。',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: '留空使用官方端点。',
-    setAiHermesHint: '使用 Hermes 账号登录，无需 API key。',
+    setAiGensparkHint: '使用 Genspark 账号登录，无需 API key。',
     setAiCodexPath: 'Codex 可执行文件',
     setAiCodexPathHint: '仅自定义安装时填写；留空会自动检测。',
     setAiCodexAutoPlaceholder: '留空自动检测（推荐）',
@@ -354,6 +354,7 @@ export const strings = {
     onbTitle3: '人人免费',
     onbBody3: '无授权费用，无广告，无水印。',
     onbNote3: 'AI 功能可能消耗 open-source contribution。',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: '上一步',
   },
   en: {
@@ -644,7 +645,7 @@ export const strings = {
     setAiKeyHint: 'Stored only on this device.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Leave empty for the official endpoint.',
-    setAiHermesHint: 'Uses your Hermes sign-in; no API key needed.',
+    setAiGensparkHint: 'Uses your Genspark sign-in; no API key needed.',
     setAiCodexPath: 'Codex executable',
     setAiCodexPathHint: 'Only set this for a custom install; leave blank to auto-detect.',
     setAiCodexAutoPlaceholder: 'Auto-detect (recommended)',
@@ -718,6 +719,7 @@ export const strings = {
     onbTitle3: 'Free for everyone',
     onbBody3: 'No license fees. No ads. No watermarks.',
     onbNote3: 'AI features may consume open-source contribution.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Back',
   },
   ja: {
@@ -1020,7 +1022,7 @@ export const strings = {
     setAiKeyHint: 'キーはこの端末にのみ保存されます。',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: '空欄で公式エンドポイントを使用します。',
-    setAiHermesHint: 'Hermes アカウントでサインインするため、API キーは不要です。',
+    setAiGensparkHint: 'Genspark アカウントでサインインするため、API キーは不要です。',
     setAiCodexPath: 'Codex 実行ファイル',
     setAiCodexPathHint: 'カスタムインストール時のみ指定します。空欄なら自動検出します。',
     setAiCodexAutoPlaceholder: '自動検出（推奨）',
@@ -1095,6 +1097,7 @@ export const strings = {
     onbTitle3: 'すべての人に無料',
     onbBody3: 'ライセンス料なし、広告なし、透かしなし。',
     onbNote3: 'AI 機能は オープンソースへの貢献を消費する場合があります。',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: '戻る',
   },
   ko: {
@@ -1389,7 +1392,7 @@ export const strings = {
     setAiKeyHint: '키는 이 기기에만 저장됩니다.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: '비워 두면 공식 엔드포인트를 사용합니다.',
-    setAiHermesHint: 'Hermes 로그인으로 사용하며 API 키가 필요 없습니다.',
+    setAiGensparkHint: 'Genspark 로그인으로 사용하며 API 키가 필요 없습니다.',
     setAiCodexPath: 'Codex 실행 파일',
     setAiCodexPathHint: '사용자 지정 설치에만 입력하세요. 비워 두면 자동 감지합니다.',
     setAiCodexAutoPlaceholder: '자동 감지(권장)',
@@ -1464,6 +1467,7 @@ export const strings = {
     onbTitle3: '모두에게 무료',
     onbBody3: '라이선스 비용 없음, 광고 없음, 워터마크 없음.',
     onbNote3: 'AI 기능은 Hermes 크레딧을 소모할 수 있습니다.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: '이전',
   },
   fr: {
@@ -1770,7 +1774,7 @@ export const strings = {
     setAiKeyHint: 'Stockée uniquement sur cet appareil.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Laisser vide pour le point de terminaison officiel.',
-    setAiHermesHint: 'Utilise votre connexion Hermes ; aucune clé API requise.',
+    setAiGensparkHint: 'Utilise votre connexion Genspark ; aucune clé API requise.',
     setAiCodexPath: 'Exécutable Codex',
     setAiCodexPathHint:
       'À renseigner uniquement pour une installation personnalisée ; sinon, détection automatique.',
@@ -1848,6 +1852,7 @@ export const strings = {
     onbTitle3: 'Gratuit pour tous',
     onbBody3: 'Pas de licence. Pas de publicité. Pas de filigrane.',
     onbNote3: 'Les fonctions IA peuvent consommer des crédits Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Retour',
   },
   de: {
@@ -2158,7 +2163,7 @@ export const strings = {
     setAiKeyHint: 'Wird nur auf diesem Gerät gespeichert.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Leer lassen für den offiziellen Endpunkt.',
-    setAiHermesHint: 'Nutzt Ihre Hermes-Anmeldung; kein API-Schlüssel nötig.',
+    setAiGensparkHint: 'Nutzt Ihre Genspark-Anmeldung; kein API-Schlüssel nötig.',
     setAiCodexPath: 'Codex-Programmdatei',
     setAiCodexPathHint:
       'Nur bei einer benutzerdefinierten Installation angeben; leer lassen für automatische Erkennung.',
@@ -2234,6 +2239,7 @@ export const strings = {
     onbTitle3: 'Kostenlos für alle',
     onbBody3: 'Keine Lizenzgebühren. Keine Werbung. Keine Wasserzeichen.',
     onbNote3: 'KI-Funktionen können Hermes-Credits verbrauchen.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Zurück',
   },
   es: {
@@ -2541,7 +2547,7 @@ export const strings = {
     setAiKeyHint: 'Se guarda solo en este dispositivo.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Deja vacío para usar el endpoint oficial.',
-    setAiHermesHint: 'Usa tu inicio de sesión de Hermes; no se necesita clave de API.',
+    setAiGensparkHint: 'Usa tu inicio de sesión de Genspark; no se necesita clave de API.',
     setAiCodexPath: 'Ejecutable de Codex',
     setAiCodexPathHint:
       'Indícalo solo para una instalación personalizada; déjalo vacío para detectarlo automáticamente.',
@@ -2618,6 +2624,7 @@ export const strings = {
     onbTitle3: 'Gratis para todos',
     onbBody3: 'Sin licencias. Sin anuncios. Sin marcas de agua.',
     onbNote3: 'Las funciones de IA pueden consumir créditos de Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Atrás',
   },
   th: {
@@ -2909,7 +2916,7 @@ export const strings = {
     setAiKeyHint: 'จัดเก็บไว้ในเครื่องนี้เท่านั้น',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'เว้นว่างเพื่อใช้ปลายทางอย่างเป็นทางการ',
-    setAiHermesHint: 'ใช้การลงชื่อเข้าใช้ Hermes ไม่ต้องใช้คีย์ API',
+    setAiGensparkHint: 'ใช้การลงชื่อเข้าใช้ Genspark ไม่ต้องใช้คีย์ API',
     setAiCodexPath: 'ไฟล์ปฏิบัติการ Codex',
     setAiCodexPathHint: 'กรอกเฉพาะเมื่อติดตั้งแบบกำหนดเอง เว้นว่างไว้เพื่อค้นหาอัตโนมัติ',
     setAiCodexAutoPlaceholder: 'ค้นหาอัตโนมัติ (แนะนำ)',
@@ -2983,6 +2990,7 @@ export const strings = {
     onbTitle3: 'ฟรีสำหรับทุกคน',
     onbBody3: 'ไม่มีค่าลิขสิทธิ์ ไม่มีโฆษณา ไม่มีลายน้ำ',
     onbNote3: 'ฟีเจอร์ AI อาจใช้เครดิต Hermes',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'ย้อนกลับ',
   },
   id: {
@@ -3285,7 +3293,7 @@ export const strings = {
     setAiKeyHint: 'Hanya disimpan di perangkat ini.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Kosongkan untuk endpoint resmi.',
-    setAiHermesHint: 'Menggunakan login Hermes; tanpa kunci API.',
+    setAiGensparkHint: 'Menggunakan login Genspark; tanpa kunci API.',
     setAiCodexPath: 'Berkas eksekusi Codex',
     setAiCodexPathHint: 'Isi hanya untuk instalasi khusus; kosongkan agar terdeteksi otomatis.',
     setAiCodexAutoPlaceholder: 'Deteksi otomatis (disarankan)',
@@ -3361,6 +3369,7 @@ export const strings = {
     onbTitle3: 'Gratis untuk semua',
     onbBody3: 'Tanpa biaya lisensi. Tanpa iklan. Tanpa watermark.',
     onbNote3: 'Fitur AI dapat menggunakan kredit Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Kembali',
   },
   ru: {
@@ -3659,7 +3668,7 @@ export const strings = {
     setAiKeyHint: 'Хранится только на этом устройстве.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Оставьте пустым для официальной конечной точки.',
-    setAiHermesHint: 'Использует вход в Hermes; ключ API не нужен.',
+    setAiGensparkHint: 'Использует вход в Genspark; ключ API не нужен.',
     setAiCodexPath: 'Исполняемый файл Codex',
     setAiCodexPathHint:
       'Указывайте только для нестандартной установки; оставьте пустым для автоопределения.',
@@ -3736,6 +3745,7 @@ export const strings = {
     onbTitle3: 'Бесплатно для всех',
     onbBody3: 'Без лицензий. Без рекламы. Без водяных знаков.',
     onbNote3: 'Функции ИИ могут расходовать кредиты Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Назад',
   },
   ar: {
@@ -4029,7 +4039,7 @@ export const strings = {
     setAiKeyHint: 'يُحفظ على هذا الجهاز فقط.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'اتركه فارغًا لاستخدام نقطة النهاية الرسمية.',
-    setAiHermesHint: 'يستخدم تسجيل الدخول إلى Hermes؛ لا حاجة لمفتاح API.',
+    setAiGensparkHint: 'يستخدم تسجيل الدخول إلى Genspark؛ لا حاجة لمفتاح API.',
     setAiCodexPath: 'ملف Codex التنفيذي',
     setAiCodexPathHint: 'حدده فقط للتثبيت المخصص؛ اتركه فارغًا للاكتشاف التلقائي.',
     setAiCodexAutoPlaceholder: 'اكتشاف تلقائي (موصى به)',
@@ -4103,6 +4113,7 @@ export const strings = {
     onbTitle3: 'مجاني للجميع',
     onbBody3: 'بلا رسوم ترخيص، بلا إعلانات، بلا علامات مائية.',
     onbNote3: 'قد تستهلك ميزات الذكاء الاصطناعي أرصدة Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'رجوع',
   },
   pt: {
@@ -4400,7 +4411,7 @@ export const strings = {
     setAiKeyHint: 'Armazenada apenas neste dispositivo.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Deixe vazio para o endpoint oficial.',
-    setAiHermesHint: 'Usa seu login Hermes; nenhuma chave de API necessária.',
+    setAiGensparkHint: 'Usa seu login Genspark; nenhuma chave de API necessária.',
     setAiCodexPath: 'Executável do Codex',
     setAiCodexPathHint:
       'Preencha apenas para uma instalação personalizada; deixe em branco para detectar automaticamente.',
@@ -4475,6 +4486,7 @@ export const strings = {
     onbTitle3: 'Gratuito para todos',
     onbBody3: "Sem licenças. Sem anúncios. Sem marcas d'água.",
     onbNote3: 'Os recursos de IA podem consumir créditos Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Voltar',
   },
   it: {
@@ -4771,7 +4783,7 @@ export const strings = {
     setAiKeyHint: 'Salvata solo su questo dispositivo.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: "Lascia vuoto per l'endpoint ufficiale.",
-    setAiHermesHint: 'Usa il tuo accesso Hermes; nessuna chiave API richiesta.',
+    setAiGensparkHint: 'Usa il tuo accesso Genspark; nessuna chiave API richiesta.',
     setAiCodexPath: 'Eseguibile Codex',
     setAiCodexPathHint:
       'Compila solo per un’installazione personalizzata; lascia vuoto per il rilevamento automatico.',
@@ -4846,6 +4858,7 @@ export const strings = {
     onbTitle3: 'Gratuito per tutti',
     onbBody3: 'Nessuna licenza. Nessuna pubblicità. Nessuna filigrana.',
     onbNote3: 'Le funzioni IA possono consumare crediti Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Indietro',
   },
   pl: {
@@ -5139,7 +5152,7 @@ export const strings = {
     setAiKeyHint: 'Przechowywany tylko na tym urządzeniu.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Pozostaw puste, aby użyć oficjalnego punktu końcowego.',
-    setAiHermesHint: 'Korzysta z logowania Hermes; klucz API nie jest potrzebny.',
+    setAiGensparkHint: 'Korzysta z logowania Genspark; klucz API nie jest potrzebny.',
     setAiCodexPath: 'Plik wykonywalny Codex',
     setAiCodexPathHint:
       'Ustaw tylko dla instalacji niestandardowej; pozostaw puste, aby wykryć automatycznie.',
@@ -5214,6 +5227,7 @@ export const strings = {
     onbTitle3: 'Za darmo dla każdego',
     onbBody3: 'Bez opłat licencyjnych. Bez reklam. Bez znaków wodnych.',
     onbNote3: 'Funkcje AI mogą zużywać kredyty Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Wstecz',
   },
   cs: {
@@ -5492,7 +5506,7 @@ export const strings = {
     setAiKeyHint: 'Ukládá se pouze na tomto zařízení.',
     setAiBaseUrl: 'Základní URL',
     setAiBaseUrlHint: 'Pro oficiální koncový bod ponechte prázdné.',
-    setAiHermesHint: 'Používá vaše přihlášení ke Hermes; klíč API není potřeba.',
+    setAiGensparkHint: 'Používá vaše přihlášení ke Genspark; klíč API není potřeba.',
     setAiCodexPath: 'Spustitelný soubor Codex',
     setAiCodexPathHint:
       'Vyplňte jen u vlastní instalace; prázdné pole znamená automatickou detekci.',
@@ -5568,6 +5582,7 @@ export const strings = {
     onbTitle3: 'Zdarma pro všechny',
     onbBody3: 'Žádné licenční poplatky. Žádné reklamy. Žádné vodoznaky.',
     onbNote3: 'Funkce AI mohou čerpat kredity Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Zpět',
     setAutoSave: 'Automaticky ukládat všechny dokumenty',
     setAutoSaveDesc:
@@ -5876,7 +5891,7 @@ export const strings = {
     setAiKeyHint: 'Alleen op dit apparaat opgeslagen.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Leeg laten voor het officiële eindpunt.',
-    setAiHermesHint: 'Gebruikt je Hermes-login; geen API-sleutel nodig.',
+    setAiGensparkHint: 'Gebruikt je Genspark-login; geen API-sleutel nodig.',
     setAiCodexPath: 'Codex-uitvoerbaar bestand',
     setAiCodexPathHint:
       'Alleen invullen voor een aangepaste installatie; laat leeg voor automatische detectie.',
@@ -5951,6 +5966,7 @@ export const strings = {
     onbTitle3: 'Gratis voor iedereen',
     onbBody3: 'Geen licentiekosten. Geen advertenties. Geen watermerken.',
     onbNote3: 'AI-functies kunnen Hermes-credits verbruiken.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Terug',
   },
   ms: {
@@ -6247,7 +6263,7 @@ export const strings = {
     setAiKeyHint: 'Disimpan pada peranti ini sahaja.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'Biarkan kosong untuk endpoint rasmi.',
-    setAiHermesHint: 'Menggunakan log masuk Hermes; tiada kunci API diperlukan.',
+    setAiGensparkHint: 'Menggunakan log masuk Genspark; tiada kunci API diperlukan.',
     setAiCodexPath: 'Fail boleh laku Codex',
     setAiCodexPathHint:
       'Isi hanya untuk pemasangan tersuai; biarkan kosong untuk pengesanan automatik.',
@@ -6323,6 +6339,7 @@ export const strings = {
     onbTitle3: 'Percuma untuk semua',
     onbBody3: 'Tiada yuran lesen. Tiada iklan. Tiada tera air.',
     onbNote3: 'Ciri AI mungkin menggunakan kredit Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'Kembali',
   },
   he: {
@@ -6607,7 +6624,7 @@ export const strings = {
     setAiKeyHint: 'נשמר רק במכשיר זה.',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'השאר ריק לנקודת הקצה הרשמית.',
-    setAiHermesHint: 'משתמש בכניסת Hermes שלך; אין צורך במפתח API.',
+    setAiGensparkHint: 'משתמש בכניסת Genspark שלך; אין צורך במפתח API.',
     setAiCodexPath: 'קובץ ההפעלה של Codex',
     setAiCodexPathHint: 'יש למלא רק בהתקנה מותאמת; השאר ריק לזיהוי אוטומטי.',
     setAiCodexAutoPlaceholder: 'זיהוי אוטומטי (מומלץ)',
@@ -6678,6 +6695,7 @@ export const strings = {
     onbTitle3: 'חינם לכולם',
     onbBody3: 'ללא דמי רישיון, ללא פרסומות, ללא סימני מים.',
     onbNote3: 'תכונות AI עשויות לצרוך קרדיטים של Hermes.',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'חזרה',
   },
   hi: {
@@ -6969,7 +6987,7 @@ export const strings = {
     setAiKeyHint: 'केवल इसी डिवाइस पर संग्रहीत।',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: 'आधिकारिक एंडपॉइंट के लिए खाली छोड़ें।',
-    setAiHermesHint: 'आपके Hermes साइन-इन का उपयोग करता है; API कुंजी की आवश्यकता नहीं।',
+    setAiGensparkHint: 'आपके Genspark साइन-इन का उपयोग करता है; API कुंजी की आवश्यकता नहीं।',
     setAiCodexPath: 'Codex निष्पादन फ़ाइल',
     setAiCodexPathHint: 'केवल कस्टम इंस्टॉलेशन के लिए भरें; स्वतः पहचान के लिए खाली छोड़ें।',
     setAiCodexAutoPlaceholder: 'स्वतः पहचान (अनुशंसित)',
@@ -7044,6 +7062,7 @@ export const strings = {
     onbTitle3: 'सभी के लिए मुफ़्त',
     onbBody3: 'कोई लाइसेंस शुल्क नहीं। कोई विज्ञापन नहीं। कोई वॉटरमार्क नहीं।',
     onbNote3: 'AI सुविधाएँ Hermes क्रेडिट खर्च कर सकती हैं।',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: 'वापस',
   },
   'zh-TW': {
@@ -7323,7 +7342,7 @@ export const strings = {
     setAiKeyHint: '金鑰僅儲存在本機。',
     setAiBaseUrl: 'Base URL',
     setAiBaseUrlHint: '留空使用官方端點。',
-    setAiHermesHint: '使用 Hermes 帳號登入，無需 API key。',
+    setAiGensparkHint: '使用 Genspark 帳號登入，無需 API key。',
     setAiCodexPath: 'Codex 可執行檔',
     setAiCodexPathHint: '僅自訂安裝時填寫；留空會自動偵測。',
     setAiCodexAutoPlaceholder: '留空自動偵測（建議）',
@@ -7393,6 +7412,7 @@ export const strings = {
     onbTitle3: '人人免費',
     onbBody3: '無授權費用，無廣告，無浮水印。',
     onbNote3: 'AI 功能可能消耗 Hermes 點數。',
+    poweredByZeroAgency: 'Powered by ZeroAgency.ai',
     onbBack: '上一步',
   },
 } as const

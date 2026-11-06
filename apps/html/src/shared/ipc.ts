@@ -40,6 +40,7 @@ export const HTML_CHANNELS = {
   filesPick: 'html:files-pick',
   filesAdd: 'html:files-add',
   filesAddPastedImage: 'html:files-add-pasted-image',
+  filesAddBytes: 'html:files-add-bytes',
   filesRead: 'html:files-read',
   filesReadImage: 'html:files-read-image',
   getLanguage: 'app:get-language',
@@ -250,6 +251,9 @@ export interface HtmlApi {
   addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
   /** persist a pasted clipboard image (no local path) to a temp file and add it as an attachment */
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
+  /** store dropped/pasted file bytes under temp and attach them — the only
+   *  drop/paste route that earns a read grant */
+  addAttachmentBytes(name: string, data: ArrayBuffer): Promise<AttachmentAddResult>
   /** read a slice of the extracted text of an attachment */
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   /** read an image attachment as base64 for multimodal input */

@@ -1,0 +1,93 @@
+/* Shared confirm/alert dialogs (app-dialog.tsx): chrome tokens only; apps
+ * never need to size this — it is a centered modal above all content. */
+
+.gs-appdialog-host {
+  position: relative;
+  z-index: 2147483000;
+}
+
+.gs-appdialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-overlay);
+}
+
+.gs-appdialog {
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 18px 20px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-menu);
+  font-family: inherit;
+}
+
+.gs-appdialog-title {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gs-appdialog-message {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.gs-appdialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.gs-appdialog-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gs-appdialog-btn:hover {
+  background: var(--hover);
+}
+
+.gs-appdialog-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gs-appdialog-btn-primary {
+  border-color: var(--color-btn-primary);
+  background: var(--color-btn-primary);
+  color: var(--color-btn-primary-text);
+}
+
+.gs-appdialog-btn-primary:hover {
+  border-color: var(--color-btn-primary-hover);
+  background: var(--color-btn-primary-hover);
+  color: var(--color-btn-primary-text);
+}
+
+.gs-appdialog-btn-danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.gs-appdialog-btn-danger:hover {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}

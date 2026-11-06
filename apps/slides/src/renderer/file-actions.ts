@@ -9,7 +9,7 @@ import type { ActionCtx } from './action-context'
 import { collectExportPdfLinks } from './export-links'
 import { renderSlidesToPngBase64 } from './export-render'
 import { t } from './i18n/locale'
-import { showToast } from './components/toast-bus'
+import { showToast } from '@hermesoffice/ui'
 
 /**
  * If a text box/table is still being edited on ⌘S/close-save, blur first so the

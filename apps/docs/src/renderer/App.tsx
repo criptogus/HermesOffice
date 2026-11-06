@@ -16,7 +16,13 @@ import type { Editor } from '@tiptap/core'
 import { handleDocsControl, type ControlRequest } from './control'
 import { DOMParser as PmDOMParser, type Mark as PmMark, Slice as PmSlice } from '@tiptap/pm/model'
 import { NodeSelection, type Transaction } from '@tiptap/pm/state'
-import { Dropdown, ImageViewer, useAutoSavePref } from '@hermesoffice/ui'
+import {
+  Dropdown,
+  ImageViewer,
+  ToastHost,
+  appConfirmDialog,
+  useAutoSavePref,
+} from '@hermesoffice/ui'
 import { wordRangeAtCaret } from './editor/comments'
 import { markdownPasteHtml } from './editor/markdown-paste'
 import { pasteTextSlice, singleCellPasteText } from './editor/paste-text'
@@ -211,7 +217,6 @@ import { FindPanel } from './components/FindPanel'
 import { Ribbon } from './components/Ribbon'
 import { computeFormatState } from './components/ribbon-format-state'
 import { IconRedo, IconSave, IconUndo } from './components/icons'
-import { ToastHost } from './components/toast'
 import {
   AI_REWRITE_ACK_KEY,
   LinkInsertModal,
@@ -4319,6 +4324,7 @@ export function App() {
       editor?.off('update', onDocUpdate)
       editor?.off('transaction', onShrinkTr)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- colMode/hasVertical/watermarkDirty feed the layout pass but must not retrigger this effect
   }, [
     doc,
     section,
@@ -4429,12 +4435,11 @@ export function App() {
 
   // Review > Editor, the Tools menu and Word's F7 all run the same AI proofread
   // behind the one-time whole-document-rewrite acknowledgement
-  const runAiProofread = useCallback(() => {
-    if (
-      localStorage.getItem(AI_REWRITE_ACK_KEY) !== '1' &&
-      !window.confirm(t('ribbonAiRewriteConfirm'))
-    )
-      return
+  const runAiProofread = useCallback(async () => {
+    if (localStorage.getItem(AI_REWRITE_ACK_KEY) !== '1') {
+      const confirmed = await appConfirmDialog({ message: t('ribbonAiRewriteConfirm') })
+      if (!confirmed) return
+    }
     localStorage.setItem(AI_REWRITE_ACK_KEY, '1')
     setShowAi(true)
     setAiPreset({ text: t('ribbonEditorPrompt'), nonce: Date.now(), autoRun: true })

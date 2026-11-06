@@ -86,11 +86,15 @@ import { AnimationPane } from './components/AnimationPane'
 import { AnimPreviewOverlay } from './components/AnimatedSlide'
 import { EquationDialog, HeaderFooterDialog, LinkDialog } from './components/InsertDialogs'
 import { CutoutDialog } from './components/CutoutDialog'
-import { useAutoSavePref, type AiScopeQuoteData, type WordArtPreset } from '@hermesoffice/ui'
+import {
+  ToastHost,
+  showToast,
+  useAutoSavePref,
+  type AiScopeQuoteData,
+  type WordArtPreset,
+} from '@hermesoffice/ui'
 import type { ChartPresetDef, IconDef, SmartArtDef } from './insert-presets'
 import { HermesMark, IconAiBeautify, IconAiFactCheck, IconAiImage } from './components/icons'
-import { ToastHost } from './components/toast'
-import { showToast } from './components/toast-bus'
 import { t, useI18n } from './i18n/locale'
 import { AiPanel } from './ai/AiPanel'
 import { ChartDataDialog } from './components/ChartDataDialog'

@@ -142,6 +142,8 @@ export const cs = {
   dlgSlicerInsertTitle: 'Vložit průřez',
   dlgSlicerPickNote:
     'Vyberte pole pro průřez; kliknutím na členy v průřezu filtrujete kontingenční tabulku.',
+  dlgSlicerSessionNote:
+    'Poznámka: podokno průřezu je k dispozici pouze v této relaci; filtrovaná data kontingenční tabulky se ukládají se souborem.',
   dlgSlicerAria: 'Průřez {name}',
   dlgSlicerClear: 'Vymazat filtr (vybrat vše)',
   dlgSlicerRemove: 'Odebrat průřez (obnovit všechny členy)',

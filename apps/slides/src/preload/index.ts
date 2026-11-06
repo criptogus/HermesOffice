@@ -453,6 +453,8 @@ contextBridge.exposeInMainWorld('slidesApi', api)
 const filesApi: DesktopFilesApi = {
   pickAttachments: () => ipcRenderer.invoke('slides:files-pick'),
   addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('slides:files-add', paths),
+  addAttachmentBytes: (name: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke('slides:files-add-bytes', name, data),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('slides:files-add-pasted-image', data, ext),
   readAttachment: (path: string, offset: number, maxChars: number) =>

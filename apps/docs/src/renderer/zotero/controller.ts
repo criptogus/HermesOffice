@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { Fragment, Slice, type Mark, type Node as PmNode } from '@tiptap/pm/model'
+import { appAlertDialog, appChoiceDialog } from '@hermesoffice/ui'
 import type { ZoteroRendererRequest } from '../../shared/ipc'
 import { parseZoteroRtf, zoteroRtfToText, type ZoteroRtfParagraph, type ZoteroRtfRun } from './rtf'
 
@@ -68,7 +69,7 @@ export class ZoteroDocumentController {
         this.editor.commands.focus()
         return null
       case 'Document_displayAlert':
-        return this.displayAlert(String(args[1] ?? ''), Number(args[3] ?? 0))
+        return await this.displayAlert(String(args[1] ?? ''), Number(args[3] ?? 0))
       case 'Document_canInsertField':
         return this.editor.isEditable
       case 'Document_cursorInField': {
@@ -461,9 +462,27 @@ export class ZoteroDocumentController {
 
   /** Zotero button sets: 0 OK, 1 OK/Cancel, 2 Yes/No, 3 Yes/No/Cancel; the reply is the
    *  button index counted from Cancel/No = 0, so Yes is 2 in the three-button set */
-  private displayAlert(message: string, buttons: number): number {
-    if (buttons > 0) return window.confirm(message) ? (buttons === 3 ? 2 : 1) : 0
-    window.alert(message)
-    return 0
+  private async displayAlert(message: string, buttons: number): Promise<number> {
+    if (buttons <= 0) {
+      await appAlertDialog({ message })
+      return 0
+    }
+    const picked = await appChoiceDialog({
+      message,
+      cancelLabel: 'Cancel',
+      choices:
+        buttons === 3
+          ? [
+              { label: 'Yes', value: '2' },
+              { label: 'No', value: '1' },
+            ]
+          : buttons === 2
+            ? [
+                { label: 'Yes', value: '1' },
+                { label: 'No', value: '0', danger: true },
+              ]
+            : [{ label: 'OK', value: '1' }],
+    })
+    return picked === null ? 0 : Number(picked)
   }
 }

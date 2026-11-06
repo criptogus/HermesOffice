@@ -274,6 +274,9 @@ export function Onboarding({ onDone }: OnboardingProps) {
             </button>
           </div>
         </div>
+        <button className="onb-powered" onClick={() => void window.aiOffice.openZeroAgency?.()}>
+          {t('poweredByZeroAgency')}
+        </button>
       </div>
     </div>
   )

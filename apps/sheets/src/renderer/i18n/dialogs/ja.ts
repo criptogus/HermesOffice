@@ -141,6 +141,8 @@ export const ja = {
   dlgSlicerInsertTitle: 'スライサーの挿入',
   dlgSlicerPickNote:
     'スライサーにするフィールドを選択します。スライサー内のメンバーをクリックするとピボットテーブルを絞り込めます。',
+  dlgSlicerSessionNote:
+    '注: スライサー パネルはこのセッションのみで使用できます。フィルター処理されたピボットテーブル データはファイルと共に保存されます。',
   dlgSlicerAria: 'スライサー {name}',
   dlgSlicerClear: 'フィルターのクリア（すべて選択）',
   dlgSlicerRemove: 'スライサーの削除（全メンバーを復元）',

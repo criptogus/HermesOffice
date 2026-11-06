@@ -22,6 +22,7 @@ import { checkAppUpdatesNow, initAppUpdater } from '../src/main/update-startup'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
   mocks.app.isPackaged = true
   process.resourcesPath = '/test/resources'
 })

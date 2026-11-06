@@ -240,6 +240,7 @@ import {
   setActiveSlidesWebContents,
   sessions,
   showChrome,
+  slidesOpenQuickSwitcher,
   takeSnapshot,
   windowRefs,
   type OpLogEntry,
@@ -272,6 +273,7 @@ import { registerAttachmentIpc } from './attachments-ipc'
 export {
   configureSlidesRuntime,
   setActiveSlidesWebContents,
+  setSlidesQuickSwitcherHook,
   setSlidesShellWindow,
   setSlidesShowBleed,
 } from './session-state'
@@ -4628,7 +4630,13 @@ export function buildSlidesMenu(): Menu {
     {
       label: tm('menuFile'),
       submenu: [
-        { label: tm('menuOpen'), accelerator: 'CmdOrCtrl+O', click: () => send('open') },
+        {
+          label: tm('menuOpen'),
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            if (!slidesOpenQuickSwitcher()) send('open')
+          },
+        },
         {
           // Detached second editor window on the same saved file: it attaches to
           // the shared session (openAndBuild), so both windows co-edit live

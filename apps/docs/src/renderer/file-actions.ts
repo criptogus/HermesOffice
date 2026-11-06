@@ -84,7 +84,7 @@ import { adoptEmbeddedFonts } from './embedded-fonts'
 import { defaultEastAsiaFontFor } from './font-list'
 import { hasPrintableHeaderFooter } from './pagination'
 import { clearPrintZoom, setPrintZoom } from './print-zoom'
-import { showToast } from './components/toast-bus'
+import { showToast } from '@hermesoffice/ui'
 import { buildStandaloneHtml } from './html-export'
 
 /** An export waiting for the pagination preview to mount; resolve settles the caller's exportPdf promise. */
