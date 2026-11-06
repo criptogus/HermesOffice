@@ -348,6 +348,33 @@ body.vib .home {
   padding: 28px 36px 40px;
   overflow-y: auto;
   background: var(--bg-content);
+  /* column flex so .powered-by can pin to the bottom of short content */
+  display: flex;
+  flex-direction: column;
+}
+
+/* product credit pinned to the bottom of the content column */
+.powered-by {
+  margin-top: auto;
+  padding-top: 28px;
+  display: flex;
+  justify-content: center;
+}
+
+.powered-by button {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.powered-by button:hover {
+  color: var(--accent);
+  background: var(--bg-hover);
 }
 
 .section-head {

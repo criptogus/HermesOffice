@@ -1260,6 +1260,11 @@ function CloudProjectsView() {
         </header>
         {renderBody()}
       </section>
+      <footer className="powered-by">
+        <button type="button" onClick={() => void window.aiOffice.openZeroAgency?.()}>
+          {t('poweredByZeroAgency')}
+        </button>
+      </footer>
     </main>
   )
 }
@@ -2546,6 +2551,14 @@ export function Home() {
     )
   }
 
+  const renderPoweredBy = () => (
+    <footer className="powered-by">
+      <button type="button" onClick={() => void window.aiOffice.openZeroAgency?.()}>
+        {t('poweredByZeroAgency')}
+      </button>
+    </footer>
+  )
+
   const renderEmpty = (hint: string) => (
     <p className="empty proj-empty">
       <svg
@@ -2656,6 +2669,7 @@ export function Home() {
             </div>
           )}
         </section>
+        {renderPoweredBy()}
       </main>
     )
   }
@@ -2775,6 +2789,7 @@ export function Home() {
             </div>
           )}
         </section>
+        {renderPoweredBy()}
       </main>
     )
   }
