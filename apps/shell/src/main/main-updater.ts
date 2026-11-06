@@ -7,7 +7,11 @@ import type { BrowserWindow } from 'electron'
 import type { UpdateUiState } from '../shared/update-api'
 import { safeExternalUrl } from '@hermesoffice/electron-utils'
 import { closeUpdateWindow, pushUpdateState, showUpdateWindow } from './update-window'
-import { initialState } from './updater'
+import {
+  initialState,
+  showManualCheckFailed,
+  showManualCheckUpToDate,
+} from './updater'
 
 /**
  * GitHub-main updater — the Hermes Office counterpart of the Hermes Desktop
@@ -22,11 +26,18 @@ import { initialState } from './updater'
  * which clones/fetches main, rebuilds (dist:mac), swaps /Applications and
  * relaunches. Full-package policy, same as the CDN updater.
  *
- * Safety gate: this source-build updater is opt-in only via
- * HERMESOFFICE_ENABLE_SOURCE_UPDATE=1. Normal packaged builds without a CDN
- * feed should not try to clone/build from GitHub on end-user machines. When a
- * CDN feed is baked in, the electron-updater path in updater.ts owns updates
- * and this module stays silent, so the two never race.
+ * Apply paths, in preference order:
+ *   1. Binary — when the update is a ho-v* release tag and this is macOS
+ *      arm64, `stage-binary` downloads the prebuilt zip from the GitHub
+ *      release. No toolchain needed; this is what end users get.
+ *   2. Source rebuild — HERMESOFFICE_ENABLE_SOURCE_UPDATE=1 opt-in (dev
+ *      machines): clone + npm ci + dist:mac + swap. Also the only path for
+ *      tagless "main moved" offers and non-arm64 platforms.
+ *   3. Manual — anything else lands on the 'manual' phase, which points at
+ *      the releases page.
+ *
+ * Checks themselves (git ls-remote) are cheap and always on for packaged
+ * builds without a CDN feed; only the source *rebuild* stays opt-in.
  */
 
 const REPO_URL = 'https://github.com/criptogus/HermesOffice.git'
@@ -45,6 +56,15 @@ const EXTRA_PATH_DIRS = [
 let started = false
 let dismissedCommit: string | null = null
 let lastNotifiedCommit: string | null = null
+
+/** the ho-v* release the open update window targets (null = tagless main
+ * build, source-rebuild only); set by checkForUpdate before showing */
+let pendingRelease: { name: string; label: string; commit: string } | null = null
+/** git ref the pending update builds from ('main' or the ho-v tag name) */
+let pendingTargetRef = 'main'
+
+/** outcome of a check, for manual-check user feedback */
+export type MainUpdateCheckOutcome = 'shown' | 'latest' | 'offline'
 
 function log(...args: unknown[]): void {
   console.log('[main-updater]', ...args)
@@ -224,23 +244,26 @@ async function ensureSource(): Promise<void> {
   })
 }
 
-async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<void> {
+async function checkForUpdate(
+  getWindow: () => BrowserWindow | null,
+): Promise<MainUpdateCheckOutcome> {
   const built = builtCommit()
   if (!built) {
     log('no build-info.json in bundle — update check skipped')
-    return
+    return 'offline'
   }
   const builtVer = builtVersion() ?? `build ${built.slice(0, 7)}`
   const main = await fetchMainCommit()
   if (!main) {
     log('could not reach origin/main — network offline?')
-    return
+    return 'offline'
   }
-  // Release-train: a source update is offered only when a NEWER ho-v* tag
-  // exists than the installed build's release base, and it installs that
-  // tag's commit — deterministic, never rolling main. Without ho-v* tags yet,
-  // fall back to the legacy "main moved" check.
+  // Release-train: an update is offered only when a NEWER ho-v* tag exists
+  // than the installed build's release base — deterministic, never rolling
+  // main. Without ho-v* tags yet, fall back to the legacy "main moved" check,
+  // which is only installable through the opt-in source rebuild.
   const tag = await fetchLatestForkTag()
+  const sourceOptIn = process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE === '1'
   let newVersion: string
   let targetRef: string
   let updateKey: string
@@ -249,22 +272,30 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
     const newer = base === null || cmpRelease(tag.label, base) > 0
     if (!newer) {
       log('up to date (', builtVer, ')')
-      return
+      return 'latest'
     }
     newVersion = tag.label
     targetRef = tag.name
     updateKey = tag.commit
   } else {
+    if (!sourceOptIn) {
+      // main moved but there is no ho-v release to download and the source
+      // rebuild is opt-in — nothing installable to offer
+      log('no ho-v release found and source updates disabled — check done')
+      return 'latest'
+    }
     if (main === built) {
       log('up to date (', builtVer, ')')
-      return
+      return 'latest'
     }
     newVersion = `build ${main.slice(0, 7)}`
     targetRef = 'main'
     updateKey = main
   }
-  if (updateKey === dismissedCommit) return
+  if (updateKey === dismissedCommit) return 'latest'
   log('update available:', builtVer, '→', newVersion, `(target ${targetRef})`)
+  pendingRelease = tag
+  pendingTargetRef = targetRef
 
   // Attention in background: dock badge + bounce + system notification,
   // once per update SHA (the modal window alone goes unnoticed when the
@@ -287,15 +318,33 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
       void (async () => {
         pushUpdateState({ phase: 'downloading', percent: 0 })
         try {
-          await ensureSource()
-          await spawnHelper(
-            ['prepare'],
-            (pct) => pushUpdateState({ phase: 'downloading', percent: pct }),
-            { HERMESOFFICE_TARGET_REF: targetRef },
-          )
-          await spawnHelper(['build'], (pct) =>
-            pushUpdateState({ phase: 'downloading', percent: pct }),
-          )
+          // Preferred path: the prebuilt arm64 zip on the ho-v* GitHub
+          // release — works on any Mac, no dev toolchain required.
+          const binaryOk =
+            pendingRelease !== null &&
+            process.platform === 'darwin' &&
+            process.arch === 'arm64'
+          if (pendingRelease && binaryOk) {
+            await spawnHelper(
+              ['stage-binary', pendingRelease.name, pendingRelease.label],
+              (pct) => pushUpdateState({ phase: 'downloading', percent: pct }),
+            )
+          } else if (process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE === '1') {
+            await ensureSource()
+            await spawnHelper(
+              ['prepare'],
+              (pct) => pushUpdateState({ phase: 'downloading', percent: pct }),
+              { HERMESOFFICE_TARGET_REF: pendingTargetRef },
+            )
+            await spawnHelper(['build'], (pct) =>
+              pushUpdateState({ phase: 'downloading', percent: pct }),
+            )
+          } else {
+            // no installable artifact for this platform/release — guide the
+            // user to the releases page instead of failing mid-download
+            pushUpdateState({ phase: 'manual' })
+            return
+          }
           pushUpdateState({ phase: 'downloaded', percent: 100 })
         } catch (err) {
           log('download/build failed:', (err as Error).message)
@@ -324,7 +373,9 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
     },
     onLater: () => {
       app.dock?.setBadge('')
-      dismissedCommit = main
+      // updateKey is the tag commit on the release train, not main's head —
+      // dismissing by `main` would never match and the prompt would return
+      dismissedCommit = pendingRelease?.commit ?? main
       closeUpdateWindow()
     },
     onOpenDownload: () => {
@@ -339,14 +390,20 @@ async function checkForUpdate(getWindow: () => BrowserWindow | null): Promise<vo
   }
 
   showUpdateWindow(getWindow(), initialState(newVersion), actions)
+  return 'shown'
 }
 
-/** Manual checks obey the same source-build opt-in as automatic checks. */
-export async function checkMainUpdatesNow(getWindow: () => BrowserWindow | null): Promise<void> {
-  if (!app.isPackaged || process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE !== '1') return
+/** Manual checks answer every outcome: update window, "up to date", or
+ * "check failed" — never silent. */
+export async function checkMainUpdatesNow(
+  getWindow: () => BrowserWindow | null,
+): Promise<void> {
+  if (!app.isPackaged) return
   if (process.platform !== 'win32' && process.platform !== 'darwin') return
   dismissedCommit = null
-  await checkForUpdate(getWindow)
+  const outcome = await checkForUpdate(getWindow)
+  if (outcome === 'latest') await showManualCheckUpToDate()
+  else if (outcome === 'offline') await showManualCheckFailed()
 }
 
 export function initMainUpdater(getWindow: () => BrowserWindow | null): void {
@@ -354,10 +411,6 @@ export function initMainUpdater(getWindow: () => BrowserWindow | null): void {
   started = true
   if (!app.isPackaged) return
   if (process.platform !== 'win32' && process.platform !== 'darwin') return
-  if (process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE !== '1') {
-    log('source updater disabled — set HERMESOFFICE_ENABLE_SOURCE_UPDATE=1 to enable')
-    return
-  }
   // CDN feed baked in? electron-updater (updater.ts) owns updates.
   if (existsSync(join(process.resourcesPath, 'app-update.yml'))) {
     log('app-update.yml present — CDN updater active, main-updater idle')

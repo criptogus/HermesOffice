@@ -54,21 +54,12 @@ describe('application update startup', () => {
 })
 
 describe('manual application update checks', () => {
-  it('uses the source transport without a packaged feed when opted in', async () => {
-    vi.stubEnv('HERMESOFFICE_ENABLE_SOURCE_UPDATE', '1')
+  it('uses the source transport without a packaged feed', async () => {
     mocks.existsSync.mockReturnValue(false)
     const window = () => null
     await checkAppUpdatesNow(window)
     expect(mocks.sourceCheck).toHaveBeenCalledWith(window)
     expect(mocks.serverCheck).not.toHaveBeenCalled()
-  })
-  it('falls back to the manual-download dialog when the source updater is off', async () => {
-    vi.stubEnv('HERMESOFFICE_ENABLE_SOURCE_UPDATE', '')
-    mocks.existsSync.mockReturnValue(false)
-    const window = () => null
-    await checkAppUpdatesNow(window)
-    expect(mocks.serverCheck).toHaveBeenCalledOnce()
-    expect(mocks.sourceCheck).not.toHaveBeenCalled()
   })
   it('uses the server transport with a packaged feed', async () => {
     mocks.existsSync.mockReturnValue(true)

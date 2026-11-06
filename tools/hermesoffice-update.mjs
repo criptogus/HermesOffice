@@ -10,6 +10,9 @@
  *   prepare   — clone/fetch origin/main into HERMESOFFICE_SOURCE_DIR + npm ci
  *   build     — npm run dist:mac from the source dir, stage the fresh .app
  *               into HERMESOFFICE_STAGE_DIR. Emits "PROGRESS <n>" lines.
+ *   stage-binary <tag> <label> — download the prebuilt arm64 zip attached to
+ *               the ho-v* GitHub release and stage the .app, no toolchain
+ *               needed. This is the default apply path for release updates.
  *   install   — wait for the running app to exit, swap /Applications bundle,
  *               ad-hoc codesign, relaunch via `open -n`.
  *
@@ -21,8 +24,16 @@
  *   HERMESOFFICE_REPO        default https://github.com/criptogus/HermesOffice.git
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 const REPO = process.env.HERMESOFFICE_REPO || 'https://github.com/criptogus/HermesOffice.git'
 const APP_PATH = process.env.HERMESOFFICE_APP_PATH || '/Applications/HermesOffice.app'
@@ -436,13 +447,108 @@ function cmdInstall() {
   )
 }
 
+/**
+ * stage-binary: fetch the prebuilt arm64 zip published on the ho-v* GitHub
+ * release and stage the .app for `install`. No git clone, no npm, no cargo —
+ * this is what makes updates work on machines without a dev toolchain.
+ * Release asset names (see the release pipeline): the versioned zip first,
+ * then the unversioned latest-alias zip as fallback.
+ */
+async function cmdStageBinary(tagName, label) {
+  if (!tagName || !label) throw new Error('usage: stage-binary <tag> <label>')
+  const repoHtml = REPO.replace(/\.git$/, '')
+  const candidates = [
+    `HermesOffice-${label}-arm64-mac.zip`,
+    'HermesOffice-arm64-mac.zip',
+  ]
+
+  mkdirSync(STAGE_DIR, { recursive: true })
+  const zipPath = join(tmpdir(), `hermesoffice-update-${label}.zip`)
+  let downloaded = false
+  for (const name of candidates) {
+    const url = `${repoHtml}/releases/download/${tagName}/${name}`
+    progress(5, `downloading ${name}`)
+    const res = await fetch(url, { redirect: 'follow' })
+    if (res.status === 404) {
+      console.error(`asset not found: ${url}`)
+      continue
+    }
+    if (!res.ok || !res.body) {
+      throw new Error(`download failed for ${name}: HTTP ${res.status}`)
+    }
+    const total = Number(res.headers.get('content-length')) || 0
+    const out = createWriteStream(zipPath)
+    const reader = res.body.getReader()
+    let received = 0
+    let lastPct = -1
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      out.write(value)
+      if (total > 0) {
+        const pct = 5 + Math.round((80 * received) / total)
+        if (pct !== lastPct) {
+          lastPct = pct
+          progress(pct)
+        }
+      }
+    }
+    out.end()
+    await new Promise((resolve, reject) => {
+      out.on('finish', resolve)
+      out.on('error', reject)
+    })
+    downloaded = true
+    break
+  }
+  if (!downloaded) {
+    throw new Error(`no arm64 zip asset on release ${tagName} — use a manual download`)
+  }
+
+  progress(88, 'extracting')
+  const extractDir = join(STAGE_DIR, 'extracted')
+  rmSync(extractDir, { recursive: true, force: true })
+  mkdirSync(extractDir, { recursive: true })
+  run('ditto', ['-x', '-k', zipPath, extractDir], { timeout: 300_000 })
+  rmSync(zipPath, { force: true })
+
+  // the zip may nest the bundle one level deep; find it either way
+  const direct = join(extractDir, 'HermesOffice.app')
+  let app = existsSync(direct) ? direct : null
+  if (!app) {
+    for (const entry of readdirSync(extractDir)) {
+      const candidate = join(extractDir, entry, 'HermesOffice.app')
+      if (existsSync(candidate)) {
+        app = candidate
+        break
+      }
+    }
+  }
+  if (!app) throw new Error('release zip did not contain HermesOffice.app')
+
+  progress(93, 'staging bundle')
+  rmSync(join(STAGE_DIR, 'HermesOffice.app'), { recursive: true, force: true })
+  copyApp(app, join(STAGE_DIR, 'HermesOffice.app'))
+  verifyBundle(join(STAGE_DIR, 'HermesOffice.app'))
+  rmSync(extractDir, { recursive: true, force: true })
+  progress(98, 'staged')
+  console.log(
+    `RESULT ${JSON.stringify({ stage: join(STAGE_DIR, 'HermesOffice.app'), version: label })}`,
+  )
+}
+
 const [cmd] = process.argv.slice(2)
 try {
   if (cmd === 'check') cmdCheck()
   else if (cmd === 'prepare') cmdPrepare()
   else if (cmd === 'build') cmdBuild()
+  else if (cmd === 'stage-binary') await cmdStageBinary(process.argv[3], process.argv[4])
   else if (cmd === 'install') cmdInstall()
-  else throw new Error(`usage: hermesoffice-update.mjs check|prepare|build|install`)
+  else
+    throw new Error(
+      `usage: hermesoffice-update.mjs check|prepare|build|stage-binary <tag> <label>|install`,
+    )
 } catch (err) {
   console.error(`ERROR ${err.message}`)
   process.exit(1)

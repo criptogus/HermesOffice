@@ -103,6 +103,7 @@ function mockLsRemote(tagScript: () => string): void {
 }
 
 const realPlatform = process.platform
+const realArch = process.arch
 
 beforeEach(() => {
   vi.resetModules()
@@ -129,17 +130,17 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+  Object.defineProperty(process, 'arch', { value: realArch, configurable: true })
   delete process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE
 })
 
-describe('initMainUpdater safety gate', () => {
-  it('does not schedule GitHub/source update checks unless explicitly enabled', async () => {
+describe('initMainUpdater gating', () => {
+  it('schedules checks for packaged builds without a CDN feed (binary path needs no opt-in)', async () => {
     const { initMainUpdater } = await loadMainUpdater()
     initMainUpdater(() => null)
 
-    expect(vi.getTimerCount()).toBe(0)
-    expect(appOn).not.toHaveBeenCalled()
-    expect(existsSync).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    expect(appOn).toHaveBeenCalled()
     expect(spawn).not.toHaveBeenCalled()
   })
 
@@ -232,9 +233,101 @@ describe('update check version labels', () => {
   })
 })
 
+describe('binary release updates (no source opt-in)', () => {
+  function bootTagUpdate(): void {
+    // build-info present, no app-update.yml, no source opt-in env
+    existsSync.mockImplementation((path) => String(path).endsWith('build-info.json'))
+    readFileSync.mockReturnValue(JSON.stringify({ commit: BUILT_SHA, version: '0.4.0' }))
+    spawn.mockImplementation((cmd: string, args: string[]) => {
+      const child = fakeChild()
+      process.nextTick(() => {
+        if (args.includes('refs/heads/main')) {
+          child.emitData(`${MAIN_SHA}\trefs/heads/main\n`)
+        } else if (args.includes('--tags')) {
+          child.emitData(`${TAG_SHA}\trefs/tags/ho-v0.5.0\n`)
+        }
+        child.emit('close', 0)
+      })
+      return child
+    })
+  }
+
+  it('offers a newer ho-v tag without HERMESOFFICE_ENABLE_SOURCE_UPDATE', async () => {
+    bootTagUpdate()
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    expect(showUpdateWindow.mock.calls[0][1].version).toBe('0.5.0')
+  })
+
+  it('downloads via stage-binary — no git clone, no npm build', async () => {
+    bootTagUpdate()
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+
+    const spawnArgs: string[][] = []
+    spawn.mockImplementation((cmd: string, args: string[]) => {
+      spawnArgs.push([cmd, ...args])
+      const child = fakeChild()
+      process.nextTick(() => {
+        if (args.includes('refs/heads/main')) {
+          child.emitData(`${MAIN_SHA}\trefs/heads/main\n`)
+        } else if (args.includes('--tags')) {
+          child.emitData(`${TAG_SHA}\trefs/tags/ho-v0.5.0\n`)
+        }
+        child.emit('close', 0)
+      })
+      return child
+    })
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    const actions = showUpdateWindow.mock.calls[0][2] as { onDownload: () => void }
+    actions.onDownload()
+    await vi.advanceTimersByTimeAsync(100)
+
+    const stageCall = spawnArgs.find((c) => c.includes('stage-binary'))
+    expect(stageCall).toBeDefined()
+    expect(stageCall).toContain('ho-v0.5.0')
+    expect(stageCall).toContain('0.5.0')
+    expect(spawnArgs.find((c) => c[0] === 'git' && c[1] === 'clone')).toBeUndefined()
+    expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'downloaded', percent: 100 })
+  })
+
+  it('does not offer a tagless main move without the source opt-in', async () => {
+    existsSync.mockImplementation((path) => String(path).endsWith('build-info.json'))
+    readFileSync.mockReturnValue(JSON.stringify({ commit: BUILT_SHA, version: '0.4.0' }))
+    spawn.mockImplementation((cmd: string, args: string[]) => {
+      const child = fakeChild()
+      process.nextTick(() => {
+        if (args.includes('refs/heads/main')) {
+          child.emitData(`${MAIN_SHA}\trefs/heads/main\n`)
+        } else if (args.includes('--tags')) {
+          child.emitData('')
+        }
+        child.emit('close', 0)
+      })
+      return child
+    })
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+  })
+})
+
 describe('first download (ensureSource)', () => {
   it('clones a full working tree — no --no-checkout — before spawning the helper', async () => {
     process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE = '1'
+    // non-arm64 → the binary release path is unavailable, so the opt-in
+    // source rebuild (clone + build) is what onDownload must exercise
+    Object.defineProperty(process, 'arch', { value: 'x64', configurable: true })
     existsSync.mockImplementation((path) => String(path).endsWith('build-info.json'))
     readFileSync.mockReturnValue(JSON.stringify({ commit: BUILT_SHA, version: '0.4.0' }))
 
