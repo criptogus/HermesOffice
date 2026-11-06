@@ -43,7 +43,7 @@ export async function testSearchProvider(
     provider === 'tavily'
       ? { useGsk: false, tavilyKey: apiKey, serperKey: '', prefer: 'tavily' }
       : { useGsk: false, serperKey: apiKey, tavilyKey: '' }
-  const r = await webSearch('GenOffice', 1, options)
+  const r = await webSearch('HermesOffice', 1, options)
   if (r.method === provider) return { ok: true }
   return {
     ok: false,
