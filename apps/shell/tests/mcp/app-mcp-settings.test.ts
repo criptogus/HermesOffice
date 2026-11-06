@@ -20,7 +20,7 @@ let logPath: string
 let port: number
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'genoffice-mcp-apply-'))
+  dir = await mkdtemp(join(tmpdir(), 'hermesoffice-mcp-apply-'))
   logPath = join(dir, 'mcp-log.txt')
   port = await freePort()
   configureMcpRuntime({

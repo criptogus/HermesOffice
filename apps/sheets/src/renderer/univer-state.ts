@@ -4,6 +4,8 @@
  * Used by both the App component (App.tsx) and the module-level sync
  * helpers (univer-sync.ts).
  */
+import type { SheetPasswordHash } from '@hermesoffice/xlsx-gateway/gateway/xlsx-protection-hash'
+import type { SheetProtectionInfo } from './sheet-protection'
 import { BorderType, LocalUndoRedoService, Worksheet, type IRange } from '@univerjs/core'
 import { SheetInterceptorService } from '@univerjs/sheets'
 
@@ -14,6 +16,8 @@ import type {
 } from '../shared/desktop-api'
 import type { createUniver } from './create-univer'
 import type { EditJournal } from './edit-journal'
+import type { SharedFormulaLookup } from './shared-formula-index'
+import type { SheetOutlineState } from './outline-model'
 import { netAxisDelta } from './view-transform'
 
 export type UniverRuntime = ReturnType<typeof createUniver>
@@ -22,11 +26,41 @@ export type ActiveWorkbook = NonNullable<
 >
 export type UniverWorksheet = NonNullable<ReturnType<ActiveWorkbook['getActiveSheet']>>
 
+export interface ActiveCellEditor {
+  isCellEditing(): boolean
+  endEditingAsync(save?: boolean): Promise<boolean>
+}
+
+export function pendingEditsForClose(journalSize: number, editorDirty: boolean): number {
+  return journalSize + (editorDirty ? 1 : 0)
+}
+
+export async function commitActiveCellEditor(
+  editor: ActiveCellEditor | null | undefined,
+): Promise<boolean> {
+  if (!editor?.isCellEditing()) return true
+  return editor.endEditingAsync(true)
+}
+
+export async function runAfterCellEditorCommit(
+  editor: ActiveCellEditor | null | undefined,
+  action: () => void | Promise<unknown>,
+): Promise<boolean> {
+  if (!(await commitActiveCellEditor(editor))) return false
+  await action()
+  return true
+}
+
 /// Column intervals (inclusive) of one row whose cells fed a wrap measure.
 export type WrapMeasureCoverage = Array<readonly [number, number]>
 
 export interface LazyWorkbookState {
-  readonly file: WorkbookFile
+  /// Mutable only in its `sessionId`: a sidecar crash drops the session
+  /// server-side, and recovery re-opens the file to adopt a live one
+  /// (see recoverSidecarSession in univer-sync.ts). Every read site reads
+  /// `state.file.sessionId` at call time, so swapping it here re-points the
+  /// whole workbook at the new session without threading a second id through.
+  file: WorkbookFile
   readonly generation: number
   readonly loadedRanges: Map<string, IRange>
   /// Sheets duplicated this session from a streaming source: Univer's copy
@@ -59,7 +93,7 @@ export interface LazyWorkbookState {
   /// so an already-loaded range must not satisfy the next load request.
   readonly decorationsPendingSheets: Set<string>
   /// File-side worksheet protection, known once a sheet finishes indexing.
-  readonly sheetProtections: Map<string, { protected: boolean; hasPassword: boolean }>
+  readonly sheetProtections: Map<string, SheetProtectionInfo>
   /// File-side manual page breaks (0-based index of the row/column after the
   /// break, file coordinates), known once a sheet finishes indexing.
   readonly sheetPageBreaks: Map<string, { rowBreaks: number[]; colBreaks: number[] }>
@@ -69,13 +103,20 @@ export interface LazyWorkbookState {
   /// File-side allow-edit ranges, known once a sheet finishes indexing.
   readonly sheetProtectedRanges: Map<
     string,
-    { name: string; sqref: string; hasPassword: boolean }[]
+    {
+      name: string
+      sqref: string
+      hasPassword: boolean
+      password?: SheetPasswordHash
+    }[]
   >
   /// Defined names the Univer engine rejected at install — preserved verbatim
   /// by the declarative defined-names save.
   readonly uninstalledDefinedNames: Set<string>
   readonly hyperlinkTargets: Map<string, Map<string, string>>
   readonly frozenStripKeys: Map<string, string>
+  /// Same bookkeeping for the frozen ROW strip (loadFrozenRowStrip).
+  readonly frozenRowStripKeys: Map<string, string>
   /// Where each sheet's filter button came from: the worksheet's own
   /// autoFilter (saveable) or a table part (whose filter lives in the table
   /// XML — editing it is blocked).
@@ -107,6 +148,12 @@ export interface LazyWorkbookState {
   /// readWorkbookFormulas, so the formula bar can show formulas even when the
   /// closure gave up and the engine never sees them. Display-only.
   readonly formulaText: Map<string, Map<string, string>>
+  /// Sheets whose formulaText overflowed and was dropped (see storeFormulaText).
+  readonly formulaTextTruncated: Set<string>
+  /// Shared-formula groups per sheet (file coordinates) from the formula
+  /// index: followers carry no text of their own there, so their formula is
+  /// derived from the master on demand.
+  readonly sharedFormulaGroups: Map<string, SharedFormulaLookup>
   /// File-cached formula results per sheet ('row:col', screen coordinates),
   /// shown in place of the engine's result when its recalculation errors
   /// (unsupported function, unresolved name). Display-only.
@@ -123,13 +170,7 @@ export interface LazyWorkbookState {
   readonly hiddenRowsCoveredThrough: Map<string, number>
   /// Known row/column outline levels per sheet (file reads + this session's
   /// group edits). Rows outside loaded ranges default to level 0.
-  readonly outline: Map<
-    string,
-    {
-      readonly rows: Map<number, { level: number; collapsed: boolean }>
-      readonly cols: Map<number, { level: number; collapsed: boolean }>
-    }
-  >
+  readonly outline: Map<string, SheetOutlineState>
   /// IronCalc fallback when closure mode is unavailable: file formula-cell
   /// keys per sheet, engine values overlaid on viewport patches, and a
   /// session kill switch after the engine rejects the workbook repeatedly.
@@ -145,6 +186,15 @@ export interface LazyWorkbookState {
     engineOverBudget: boolean
     readonly formulaCells: Map<string, ReadonlySet<number>>
     readonly overlay: Map<string, Map<string, PinnedClosureCell>>
+    /// Sheets whose latest engine run had to keep at least one cached value
+    /// (the model lacks a function or reference, so every value derived from
+    /// the gap is suspect): the save must not refresh cached <v>s from such
+    /// an overlay — the file's own results are Excel's and stay authoritative.
+    readonly incompleteRuns: Set<string>
+    /// Values the external-links panel applied: a fresh sidecar computation,
+    /// not engine output. Kept out of `overlay` so an incomplete engine run
+    /// cannot release them, and a save counts them as pending work.
+    readonly externalOverlay: Map<string, Map<string, PinnedClosureCell>>
     /// per-sheet: viewport row the last SUCCESSFUL overlay window was
     /// anchored at and whether it covered every formula band; a partial
     /// window re-anchors when the user scrolls far from it. Written only

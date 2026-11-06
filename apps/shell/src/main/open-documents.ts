@@ -3,7 +3,7 @@ import { renameSync, unlinkSync, writeFileSync } from 'node:fs'
 
 /**
  * userData/open-documents.json: the files the running shell has open in tabs,
- * for other processes — the genoffice CLI refuses to rewrite a document in place
+ * for other processes — the hermesoffice CLI refuses to rewrite a document in place
  * while the editor shows it, since the editor would either warn at its next
  * save (docs, sheets) or silently overwrite the change (slides). Rewritten on
  * every tab change, emptied at startup, removed on quit; the pid lets a reader
@@ -17,7 +17,9 @@ export interface OpenDocumentsRegistry {
   paths: string[]
 }
 
-export function publishOpenDocuments(path: string, paths: readonly string[]): void {
+const reportedWriteErrors = new Set<string>()
+
+export function publishOpenDocuments(path: string, paths: readonly string[]): boolean {
   const registry: OpenDocumentsRegistry = {
     pid: process.pid,
     updatedAt: new Date().toISOString(),
@@ -27,10 +29,18 @@ export function publishOpenDocuments(path: string, paths: readonly string[]): vo
   try {
     writeFileSync(tempPath, JSON.stringify(registry), 'utf8')
     renameSync(tempPath, path)
-  } catch {
+    return true
+  } catch (err) {
     try {
       unlinkSync(tempPath)
     } catch {}
+    const message = err instanceof Error ? err.message : String(err)
+    const key = (err as NodeJS.ErrnoException)?.code ?? message
+    if (!reportedWriteErrors.has(key)) {
+      reportedWriteErrors.add(key)
+      console.warn('[shell] open-documents registry write failed:', message)
+    }
+    return false
   }
 }
 

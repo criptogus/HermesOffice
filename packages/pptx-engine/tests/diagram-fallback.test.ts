@@ -38,6 +38,24 @@ describe('layoutDiagramFallback', () => {
     expect(JSON.stringify(shapes[0])).toContain('Alpha')
   })
 
+  it('bounds deeply nested diagram data before layout recursion', () => {
+    const depth = 20_000
+    const points = Array.from(
+      { length: depth },
+      (_, index) => `<dgm:pt modelId="n${index}"/>`,
+    ).join('')
+    const connections = Array.from({ length: depth }, (_, index) => {
+      const source = index === 0 ? 'doc' : `n${index - 1}`
+      return `<dgm:cxn srcId="${source}" destId="n${index}"/>`
+    }).join('')
+    const data =
+      '<dgm:dataModel xmlns:dgm="d"><dgm:ptLst><dgm:pt modelId="doc" type="doc"/>' +
+      `${points}</dgm:ptLst><dgm:cxnLst>${connections}</dgm:cxnLst></dgm:dataModel>`
+    expect(layoutDiagramFallback(data, {}, 9144000, 6858000, 'orgChart1')).toEqual(
+      expect.any(Array),
+    )
+  })
+
   it('explicit type="node" points are kept', () => {
     const explicit = DATA.replace('<dgm:pt modelId="n2"/>', '<dgm:pt modelId="n2" type="node"/>')
     expect(layoutDiagramFallback(explicit, {}, 9144000, 6858000)).toHaveLength(5)

@@ -9,6 +9,7 @@
 /// paste does.
 
 import { PackageArchive, relsPathFor, resolveTarget, type Relationship } from './zip'
+import { hasContentTypeOverride, maxRelationshipIdNumber } from './xml-utils'
 
 const LAYOUT_REL = '/slideLayout'
 const NOTES_REL = '/notesSlide'
@@ -55,7 +56,7 @@ function extOf(path: string): string {
 function overrideContentType(ct: string | null, partPath: string): string | undefined {
   if (!ct) return undefined
   const re = new RegExp(
-    `<Override[^>]*PartName="/${partPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*ContentType="([^"]+)"`,
+    `<Override[^>]*PartName=["']/${partPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*ContentType=["']([^"']+)["']`,
   )
   return re.exec(ct)?.[1]
 }
@@ -358,7 +359,7 @@ function ensureContentTypes(
       const targetPath = pathMap.get(key)
       if (!targetPath) continue
       const override = `<Override PartName="/${targetPath}" ContentType="${contentType}"/>`
-      if (!ct.includes(`PartName="/${targetPath}"`))
+      if (!hasContentTypeOverride(ct, targetPath))
         ct = ct.replace('</Types>', () => `${override}</Types>`)
     } else if (!new RegExp(`<Default[^>]*Extension="${key}"`, 'i').test(ct)) {
       ct = ct.replace(
@@ -414,8 +415,7 @@ function registerMaster(archive: PackageArchive, masterPath: string): boolean {
   const pres = archive.readText(PRES_PATH)
   const presRels = archive.readText(presRelsPath)
   if (!pres || !presRels || !pres.includes('</p:sldMasterIdLst>')) return false
-  let maxRid = 0
-  for (const m of presRels.matchAll(/Id="rId(\d+)"/g)) maxRid = Math.max(maxRid, Number(m[1]))
+  const maxRid = maxRelationshipIdNumber(presRels)
   const rid = `rId${maxRid + 1}`
   archive.entries.set(
     presRelsPath,

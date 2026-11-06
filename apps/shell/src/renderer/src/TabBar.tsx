@@ -1,12 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import type { TabsApi, TabSummary } from '../../shared/tabs-api'
+import { TEAR_OFF_SLACK, insertionIndexForX, isBeyondBand } from '../../shared/tab-drag-geometry'
+import { notifyFilesChanged } from './file-events'
 import { useI18n } from './locale'
 
 declare global {
   interface Window {
     aiOfficeTabs: TabsApi
   }
+}
+
+/**
+ * Formats hover tooltip for document tab:
+ * - Tabs with a saved filePath show the full title on line 1, and the full absolute path on line 2.
+ * - Untitled or Home/Help tabs without a filePath show the title alone.
+ */
+export function formatTabTooltip(tab: TabSummary): string {
+  return tab.filePath ? `${tab.title}\n${tab.filePath}` : tab.title
 }
 
 function DocIcon() {
@@ -39,6 +50,18 @@ function PdfIcon() {
       <rect width="240" height="240" rx="48" fill="#EF4444" />
       <path
         d="M102.719 63.0153C105.738 52.1477 126.265 50.9398 128.68 66.6374C131.699 75.6938 127.472 90.7878 125.661 100.448C130.491 113.127 137.133 122.183 147.397 128.22C158.264 127.013 179.395 125.202 186.641 132.447C192.678 138.485 191.471 155.389 175.774 155.389C166.717 155.389 153.434 151.767 141.963 145.126C129.284 147.541 114.19 152.974 100.907 157.804C70.7196 209.727 53.2104 186.181 55.0216 176.521C57.4366 164.446 73.7385 154.786 85.8136 148.749C91.8511 137.277 100.907 117.957 106.944 103.466C102.718 86.5617 100.304 72.6754 102.719 63.0153ZM85.2149 158.437C81.5921 161.456 70.1214 171.117 67.1026 179.569C67.1026 179.569 73.7436 176.55 85.2149 158.437ZM116.605 113.718C112.378 124.586 107.548 136.662 101.511 146.925C111.171 142.699 122.039 137.869 134.718 134.85C127.473 130.02 121.435 122.775 116.605 113.718ZM180.613 143.932C183.028 142.121 179.406 137.291 158.275 139.102C177.595 147.555 180.613 143.932 180.613 143.932ZM116.013 64.2419C114.805 64.2436 114.806 80.5436 117.221 88.9958C120.239 83.5616 120.843 64.2421 116.013 64.2419Z"
+        fill="#fff"
+      />
+    </svg>
+  )
+}
+
+function HelpIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 240 240" fill="none" aria-hidden="true">
+      <rect width="240" height="240" rx="48" fill="#7C5CE0" />
+      <path
+        d="M120 176c-6.6 0-12-5.2-12-11.6 0-6.5 5.4-11.7 12-11.7s12 5.2 12 11.7c0 6.4-5.4 11.6-12 11.6zm-9.6-34.9c0-16.2 19.2-19.1 19.2-30.4 0-5.6-4.4-9.3-10.6-9.3-6.5 0-11 3.4-13.3 8.7-1.5 3.5-5.1 5.4-8.9 4.6l-8.7-1.8c-4.7-1-7.6-5.7-6.2-10.2C86.5 88.7 99.6 79 119.6 79c20.7 0 34.3 12.3 34.3 29.6 0 23.7-24.4 26.6-24.4 39.4 0 2.5-2.1 4.4-4.7 4.4h-10.1c-2.6 0-4.7-1.9-4.7-4.4z"
         fill="#fff"
       />
     </svg>
@@ -124,6 +147,31 @@ const KIND_ICON: Record<TabSummary['kind'], ReactElement> = {
   pdf: <PdfIcon />,
   markdown: <MarkdownIcon />,
   html: <HtmlIcon />,
+  help: <HelpIcon />,
+}
+
+/**
+ * Extension of a path's last segment, without the dot ('' when it has none).
+ * Read off the basename: a dot in a directory name is not an extension, and
+ * taking 'v2\Notes' from C:\Users\me.v2\Notes built a rename target that
+ * renameFile could not resolve.
+ */
+export function fileExtension(filePath: string): string {
+  const name = filePath.slice(Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/')) + 1)
+  const dot = name.lastIndexOf('.')
+  return dot > -1 ? name.slice(dot + 1) : ''
+}
+
+// a trailing dot counts: "note." must reach the shell's own rejection, not become "note..md"
+function hasExtension(name: string): boolean {
+  return name.lastIndexOf('.') > -1
+}
+
+/** An extensionless name keeps the current extension; a typed one is taken verbatim (note.md -> note.txt). */
+export function renamedFileName(currentPath: string, typedName: string): string {
+  if (hasExtension(typedName)) return typedName
+  const ext = fileExtension(currentPath)
+  return ext ? `${typedName}.${ext}` : typedName
 }
 
 export function TabBar() {
@@ -131,8 +179,53 @@ export function TabBar() {
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const stripRef = useRef<HTMLDivElement>(null)
 
+  // Double-click a file tab to rename the underlying file inline (Home's row
+  // rename, one tab over): the input prefills the base name, Enter/blur commits
+  // through the same renameFile IPC (title syncs via tabManager.renameTabFile),
+  // Escape cancels. Home tabs and untitled documents cannot be renamed.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null)
+  const renamingRef = useRef(renaming)
+  renamingRef.current = renaming
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  /** open the inline rename box on a file tab (double-click, or "Rename" in the tab menu) */
+  const beginRename = (tab: TabSummary) => {
+    if (tab.id === 'home' || !tab.filePath) return
+    // whole name, extension included: only the shell may change an extension
+    setRenaming({ id: tab.id, value: tab.title })
+  }
+  const beginRenameRef = useRef(beginRename)
+  beginRenameRef.current = beginRename
+  useEffect(
+    () =>
+      window.aiOfficeTabs.onStartRename?.((id) => {
+        const tab = tabsRef.current.find((candidate) => candidate.id === id)
+        if (tab) beginRenameRef.current(tab)
+      }),
+    [],
+  )
+  const commitRename = () => {
+    const r = renamingRef.current
+    renamingRef.current = null
+    setRenaming(null)
+    if (!r) return
+    const tab = tabsRef.current.find((tb) => tb.id === r.id)
+    const value = r.value.trim()
+    if (!tab?.filePath || !value) return
+    const newName = renamedFileName(tab.filePath, value)
+    if (newName === tab.title) return
+    void window.aiOffice.renameFile(tab.filePath, newName).then((result) => {
+      if (!result.ok) window.alert(result.error ?? t('renameFailed'))
+      // Home shares this renderer and only re-pulls on window focus, which the
+      // rename input already holds: tell it the recents / folder rows moved.
+      else notifyFilesChanged()
+    })
+  }
+
   // Chrome-style drag-to-reorder: the grabbed tab tracks the pointer 1:1 while
   // its neighbours slide aside live; the final order is committed on release.
+  // Leaving the strip vertically tears the tab off into its own window, which
+  // then follows the still-held pointer; coming back over the strip docks it.
   interface DragInfo {
     pointerId: number
     id: string
@@ -141,8 +234,15 @@ export function TabBar() {
     /** viewport-x left edge + width of every tab, sampled at drag start */
     lefts: number[]
     widths: number[]
+    /** the strip's vertical band, sampled at drag start (tear-off threshold) */
+    stripTop: number
+    stripBottom: number
     target: number
     started: boolean
+    /** tear-off requested, main has not answered yet */
+    tearing: boolean
+    /** the tab is a window now; moves steer it, release lets it go */
+    torn: boolean
   }
   const dragRef = useRef<DragInfo | null>(null)
   const [dragVisual, setDragVisual] = useState<{
@@ -152,11 +252,28 @@ export function TabBar() {
     target: number
     width: number
   } | null>(null)
+  // a detached window is being dragged over the strip: insertion indicator x
+  // (strip-relative) — the main process asks, this strip answers with the slot
+  const [dockX, setDockX] = useState<number | null>(null)
+
+  const tabRects = () =>
+    Array.from(stripRef.current?.querySelectorAll<HTMLElement>('.tab-item') ?? [], (el) => {
+      const r = el.getBoundingClientRect()
+      return { left: r.left, width: r.width }
+    })
 
   const finishDrag = (pointerId: number, commit: boolean) => {
     const drag = dragRef.current
     if (!drag || pointerId !== drag.pointerId) return
     dragRef.current = null
+    if (drag.torn) {
+      // release: the window under the pointer stays where it is and takes focus
+      void window.aiOfficeTabs.endTornDrag()
+      return
+    }
+    // released while main is still creating the window: the tearOff callback
+    // sees no drag and ends the drag itself
+    if (drag.tearing) return
     if (!drag.started) {
       // plain click: the in-view scroll was suppressed while the press was
       // held (dragRef was set), so honor it now that the press is over
@@ -200,11 +317,110 @@ export function TabBar() {
   // and pointerup/pointercancel never fire — clear the drag state ourselves
   useEffect(() => {
     const drag = dragRef.current
-    if (drag && !tabs.some((t) => t.id === drag.id)) {
+    // a torn-off tab leaves the list by design and its drag goes on
+    if (drag && !drag.torn && !drag.tearing && !tabs.some((t) => t.id === drag.id)) {
       dragRef.current = null
       setDragVisual(null)
     }
   }, [tabs])
+
+  // A detached window dragged over this strip: place the insertion indicator
+  // at the slot under the pointer and tell main which slot that is.
+  useEffect(() => {
+    return window.aiOfficeTabs.onDockPreview?.((preview) => {
+      const strip = stripRef.current
+      if (!preview || !strip) {
+        setDockX(null)
+        return
+      }
+      const rects = tabRects()
+      const index = insertionIndexForX(rects, preview.x)
+      window.aiOfficeTabs.reportDockIndex(index)
+      const stripLeft = strip.getBoundingClientRect().left - strip.scrollLeft
+      const slot = rects[index]
+      const last = rects[rects.length - 1]
+      const edge = slot ? slot.left : last ? last.left + last.width : preview.x
+      setDockX(Math.round(edge - stripLeft))
+    })
+  }, [])
+
+  /** pointer moves during a drag, delivered to the strip (it holds the capture) */
+  const handleDragMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (!drag || event.pointerId !== drag.pointerId) return
+    if (drag.torn) {
+      window.aiOfficeTabs.dragTornWindow(event.screenX, event.screenY)
+      // back over the strip: the window folds back into a tab at the pointer's slot
+      if (!isBeyondBand(event.clientY, drag.stripTop, drag.stripBottom, 0)) {
+        dragRef.current = null
+        void window.aiOfficeTabs.dockTornWindow(insertionIndexForX(tabRects(), event.clientX))
+      }
+      return
+    }
+    if (drag.tearing) return
+    let dx = event.clientX - drag.startX
+    // 4px dead zone so plain clicks never wiggle the tab
+    if (!drag.started) {
+      if (Math.abs(dx) < 4 && Math.abs(event.clientY - (drag.stripTop + drag.stripBottom) / 2) < 4)
+        return
+      // re-sample geometry the moment the drag really starts — the
+      // pointer-down activation re-renders and could have moved tabs
+      const rects = tabRects()
+      drag.lefts = rects.map((r) => r.left)
+      drag.widths = rects.map((r) => r.width)
+      drag.started = true
+    }
+    // far enough above or below the strip: tear the tab off into its own window
+    if (isBeyondBand(event.clientY, drag.stripTop, drag.stripBottom, TEAR_OFF_SLACK)) {
+      drag.tearing = true
+      const { screenX, screenY, pointerId } = event
+      void window.aiOfficeTabs.tearOff(drag.id, screenX, screenY).then((ok) => {
+        const current = dragRef.current
+        if (!current || current.pointerId !== pointerId) {
+          // released meanwhile: let the window go (it exists only when ok)
+          if (ok) void window.aiOfficeTabs.endTornDrag()
+          return
+        }
+        current.tearing = false
+        if (!ok) return
+        current.torn = true
+        setDragVisual(null)
+      })
+      return
+    }
+    // keep the tab inside the strip; slot 0 (Home) is off limits
+    const last = drag.lefts.length - 1
+    const minDx = drag.lefts[1] - drag.lefts[drag.from]
+    const maxDx =
+      drag.lefts[last] + drag.widths[last] - drag.widths[drag.from] - drag.lefts[drag.from]
+    dx = Math.min(Math.max(dx, minDx), Math.max(minDx, maxDx))
+    // Chrome's rule: swap once the grabbed tab's leading edge crosses
+    // a neighbour's midpoint (the clamped center can only ever *touch*
+    // the first slot's midpoint, so edge-based tests have no dead spot)
+    const draggedLeft = drag.lefts[drag.from] + dx
+    const draggedRight = draggedLeft + drag.widths[drag.from]
+    let target = drag.from
+    for (let i = 1; i < drag.from; i++) {
+      if (draggedLeft < drag.lefts[i] + drag.widths[i] / 2) {
+        target = i
+        break
+      }
+    }
+    for (let i = last; i > drag.from; i--) {
+      if (draggedRight > drag.lefts[i] + drag.widths[i] / 2) {
+        target = i
+        break
+      }
+    }
+    drag.target = target
+    setDragVisual({
+      id: drag.id,
+      dx,
+      from: drag.from,
+      target,
+      width: drag.widths[drag.from],
+    })
+  }
 
   // Trackpads scroll the strip natively; map a mouse's vertical wheel to
   // horizontal scrolling. Native listener because React registers wheel as
@@ -258,10 +474,18 @@ export function TabBar() {
         </button>
       )}
       <div
-        className={dragVisual ? 'tab-strip dragging' : 'tab-strip'}
+        className={`tab-strip ${dragVisual ? 'dragging' : ''} ${dockX !== null ? 'dock-target' : ''}`}
         ref={stripRef}
-        role="tablist"
+        // the strip, not the grabbed tab, owns the pointer capture: a torn-off
+        // tab's element unmounts mid-gesture, and the moves must keep coming
+        onPointerMove={handleDragMove}
+        onPointerUp={(event) => finishDrag(event.pointerId, true)}
+        onPointerCancel={(event) => finishDrag(event.pointerId, false)}
+        onLostPointerCapture={(event) => finishDrag(event.pointerId, false)}
       >
+        {dockX !== null && (
+          <div className="tab-dock-indicator" style={{ left: dockX }} aria-hidden="true" />
+        )}
         {tabs.map((tab, index) => {
           // live transforms: the grabbed tab tracks the pointer; tabs between
           // the origin and the current target slide aside by the grabbed width
@@ -278,32 +502,60 @@ export function TabBar() {
           return (
             <div
               key={tab.id}
-              className={`tab-item ${tab.kind === 'home' ? 'tab-home' : ''} ${tab.active ? 'active' : ''} ${dragVisual?.id === tab.id ? 'drag-source' : ''}`}
-              role="tab"
-              aria-selected={tab.active}
-              tabIndex={tab.active ? 0 : -1}
+              className={`tab-item ${tab.kind === 'home' ? 'tab-home' : ''} ${tab.active ? 'active' : ''} ${tab.dormant ? 'tab-dormant' : ''} ${dragVisual?.id === tab.id ? 'drag-source' : ''}`}
               // long file names ellipsize in the strip — hover reveals the
-              // full title (the close button's own tooltip still wins there)
-              title={tab.title}
+              // full title and where the file is (the close button's own tooltip still wins there)
+              title={
+                tab.dormant
+                  ? `${formatTabTooltip(tab)} (${t('tabSleeping')})`
+                  : formatTabTooltip(tab)
+              }
               style={dragStyle}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
+              onContextMenu={(event) => {
+                event.preventDefault()
+                if (tab.id === 'home') return
+                void window.aiOfficeTabs.showTabMenu(
+                  tab.id,
+                  Math.round(event.clientX),
+                  Math.round(event.clientY),
+                )
+              }}
+              onAuxClick={(event) => {
+                if (event.button !== 1 || !tab.closable) return
+                event.preventDefault()
+                void window.aiOfficeTabs.close(tab.id)
+              }}
+              onMouseDown={(event) => {
+                // middle button: stop Chromium's autoscroll on the scrollable
+                // strip so the tab is still under the pointer at auxclick
+                if (event.button === 1) {
                   event.preventDefault()
-                  if (!tab.active) void window.aiOfficeTabs.activate(tab.id)
+                  return
                 }
+                // the strip captures the pointer for dragging, which retargets
+                // the derived dblclick to the strip; pointer events carry no
+                // click count either, so read it off the compat mousedown
+                if (event.button !== 0 || event.detail !== 2) return
+                if (tab.id === 'home' || !tab.filePath) return
+                if ((event.target as HTMLElement).closest('.tab-close')) return
+                if ((event.target as HTMLElement).closest('.tab-rename-input')) return
+                // the input mounts and autofocuses inside this dispatch; the
+                // default mousedown focus step would blur it straight away
+                event.preventDefault()
+                beginRename(tab)
               }}
               onPointerDown={(event) => {
                 if (event.button !== 0) return
                 if ((event.target as HTMLElement).closest('.tab-close')) return
+                if ((event.target as HTMLElement).closest('.tab-rename-input')) return
                 // Chrome-style: pressing a tab activates it immediately, so
                 // activation never depends on the click that a drag would eat
                 if (!tab.active) void window.aiOfficeTabs.activate(tab.id)
                 if (tab.id === 'home') return
                 const strip = stripRef.current
                 if (!strip) return
-                const rects = Array.from(strip.querySelectorAll<HTMLElement>('.tab-item'), (el) =>
-                  el.getBoundingClientRect(),
-                )
+                const rects = tabRects()
+                const band = strip.getBoundingClientRect()
                 dragRef.current = {
                   pointerId: event.pointerId,
                   id: tab.id,
@@ -311,80 +563,49 @@ export function TabBar() {
                   startX: event.clientX,
                   lefts: rects.map((r) => r.left),
                   widths: rects.map((r) => r.width),
+                  stripTop: band.top,
+                  stripBottom: band.bottom,
                   target: index,
                   started: false,
+                  tearing: false,
+                  torn: false,
                 }
-                event.currentTarget.setPointerCapture(event.pointerId)
+                strip.setPointerCapture(event.pointerId)
               }}
-              onPointerMove={(event) => {
-                const drag = dragRef.current
-                if (!drag || event.pointerId !== drag.pointerId) return
-                let dx = event.clientX - drag.startX
-                // 4px dead zone so plain clicks never wiggle the tab
-                if (!drag.started) {
-                  if (Math.abs(dx) < 4) return
-                  // re-sample geometry the moment the drag really starts — the
-                  // pointer-down activation re-renders and could have moved tabs
-                  const strip = stripRef.current
-                  if (strip) {
-                    const rects = Array.from(
-                      strip.querySelectorAll<HTMLElement>('.tab-item'),
-                      (el) => el.getBoundingClientRect(),
-                    )
-                    drag.lefts = rects.map((r) => r.left)
-                    drag.widths = rects.map((r) => r.width)
-                  }
-                  drag.started = true
-                }
-                // keep the tab inside the strip; slot 0 (Home) is off limits
-                const last = drag.lefts.length - 1
-                const minDx = drag.lefts[1] - drag.lefts[drag.from]
-                const maxDx =
-                  drag.lefts[last] +
-                  drag.widths[last] -
-                  drag.widths[drag.from] -
-                  drag.lefts[drag.from]
-                dx = Math.min(Math.max(dx, minDx), Math.max(minDx, maxDx))
-                // Chrome's rule: swap once the grabbed tab's leading edge crosses
-                // a neighbour's midpoint (the clamped center can only ever *touch*
-                // the first slot's midpoint, so edge-based tests have no dead spot)
-                const draggedLeft = drag.lefts[drag.from] + dx
-                const draggedRight = draggedLeft + drag.widths[drag.from]
-                let target = drag.from
-                for (let i = 1; i < drag.from; i++) {
-                  if (draggedLeft < drag.lefts[i] + drag.widths[i] / 2) {
-                    target = i
-                    break
-                  }
-                }
-                for (let i = last; i > drag.from; i--) {
-                  if (draggedRight > drag.lefts[i] + drag.widths[i] / 2) {
-                    target = i
-                    break
-                  }
-                }
-                drag.target = target
-                setDragVisual({
-                  id: drag.id,
-                  dx,
-                  from: drag.from,
-                  target,
-                  width: drag.widths[drag.from],
-                })
-              }}
-              onPointerUp={(event) => finishDrag(event.pointerId, true)}
-              onPointerCancel={(event) => finishDrag(event.pointerId, false)}
-              onLostPointerCapture={(event) => finishDrag(event.pointerId, false)}
             >
               {/* highlight plate behind the content — hover capsule / active white body */}
               <span className="tab-plate" aria-hidden="true" />
               <span className="tab-icon">{KIND_ICON[tab.kind]}</span>
-              <span className="tab-title">{tab.title}</span>
+              {renaming?.id === tab.id ? (
+                <input
+                  className="tab-rename-input"
+                  autoFocus
+                  value={renaming.value}
+                  aria-label={t('rename')}
+                  spellCheck={false}
+                  onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onChange={(event) => setRenaming({ id: tab.id, value: event.target.value })}
+                  onKeyDown={(event) => {
+                    // Enter that confirms an IME candidate is not a commit (Home's rename does the same)
+                    if (event.nativeEvent.isComposing) return
+                    if (event.key === 'Enter') commitRename()
+                    else if (event.key === 'Escape') {
+                      renamingRef.current = null
+                      setRenaming(null)
+                    }
+                  }}
+                  onBlur={commitRename}
+                />
+              ) : (
+                <span className="tab-title">{tab.title}</span>
+              )}
               {tab.closable && (
                 <button
                   className="tab-close"
                   title={t('closeTab')}
-                  aria-label={`${t('closeTab')} - ${tab.title}`}
+                  aria-label={t('closeTab')}
                   onClick={(event) => {
                     event.stopPropagation()
                     void window.aiOfficeTabs.close(tab.id)

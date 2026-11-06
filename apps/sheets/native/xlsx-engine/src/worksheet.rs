@@ -4,6 +4,12 @@
 
 use super::*;
 
+/// The worksheet extension carrying x14 data validations. Excel parks
+/// cross-sheet rules in an extension of its own; the x14 conditional
+/// formatting extension ({78C0D931-…}) is a different one, and Excel
+/// ignores validation rules placed there.
+pub(crate) const X14_DV_EXT_URI: &str = "{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}";
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn index_worksheet(
     workbook_path: &Path,
@@ -39,6 +45,7 @@ pub(crate) fn index_worksheet(
     // Shared-formula groups: the master's text expands into every follower (#165).
     let mut shared_formulas = shared_formulas::SharedFormulas::default();
     let mut cell_shared_si: Option<u32> = None;
+    let mut cell_shared_ref: Option<MergedRange> = None;
     let mut chunk_index = 0;
     let mut chunk = ChunkData::default();
     let mut pending_formulas: Vec<CellRecord> = Vec::new();
@@ -72,6 +79,17 @@ pub(crate) fn index_worksheet(
     let mut protected_ranges: Vec<ProtectedRangeInfo> = Vec::new();
     let mut dv_rule: Option<DataValidationRule> = None;
     let mut in_dv_formula = false;
+    // x14:dataValidation delivers its sqref as an <xm:sqref> child after the
+    // formulas (the legacy form carries it as an attribute); these track
+    // that pending child while one is open.
+    let mut dv_x14 = false;
+    let mut in_dv_sqref = false;
+    let mut dv_sqref_text = String::new();
+    // The extension the reader is inside. The x14 form of a validation rule
+    // only counts inside Excel's x14 data-validation extension; the same
+    // element in another extension (the conditional-formatting one) is a
+    // rule Excel ignores.
+    let mut in_x14_dv_ext = false;
     let mut data_validations: Vec<DataValidationRule> = Vec::new();
     let mut page_print = PagePrintInfo::default();
     // customSheetView carries its own print elements; only sheet-level ones
@@ -107,7 +125,7 @@ pub(crate) fn index_worksheet(
                             &mut pending_formulas,
                             cache_directory,
                             state,
-                            row_chunk * CHUNK_ROW_COUNT - 1,
+                            row_chunk.saturating_mul(CHUNK_ROW_COUNT).saturating_sub(1),
                         )?;
                         chunk_index = row_chunk;
                     }
@@ -137,7 +155,7 @@ pub(crate) fn index_worksheet(
                             &mut pending_formulas,
                             cache_directory,
                             state,
-                            cell_chunk * CHUNK_ROW_COUNT - 1,
+                            cell_chunk.saturating_mul(CHUNK_ROW_COUNT).saturating_sub(1),
                         )?;
                         chunk_index = cell_chunk;
                     }
@@ -151,6 +169,12 @@ pub(crate) fn index_worksheet(
             Event::Start(element) if element.local_name().as_ref() == b"f" => {
                 in_formula = true;
                 cell_shared_si = shared_formula_si(&reader, &element)?;
+                cell_shared_ref = if cell_shared_si.is_some() {
+                    attribute_value(&reader, &element, b"ref")?
+                        .and_then(|reference| parse_range_reference(&reference))
+                } else {
+                    None
+                };
                 if let Some(builder) = cell_builder.as_mut() {
                     builder.array_ref = array_formula_ref(&reader, &element)?;
                 }
@@ -163,6 +187,7 @@ pub(crate) fn index_worksheet(
                 {
                     if let Some(formula) = shared_formulas.expand(si, builder.row, builder.column) {
                         builder.formula = formula;
+                        builder.shared_follower = true;
                     }
                 }
             }
@@ -242,6 +267,8 @@ pub(crate) fn index_worksheet(
                     {
                         formula.push_str(&decoded);
                     }
+                } else if in_dv_sqref {
+                    dv_sqref_text.push_str(&decoded);
                 }
             }
             Event::GeneralRef(reference) => {
@@ -271,6 +298,8 @@ pub(crate) fn index_worksheet(
                     {
                         formula.push_str(&decoded);
                     }
+                } else if in_dv_sqref {
+                    dv_sqref_text.push_str(&decoded);
                 }
             }
             Event::End(element) if element.local_name().as_ref() == b"f" => {
@@ -282,9 +311,16 @@ pub(crate) fn index_worksheet(
                             shared_formulas.expand(si, builder.row, builder.column)
                         {
                             builder.formula = formula;
+                            builder.shared_follower = true;
                         }
                     } else {
-                        shared_formulas.register(si, builder.row, builder.column, &builder.formula);
+                        shared_formulas.register(
+                            si,
+                            builder.row,
+                            builder.column,
+                            &builder.formula,
+                            cell_shared_ref.take(),
+                        );
                     }
                 }
             }
@@ -313,14 +349,15 @@ pub(crate) fn index_worksheet(
                             &mut pending_formulas,
                             cache_directory,
                             state,
-                            cell_chunk * CHUNK_ROW_COUNT - 1,
+                            cell_chunk.saturating_mul(CHUNK_ROW_COUNT).saturating_sub(1),
                         )?;
                         chunk_index = cell_chunk;
                     }
+                    let shared_follower = builder.shared_follower;
                     if let Some(cell) =
                         builder.finish(shared_strings, styled_xfs, rich_image_cells)?
                     {
-                        if cell.formula.is_some() {
+                        if cell.formula.is_some() && !shared_follower {
                             pending_formulas.push(cell.clone());
                         }
                         chunk.cells.push(cell);
@@ -455,14 +492,7 @@ pub(crate) fn index_worksheet(
             Event::Start(element) | Event::Empty(element)
                 if element.local_name().as_ref() == b"sheetProtection" =>
             {
-                let protected = attribute_value(&reader, &element, b"sheet")?
-                    .is_some_and(|value| value == "1" || value == "true");
-                let has_password = attribute_value(&reader, &element, b"password")?.is_some()
-                    || attribute_value(&reader, &element, b"hashValue")?.is_some();
-                sheet_protection = Some(SheetProtectionInfo {
-                    protected,
-                    has_password,
-                });
+                sheet_protection = Some(parse_sheet_protection(&reader, &element)?);
             }
             Event::Start(element) if element.local_name().as_ref() == b"customSheetViews" => {
                 in_custom_sheet_views = true;
@@ -621,10 +651,34 @@ pub(crate) fn index_worksheet(
                     range.has_password = true;
                 }
             }
+            Event::Start(element) if element.local_name().as_ref() == b"ext" => {
+                in_x14_dv_ext = attribute_value(&reader, &element, b"uri")?
+                    .is_some_and(|uri| uri.eq_ignore_ascii_case(X14_DV_EXT_URI));
+            }
+            Event::Empty(element) if element.local_name().as_ref() == b"ext" => {
+                in_x14_dv_ext = false;
+            }
+            Event::End(element) if element.local_name().as_ref() == b"ext" => {
+                in_x14_dv_ext = false;
+            }
             Event::Start(element) if element.local_name().as_ref() == b"dataValidation" => {
-                dv_rule = parse_dv_rule(&reader, &element)?;
+                // Legacy rules carry sqref as an attribute; the x14
+                // extension form has none (it arrives as an <xm:sqref>
+                // child), so the attribute's presence selects the shape.
+                if attribute_value(&reader, &element, b"sqref")?.is_some() {
+                    dv_x14 = false;
+                    dv_rule = parse_dv_rule(&reader, &element)?;
+                } else if in_x14_dv_ext {
+                    dv_x14 = true;
+                    dv_rule = Some(x14_dv_rule(&reader, &element)?);
+                }
+                // An x14-shaped rule outside the data-validation extension is
+                // not a rule: Excel ignores it there, so it is not read as
+                // one either.
             }
             Event::Empty(element) if element.local_name().as_ref() == b"dataValidation" => {
+                // A self-closing x14 form has no room for its <xm:sqref>
+                // child, so only the legacy shape is usable here.
                 if let Some(rule) = parse_dv_rule(&reader, &element)? {
                     data_validations.push(rule);
                 }
@@ -642,10 +696,32 @@ pub(crate) fn index_worksheet(
             {
                 in_dv_formula = false;
             }
+            Event::Start(element)
+                if element.local_name().as_ref() == b"sqref" && dv_x14 && dv_rule.is_some() =>
+            {
+                in_dv_sqref = true;
+                dv_sqref_text.clear();
+            }
+            Event::End(element)
+                if element.local_name().as_ref() == b"sqref" && dv_x14 && dv_rule.is_some() =>
+            {
+                in_dv_sqref = false;
+                if let Some(rule) = &mut dv_rule {
+                    rule.ranges = dv_sqref_text
+                        .split_whitespace()
+                        .filter_map(parse_area_reference)
+                        .collect();
+                }
+            }
             Event::End(element) if element.local_name().as_ref() == b"dataValidation" => {
                 if let Some(rule) = dv_rule.take() {
-                    data_validations.push(rule);
+                    // An x14 entry without a usable <xm:sqref> names no
+                    // cells; drop it like an unparsable legacy one.
+                    if !rule.ranges.is_empty() {
+                        data_validations.push(rule);
+                    }
                 }
+                dv_x14 = false;
             }
             Event::Start(element) | Event::Empty(element)
                 if element.local_name().as_ref() == b"conditionalFormatting" =>
@@ -868,6 +944,8 @@ pub(crate) fn index_worksheet(
         .map_err(|_| SidecarError::Io("Worksheet index lock was poisoned.".into()))?;
     index.merges = merges;
     index.hyperlinks = hyperlinks;
+    index.shared_formula_groups =
+        shared_formulas.groups(|formula| format!("={}", strip_future_function_markers(formula)));
     for (id, color) in x14_negative_colors {
         if let Some(rule) = x14_rule_slots
             .get(&id)
@@ -997,11 +1075,28 @@ pub(crate) fn parse_dv_rule<R: std::io::BufRead>(
     if ranges.is_empty() {
         return Ok(None);
     }
+    Ok(Some(dv_rule_attributes(reader, element, ranges)?))
+}
+
+/// An x14:dataValidation open tag: same attributes as the legacy form, with
+/// the sqref left for the <xm:sqref> child that closes the element.
+fn x14_dv_rule<R: std::io::BufRead>(
+    reader: &Reader<R>,
+    element: &BytesStart<'_>,
+) -> Result<DataValidationRule, SidecarError> {
+    dv_rule_attributes(reader, element, Vec::new())
+}
+
+fn dv_rule_attributes<R: std::io::BufRead>(
+    reader: &Reader<R>,
+    element: &BytesStart<'_>,
+    ranges: Vec<MergedRange>,
+) -> Result<DataValidationRule, SidecarError> {
     let flag = |name: &[u8]| -> Result<bool, SidecarError> {
         Ok(attribute_value(reader, element, name)?
             .is_some_and(|value| value == "1" || value == "true"))
     };
-    Ok(Some(DataValidationRule {
+    Ok(DataValidationRule {
         ranges,
         rule_type: attribute_value(reader, element, b"type")?.unwrap_or_else(|| "none".into()),
         operator: attribute_value(reader, element, b"operator")?,
@@ -1015,7 +1110,7 @@ pub(crate) fn parse_dv_rule<R: std::io::BufRead>(
         error: attribute_value(reader, element, b"error")?,
         prompt_title: attribute_value(reader, element, b"promptTitle")?,
         prompt: attribute_value(reader, element, b"prompt")?,
-    }))
+    })
 }
 
 pub(crate) fn parse_cf_rule<R: std::io::BufRead>(
@@ -1204,6 +1299,17 @@ pub(crate) fn flush_chunk(
 ) -> Result<(), SidecarError> {
     let path = cache_directory.join(format!("sheet-{sheet_index}-chunk-{chunk_index}.json"));
     let has_data = !chunk.cells.is_empty() || !chunk.rows.is_empty();
+    let outline_rows: Vec<RowOutlineEntry> = chunk
+        .rows
+        .iter()
+        .filter(|row| row.outline_level.is_some() || row.collapsed)
+        .map(|row| RowOutlineEntry {
+            row: row.row,
+            level: row.outline_level.unwrap_or(0),
+            collapsed: row.collapsed,
+            hidden: row.hidden,
+        })
+        .collect();
     if has_data {
         let file = File::create(&path)?;
         let mut writer = BufWriter::new(file);
@@ -1219,6 +1325,7 @@ pub(crate) fn flush_chunk(
     if has_data {
         index.chunk_files.insert(chunk_index, path);
     }
+    index.outline_rows.extend(outline_rows);
     if !pending_formulas.is_empty() {
         let room = MAX_FORMULA_CELLS.saturating_sub(index.formula_cells.len());
         if pending_formulas.len() > room {
@@ -1241,6 +1348,8 @@ pub(crate) struct CellBuilder {
     raw_value: String,
     formula: String,
     array_ref: Option<String>,
+    /// Formula inherited from a shared-formula master (`<f t="shared" si/>`).
+    shared_follower: bool,
     inline_text: String,
     inline_runs: Vec<RichRun>,
     current_run: Option<RichRun>,
@@ -1254,8 +1363,9 @@ impl CellBuilder {
         fallback_column: usize,
     ) -> Result<Self, SidecarError> {
         // <c r=> is optional: an unaddressed cell sits one right of its predecessor.
+        // A malformed one degrades the same way instead of failing the whole open.
         let (row, column) = match attribute_value(reader, element, b"r")? {
-            Some(address) => parse_address(&address)?,
+            Some(address) => parse_address(&address).unwrap_or((fallback_row, fallback_column)),
             None => (fallback_row, fallback_column),
         };
         Ok(Self {
@@ -1267,6 +1377,7 @@ impl CellBuilder {
             raw_value: String::new(),
             formula: String::new(),
             array_ref: None,
+            shared_follower: false,
             inline_text: String::new(),
             inline_runs: Vec::new(),
             current_run: None,
@@ -1279,13 +1390,17 @@ impl CellBuilder {
         styled_xfs: &[bool],
         rich_image_cells: &HashSet<(usize, usize)>,
     ) -> Result<Option<CellRecord>, SidecarError> {
-        let formula = if self.formula.is_empty() {
+        let picture = rich_image_cells.contains(&(self.row, self.column));
+        let formula = if picture || self.formula.is_empty() {
             None
         } else {
             Some(format!("={}", strip_future_function_markers(&self.formula)))
         };
         let mut rich = None;
         let value = match self.cell_type.as_deref() {
+            // Resolved pictures replace cached text/errors and the renderer's
+            // unsupported DISPIMG formula; the source XML remains untouched.
+            _ if picture => None,
             // Empty <v/> or a stale index degrades to a valueless styled cell;
             // erroring here used to blank the whole sheet.
             Some("s") => match self
@@ -1310,9 +1425,6 @@ impl CellBuilder {
                 normalize_cell_text(&mut inline_text);
                 Some(CellValue::String(inline_text))
             }
-            // An error cell hosting an in-cell picture record renders as the
-            // picture, not as its cached #VALUE! placeholder.
-            Some("e") if rich_image_cells.contains(&(self.row, self.column)) => None,
             Some("str") | Some("e") => {
                 let mut raw_value = self.raw_value;
                 normalize_cell_text(&mut raw_value);
@@ -1367,18 +1479,87 @@ pub(crate) fn strip_future_function_markers(formula: &str) -> String {
     if !formula.contains("_xlfn.") && !formula.contains("_xlws.") {
         return formula.to_owned();
     }
-    formula
-        .split('"')
-        .enumerate()
-        .map(|(index, segment)| {
-            if index % 2 == 1 {
-                segment.to_owned()
-            } else {
-                segment.replace("_xlfn.", "").replace("_xlws.", "")
+    let bytes = formula.as_bytes();
+    let mut out = String::with_capacity(formula.len());
+    let mut copied_from = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' || bytes[index] == b'\'' {
+            let quote = bytes[index];
+            index += 1;
+            while index < bytes.len() {
+                if bytes[index] == quote {
+                    if bytes.get(index + 1) == Some(&quote) {
+                        index += 2;
+                    } else {
+                        index += 1;
+                        break;
+                    }
+                } else {
+                    index += 1;
+                }
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\"")
+            continue;
+        }
+        let start = index;
+        let end = formula_name_end(formula, start);
+        if end > start {
+            let token = &formula[start..end];
+            let marker_len = if token
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("_xlfn."))
+            {
+                6
+            } else if token
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("_xlws."))
+            {
+                6
+            } else {
+                0
+            };
+            let marker_len = if token
+                .get(..12)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("_xlfn._xlws."))
+            {
+                12
+            } else {
+                marker_len
+            };
+            let valid_name = marker_len > 0
+                && !token[marker_len..].is_empty()
+                && token[marker_len..].chars().all(|character| {
+                    character.is_alphanumeric() || matches!(character, '_' | '.' | '\\' | '$')
+                });
+            let after = formula[end..].trim_start();
+            if valid_name && after.starts_with('(') {
+                out.push_str(&formula[copied_from..start]);
+                out.push_str(&token[marker_len..]);
+                copied_from = end;
+                index = end;
+                continue;
+            }
+            index = end;
+            continue;
+        }
+        let Some(character) = formula[index..].chars().next() else {
+            break;
+        };
+        index += character.len_utf8();
+    }
+    out.push_str(&formula[copied_from..]);
+    out
+}
+
+fn formula_name_end(formula: &str, start: usize) -> usize {
+    let mut end = start;
+    for (offset, character) in formula[start..].char_indices() {
+        if !character.is_alphanumeric() && !matches!(character, '_' | '.' | '\\' | '$') {
+            break;
+        }
+        end = start + offset + character.len_utf8();
+    }
+    end
 }
 
 /// `ref` of a `<f t="array">` element; None for ordinary formulas.
@@ -1401,4 +1582,60 @@ pub(crate) fn shared_formula_si<R: std::io::BufRead>(
         return Ok(None);
     }
     Ok(attribute_value(reader, element, b"si")?.and_then(|value| value.parse::<u32>().ok()))
+}
+
+fn is_true(value: &Option<String>) -> bool {
+    value.as_deref().is_some_and(|v| v == "1" || v == "true")
+}
+
+fn is_false(value: &Option<String>) -> bool {
+    value.as_deref().is_some_and(|v| v == "0" || v == "false")
+}
+
+/// Lock-style attributes default to 1 (not allowed); objects/scenarios and
+/// the two select flags default to 0 (allowed).
+pub(crate) fn parse_sheet_protection<R: std::io::BufRead>(
+    reader: &Reader<R>,
+    element: &BytesStart<'_>,
+) -> Result<SheetProtectionInfo, SidecarError> {
+    let attr = |name: &[u8]| attribute_value(reader, element, name);
+    let allowed_unless_locked =
+        |name: &[u8]| -> Result<bool, SidecarError> { Ok(!is_true(&attr(name)?)) };
+    let locked_unless_cleared =
+        |name: &[u8]| -> Result<bool, SidecarError> { Ok(is_false(&attr(name)?)) };
+    let allow = SheetProtectionAllow {
+        select_locked_cells: allowed_unless_locked(b"selectLockedCells")?,
+        select_unlocked_cells: allowed_unless_locked(b"selectUnlockedCells")?,
+        objects: allowed_unless_locked(b"objects")?,
+        scenarios: allowed_unless_locked(b"scenarios")?,
+        format_cells: locked_unless_cleared(b"formatCells")?,
+        format_columns: locked_unless_cleared(b"formatColumns")?,
+        format_rows: locked_unless_cleared(b"formatRows")?,
+        insert_columns: locked_unless_cleared(b"insertColumns")?,
+        insert_rows: locked_unless_cleared(b"insertRows")?,
+        insert_hyperlinks: locked_unless_cleared(b"insertHyperlinks")?,
+        delete_columns: locked_unless_cleared(b"deleteColumns")?,
+        delete_rows: locked_unless_cleared(b"deleteRows")?,
+        sort: locked_unless_cleared(b"sort")?,
+        auto_filter: locked_unless_cleared(b"autoFilter")?,
+        pivot_tables: locked_unless_cleared(b"pivotTables")?,
+    };
+    let password = match (attr(b"hashValue")?, attr(b"password")?) {
+        (Some(hash_value), _) => Some(SheetPasswordHash::Hashed {
+            algorithm_name: attr(b"algorithmName")?.unwrap_or_else(|| "SHA-512".to_owned()),
+            hash_value,
+            salt_value: attr(b"saltValue")?.unwrap_or_default(),
+            spin_count: attr(b"spinCount")?
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0),
+        }),
+        (None, Some(legacy)) => Some(SheetPasswordHash::Legacy { legacy }),
+        (None, None) => None,
+    };
+    Ok(SheetProtectionInfo {
+        protected: is_true(&attr(b"sheet")?),
+        has_password: password.is_some(),
+        allow,
+        password,
+    })
 }

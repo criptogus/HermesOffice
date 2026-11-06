@@ -31,6 +31,37 @@ const BODY =
   spacedPara('RIPC AI', -20) + // pure Latin
   spacedPara('정보RI', -20) // half wide, half narrow
 
+const settingsPart = (compat: string) => ({
+  ...SETTINGS_PART,
+  xml: SETTINGS_PART.xml.replace('<w:balanceSingleByteDoubleByteWidth/>', compat),
+})
+
+describe('settings.xml compat flags', () => {
+  it('surfaces useFELayout next to balanceDbcsSpacing', async () => {
+    const both = await parseDocx(
+      await buildDocx({
+        bodyXml: BODY,
+        extraParts: [settingsPart('<w:balanceSingleByteDoubleByteWidth/><w:useFELayout/>')],
+      }),
+    )
+    expect(both.balanceDbcsSpacing).toBe(true)
+    expect(both.useFELayout).toBe(true)
+    const feOnly = await parseDocx(
+      await buildDocx({ bodyXml: BODY, extraParts: [settingsPart('<w:useFELayout/>')] }),
+    )
+    expect(feOnly.balanceDbcsSpacing).toBeUndefined()
+    expect(feOnly.useFELayout).toBe(true)
+    const flagOnly = await parseDocx(
+      await buildDocx({ bodyXml: BODY, extraParts: [SETTINGS_PART] }),
+    )
+    expect(flagOnly.useFELayout).toBeUndefined()
+    const off = await parseDocx(
+      await buildDocx({ bodyXml: BODY, extraParts: [settingsPart('<w:useFELayout w:val="0"/>')] }),
+    )
+    expect(off.useFELayout).toBeUndefined()
+  })
+})
+
 describe('balanceSingleByteDoubleByteWidth character spacing', () => {
   it('doubles spacing on wide glyphs, weighted by the run mix', async () => {
     const doc = await parseDocx(await buildDocx({ bodyXml: BODY, extraParts: [SETTINGS_PART] }))
@@ -38,6 +69,21 @@ describe('balanceSingleByteDoubleByteWidth character spacing', () => {
     expect(doc.blocks[0].runs![0].charSpacingTwips).toBe(-40) // all wide -> x2
     expect(doc.blocks[1].runs![0].charSpacingTwips).toBe(-20) // all narrow -> x1
     expect(doc.blocks[2].runs![0].charSpacingTwips).toBe(-30) // half -> x1.5
+  })
+
+  it('gates on the paragraph style East Asian face when the run declares none', async () => {
+    const styles =
+      '<w:style w:type="paragraph" w:styleId="KoBody"><w:name w:val="KoBody"/>' +
+      '<w:rPr><w:rFonts w:ascii="\uB9D1\uC740 \uACE0\uB515" w:eastAsia="\uB9D1\uC740 \uACE0\uB515"/></w:rPr></w:style>'
+    const body =
+      '<w:p><w:pPr><w:pStyle w:val="KoBody"/></w:pPr><w:r><w:rPr><w:spacing w:val="-20"/></w:rPr>' +
+      '<w:t>\uC815\uBCF4\uD654\uBE44\uC804</w:t></w:r></w:p>' +
+      spacedPara('\uC815\uBCF4\uD654\uBE44\uC804', -20)
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: body, extraStylesXml: styles, extraParts: [SETTINGS_PART] }),
+    )
+    expect(doc.blocks[0].runs![0].charSpacingTwips).toBe(-20)
+    expect(doc.blocks[1].runs![0].charSpacingTwips).toBe(-40)
   })
 
   it('keeps hangul and kana single in Malgun Gothic while Han still doubles', async () => {

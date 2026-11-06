@@ -1,6 +1,12 @@
 import type JSZip from 'jszip'
-import { parseRels } from './parse-package'
-import type { EmbeddedFont, EmbeddedFontRef, EmbeddedFontSlot, FontTableEntry } from './types'
+import { parseRels, resolveRelationshipTargetPath } from './parse-package'
+import type {
+  EmbeddedFontLineMetrics,
+  EmbeddedFont,
+  EmbeddedFontRef,
+  EmbeddedFontSlot,
+  FontTableEntry,
+} from './types'
 import { attrsOf, childrenOf, findChild, nameOf, xmlParser, type XNode } from './xml-utils'
 
 export const FONT_TABLE_PART_PATH = 'word/fontTable.xml'
@@ -28,6 +34,10 @@ export function parseFontTable(xml: string): FontTableEntry[] {
     if (panose) entry.panose = panose
     const family = val('w:family')
     if (family) entry.family = family
+    const charset = val('w:charset')
+    if (charset) entry.charset = charset
+    const csb0 = attrsOf(findChild(node, 'w:sig') ?? {})['w:csb0']
+    if (csb0) entry.csb0 = csb0
     const pitch = val('w:pitch')
     if (pitch) entry.pitch = pitch
     const embedded = parseEmbedSlots(node)
@@ -65,6 +75,30 @@ export function isSfnt(bytes: Uint8Array): boolean {
   return SFNT_MAGICS.has(magic)
 }
 
+/** hhea line box of a single sfnt face in em units; null without head/hhea */
+export function sfntLineMetrics(bytes: Uint8Array): EmbeddedFontLineMetrics | null {
+  if (!isSfnt(bytes)) return null
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const numTables = dv.getUint16(4)
+  let unitsPerEm = 0
+  let hhea = -1
+  for (let t = 0; t < numTables; t++) {
+    const rec = 12 + 16 * t
+    if (rec + 16 > bytes.length) return null
+    const tag = String.fromCharCode(bytes[rec], bytes[rec + 1], bytes[rec + 2], bytes[rec + 3])
+    const off = dv.getUint32(rec + 8)
+    const len = dv.getUint32(rec + 12)
+    if (tag === 'head' && len >= 20 && off + 20 <= bytes.length) unitsPerEm = dv.getUint16(off + 18)
+    if (tag === 'hhea' && len >= 10 && off + 10 <= bytes.length) hhea = off
+  }
+  if (unitsPerEm === 0 || hhea < 0) return null
+  return {
+    ascent: dv.getInt16(hhea + 4) / unitsPerEm,
+    descent: -dv.getInt16(hhea + 6) / unitsPerEm,
+    lineGap: dv.getInt16(hhea + 8) / unitsPerEm,
+  }
+}
+
 /**
  * Undo the ECMA-376 17.8.1 obfuscation: the first 32 bytes are XORed with the
  * fontKey GUID's 16 bytes taken in reverse order. A missing/zero key or a part
@@ -97,16 +131,19 @@ export async function readEmbeddedFonts(
     >) {
       const rel = rels.get(ref.rId)
       if (!rel || rel.targetMode === 'External') continue
-      const path = rel.target.startsWith('/') ? rel.target.slice(1) : `word/${rel.target}`
+      const path = resolveRelationshipTargetPath(FONT_TABLE_PART_PATH, rel.target)
+      if (!path) continue
       const file = zip.file(path)
       if (!file) continue
       const data = deobfuscateOdttf(await file.async('uint8array'), ref.fontKey)
       if (!isSfnt(data)) continue
+      const lineMetrics = sfntLineMetrics(data)
       out.push({
         family: entry.name,
         bold: slot === 'bold' || slot === 'boldItalic',
         italic: slot === 'italic' || slot === 'boldItalic',
         data,
+        ...(lineMetrics ? { lineMetrics } : {}),
       })
     }
   }

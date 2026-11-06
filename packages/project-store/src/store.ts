@@ -15,12 +15,16 @@
  * - seq is maintained by the store layer: auto-incremented on each appendChatMessage
  */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -44,6 +48,28 @@ import type {
 
 /** Max stored characters for a single tool input/output field */
 const TOOL_FIELD_MAX_CHARS = 16_000
+const MAX_TOOLS_PER_MESSAGE = 64
+const MAX_ATTACHMENTS_PER_MESSAGE = 32
+const TOOL_NAME_MAX_CHARS = 200
+const TOOL_SUMMARY_MAX_CHARS = 2_000
+const ATTACHMENT_FIELD_MAX_CHARS = 1_000
+
+function clampChatField(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.slice(0, max) : ''
+}
+
+// Providers hand tool input/output over as objects as often as text; a bare
+// .slice() threw and dropped the whole message.
+function toolFieldText(value: unknown): string {
+  if (typeof value === 'string') return value.slice(0, TOOL_FIELD_MAX_CHARS)
+  let text: string
+  try {
+    text = JSON.stringify(value) ?? String(value)
+  } catch {
+    text = String(value)
+  }
+  return text.slice(0, TOOL_FIELD_MAX_CHARS)
+}
 
 /**
  * Max stored characters for message text. A model that falls into a repetition
@@ -53,7 +79,14 @@ const TOOL_FIELD_MAX_CHARS = 16_000
 const TEXT_MAX_CHARS = 32_000
 /** Max stored characters of a scope excerpt */
 const SCOPE_TEXT_MAX_CHARS = 400
+const SCOPE_LABEL_MAX_CHARS = 200
 const TEXT_TRUNCATED_MARK = '\n\n[truncated]'
+/**
+ * Max opening messages buffered in memory per chat before the first
+ * assistant message materializes the file. Without a cap, thousands of
+ * pre-first-reply user messages accumulate unboundedly in the map.
+ */
+export const MAX_PENDING_OPENING_MESSAGES = 200
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -67,6 +100,8 @@ function ensureDir(dir: string): void {
 const DEFAULT_CHAT_LIMIT = 200
 // Upper bound for loadChat limit to avoid unbounded reads
 const MAX_CHAT_LIMIT = 10_000
+const MAX_CHAT_FILE_READ_BYTES = 8 * 1024 * 1024
+const MAX_CHAT_FILE_HARD_CAP_BYTES = 64 * 1024 * 1024
 /** Max project name chars: prevents MB names bloating index.json/project.json. */
 export const MAX_PROJECT_NAME_CHARS = 128
 /** Default timeline entries; upper bound avoids loading every chat fully. */
@@ -102,6 +137,179 @@ function normalizeChatLimit(limit: number): number {
   return floored
 }
 
+/**
+ * The one key a file path is stored and hashed under. The shell canonicalizes
+ * open paths with realpathSync.native, so the store has to agree: a symlink, a
+ * Windows case or 8.3 variant and a macOS Unicode-normalization variant of one
+ * physical document must all land on the same project membership and chat id.
+ *
+ * A leaf that cannot be resolved (not written yet, or already renamed away) is
+ * keyed under its resolved directory, and a path whose directory does not resolve
+ * either is used as given.
+ */
+export function canonicalPathKey(filePath: string): string {
+  try {
+    return realpathSync.native(filePath).normalize('NFC')
+  } catch {
+    // The leaf may be gone (renamed or deleted) while its directory still
+    // resolves, which is the case fileRenamed has to look up.
+  }
+  try {
+    return join(realpathSync.native(dirname(filePath)), basename(filePath)).normalize('NFC')
+  } catch {
+    return unresolvedPathKey(filePath)
+  }
+}
+
+/** Key for a path that has no resolvable target yet, used to find earlier entries. */
+function unresolvedPathKey(filePath: string): string {
+  return filePath.normalize('NFC')
+}
+
+function hashPathKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 16)
+}
+
+function readChatTail(filePath: string): string {
+  const size = statSync(filePath).size
+  if (size === 0) return ''
+  const fd = openSync(filePath, 'r')
+  try {
+    let length = Math.min(size, MAX_CHAT_FILE_READ_BYTES - 1)
+    for (;;) {
+      const start = size - length
+      const buffer = Buffer.allocUnsafe(length)
+      const bytesRead = readSync(fd, buffer, 0, length, start)
+      const window = buffer.subarray(0, bytesRead)
+      if (start === 0) return window.toString('utf8')
+      const boundary = Buffer.allocUnsafe(1)
+      readSync(fd, boundary, 0, 1, start - 1)
+      if (boundary[0] === 0x0a) return window.toString('utf8')
+      const newline = window.indexOf(0x0a)
+      // A newline only at the very end means the window is one oversized record
+      if (newline >= 0 && newline < bytesRead - 1)
+        return window.subarray(newline + 1).toString('utf8')
+      if (length >= MAX_CHAT_FILE_HARD_CAP_BYTES) {
+        console.warn(
+          `[project-store] no record boundary within the last ${length} bytes of ${filePath}; loading an empty chat`,
+        )
+        return ''
+      }
+      console.warn(
+        `[project-store] one chat record exceeds ${length} bytes in ${filePath}; reading further back`,
+      )
+      length = Math.min(size, length * 2, MAX_CHAT_FILE_HARD_CAP_BYTES)
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/// The first user turn in a transcript, read from the file's head. A list of
+/// threads must not read every transcript in full to label them, and the
+/// first question sits on the first lines by construction; a window that ends
+/// mid-record just fails to parse and yields no label.
+function firstQuestionInFile(filePath: string): string | undefined {
+  const size = statSync(filePath).size
+  if (size === 0) return undefined
+  const fd = openSync(filePath, 'r')
+  try {
+    const buffer = Buffer.allocUnsafe(Math.min(size, 8192))
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0)
+    for (const line of buffer.subarray(0, bytesRead).toString('utf8').split('\n')) {
+      try {
+        const record = JSON.parse(line) as { role?: string; text?: string }
+        if (record.role === 'user' && typeof record.text === 'string' && record.text.trim()) {
+          return record.text
+        }
+      } catch {
+        // a torn line at the window's edge, or a record we can't read: no label
+      }
+    }
+    return undefined
+  } catch {
+    return undefined
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function parseChatRecords(raw: string): ChatMessage[] {
+  const messages: ChatMessage[] = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const msg = JSON.parse(line) as ChatMessage
+      // A non-finite seq (Infinity, either written directly or from an
+      // overflowing max+1 in mergeChatFiles) survives typeof, but JSON.stringify
+      // writes it as null, which fails this gate on the next read and drops
+      // every record of the file. Rejecting it here also keeps the merge from
+      // renumbering moved records from Infinity.
+      if (
+        Number.isFinite(msg.seq) &&
+        typeof msg.role === 'string' &&
+        typeof msg.text === 'string'
+      ) {
+        messages.push(msg)
+      }
+    } catch {
+      continue
+    }
+  }
+  return messages
+}
+
+function readAllChatRecords(filePath: string): ChatMessage[] {
+  return parseChatRecords(readFileSync(filePath, 'utf8'))
+}
+
+function appendJsonLines(filePath: string, lines: string): void {
+  if (!lines) return
+  let prefix = ''
+  try {
+    const size = statSync(filePath).size
+    if (size > 0) {
+      const fd = openSync(filePath, 'r')
+      try {
+        const lastByte = Buffer.allocUnsafe(1)
+        readSync(fd, lastByte, 0, 1, size - 1)
+        if (lastByte[0] !== 0x0a) prefix = '\n'
+      } finally {
+        closeSync(fd)
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  appendFileSync(filePath, prefix + lines, 'utf8')
+}
+
+function mergeChatFiles(oldPath: string, newPath: string): number {
+  const existing = readAllChatRecords(newPath)
+  const moved = readAllChatRecords(oldPath)
+  let seq = existing.reduce((m, msg) => Math.max(m, msg.seq), -1) + 1
+  const movedLines = moved
+    .map((message) => JSON.stringify({ ...message, seq: seq++ }) + '\n')
+    .join('')
+  if (movedLines) {
+    const target = readFileSync(newPath)
+    const boundary =
+      target.length > 0 && target[target.length - 1] !== 0x0a ? Buffer.from('\n') : Buffer.alloc(0)
+    const tmpPath = `${newPath}.${randomBytes(6).toString('hex')}.tmp`
+    try {
+      writeFileSync(tmpPath, Buffer.concat([target, boundary, Buffer.from(movedLines, 'utf8')]))
+      renameSync(tmpPath, newPath)
+    } catch (error) {
+      try {
+        unlinkSync(tmpPath)
+      } catch {}
+      throw error
+    }
+  }
+  unlinkSync(oldPath)
+  return seq - 1
+}
+
 function readJson<T>(filePath: string): T | null {
   try {
     if (!existsSync(filePath)) return null
@@ -114,9 +322,16 @@ function readJson<T>(filePath: string): T | null {
 /** Atomic write: write to .tmp then rename, so a process interruption can't leave half-written JSON */
 function writeJson(filePath: string, data: unknown): void {
   ensureDir(dirname(filePath))
-  const tmpPath = `${filePath}.tmp`
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8')
-  renameSync(tmpPath, filePath)
+  const tmpPath = `${filePath}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8')
+    renameSync(tmpPath, filePath)
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath)
+    } catch {}
+    throw error
+  }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -152,6 +367,43 @@ export class ProjectStore {
   private chatPath(projectId: string, chatId: string): string {
     assertSafeId(chatId, 'chatId')
     return join(this.chatsDir(projectId), `${chatId}.jsonl`)
+  }
+
+  /**
+   * The key a path is stored under in one of the index maps, looking through the
+   * alternate spellings as well: an older version keyed entries under the raw
+   * path exactly as the shell passed it (on macOS that is the NFD spelling the
+   * file system reports, which canonicalization folds to NFC), and a path
+   * registered while the file did not exist yet is keyed unresolved and resolves
+   * to a real path once it is written.
+   */
+  private findMapKey(
+    map: Record<string, string> | undefined,
+    filePath: string,
+  ): string | undefined {
+    if (!map) return undefined
+    const key = canonicalPathKey(filePath)
+    if (map[key] !== undefined) return key
+    for (const alt of [filePath, unresolvedPathKey(filePath)]) {
+      if (alt !== key && map[alt] !== undefined) return alt
+    }
+    return undefined
+  }
+
+  /**
+   * Moves an entry found under a legacy or unresolved key to the canonical key,
+   * so later lookups through any spelling hit the same single entry.
+   */
+  private static rekeyEntry(map: Record<string, string>, fromKey: string, toKey: string): void {
+    if (fromKey === toKey) return
+    map[toKey] = map[fromKey]!
+    delete map[fromKey]
+  }
+
+  /** Same identity test for the raw path lists kept in project.json */
+  private static ownsFile(files: readonly string[], filePath: string): boolean {
+    const key = canonicalPathKey(filePath)
+    return files.some((f) => canonicalPathKey(f) === key)
   }
 
   // ── seq counters (in-memory cache, initialized from JSONL line count on first read) ──
@@ -220,6 +472,15 @@ export class ProjectStore {
       updatedAt: now,
       files: [],
     }
+    // A project.json that is there but does not parse is corrupt, not absent —
+    // readProject reports both as null, so writing the fresh project over it
+    // would drop the file list for good. Keep the broken file for recovery.
+    const projectJson = this.projectJsonPath('default')
+    if (existsSync(projectJson)) {
+      const aside = `${projectJson}.corrupt-${Date.now()}`
+      console.warn(`[project-store] default project.json is unreadable, moved to ${aside}`)
+      renameSync(projectJson, aside)
+    }
     ensureDir(this.projectDir('default'))
     this.writeProject(data)
 
@@ -238,16 +499,24 @@ export class ProjectStore {
   resolveProjectForFile(filePath: string): string {
     this.ensureDefaultProject()
     const index = this.readIndex()
-    const existing = index.fileMap[filePath]
-    if (existing) return existing
+    const key = canonicalPathKey(filePath)
+    const existingKey = this.findMapKey(index.fileMap, filePath)
+    if (existingKey !== undefined) {
+      const projectId = index.fileMap[existingKey]!
+      if (existingKey !== key) {
+        ProjectStore.rekeyEntry(index.fileMap, existingKey, key)
+        this.writeIndex(index)
+      }
+      return projectId
+    }
 
     // Assign to default
-    index.fileMap[filePath] = 'default'
+    index.fileMap[key] = 'default'
     this.writeIndex(index)
 
     // Update the files list in project.json
     const proj = this.readProject('default')
-    if (proj && !proj.files.includes(filePath)) {
+    if (proj && !ProjectStore.ownsFile(proj.files, filePath)) {
       proj.files.push(filePath)
       proj.updatedAt = nowIso()
       this.writeProject(proj)
@@ -256,19 +525,45 @@ export class ProjectStore {
   }
 
   /**
-   * Derives a chatId from a file path (first 16 hex chars of sha256).
-   * Unsaved files use an externally provided temp id (e.g. "unsaved-<timestamp>").
+   * Derives a chatId from a file path (first 16 hex chars of sha256 of the
+   * canonical path key). Unsaved files use an externally provided temp id
+   * (e.g. "unsaved-<timestamp>").
    * Only a fallback derivation for old data without a mapping; new code uses
    * resolveChatForFile (stable mapping).
    */
   static chatIdForFile(filePath: string): string {
-    return createHash('sha256').update(filePath).digest('hex').slice(0, 16)
+    return hashPathKey(canonicalPathKey(filePath))
+  }
+
+  /**
+   * The ids a path had before canonicalization, so chats written by an older
+   * version under the raw path hash are still found: the raw string exactly as
+   * given (older macOS entries are NFD) and its NFC form.
+   */
+  private static legacyChatIdsForFile(filePath: string): string[] {
+    return [...new Set([hashPathKey(filePath), hashPathKey(unresolvedPathKey(filePath))])]
+  }
+
+  /**
+   * Chat id for a path with no registered mapping: the canonical hash, unless an
+   * older version already wrote this chat under a raw path hash.
+   */
+  private fallbackChatId(projectId: string | undefined, filePath: string): string {
+    const chatId = ProjectStore.chatIdForFile(filePath)
+    if (!projectId) return chatId
+    if (existsSync(this.chatPath(projectId, chatId))) return chatId
+    for (const legacy of ProjectStore.legacyChatIdsForFile(filePath)) {
+      if (legacy !== chatId && existsSync(this.chatPath(projectId, legacy))) return legacy
+    }
+    return chatId
   }
 
   /** Gets the chatId from the mapping; falls back to the path hash without registering. */
-  chatIdForPath(filePath: string): string {
+  chatIdForPath(filePath: string, projectId?: string): string {
     const index = this.readIndex()
-    return index.chatIdByPath?.[filePath] ?? ProjectStore.chatIdForFile(filePath)
+    const key = this.findMapKey(index.chatIdByPath, filePath)
+    if (key !== undefined) return index.chatIdByPath![key]!
+    return this.fallbackChatId(projectId, filePath)
   }
 
   /**
@@ -280,10 +575,18 @@ export class ProjectStore {
   resolveChatForFile(filePath: string): { projectId: string; chatId: string } {
     const projectId = this.resolveProjectForFile(filePath)
     const index = this.readIndex()
-    const mapped = index.chatIdByPath?.[filePath]
-    if (mapped) return { projectId, chatId: mapped }
-    const chatId = ProjectStore.chatIdForFile(filePath)
-    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [filePath]: chatId }
+    const key = canonicalPathKey(filePath)
+    const mappedKey = this.findMapKey(index.chatIdByPath, filePath)
+    if (mappedKey !== undefined) {
+      const chatId = index.chatIdByPath![mappedKey]!
+      if (mappedKey !== key) {
+        ProjectStore.rekeyEntry(index.chatIdByPath!, mappedKey, key)
+        this.writeIndex(index)
+      }
+      return { projectId, chatId }
+    }
+    const chatId = this.fallbackChatId(projectId, filePath)
+    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [key]: chatId }
     this.writeIndex(index)
     return { projectId, chatId }
   }
@@ -293,28 +596,122 @@ export class ProjectStore {
    * project.files and chatIdByPath are updated accordingly, while the chatId
    * stays the same (history needs no relocation).
    */
+  /** every file path the index keys on (project membership and chat ids) */
+  knownFilePaths(): string[] {
+    const index = this.readIndex()
+    return [...new Set([...Object.keys(index.fileMap), ...Object.keys(index.chatIdByPath ?? {})])]
+  }
+
   fileRenamed(oldPath: string, newPath: string): void {
     if (oldPath === newPath) return
     const index = this.readIndex()
-    const pid = index.fileMap[oldPath]
-    if (pid !== undefined) {
-      delete index.fileMap[oldPath]
-      index.fileMap[newPath] = pid
+    const oldKey = canonicalPathKey(oldPath)
+    const newKey = canonicalPathKey(newPath)
+    const pidKey = this.findMapKey(index.fileMap, oldPath)
+    // Read the owner before the entry is dropped: the chat fallback below is
+    // the only path that can find a transcript an older version wrote under
+    // the raw-path hash, and it needs the projectId to look inside.
+    const pid = pidKey !== undefined ? index.fileMap[pidKey] : undefined
+    const chatKey = this.findMapKey(index.chatIdByPath, oldPath)
+    // The file at newPath (if any) was replaced by the renamed one, so the
+    // source mappings win; the displaced file's entries are cleaned up instead
+    // of lingering in project.files or as an unreachable transcript.
+    const displacedPidKey = this.findMapKey(index.fileMap, newPath)
+    const displacedPid =
+      displacedPidKey !== undefined && displacedPidKey !== pidKey
+        ? index.fileMap[displacedPidKey]
+        : undefined
+    const displacedChatKey = this.findMapKey(index.chatIdByPath, newPath)
+    const displacedChatId =
+      displacedChatKey !== undefined && displacedChatKey !== chatKey
+        ? index.chatIdByPath![displacedChatKey]
+        : undefined
+    if (pidKey !== undefined && pid !== undefined) {
+      delete index.fileMap[pidKey]
+      if (displacedPid !== undefined) delete index.fileMap[displacedPidKey!]
+      index.fileMap[newKey] = pid
+      if (displacedPid !== undefined && displacedPid !== pid) {
+        const other = this.readProject(displacedPid)
+        if (other) {
+          other.files = other.files.filter((f) => canonicalPathKey(f) !== newKey)
+          other.updatedAt = nowIso()
+          this.writeProject(other)
+        }
+      }
       const proj = this.readProject(pid)
       if (proj) {
-        proj.files = proj.files.map((f) => (f === oldPath ? newPath : f))
+        const seen = new Set<string>()
+        proj.files = proj.files
+          .map((f) => (canonicalPathKey(f) === oldKey ? newPath : f))
+          .filter((f) => {
+            const k = canonicalPathKey(f)
+            if (seen.has(k)) return false
+            seen.add(k)
+            return true
+          })
         proj.updatedAt = nowIso()
         this.writeProject(proj)
       }
     }
     // Old data without a mapping: the chatId was derived from the old path hash; register the mapping under that hash on rename so history keeps up
-    const chatId = index.chatIdByPath?.[oldPath] ?? ProjectStore.chatIdForFile(oldPath)
-    if (index.chatIdByPath?.[oldPath] !== undefined) delete index.chatIdByPath[oldPath]
-    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [newPath]: chatId }
+    const chatId =
+      chatKey !== undefined ? index.chatIdByPath![chatKey]! : this.fallbackChatId(pid, oldPath)
+    if (chatKey !== undefined) delete index.chatIdByPath![chatKey]
+    if (displacedChatId !== undefined) delete index.chatIdByPath![displacedChatKey!]
+    index.chatIdByPath = { ...(index.chatIdByPath ?? {}), [newKey]: chatId }
+    if (displacedChatId !== undefined && displacedChatId !== chatId) {
+      this.trashChat(displacedPid ?? pid ?? 'default', displacedChatId)
+    }
     this.writeIndex(index)
   }
 
-  /** Persist every message immediately, including failed/cancelled opening turns. */
+  /** Soft-deletes a transcript the way deleteProject does with a project directory. */
+  private trashChat(projectId: string, chatId: string): void {
+    const src = this.chatPath(projectId, chatId)
+    if (!existsSync(src)) return
+    const trashDir = join(this.baseDir, '.trash')
+    try {
+      ensureDir(trashDir)
+      renameSync(src, join(trashDir, `${projectId}-${chatId}-${Date.now()}.jsonl`))
+    } catch (err) {
+      console.warn('[project-store] fileRenamed move of displaced chat to trash failed:', err)
+    }
+    this.seqCounters.delete(this.seqKey(projectId, chatId))
+  }
+
+  /**
+   * Buffer for the opening messages of a chat that has no file yet: the file
+   * is not created until the first assistant reply arrives, so aborted or
+   * failed requests never leave behind an empty record with a lone user
+   * message.
+   */
+  private readonly pendingFirstWrite = new Map<string, ChatMessage[]>()
+
+  /** Flushes buffered opening messages to disk (materialized before rebind: once the file is saved, the opening messages should be kept). */
+  private flushPending(projectId: string, chatId: string): void {
+    // Validate before any IO so traversal ids throw instead of being swallowed below
+    assertSafeId(projectId, 'projectId')
+    assertSafeId(chatId, 'chatId')
+    const key = this.seqKey(projectId, chatId)
+    const buf = this.pendingFirstWrite.get(key)
+    this.pendingFirstWrite.delete(key)
+    if (!buf || buf.length === 0) return
+    try {
+      ensureDir(this.chatsDir(projectId))
+      const lines = buf.map((r) => JSON.stringify(r) + '\n').join('')
+      appendJsonLines(this.chatPath(projectId, chatId), lines)
+    } catch (err) {
+      console.warn('[project-store] flushPending failed:', err)
+    }
+  }
+
+  /**
+   * Appends one message to the JSONL. A write failure keeps the buffered
+   * opening messages and throws so the caller sees it.
+   * seq is auto-assigned by the store layer (monotonically increasing).
+   * When the record file doesn't exist yet, non-assistant messages are buffered;
+   * the file is created and flushed only when the first assistant message arrives.
+   */
   appendChatMessage(
     projectId: string,
     chatId: string,
@@ -334,27 +731,50 @@ export class ProjectStore {
       if (msg.fileRef !== undefined) record.fileRef = msg.fileRef
       if (msg.tools && msg.tools.length > 0) {
         // Truncate tool inputs/outputs so one JSONL line can't blow up on a huge payload
-        record.tools = msg.tools.map((t) => ({
+        record.tools = msg.tools.slice(0, MAX_TOOLS_PER_MESSAGE).map((t) => ({
           ...t,
-          ...(t.input !== undefined ? { input: t.input.slice(0, TOOL_FIELD_MAX_CHARS) } : {}),
-          ...(t.output !== undefined ? { output: t.output.slice(0, TOOL_FIELD_MAX_CHARS) } : {}),
+          name: clampChatField(t.name, TOOL_NAME_MAX_CHARS),
+          summary: clampChatField(t.summary, TOOL_SUMMARY_MAX_CHARS),
+          ...(t.input !== undefined ? { input: toolFieldText(t.input) } : {}),
+          ...(t.output !== undefined ? { output: toolFieldText(t.output) } : {}),
         }))
       }
-      if (msg.attachments !== undefined) record.attachments = msg.attachments
+      if (msg.attachments !== undefined) {
+        record.attachments = msg.attachments.slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((a) => ({
+          ...a,
+          name: clampChatField(a.name, ATTACHMENT_FIELD_MAX_CHARS),
+          ...(a.path !== undefined
+            ? { path: clampChatField(a.path, ATTACHMENT_FIELD_MAX_CHARS) }
+            : {}),
+          ...(a.ext !== undefined
+            ? { ext: clampChatField(a.ext, ATTACHMENT_FIELD_MAX_CHARS) }
+            : {}),
+        }))
+      }
       if (msg.scope !== undefined) {
         record.scope = {
-          label: msg.scope.label,
+          label: clampChatField(msg.scope.label, SCOPE_LABEL_MAX_CHARS),
           ...(msg.scope.text !== undefined
             ? { text: msg.scope.text.slice(0, SCOPE_TEXT_MAX_CHARS) }
             : {}),
         }
       }
 
+      const key = this.seqKey(projectId, chatId)
+      // hermesoffice: opening messages are appended immediately — an in-memory
+      // buffer would lose them on process restart (upstream buffers until the
+      // first assistant reply; our durable-conversation tests require the write)
       ensureDir(this.chatsDir(projectId))
-      const lines = JSON.stringify(record) + '\n'
-      appendFileSync(this.chatPath(projectId, chatId), lines, 'utf8')
+      const buf = this.pendingFirstWrite.get(key) ?? []
+      const lines = [...buf, record].map((r) => JSON.stringify(r) + '\n').join('')
+      appendJsonLines(this.chatPath(projectId, chatId), lines)
+      this.pendingFirstWrite.delete(key)
     } catch (err) {
-      console.warn('[project-store] appendChatMessage failed:', err)
+      console.warn(
+        `[project-store] appendChatMessage failed for ${this.chatPath(projectId, chatId)}:`,
+        err,
+      )
+      throw err
     }
   }
 
@@ -368,27 +788,11 @@ export class ProjectStore {
     assertSafeId(chatId, 'chatId')
     // Clamp limit so 0 no longer returns all messages via slice(-0)
     const safeLimit = normalizeChatLimit(limit)
+    const pending = this.pendingFirstWrite.get(this.seqKey(projectId, chatId)) ?? []
     const filePath = this.chatPath(projectId, chatId)
-    const messages: ChatMessage[] = []
+    const messages: ChatMessage[] = [...pending]
     try {
-      if (existsSync(filePath)) {
-        const raw = readFileSync(filePath, 'utf8')
-        const lines = raw.split('\n').filter((l) => l.trim())
-        for (const line of lines) {
-          try {
-            const msg = JSON.parse(line) as ChatMessage
-            if (
-              typeof msg.seq === 'number' &&
-              typeof msg.role === 'string' &&
-              typeof msg.text === 'string'
-            ) {
-              messages.push(msg)
-            }
-          } catch {
-            // skip bad lines
-          }
-        }
-      }
+      if (existsSync(filePath)) messages.push(...parseChatRecords(readChatTail(filePath)))
       // Sort by seq and take the most recent entries (safeLimit is always >= 1)
       messages.sort((a, b) => a.seq - b.seq)
       return messages.slice(-safeLimit)
@@ -418,10 +822,49 @@ export class ProjectStore {
         } catch {
           // use defaults if stat fails
         }
-        return { chatId, updatedAt, approxCount }
+        const firstQuestion = firstQuestionInFile(fullPath)
+        return {
+          chatId,
+          updatedAt,
+          approxCount,
+          ...(firstQuestion === undefined ? {} : { firstQuestion }),
+        }
       })
     } catch {
       return []
+    }
+  }
+
+  /**
+   * Removes one chat's transcript. Unlike deleteProject this is not a soft
+   * delete: a conversation has no files to migrate out of it, and a reader who
+   * dismisses a thread means for it to be gone. The chatId is checked against
+   * the directory's own contents rather than trusted, so a crafted id cannot
+   * reach outside the project's chats directory.
+   */
+  deleteChat(projectId: string, chatId: string): void {
+    assertSafeId(projectId, 'projectId')
+    assertSafeId(chatId, 'chatId')
+    const path = this.chatPath(projectId, chatId)
+    // A user turn that has not been answered yet is still only in the pending
+    // buffer, so a conversation whose file was never written is the normal case
+    // for a question the reader has just asked and then dismissed. Dropping the
+    // queue is what deletes it; the file below may well not exist yet.
+    this.pendingFirstWrite.delete(this.seqKey(projectId, chatId))
+    // A transcript bound to a document leaves its path mapping behind; drop
+    // every entry that points at the deleted id so a future file at the same
+    // path is not handed the deleted conversation's identity.
+    const index = this.readIndex()
+    const bound = Object.entries(index.chatIdByPath ?? {}).filter(([, id]) => id === chatId)
+    if (bound.length > 0) {
+      for (const [key] of bound) delete index.chatIdByPath![key]
+      this.writeIndex(index)
+    }
+    if (!existsSync(path)) return
+    try {
+      unlinkSync(path)
+    } catch (err) {
+      throw new Error(`Could not delete the conversation: ${String(err)}`, { cause: err })
     }
   }
 
@@ -437,6 +880,10 @@ export class ProjectStore {
     toId: string,
   ): void {
     if (fromProjectId === toProjectId && fromId === toId) return
+    // The source may still have buffered opening messages: materialize them first (once the file is saved, they should be kept)
+    this.flushPending(fromProjectId, fromId)
+    // the target may have buffered opening messages too, or the merge produces duplicate seqs
+    this.flushPending(toProjectId, toId)
     const oldPath = this.chatPath(fromProjectId, fromId)
     const newPath = this.chatPath(toProjectId, toId)
     let mergedMaxSeq: number | undefined
@@ -446,13 +893,7 @@ export class ProjectStore {
         if (!existsSync(newPath)) {
           renameSync(oldPath, newPath)
         } else {
-          const existing = this.loadChat(toProjectId, toId, 10_000)
-          let seq = existing.reduce((m, msg) => Math.max(m, msg.seq), -1) + 1
-          const moved = this.loadChat(fromProjectId, fromId, 10_000)
-          const lines = moved.map((m) => JSON.stringify({ ...m, seq: seq++ }) + '\n').join('')
-          if (lines) appendFileSync(newPath, lines, 'utf8')
-          unlinkSync(oldPath)
-          mergedMaxSeq = seq - 1
+          mergedMaxSeq = mergeChatFiles(oldPath, newPath)
         }
       }
     } catch (err) {
@@ -534,7 +975,7 @@ export class ProjectStore {
 
   /**
    * Lists files that currently exist for a project. Stored paths are historical
-   * records and may outlive files deleted or moved outside GenOffice.
+   * records and may outlive files deleted or moved outside HermesOffice.
    */
   listProjectFiles(projectId: string): string[] {
     const proj = this.readProject(projectId)
@@ -556,12 +997,17 @@ export class ProjectStore {
       )
     }
     const now = nowIso()
-    // Generate a stable yet unique id
-    const hash = createHash('sha256')
-      .update(trimmed + now)
-      .digest('hex')
-      .slice(0, 12)
-    const id = `proj-${hash}`
+    // attempt 0 reproduces the historical id; a nonce only on a same-millisecond collision
+    let id: string
+    let attempt = 0
+    do {
+      const hash = createHash('sha256')
+        .update(attempt === 0 ? trimmed + now : `${trimmed}:${now}:${attempt}`)
+        .digest('hex')
+        .slice(0, 12)
+      id = `proj-${hash}`
+      attempt++
+    } while (this.readIndex().projects.some((p) => p.id === id))
     const data: ProjectData = {
       id,
       name: trimmed,
@@ -607,9 +1053,11 @@ export class ProjectStore {
 
   /**
    * Soft-deletes a project:
-   * 1. Move the directory into projects/.trash/<id>-<ts>/
-   * 2. Reassign all of its files in fileMap back to default
-   * 3. Remove the project from index.projects
+   * 1. Move each of its files' chats into the default project, so the transcript
+   *    follows the file instead of staying behind in the trashed directory
+   * 2. Move the directory into projects/.trash/<id>-<ts>/
+   * 3. Reassign all of its files in fileMap back to default
+   * 4. Remove the project from index.projects
    * The default project cannot be deleted.
    */
   deleteProject(id: string): void {
@@ -617,7 +1065,20 @@ export class ProjectStore {
     const proj = this.readProject(id)
     if (!proj) throw new Error(`Project does not exist: ${id}`)
 
-    // 1. Soft-delete the directory
+    this.ensureDefaultProject()
+    const index = this.readIndex()
+    const ownedFiles = Object.entries(index.fileMap)
+      .filter(([, pid]) => pid === id)
+      .map(([filePath]) => filePath)
+
+    // 1. Migrate the chats first: the transcript has to be readable from the
+    // default project before the directory it lives in is moved to the trash.
+    for (const filePath of ownedFiles) {
+      const chatId = this.chatIdForPath(filePath, id)
+      this.renameOrMergeChat(id, chatId, 'default', chatId)
+    }
+
+    // 2. Soft-delete the directory
     const src = this.projectDir(id)
     const ts = Date.now()
     const trashDir = join(this.baseDir, '.trash')
@@ -629,9 +1090,7 @@ export class ProjectStore {
       console.warn('[project-store] deleteProject rename to trash failed:', err)
     }
 
-    // 2. Reassign this project's files in fileMap back to default
-    this.ensureDefaultProject()
-    const index = this.readIndex()
+    // 3. Reassign this project's files in fileMap back to default
     const movedFiles: string[] = []
     for (const [filePath, pid] of Object.entries(index.fileMap)) {
       if (pid === id) {
@@ -639,19 +1098,21 @@ export class ProjectStore {
         movedFiles.push(filePath)
       }
     }
-    // Update the default project.json
+    // Update the default project.json, listing each file under the spelling the
+    // deleted project showed it as rather than under its canonical map key
     if (movedFiles.length > 0) {
       const defaultProj = this.readProject('default')
       if (defaultProj) {
-        for (const f of movedFiles) {
-          if (!defaultProj.files.includes(f)) defaultProj.files.push(f)
+        for (const key of movedFiles) {
+          const f = proj.files.find((listed) => canonicalPathKey(listed) === key) ?? key
+          if (!ProjectStore.ownsFile(defaultProj.files, f)) defaultProj.files.push(f)
         }
         defaultProj.updatedAt = nowIso()
         this.writeProject(defaultProj)
       }
     }
 
-    // 3. Remove the index.projects entry
+    // 4. Remove the index.projects entry
     index.projects = index.projects.filter((p) => p.id !== id)
     this.writeIndex(index)
   }
@@ -660,12 +1121,15 @@ export class ProjectStore {
    * Moves a file from its current project into a target project:
    * 1. Update fileMap
    * 2. Update the files lists in both project.json files
-   * 3. Move the corresponding chat's jsonl file to the new project directory
+   * 3. Relocate the corresponding chat's jsonl file to the new project directory
+   *    (merged into any transcript already there under the same chat id)
    */
   moveFileToProject(filePath: string, targetProjectId: string): void {
     this.ensureDefaultProject()
     const index = this.readIndex()
-    const fromProjectId = index.fileMap[filePath] ?? 'default'
+    const existingKey = this.findMapKey(index.fileMap, filePath)
+    const fromProjectId = existingKey !== undefined ? index.fileMap[existingKey]! : 'default'
+    const newKey = canonicalPathKey(filePath)
 
     if (fromProjectId === targetProjectId) return // nothing to move
 
@@ -674,41 +1138,31 @@ export class ProjectStore {
     if (!targetProj) throw new Error(`Target project does not exist: ${targetProjectId}`)
 
     // 1. Update fileMap
-    index.fileMap[filePath] = targetProjectId
+    if (existingKey !== undefined && existingKey !== newKey) delete index.fileMap[existingKey]
+    index.fileMap[newKey] = targetProjectId
     this.writeIndex(index)
 
     // 2. Update fromProject.files
     const fromProj = this.readProject(fromProjectId)
     if (fromProj) {
-      fromProj.files = fromProj.files.filter((f) => f !== filePath)
+      fromProj.files = fromProj.files.filter(
+        (f) => canonicalPathKey(f) !== canonicalPathKey(filePath),
+      )
       fromProj.updatedAt = nowIso()
       this.writeProject(fromProj)
     }
 
     // 3. Update targetProject.files
-    if (!targetProj.files.includes(filePath)) targetProj.files.push(filePath)
+    if (!ProjectStore.ownsFile(targetProj.files, filePath)) targetProj.files.push(filePath)
     targetProj.updatedAt = nowIso()
     this.writeProject(targetProj)
 
-    // 4. Move the corresponding chat's JSONL
-    const chatId = this.chatIdForPath(filePath)
-    const srcChatPath = this.chatPath(fromProjectId, chatId)
-    const dstChatPath = this.chatPath(targetProjectId, chatId)
-    try {
-      if (existsSync(srcChatPath)) {
-        ensureDir(this.chatsDir(targetProjectId))
-        renameSync(srcChatPath, dstChatPath)
-      }
-    } catch (err) {
-      console.warn('[project-store] moveFileToProject chat rename failed:', err)
-    }
-
-    // 5. Migrate the seq counter cache
-    const oldKey = this.seqKey(fromProjectId, chatId)
-    const newKey = this.seqKey(targetProjectId, chatId)
-    const cur = this.seqCounters.get(oldKey)
-    this.seqCounters.delete(oldKey)
-    if (cur !== undefined) this.seqCounters.set(newKey, cur)
+    // 4. Relocate the corresponding chat's JSONL. The same chat id can already exist in the
+    // target project, so go through renameOrMergeChat: it renumbers and appends instead of
+    // clobbering the target transcript, and migrates the seq counter (materializing buffered
+    // opening messages first).
+    const chatId = this.chatIdForPath(filePath, fromProjectId)
+    this.renameOrMergeChat(fromProjectId, chatId, targetProjectId, chatId)
   }
 
   /**
@@ -723,8 +1177,9 @@ export class ProjectStore {
     const chatToFile = new Map<string, string>()
     for (const [filePath, pid] of Object.entries(index.fileMap)) {
       if (pid === projectId) {
-        const chatId = index.chatIdByPath?.[filePath] ?? ProjectStore.chatIdForFile(filePath)
-        chatToFile.set(chatId, filePath)
+        const chatId = this.fallbackChatId(projectId, filePath)
+        const chatKey = this.findMapKey(index.chatIdByPath, filePath)
+        chatToFile.set(chatKey !== undefined ? index.chatIdByPath![chatKey]! : chatId, filePath)
       }
     }
 
@@ -732,7 +1187,7 @@ export class ProjectStore {
     const chats = this.listChats(projectId)
     for (const { chatId } of chats) {
       const filePath = chatToFile.get(chatId) ?? ''
-      const msgs = this.loadChat(projectId, chatId, 200)
+      const msgs = this.loadChat(projectId, chatId, boundedLimit)
       for (const msg of msgs) {
         entries.push({
           filePath,

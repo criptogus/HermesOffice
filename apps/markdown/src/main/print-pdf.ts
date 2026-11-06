@@ -5,7 +5,7 @@ import { BrowserWindow } from 'electron'
 
 /** Shared pagination for PDF and PNG export. Document scripts remain disabled. */
 export async function printMarkdownPdf(html: string): Promise<Buffer> {
-  const workDir = await mkdtemp(join(tmpdir(), 'genoffice-md-print-'))
+  const workDir = await mkdtemp(join(tmpdir(), 'hermesoffice-md-print-'))
   let printWin: BrowserWindow | undefined
   try {
     printWin = new BrowserWindow({

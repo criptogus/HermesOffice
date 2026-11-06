@@ -50,7 +50,7 @@ type GlobalWithWindow = { window?: unknown }
 /** the idempotence flag lives on globalThis; clear it between installs */
 function resetInstallFlag(): void {
   delete (globalThis as Record<symbol | string, unknown>)[
-    Symbol.for('genoffice.drop-open-installed')
+    Symbol.for('hermesoffice.drop-open-installed')
   ]
 }
 
@@ -135,6 +135,12 @@ describe('partitionDropPayload', () => {
   it('classifies openable extensions case-insensitively', () => {
     const result = partitionDropPayload(['REPORT.DOCX', 'data.CSV', 'notes.MarkDown'])
     expect(result.supported).toEqual(['REPORT.DOCX', 'data.CSV', 'notes.MarkDown'])
+  })
+
+  it('treats a dropped .tsv as openable, not as unsupported', () => {
+    const result = partitionDropPayload(['/data/variants.tsv', '/x/y.TSV'])
+    expect(result.supported).toEqual(['/data/variants.tsv', '/x/y.TSV'])
+    expect(result.unsupportedExts).toEqual([])
   })
 
   it('collects known-unsupported extensions uniquely, first-seen order', () => {

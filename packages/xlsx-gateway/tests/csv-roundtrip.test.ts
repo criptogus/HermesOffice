@@ -76,10 +76,26 @@ describe('xlsx-gateway csv import round trip', () => {
   it('keeps formula-like text as text instead of a stored formula', async () => {
     const csv = 'expr,note\n"=SUM(A1:A2)",plain'
     const cells = await sheetCells(await csvToXlsxBuffer(csv))
-
     expect(cells['A2']?.value).toBe('=SUM(A1:A2)')
     expect(cells['A2']?.formula).toBeUndefined()
     expect(cells['B2']?.value).toBe('plain')
+  })
+
+  it('writes future markers through the gateway save path with quoted sheet names', async () => {
+    const source = await csvToXlsxBuffer('value\n1')
+    const mutation = await applyCellEditsToXlsx(source, [
+      {
+        sheetName: 'Sheet1',
+        row: 0,
+        column: 0,
+        writeValue: true,
+        cell: { value: null, formula: `='Data_xlfn.Total'!MINIFS(A1:A2,A1:A2,">0")` },
+      },
+    ])
+
+    expect(await sheetXml(mutation.buffer)).toContain(
+      `<f>'Data_xlfn.Total'!_xlfn.MINIFS(A1:A2,A1:A2,"&gt;0")</f>`,
+    )
   })
 
   it('is deterministic: the same csv yields identical entry bytes and cells', async () => {

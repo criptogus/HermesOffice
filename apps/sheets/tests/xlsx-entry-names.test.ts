@@ -1,4 +1,4 @@
-/// genoffice#196: a producer wrote every package entry with a leading '/'.
+/// hermesoffice#196: a producer wrote every package entry with a leading '/'.
 /// Excel and Numbers open such files; the gateway must fold the quirk
 /// instead of rejecting the workbook as unsafe.
 import JSZip from 'jszip'
@@ -41,11 +41,51 @@ async function buildXlsx(rename: (name: string) => string): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' })
 }
 
-describe('non-conformant ZIP entry names (genoffice#196)', () => {
+async function buildEncodedTargetXlsx(
+  target: string,
+  entryName = 'xl/worksheets/sheet 1.xml',
+): Promise<Buffer> {
+  const zip = new JSZip()
+  for (const [name, xml] of Object.entries(PARTS)) {
+    const outputName = name === 'xl/worksheets/sheet1.xml' ? entryName : name
+    const outputXml =
+      name === 'xl/_rels/workbook.xml.rels' ? xml.replace('worksheets/sheet1.xml', target) : xml
+    zip.file(outputName, outputXml)
+  }
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+
+describe('non-conformant ZIP entry names (hermesoffice#196)', () => {
   it('reads a package whose entries carry a leading slash', async () => {
     const imported = await readBasicWorkbook(await buildXlsx((name) => `/${name}`))
     expect(Object.values(imported.sheetNamesById)).toEqual(['Codes'])
     expect(Object.keys(imported.snapshot.sheets[0]?.cells ?? {})).toEqual(['A1'])
+  })
+
+  it('resolves percent-encoded worksheet relationship targets', async () => {
+    const imported = await readBasicWorkbook(
+      await buildEncodedTargetXlsx('worksheets/sheet%201.xml'),
+    )
+    expect(Object.values(imported.sheetNamesById)).toEqual(['Codes'])
+    expect(Object.keys(imported.snapshot.sheets[0]?.cells ?? {})).toEqual(['A1'])
+  })
+
+  it('rejects malformed and escaping worksheet relationship targets', async () => {
+    await expect(
+      readBasicWorkbook(await buildEncodedTargetXlsx('worksheets/%ZZ.xml')),
+    ).rejects.toThrow(/Invalid OPC relationship target/)
+    await expect(
+      readBasicWorkbook(await buildEncodedTargetXlsx('../../outside.xml')),
+    ).rejects.toThrow(/Invalid OPC relationship target/)
+  })
+
+  it('saves through a percent-encoded worksheet relationship target', async () => {
+    const mutation = await applyCellEditsToXlsx(
+      await buildEncodedTargetXlsx('worksheets/sheet%201.xml'),
+      [{ sheetName: 'Codes', row: 0, column: 0, writeValue: true, cell: { value: 2 } }],
+    )
+    const imported = await readBasicWorkbook(mutation.buffer)
+    expect(imported.snapshot.sheets[0]?.cells.A1?.value).toBe(2)
   })
 
   it('reads a package with backslash separators', async () => {

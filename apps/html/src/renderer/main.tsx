@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { htmlDir, htmlLang, type Lang } from '@hermesoffice/i18n'
 import App from './App'
 import { PresentView } from './PresentView'
 import { LocaleProvider } from './i18n/locale'
@@ -7,6 +7,10 @@ import type { UiTheme } from '../shared/ipc'
 import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/ai-model-picker.css'
+import '@hermesoffice/ui/ai-queue-strip.css'
+import '@hermesoffice/ui/ai-usage.css'
+import '@hermesoffice/ui/ai-skills.css'
 import '@hermesoffice/ui/dropdown.css'
 import '@hermesoffice/ui/find-panel.css'
 import '@hermesoffice/ui/color-picker.css'
@@ -29,9 +33,10 @@ void (async () => {
     window.htmlApi.getTheme().catch(() => 'system' as const),
   ])
   document.documentElement.lang = htmlLang(lang as Lang)
+  document.documentElement.dir = htmlDir(lang)
   applyTheme(theme)
   window.htmlApi.onThemeChanged(applyTheme)
-  void window.htmlApi
+  await window.htmlApi
     ?.getAiPanelPrefs?.()
     .then(applyAiPanelPrefs)
     .catch(() => {})

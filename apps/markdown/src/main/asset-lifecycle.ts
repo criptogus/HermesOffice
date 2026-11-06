@@ -14,7 +14,7 @@ import {
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { atomicWriteFile } from './atomic-write'
 
-export const ASSET_MANIFEST_FILENAME = '.genoffice-assets.json'
+export const ASSET_MANIFEST_FILENAME = '.hermesoffice-assets.json'
 
 export interface OwnedAssetRecord {
   name: string
@@ -96,7 +96,12 @@ function replaceControlCharacters(value: string): string {
 }
 
 function sanitizeAssetName(input: string): string {
-  const raw = basename(input.replace(/\\/g, '/'))
+  // path.win32.basename reads a leading <letter>: as a drive prefix and
+  // strips it before the sanitizer ever sees the colon (a:b.png ->
+  // b.png on Windows, a_b.png elsewhere). Replace colons first so the
+  // sanitizer - not the platform's path semantics - decides what a
+  // colon becomes, identically on every platform.
+  const raw = basename(input.replace(/\\/g, '/').replace(/:/g, '_'))
   const rawExt = extname(raw)
   const ext = /^\.[a-z0-9]{1,10}$/i.test(rawExt) ? rawExt.toLowerCase() : ''
   const maxStem = 140 - ext.length
@@ -397,6 +402,32 @@ export async function resolveSafeRelativeImagePath(
   }
 }
 
+/**
+ * The realpath of an image target served from the vault wiki root — the same
+ * root {@link resolveWikiLinks} walks (no second definition), so a cross-folder
+ * picture embed `![[attachments/x.png]]` that resolves also renders. A target
+ * must sit under the root lexically and after realpath resolution (a symlink
+ * out of the vault is refused); `null` = refuse the serve.
+ */
+export async function resolveSafeVaultImagePath(
+  root: string,
+  target: string,
+): Promise<string | null> {
+  const vaultRoot = resolve(root)
+  if (!isInDocDir(target, vaultRoot)) return null
+  try {
+    const [realRoot, realCandidate, info] = await Promise.all([
+      realpath(vaultRoot),
+      realpath(target),
+      stat(target),
+    ])
+    if (!info.isFile() || !isInDocDir(realCandidate, realRoot)) return null
+    return realCandidate
+  } catch {
+    return null
+  }
+}
+
 function ownedNameForSource(source: string): string | null {
   const decoded = decodeLocalSource(source)
   if (!decoded) return null
@@ -477,16 +508,20 @@ function escapedAt(text: string, index: number): boolean {
 
 function imageDestinationRanges(markdown: string): DestinationRange[] {
   const ranges: DestinationRange[] = []
+  const closingBrackets = new Map<number, number>()
+  const bracketStack: number[] = []
+  for (let index = 0; index < markdown.length; index++) {
+    if (escapedAt(markdown, index)) continue
+    if (markdown[index] === '[') bracketStack.push(index)
+    else if (markdown[index] === ']') {
+      const open = bracketStack.pop()
+      if (open !== undefined) closingBrackets.set(open, index)
+    }
+  }
   for (let i = 0; i < markdown.length - 2; i++) {
     if (markdown[i] !== '!' || markdown[i + 1] !== '[' || escapedAt(markdown, i)) continue
-    let bracketDepth = 1
-    let altEnd = i + 2
-    for (; altEnd < markdown.length; altEnd++) {
-      if (escapedAt(markdown, altEnd)) continue
-      if (markdown[altEnd] === '[') bracketDepth++
-      else if (markdown[altEnd] === ']' && --bracketDepth === 0) break
-    }
-    if (bracketDepth !== 0) continue
+    const altEnd = closingBrackets.get(i + 1)
+    if (altEnd === undefined) continue
     let open = altEnd + 1
     while (markdown[open] === ' ' || markdown[open] === '\t') open++
     if (markdown[open] !== '(') {

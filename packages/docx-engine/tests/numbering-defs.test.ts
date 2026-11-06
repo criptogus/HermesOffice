@@ -4,8 +4,11 @@ import {
   computeListMarkerInfos,
   computeListMarkers,
   customEnumItems,
+  customLevelFromNumberingLevel,
+  customLevelXml,
   formatNumber,
   markerTabAdvance,
+  mergeLevelXml,
   parseDocx,
   saveDocx,
   type SaveBlock,
@@ -50,6 +53,38 @@ describe('numbering definitions (word/numbering.xml)', () => {
     // follow the abstractNum
     expect(num2.levels[1]).toEqual({ numFmt: 'upperRoman', lvlText: '%2:', start: 5 })
     expect(num2.levels[0]).toEqual({ numFmt: 'decimal', lvlText: '%1.', start: 1 })
+  })
+
+  it('reads level w:ind as logical start/end with an absent left = 0, and the level w:bidi', async () => {
+    // Word probe 2026-10-20: a bidi level `right=360 hanging=360` hangs the marker
+    // 18pt outside the start (right) margin and indents the end (left) side by 18pt
+    const numbering =
+      XML_DECL +
+      '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+      '<w:numFmt w:val="bullet"/><w:lvlText w:val="-"/><w:lvlJc w:val="right"/>' +
+      '<w:pPr><w:bidi/><w:ind w:right="360" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>' +
+      '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+      '<w:numFmt w:val="bullet"/><w:lvlText w:val="-"/>' +
+      '<w:pPr><w:ind w:start="720" w:end="120" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>' +
+      '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>' +
+      '</w:numbering>'
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml:
+          '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+          '<w:jc w:val="left"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>',
+        numberingXml: numbering,
+      }),
+    )
+    const rtl = doc.numbering.get('1')?.levels[0]
+    expect(rtl).toMatchObject({ indentLeft: 0, indentRight: 360, hanging: 360, bidi: true })
+    expect(doc.numbering.get('2')?.levels[0]).toMatchObject({ indentLeft: 720, indentRight: 120 })
+    expect(doc.numbering.get('2')?.levels[0]?.bidi).toBeUndefined()
+    // the level's w:bidi makes the paragraph bidi: w:jc left is the start edge (visual right)
+    const item = doc.blocks.find((b) => b.type === 'listItem')
+    expect(item && 'format' in item ? item.format?.align : undefined).toBe('right')
   })
 
   it('keeps the bullet/ordered classification for list blocks', async () => {
@@ -101,6 +136,34 @@ describe('mixed multilevel list kind', () => {
   })
 })
 
+describe('mergeLevelXml keeps foreign-namespace children', () => {
+  it('keeps w14 extension children of rPr and an mc:AlternateContent sibling', () => {
+    // the child scan matched w: names only, so a w14:textOutline vanished from
+    // the marker's rPr and the mc:AlternateContent was replaced by its own child
+    const outline =
+      '<w14:textOutline w14:w="9525"><w14:solidFill><w14:srgbClr w14:val="FF0000"/>' +
+      '</w14:solidFill></w14:textOutline>'
+    const alt =
+      '<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing/></mc:Choice></mc:AlternateContent>'
+    const existing =
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/>' +
+      `<w:rPr><w:rFonts w:ascii="Symbol"/>${outline}</w:rPr>${alt}</w:lvl>`
+
+    const merged = mergeLevelXml(existing, { numFmt: 'bullet', lvlText: '–', indentLeft: 720 }, 0)
+    expect(merged).toContain(`<w:rPr><w:rFonts w:ascii="Symbol"/>${outline}</w:rPr>`)
+    expect(merged).toContain(alt)
+    expect(merged).toContain('<w:lvlText w:val="–"/>')
+
+    // an rPr holding nothing but a w14 child survives instead of being deleted
+    const extOnly = mergeLevelXml(
+      `<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:rPr>${outline}</w:rPr></w:lvl>`,
+      { numFmt: 'bullet', lvlText: '–', indentLeft: 720 },
+      0,
+    )
+    expect(extOnly).toContain(`<w:rPr>${outline}</w:rPr>`)
+  })
+})
+
 describe('missing w:start default', () => {
   const NO_START_NUMBERING =
     XML_DECL +
@@ -127,6 +190,28 @@ describe('missing w:start default', () => {
       doc.numbering,
     )
     expect(markers).toEqual(['0.', '1.'])
+  })
+
+  it('letter formats clamp a missing or zero w:start to the first letter instead of an empty marker', async () => {
+    const letters = NO_START_NUMBERING.replace('w:val="decimal"', 'w:val="lowerLetter"')
+    const li = (text: string) =>
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' +
+      `<w:r><w:t>${text}</w:t></w:r></w:p>`
+    const doc = await parseDocx(
+      await buildDocx({ bodyXml: li('a') + li('b'), numberingXml: letters }),
+    )
+    const markers = computeListMarkers(
+      [
+        { numId: '1', ilvl: 0 },
+        { numId: '1', ilvl: 0 },
+      ],
+      doc.numbering,
+    )
+    // the counter still starts at 0 (as for decimal); only the glyph is floored, like toRoman
+    expect(markers[0]).toBe('a.')
+    expect(markers.every((m) => m !== '.')).toBe(true)
+    expect(formatNumber(0, 'lowerLetter')).toBe('a')
+    expect(formatNumber(-3, 'upperLetter')).toBe('A')
   })
 })
 
@@ -292,6 +377,35 @@ describe('numFmt "none" with empty lvlText', () => {
   })
 })
 
+describe('empty lvlText', () => {
+  const EMPTY_TEXT_NUMBERING =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:abstractNum w:abstractNumId="0">' +
+    '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:suff w:val="nothing"/><w:lvlText w:val=""/>' +
+    '<w:pPr><w:ind w:left="432" w:hanging="432"/></w:pPr></w:lvl>' +
+    '</w:abstractNum>' +
+    '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>' +
+    '</w:numbering>'
+
+  it('a decimal level whose lvlText is empty shows nothing, not the counter fallback', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: '<w:p><w:r><w:t>x</w:t></w:r></w:p>',
+        numberingXml: EMPTY_TEXT_NUMBERING,
+      }),
+    )
+    const markers = computeListMarkers(
+      [
+        { numId: '1', ilvl: 0 },
+        { numId: '1', ilvl: 0 },
+      ],
+      doc.numbering,
+    )
+    expect(markers).toEqual(['', ''])
+  })
+})
+
 describe('w14 custom numFmt (mc:AlternateContent)', () => {
   const alternate = (choiceFmt: string, format: string) =>
     XML_DECL +
@@ -349,6 +463,76 @@ describe('w14 custom numFmt (mc:AlternateContent)', () => {
     expect(formatNumber(5, 'custom', 'α, β, γ, ...')).toBe('β')
     expect(formatNumber(3, 'custom')).toBe('3')
   })
+
+  // hermesoffice#2121: the dialog shape dropped the enumeration, so a reused or
+  // re-saved custom level came back as plain digits ("Za 1:")
+  it('customLevelFromNumberingLevel carries the enumeration', async () => {
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: '<w:p><w:r><w:t>x</w:t></w:r></w:p>',
+        numberingXml: alternate('custom', 'α, β, γ, ...'),
+      }),
+    )
+    const custom = customLevelFromNumberingLevel(doc.numbering.get('1')!.levels[0])
+    expect(custom.numFmt).toBe('custom')
+    expect(custom.customFormat).toBe('α, β, γ, ...')
+  })
+
+  it('a new custom level is written as mc:AlternateContent and parses back', async () => {
+    const lvl = customLevelXml(
+      { numFmt: 'custom', customFormat: 'Za prvé, Za druhé, ...', lvlText: '%1:', indentLeft: 720 },
+      0,
+    )
+    expect(lvl).not.toMatch(/<w:numFmt w:val="custom"\/>/)
+    expect(lvl).toMatch(/<w:start[^>]*\/><mc:AlternateContent[^>]*><mc:Choice Requires="w14">/)
+    expect(lvl).toContain('<mc:Fallback><w:numFmt w:val="decimal"/></mc:Fallback>')
+    const doc = await parseDocx(
+      await buildDocx({
+        bodyXml: '<w:p><w:r><w:t>x</w:t></w:r></w:p>',
+        numberingXml:
+          XML_DECL +
+          '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          `<w:abstractNum w:abstractNumId="0">${lvl}</w:abstractNum>` +
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>',
+      }),
+    )
+    expect(doc.numbering.get('1')!.levels[0].customFormat).toBe('Za prvé, Za druhé, ...')
+    expect(
+      computeListMarkers(
+        [
+          { numId: '1', ilvl: 0 },
+          { numId: '1', ilvl: 0 },
+        ],
+        doc.numbering,
+      ),
+    ).toEqual(['Za prvé:', 'Za druhé:'])
+  })
+
+  it('mergeLevelXml replaces the custom numFmt in place instead of adding a bare one beside it', () => {
+    const existing =
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+      '<mc:AlternateContent><mc:Choice Requires="w14"><w:numFmt w:val="custom" w:format="α, β, γ, ..."/></mc:Choice>' +
+      '<mc:Fallback><w:numFmt w:val="decimal"/></mc:Fallback></mc:AlternateContent>' +
+      '<w:lvlText w:val="%1."/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>'
+    const kept = mergeLevelXml(
+      existing,
+      { numFmt: 'custom', customFormat: 'α, β, γ, ...', lvlText: '%1.', indentLeft: 1440 },
+      0,
+    )
+    expect(kept.match(/<w:numFmt\b/g)).toHaveLength(2)
+    expect(kept.match(/<mc:AlternateContent\b/g)).toHaveLength(1)
+    expect(kept).toMatch(/<w:start[^>]*\/><mc:AlternateContent/)
+    expect(kept).toContain('w:format="α, β, γ, ..."')
+    expect(kept).toContain('<w:ind w:left="1440"')
+
+    const plain = mergeLevelXml(
+      existing,
+      { numFmt: 'upperRoman', lvlText: '%1.', indentLeft: 720 },
+      0,
+    )
+    expect(plain).not.toContain('AlternateContent')
+    expect(plain).toContain('<w:start w:val="1"/><w:numFmt w:val="upperRoman"/>')
+  })
 })
 
 describe('numbering level positive w:firstLine', () => {
@@ -383,6 +567,16 @@ describe('markerTabAdvance (default tab after the marker)', () => {
     expect(markerTabAdvance(0, 360, 360)).toBeNull()
   })
 
+  it('a custom stop between the marker end and the hanging indent catches the tab', () => {
+    // numbered heading: level left=720 hanging=720, paragraph stops 450/1350/3060,
+    // one-digit marker ~160 twips -> Word starts the text at 450, not at 720
+    expect(markerTabAdvance(0, 160, 720, 720, [450, 1350, 3060, 720])).toBe(450)
+    // stops at or past the indent change nothing
+    expect(markerTabAdvance(0, 160, 720, 720, [720, 1350])).toBeNull()
+    // a stop under the marker itself is skipped
+    expect(markerTabAdvance(0, 500, 720, 720, [450])).toBeNull()
+  })
+
   it('jumps to the next default-tab-grid stop when the marker overflows', () => {
     // "NEW-1-FORMAT" at ind left=360 hanging=360: marker 0..~1476 -> stop at 2160
     expect(markerTabAdvance(0, 1476, 360)).toBe(2160)
@@ -396,6 +590,11 @@ describe('markerTabAdvance (default tab after the marker)', () => {
 
   it('honors a custom default tab interval', () => {
     expect(markerTabAdvance(0, 400, 360, 708)).toBe(708)
+  })
+
+  it('a zero default tab grid puts the text right after the marker, custom stops still win', () => {
+    expect(markerTabAdvance(0, 400, 360, 0)).toBe(400)
+    expect(markerTabAdvance(0, 400, 360, 0, [1080])).toBe(1080)
   })
 })
 
@@ -784,5 +983,28 @@ describe('markerTabAdvance with custom tab stops', () => {
     // every custom stop is behind the marker: next default past both
     expect(markerTabAdvance(0, 1500, 0, 720, [720])).toBe(2160)
     expect(markerTabAdvance(0, 1500, 0, 720, [])).toBe(2160)
+  })
+})
+
+describe('hostile numbering values', () => {
+  it('bounds huge and non-finite values instead of hanging', () => {
+    const start = Date.now()
+    for (const fmt of [
+      'upperRoman',
+      'lowerRoman',
+      'upperLetter',
+      'lowerLetter',
+      'upperGreek',
+      'decimal',
+    ]) {
+      for (const v of [1e9, Infinity, -Infinity, NaN]) {
+        const out = formatNumber(v, fmt)
+        expect(typeof out).toBe('string')
+        expect(out.length).toBeLessThan(100_000)
+      }
+    }
+    expect(Date.now() - start).toBeLessThan(10000)
+    expect(formatNumber(4, 'upperRoman')).toBe('IV')
+    expect(formatNumber(27, 'upperLetter')).toBe('AA')
   })
 })

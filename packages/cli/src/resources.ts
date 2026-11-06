@@ -112,23 +112,41 @@ export function appLaunch(env: NodeJS.ProcessEnv = process.env): AppLaunch | nul
   return null
 }
 
-function installedAppBinaries(env: NodeJS.ProcessEnv): string[] {
-  switch (process.platform) {
+function installedAppBinaries(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  resources: string | null = packagedResourcesDir(),
+): string[] {
+  const shipped = resources ? appBinaryForResources(resources, platform) : null
+  switch (platform) {
     case 'darwin':
       return [
+        ...(shipped ? [shipped] : []),
         '/Applications/HermesOffice.app/Contents/MacOS/HermesOffice',
         join(homedir(), 'Applications/HermesOffice.app/Contents/MacOS/HermesOffice'),
       ]
     case 'win32':
       return [
+        ...(shipped ? [shipped] : []),
         env.LOCALAPPDATA
           ? join(env.LOCALAPPDATA, 'Programs', 'HermesOffice', 'HermesOffice.exe')
           : '',
         env.ProgramFiles ? join(env.ProgramFiles, 'HermesOffice', 'HermesOffice.exe') : '',
       ].filter(Boolean)
     default:
-      return ['/opt/HermesOffice/hermesoffice', '/usr/bin/hermesoffice']
+      return [
+        ...(shipped ? [shipped] : []),
+        '/opt/HermesOffice/hermesoffice',
+        '/usr/bin/hermesoffice',
+      ]
   }
+}
+
+export function appBinaryForResources(resources: string, platform: NodeJS.Platform): string {
+  const install = dirname(resources)
+  if (platform === 'darwin') return join(install, 'MacOS', 'HermesOffice')
+  if (platform === 'win32') return join(install, 'HermesOffice.exe')
+  return join(install, 'hermesoffice')
 }
 
 /**

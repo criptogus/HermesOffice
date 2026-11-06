@@ -1,7 +1,7 @@
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { BrowserWindow } from 'electron'
-import type { Rectangle, WebContents, WebContentsView } from 'electron'
+import { app, BrowserWindow, shell, WebContentsView } from 'electron'
+import type { Rectangle, WebContents } from 'electron'
 
 import {
   createDocsView,
@@ -45,7 +45,26 @@ import {
   setActiveSlidesWebContents,
   slidesIsDirty,
 } from '../../../slides/src/main/slides-main'
+import { rendererUrl, safeExternalUrl } from '@hermesoffice/electron-utils'
 import type { DocumentTabKind, OpenDocumentTab, TabKind, TabSummary } from '../shared/tabs-api'
+import { isSettledRect, tabStripHeight } from '../shared/tab-drag-geometry'
+import {
+  DEFAULT_IDLE_MS,
+  defaultMaxLiveTabs,
+  MEMORY_BUDGET_SHARE,
+  pickTabsToSleep,
+  SLEEP_SWEEP_INTERVAL_MS,
+  type SleepPolicy,
+} from './tab-hibernation'
+
+/** a tab lifted out of the strip with its live view: what "Open in New Window",
+ *  tear-off and dock hand back and forth between the shell and a detached window */
+export interface DetachedTab {
+  view: WebContentsView
+  kind: TabKind
+  title: string
+  filePath?: string
+}
 
 interface TabRecord {
   id: string
@@ -56,10 +75,14 @@ interface TabRecord {
   filePath?: string
   /** chrome-free Present tab: no file, no editor menu or save/export targets */
   present?: boolean
+  /** when the tab last became or stopped being the active one */
+  lastActiveAt: number
+  /** never put to sleep (tab context menu) */
+  pinned?: boolean
+  /** renderer destroyed to free memory; `view` is null until the tab is shown again */
+  dormant?: boolean
 }
 
-/** must match the tab strip's rendered height (apps/shell/src/renderer/src/TabBar.tsx) */
-const TAB_STRIP_HEIGHT = 40
 const HOME_ID = 'home'
 
 /**
@@ -70,7 +93,7 @@ const HOME_ID = 'home'
  */
 export class TabManager {
   private readonly tabs: TabRecord[] = [
-    { id: HOME_ID, kind: 'home', view: null, title: 'HermesOffice' },
+    { id: HOME_ID, kind: 'home', view: null, title: 'HermesOffice', lastActiveAt: Date.now() },
   ]
   private activeId: string = HOME_ID
   private nextId = 1
@@ -82,6 +105,10 @@ export class TabManager {
   private readonly bleedWcIds = new Set<number>()
   /** tabs mid unsaved-changes prompt, so a second close click doesn't stack dialogs */
   private readonly closingIds = new Set<string>()
+  private closedListener: ((tab: { kind: TabKind; filePath: string }) => void) | null = null
+  /** views whose HTML-fullscreen listeners are installed: a view that leaves
+   *  for a detached window and docks back must not get a second pair */
+  private readonly fullScreenTracked = new WeakSet<WebContentsView>()
   /** Sheets renderer mounted ahead of the next open: parsing its bundle and
    *  booting Univer is the bulk of a workbook's open time, and the shell hands
    *  the path over after mount anyway. */
@@ -94,33 +121,50 @@ export class TabManager {
     private readonly applyMenuFor: (kind: TabKind) => void,
     /** localized placeholder title for a tab that has no file yet */
     private readonly untitledTitleFor?: (kind: TabKind) => string,
+    /**
+     * The live interface scale (hermesoffice#1913). A getter rather than a value so a change
+     * made from the View menu reaches the next layout without rebuilding this.
+     */
+    private readonly uiScale: () => number = () => 1,
   ) {
     // Layout once synchronously for macOS/Windows (bounds are already correct),
     // then once more on the next tick. On Linux/X11, `resize` fires before the
     // window manager applies the new size, so getContentBounds() is still the
     // pre-maximize size inside the handler and a follow-up layout is required.
-    // See https://github.com/genspark-ai/genoffice/issues/15
+    // See https://github.com/genspark-ai/hermesoffice/issues/15
     shellWindow.on('resize', () => {
       this.layout()
       setImmediate(() => this.layout())
     })
-    shellWindow.webContents.once('did-finish-load', () => this.scheduleSpareSheetsView(1500))
+    // Windows fires `restore` when a minimized window comes back from the taskbar,
+    // sometimes before the client bounds have settled — the same stale-geometry
+    // race as Linux/X11 maximize (issue #15). Reconcile synchronously (the bounds
+    // are usually already right) and once more on the next tick. Bounded: exactly
+    // two layout passes per restore, no polling, no recurring timers.
+    shellWindow.on('restore', () => {
+      this.reconcileAfterWindowRestore()
+      setImmediate(() => this.reconcileAfterWindowRestore())
+    })
   }
 
   private scheduleSpareSheetsView(delayMs: number): void {
-    if (process.env.HERMESOFFICE_NO_SPARE_VIEW || this.spareSheetsTimer) return
+    if (process.env.HERMESOFFICE_NO_SPARE_VIEW || this.spareSheetsTimer || this.spareSheetsView)
+      return
+    if (this.tabs.find((t) => t.id === this.activeId)?.kind !== 'sheets') return
     this.spareSheetsTimer = setTimeout(() => {
       this.spareSheetsTimer = null
       if (this.spareSheetsView || this.shellWindow.isDestroyed()) return
+      const active = this.tabs.find((t) => t.id === this.activeId)
+      if (active?.kind !== 'sheets') return
       const view = createSheetsView({ includeAiHandlers: false })
       // registering the session made the spare the menu-action target
-      const active = this.tabs.find((t) => t.id === this.activeId)
-      setActiveSheetsWebContents(
-        active?.kind === 'sheets' && active.view ? active.view.webContents : null,
-      )
+      setActiveSheetsWebContents(active.view?.webContents ?? null)
       this.shellWindow.contentView.addChildView(view)
       view.setVisible(false)
-      view.setBounds(this.contentBounds())
+      // the window may be minimized or mid-restore when the spare spawns; a
+      // degenerate rect would leave the spare zero-sized until its next layout
+      const bounds = this.contentBounds()
+      if (isSettledRect(bounds)) view.setBounds(bounds)
       view.webContents.once('render-process-gone', () => {
         if (this.spareSheetsView !== view) return
         this.spareSheetsView = null
@@ -136,6 +180,16 @@ export class TabManager {
     return view && !view.webContents.isDestroyed() ? view : null
   }
 
+  private discardSpareSheetsView(): void {
+    if (this.spareSheetsTimer) clearTimeout(this.spareSheetsTimer)
+    this.spareSheetsTimer = null
+    const spare = this.spareSheetsView
+    this.spareSheetsView = null
+    if (!spare) return
+    this.shellWindow.contentView.removeChildView(spare)
+    spare.webContents.close()
+  }
+
   private untitled(kind: TabKind, fallback: string): string {
     return this.untitledTitleFor?.(kind) ?? fallback
   }
@@ -149,7 +203,11 @@ export class TabManager {
     if (active?.view && this.bleedWcIds.has(active.view.webContents.id)) {
       return { x: 0, y: 0, width, height }
     }
-    return { x: 0, y: TAB_STRIP_HEIGHT, width, height: Math.max(0, height - TAB_STRIP_HEIGHT) }
+    // The strip is `zoom`ed by the interface scale, so its rendered height
+    // grows with it — positioning the view at the unscaled constant would paint
+    // the document underneath a taller tab strip.
+    const strip = tabStripHeight(this.uiScale())
+    return { x: 0, y: strip, width, height: Math.max(0, height - strip) }
   }
 
   /** Grow/restore a tab view over the tab strip on request (slides show fullscreen) */
@@ -164,13 +222,20 @@ export class TabManager {
    * grow its view over the tab strip so nothing of the shell chrome shows;
    * restore the normal bounds on leave.
    */
-  private trackHtmlFullScreen(id: string, view: WebContentsView): void {
+  private trackHtmlFullScreen(view: WebContentsView): void {
+    if (this.fullScreenTracked.has(view)) return
+    this.fullScreenTracked.add(view)
+    // resolved at event time: the same view gets a fresh id every time it docks
+    const currentId = () => this.tabs.find((t) => t.view === view)?.id
     view.webContents.on('enter-html-full-screen', () => {
+      const id = currentId()
+      if (id === undefined) return
       this.htmlFullScreenId = id
       this.layout()
     })
     view.webContents.on('leave-html-full-screen', () => {
-      if (this.htmlFullScreenId === id) this.htmlFullScreenId = null
+      const id = currentId()
+      if (id !== undefined && this.htmlFullScreenId === id) this.htmlFullScreenId = null
       this.layout()
     })
   }
@@ -179,8 +244,24 @@ export class TabManager {
   layout(): void {
     // Deferred resize layouts can land after the shell window was closed.
     if (this.shellWindow.isDestroyed()) return
+    const bounds = this.contentBounds()
+    // A minimized or mid-restore window can report a degenerate client rect;
+    // applying it would shrink the active view to nothing — the white screen
+    // after a Windows taskbar restore. Keep the last good layout instead.
+    if (!isSettledRect(bounds)) return
     const active = this.tabs.find((t) => t.id === this.activeId)
-    if (active?.view) active.view.setBounds(this.contentBounds())
+    if (active?.view) active.view.setBounds(bounds)
+  }
+
+  /**
+   * Re-fit the active view after the native window returns from the taskbar.
+   * Deliberately narrower than activateTab: no visibility toggles, no focus,
+   * no menu, no onChanged — the active tab, its WebContentsView and every
+   * other document stay exactly as they were.
+   */
+  reconcileAfterWindowRestore(): void {
+    if (this.shellWindow.isDestroyed() || this.shellWindow.isMinimized()) return
+    this.layout()
   }
 
   /** files open in any tab, for the open-documents registry */
@@ -196,6 +277,8 @@ export class TabManager {
       closable: t.id !== HOME_ID,
       active: t.id === this.activeId,
       ...(t.filePath ? { filePath: t.filePath } : {}),
+      ...(t.dormant ? { dormant: true } : {}),
+      ...(t.pinned ? { pinned: true } : {}),
     }))
   }
 
@@ -209,7 +292,9 @@ export class TabManager {
    * renderer. Hence the async signature.
    */
   async openDocuments(): Promise<OpenDocumentTab[]> {
-    const tabs = this.tabs.filter((tab) => tab.kind !== 'home' && !tab.present && tab.view)
+    const tabs = this.tabs.filter(
+      (tab) => tab.kind !== 'home' && !tab.present && (tab.view || tab.dormant),
+    )
     return Promise.all(
       tabs.map(async (tab) => ({
         id: tab.id,
@@ -248,6 +333,33 @@ export class TabManager {
     this.activateTab(HOME_ID)
   }
 
+  /** The in-app user manual (issue #1520): a closable tab showing the shell
+      renderer's help mode — the same bundle, branched on ?mode=help, so no
+      second renderer build is needed. */
+  openHelpTab(): string {
+    // F1 again, or the Help menu while the manual is already open, focuses it
+    // instead of stacking a second copy: the tab is closable (only Home is
+    // not), so "press F1 again" is an ordinary thing to do
+    const existing = this.tabs.find((t) => t.kind === 'help')
+    if (existing) {
+      this.activateTab(existing.id)
+      return existing.id
+    }
+    const view = createHelpView()
+    const id = `t${this.nextId++}`
+    this.shellWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    this.tabs.push({
+      id,
+      kind: 'help',
+      view,
+      title: this.untitled('help', 'HermesOffice Help'),
+      lastActiveAt: Date.now(),
+    })
+    this.activateTab(id)
+    return id
+  }
+
   openDocsTab(
     openPath?: string,
     options?: { newBlank?: boolean; aiContent?: AiDocContent },
@@ -258,9 +370,10 @@ export class TabManager {
     if (options?.aiContent) queueDocsAiContent(view.webContents.id, options.aiContent)
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'docs',
       view,
       title: openPath ? basename(openPath) : this.untitled('docs', 'HermesOffice Docs'),
@@ -273,7 +386,8 @@ export class TabManager {
   openSheetsTab(openPath?: string, options?: { newBlank?: boolean }): string {
     if (options?.newBlank) setSheetsNewBlank()
     const spare = this.takeSpareSheetsView()
-    const view = spare ?? createSheetsView({ includeAiHandlers: false })
+    const view =
+      spare ?? createSheetsView({ includeAiHandlers: false, openingWorkbook: Boolean(openPath) })
     // bind the path to this tab's webContents: a multi-select Open creates
     // several sheets tabs in one loop, so a single global path would be
     // overwritten before the earlier tabs consume it
@@ -286,10 +400,10 @@ export class TabManager {
       this.shellWindow.contentView.addChildView(view)
       view.setVisible(false)
     }
-    this.trackHtmlFullScreen(id, view)
-    this.scheduleSpareSheetsView(3000)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'sheets',
       view,
       title: openPath ? basename(openPath) : this.untitled('sheets', 'AI Sheets'),
@@ -304,9 +418,10 @@ export class TabManager {
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'slides',
       view,
       title: openPath ? basename(openPath) : this.untitled('slides', 'AI Slides'),
@@ -321,8 +436,15 @@ export class TabManager {
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
-    this.tabs.push({ id, kind: 'pdf', view, title: basename(openPath), filePath: openPath })
+    this.trackHtmlFullScreen(view)
+    this.tabs.push({
+      id,
+      kind: 'pdf',
+      view,
+      title: basename(openPath),
+      filePath: openPath,
+      lastActiveAt: Date.now(),
+    })
     this.activateTab(id)
     return id
   }
@@ -341,9 +463,10 @@ export class TabManager {
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'markdown',
       view,
       title: openPath ? basename(openPath) : this.untitled('markdown', 'AI Markdown'),
@@ -358,9 +481,10 @@ export class TabManager {
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'html',
       view,
       title: openPath ? basename(openPath) : this.untitled('html', 'AI HTML'),
@@ -376,9 +500,10 @@ export class TabManager {
     const id = `t${this.nextId++}`
     this.shellWindow.contentView.addChildView(view)
     view.setVisible(false)
-    this.trackHtmlFullScreen(id, view)
+    this.trackHtmlFullScreen(view)
     this.tabs.push({
       id,
+      lastActiveAt: Date.now(),
       kind: 'html',
       view,
       title: title || this.untitled('html', 'AI HTML'),
@@ -391,11 +516,38 @@ export class TabManager {
   activateTab(id: string): void {
     const target = this.tabs.find((t) => t.id === id)
     if (!target) return
+    if (target.dormant) this.reviveTab(target)
+    const now = Date.now()
+    const previous = this.tabs.find((t) => t.id === this.activeId)
+    if (previous) previous.lastActiveAt = now
+    target.lastActiveAt = now
     for (const t of this.tabs) t.view?.setVisible(t.id === id)
-    if (target.view) target.view.setBounds(this.contentBounds())
+    const bounds = this.contentBounds()
+    // a bring-forward while the window is minimized or mid-restore must not
+    // zero-size the view being activated (same guard as layout())
+    if (target.view && isSettledRect(bounds)) target.view.setBounds(bounds)
     this.activeId = id
+    if (target.kind === 'sheets') this.scheduleSpareSheetsView(3000)
+    else this.discardSpareSheetsView()
     this.refreshActiveTargets()
+    this.focusActiveView()
     this.onChanged()
+  }
+
+  /** Hand keyboard focus to the active tab's view. The click that opened or
+   *  switched a tab lands on the chrome webContents (tab strip, Home list),
+   *  and a WebContentsView made visible does not take focus on its own — so
+   *  without this, typing after every open/switch keeps going to a hidden
+   *  view. Home has no view of its own; the shell window's webContents is
+   *  the focus target there. Skipped while the window is unfocused
+   *  (background opens must not steal OS focus); the window's `focus`
+   *  handler re-runs it. */
+  focusActiveView(): void {
+    if (this.shellWindow.isDestroyed() || !this.shellWindow.isFocused()) return
+    const target = this.tabs.find((t) => t.id === this.activeId)
+    if (!target) return
+    if (target.view) target.view.webContents.focus()
+    else this.shellWindow.webContents.focus()
   }
 
   /** Re-point the process-global active-editor targets and the app menu at this
@@ -421,6 +573,15 @@ export class TabManager {
     const [moved] = this.tabs.splice(fromIndex, 1)
     this.tabs.splice(clamped, 0, moved)
     this.onChanged()
+  }
+
+  /** kind, title and file of the document tab rendered by `webContentsId` (Home has no view) */
+  describeWebContents(
+    webContentsId: number,
+  ): { kind: TabKind; title: string; filePath?: string } | null {
+    const tab = this.tabs.find((t) => t.view?.webContents.id === webContentsId)
+    if (!tab) return null
+    return { kind: tab.kind, title: tab.title, ...(tab.filePath ? { filePath: tab.filePath } : {}) }
   }
 
   tabIdForWebContents(webContentsId: number): string | undefined {
@@ -451,13 +612,15 @@ export class TabManager {
     newPath: string,
   ): Array<{ kind: TabKind; webContents: WebContents }> {
     const affected: Array<{ kind: TabKind; webContents: WebContents }> = []
+    let renamed = 0
     for (const tab of this.tabs) {
       if (tab.filePath !== oldPath) continue
       tab.filePath = newPath
       tab.title = basename(newPath)
+      renamed++
       if (tab.view) affected.push({ kind: tab.kind, webContents: tab.view.webContents })
     }
-    if (affected.length > 0) this.onChanged()
+    if (renamed > 0) this.onChanged()
     return affected
   }
 
@@ -584,6 +747,8 @@ export class TabManager {
     if (idx < 0) return
     if (this.htmlFullScreenId === id) this.htmlFullScreenId = null
     const [removed] = this.tabs.splice(idx, 1)
+    if (removed.filePath && !removed.present)
+      this.closedListener?.({ kind: removed.kind, filePath: removed.filePath })
     if (this.activeId === id) {
       const fallback = this.tabs[idx - 1] ?? this.tabs[0]
       this.activateTab(fallback.id)
@@ -593,18 +758,194 @@ export class TabManager {
     if (removed.view) {
       removed.view.setVisible(false)
       this.shellWindow.contentView.removeChildView(removed.view)
-      if (removed.kind === 'docs') {
-        // webContents.close()/.destroy() on a closed docs tab wedges Electron's whole
-        // UI thread in a native modal run loop (reproduced consistently; survives
-        // close() vs destroy(), teardown ordering, deferring, and disabling
-        // accessibility support — looks like an upstream WebContentsView/Chromium
-        // issue, not something fixable from here). Detaching without destroying
-        // avoids the freeze; the orphaned webContents is reclaimed when the app quits.
-        teardownDocsRenderer(removed.view.webContents)
-      } else {
-        removed.view.webContents.close()
-      }
+      destroyView(removed.kind, removed.view)
     }
+  }
+
+  /** a tab with a renderer; dormant and Home tabs have none */
+  private isLive(tab: TabRecord): boolean {
+    return !!tab.view
+  }
+
+  setPinned(id: string, pinned: boolean): void {
+    const tab = this.tabs.find((t) => t.id === id)
+    if (!tab || tab.kind === 'home') return
+    tab.pinned = pinned
+    this.onChanged()
+  }
+
+  /**
+   * Destroy the renderer of a background tab and keep only what is needed to
+   * reopen it: kind, path, title, position. Refuses the active tab, pinned
+   * tabs, untitled documents, Present tabs, the manual, a tab mid-prompt or in
+   * HTML fullscreen, and anything with unsaved changes. Resolves true when the
+   * tab went to sleep.
+   */
+  async sleepTab(id: string): Promise<boolean> {
+    const tab = this.tabs.find((t) => t.id === id)
+    if (!tab?.view || !this.canSleep(tab)) return false
+    if (await this.tabIsDirty(tab)) return false
+    // re-check: the dirty query yielded, and the user may have switched here meanwhile
+    if (!tab.view || !this.canSleep(tab)) return false
+    const view = tab.view
+    tab.view = null
+    tab.dormant = true
+    view.setVisible(false)
+    this.shellWindow.contentView.removeChildView(view)
+    destroyView(tab.kind, view)
+    this.onChanged()
+    return true
+  }
+
+  private canSleep(tab: TabRecord): boolean {
+    return (
+      tab.id !== this.activeId &&
+      !tab.pinned &&
+      !tab.present &&
+      !!tab.filePath &&
+      tab.kind !== 'home' &&
+      tab.kind !== 'help' &&
+      !this.closingIds.has(tab.id) &&
+      this.htmlFullScreenId !== tab.id
+    )
+  }
+
+  /** rebuild a sleeping tab's view from its file, in place; the caller shows it */
+  private reviveTab(tab: TabRecord): void {
+    const view = createViewFor(tab.kind, tab.filePath)
+    if (!view) return
+    this.shellWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    this.trackHtmlFullScreen(view)
+    tab.view = view
+    tab.dormant = false
+    tab.lastActiveAt = Date.now()
+  }
+
+  /** a sleeping tab asked for by its webContents (agents, CLI, menus) wakes in the background */
+  private ensureLive(tab: TabRecord | undefined): TabRecord | undefined {
+    if (tab?.dormant) {
+      this.reviveTab(tab)
+      this.onChanged()
+    }
+    return tab
+  }
+
+  /**
+   * One pass of the sleep policy: background tabs idle past `policy.idleMs`
+   * sleep while more than `policy.maxLiveTabs` renderers are alive; over the
+   * memory budget the oldest sleeps regardless. Returns the ids put to sleep.
+   */
+  async sleepIdleTabs(
+    policy: SleepPolicy,
+    now = Date.now(),
+    overBudget = false,
+  ): Promise<string[]> {
+    const live = this.tabs.filter((t) => this.isLive(t))
+    const candidates: { id: string; lastActiveAt: number }[] = []
+    // dirtiness is resolved here, not in canSleep: it is async for docs, and a
+    // dirty tab left among the candidates would be picked (and refused) on
+    // every sweep, starving the clean tabs behind it
+    for (const t of live) {
+      if (this.canSleep(t) && !(await this.tabIsDirty(t)))
+        candidates.push({ id: t.id, lastActiveAt: t.lastActiveAt })
+    }
+    const slept: string[] = []
+    for (const id of pickTabsToSleep(candidates, live.length, policy, now, overBudget)) {
+      if (await this.sleepTab(id)) slept.push(id)
+    }
+    return slept
+  }
+
+  /**
+   * Run the sleep policy every minute while `enabled()` holds. The live-tab
+   * cap follows the machine's memory; the budget check sums every process of
+   * the app against a share of physical memory.
+   */
+  startSleepSweeper(enabled: () => boolean): () => void {
+    const policy: SleepPolicy = {
+      maxLiveTabs:
+        envNumber('HERMESOFFICE_TAB_SLEEP_MAX_LIVE') ??
+        defaultMaxLiveTabs(process.getSystemMemoryInfo().total * 1024),
+      idleMs: envNumber('HERMESOFFICE_TAB_SLEEP_IDLE_MS') ?? DEFAULT_IDLE_MS,
+    }
+    let running = false
+    const timer = setInterval(
+      () => {
+        if (!enabled() || running || this.shellWindow.isDestroyed()) return
+        running = true
+        void this.sleepIdleTabs(policy, Date.now(), appOverMemoryBudget()).finally(() => {
+          running = false
+        })
+      },
+      envNumber('HERMESOFFICE_TAB_SLEEP_SWEEP_MS') ?? SLEEP_SWEEP_INTERVAL_MS,
+    )
+    timer.unref?.()
+    return () => clearInterval(timer)
+  }
+
+  /** told when a tab with a file is closed (not detached), so it can be reopened */
+  setClosedListener(listener: ((tab: { kind: TabKind; filePath: string }) => void) | null): void {
+    this.closedListener = listener
+  }
+
+  /** Remove a tab from the strip WITHOUT destroying its WebContentsView and
+   *  hand it to the caller ("Open in New Window" — the live document, unsaved
+   *  edits included, moves into a detached editor window). Null while a close
+   *  prompt is pending on the tab. */
+  detachTab(id: string): DetachedTab | null {
+    if (id === HOME_ID) return null
+    const idx = this.tabs.findIndex((t) => t.id === id)
+    const tab = idx >= 0 ? this.tabs[idx] : undefined
+    if (!tab?.view || tab.present || this.closingIds.has(id)) return null
+    this.tabs.splice(idx, 1)
+    if (this.htmlFullScreenId === id) this.htmlFullScreenId = null
+    const view = tab.view
+    view.setVisible(false)
+    this.shellWindow.contentView.removeChildView(view)
+    if (this.activeId === id) {
+      const fallback = this.tabs[idx - 1] ?? this.tabs[0]
+      this.activateTab(fallback.id)
+    } else {
+      this.onChanged()
+    }
+    return { view, kind: tab.kind, title: tab.title, filePath: tab.filePath }
+  }
+
+  /** Whether a tab can leave the strip for its own window (tear-off / Open in
+   *  New Window): every document tab except a chrome-free Present tab. */
+  canDetachTab(id: string): boolean {
+    const tab = this.tabs.find((t) => t.id === id)
+    return !!tab?.view && !tab.present && !this.closingIds.has(id)
+  }
+
+  /**
+   * The inverse of detachTab: a live view coming back from a detached window
+   * (dock by dragging the window onto the strip, or a tear-off that returned
+   * mid-gesture) becomes a tab again at `index` — Home stays pinned at 0, an
+   * out-of-range or omitted index appends — and is activated. The document,
+   * unsaved edits included, is untouched: only the view's parent changes.
+   */
+  attachTab(record: DetachedTab, index?: number): string {
+    const id = `t${this.nextId++}`
+    const { view } = record
+    this.shellWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    this.trackHtmlFullScreen(view)
+    const slot =
+      index === undefined || !Number.isFinite(index)
+        ? this.tabs.length
+        : Math.min(Math.max(Math.trunc(index), 1), this.tabs.length)
+    this.tabs.splice(slot, 0, {
+      id,
+      kind: record.kind,
+      view,
+      title: record.title,
+      filePath: record.filePath,
+      lastActiveAt: Date.now(),
+    })
+    this.activateTab(id)
+    return id
   }
 
   /** the editor tab showing this file, whichever module owns it (path compared after resolving links) */
@@ -612,14 +953,17 @@ export class TabManager {
     path?: string,
   ): { id: string; kind: TabKind; webContents: WebContents } | undefined {
     const wanted = canonicalPath(path)
-    const tab = this.tabs.find(
-      (t) => t.view && t.filePath && !t.present && canonicalPath(t.filePath) === wanted,
+    const tab = this.ensureLive(
+      this.tabs.find(
+        (t) =>
+          (t.view || t.dormant) && t.filePath && !t.present && canonicalPath(t.filePath) === wanted,
+      ),
     )
     return tab?.view ? { id: tab.id, kind: tab.kind, webContents: tab.view.webContents } : undefined
   }
 
   webContentsForTab(id: string): WebContents | undefined {
-    return this.tabs.find((t) => t.id === id)?.view?.webContents
+    return this.ensureLive(this.tabs.find((t) => t.id === id))?.view?.webContents
   }
 
   private findTabOfKindByPath(kind: TabKind, path?: string): string | undefined {
@@ -627,7 +971,7 @@ export class TabManager {
     return this.tabs.find(
       (t) =>
         t.kind === kind &&
-        t.view &&
+        (t.view || t.dormant) &&
         t.filePath &&
         !t.present &&
         canonicalPath(t.filePath) === wanted,
@@ -687,11 +1031,81 @@ export class TabManager {
   }
 }
 
-function canonicalPath(path: string | undefined): string | undefined {
+/** the editor view for a tab rebuilt from its file (sleep/wake); null for kinds that cannot be */
+function createViewFor(kind: TabKind, filePath: string | undefined): WebContentsView | null {
+  if (!filePath) return null
+  switch (kind) {
+    case 'docs':
+      return createDocsView(filePath)
+    case 'sheets': {
+      const view = createSheetsView({ includeAiHandlers: false, openingWorkbook: true })
+      queueWorkbookForView(view.webContents, filePath)
+      return view
+    }
+    case 'slides':
+      return createSlidesView(filePath)
+    case 'pdf':
+      return createPdfView(filePath)
+    case 'markdown':
+      return createMarkdownView(filePath)
+    case 'html':
+      return createHtmlView(filePath)
+    default:
+      return null
+  }
+}
+
+/** release a view's renderer; docs needs its main-process bookkeeping dropped first */
+function destroyView(kind: TabKind, view: WebContentsView): void {
+  if (view.webContents.isDestroyed()) return
+  if (kind === 'docs') teardownDocsRenderer(view.webContents)
+  view.webContents.close()
+}
+
+/** test hooks: the sweep is minutes-scale by design, too slow for an e2e run */
+function envNumber(name: string): number | undefined {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function appOverMemoryBudget(): boolean {
+  try {
+    const usedKB = app.getAppMetrics().reduce((sum, m) => sum + m.memory.workingSetSize, 0)
+    return usedKB > process.getSystemMemoryInfo().total * MEMORY_BUDGET_SHARE
+  } catch {
+    return false
+  }
+}
+
+export function canonicalPath(path: string | undefined): string | undefined {
   if (path === undefined) return undefined
   try {
     return realpathSync.native(path)
   } catch {
     return path
   }
+}
+
+/** The manual shares the shell's renderer bundle and preload: the view is just
+    the shell renderer at ?mode=help. Dev serves it from the dev server, the
+    packaged app from the `help` scheme root registered in shell main. */
+function createHelpView(): WebContentsView {
+  const view = new WebContentsView({
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  })
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    const target = safeExternalUrl(url)
+    if (target) void shell.openExternal(target)
+    return { action: 'deny' }
+  })
+  void view.webContents.loadURL(
+    rendererUrl(process.env.ELECTRON_RENDERER_URL, 'help', { mode: 'help' }),
+  )
+  return view
 }

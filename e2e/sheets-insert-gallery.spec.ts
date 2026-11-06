@@ -35,7 +35,7 @@ function cellPoint(origin: { x: number; y: number }, row: number, column: number
 
 test.describe('sheets: Insert → Recommended Charts and Icons', () => {
   test('recommends charts for a time series and inserts an icon', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-gallery-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-gallery-e2e-'))
     const workbook = join(scratch, 'gallery.xlsx')
     await copyFile(FIXTURE, workbook)
 

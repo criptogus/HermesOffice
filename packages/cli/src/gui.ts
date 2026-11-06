@@ -7,13 +7,38 @@ import { CliError, EXIT } from './result'
 /** The shell's Electron userData directory, located without Electron (HERMESOFFICE_USER_DATA overrides). */
 export function hermesofficeUserDataDir(env: NodeJS.ProcessEnv): string {
   if (env.HERMESOFFICE_USER_DATA) return env.HERMESOFFICE_USER_DATA
+  // Resolve the home from the env we were given (as os.homedir() does with process.env.HOME), so
+  // an in-process caller with a substituted HOME never lands in the real user directories.
+  const home = env.HOME || homedir()
   const base =
     process.platform === 'darwin'
-      ? join(homedir(), 'Library', 'Application Support')
+      ? join(home, 'Library', 'Application Support')
       : process.platform === 'win32'
-        ? env.APPDATA || join(homedir(), 'AppData', 'Roaming')
-        : env.XDG_CONFIG_HOME || join(homedir(), '.config')
+        ? env.APPDATA || join(home, 'AppData', 'Roaming')
+        : env.XDG_CONFIG_HOME || join(home, '.config')
   return join(base, 'HermesOffice')
+}
+
+/**
+ * Every directory a live HermesOffice may have published its registries under: the
+ * packaged profile, then the dev profiles.
+ *
+ * The dev profile has been spelled two ways. It was `<name> Dev` until
+ * hermesoffice#1879 moved the shell to `<name>-Dev` — a space breaks XDG config
+ * entries, which are meant to be one token (hermesoffice#1817) — and the shell renames the
+ * old directory on first run after that. Both spellings are scanned here, new
+ * first, because a profile that was never migrated still has to be reachable:
+ * a custom `HERMESOFFICE_USER_DATA`, a checkout whose shell has not run since the
+ * rename, or a migration that could not move a busy directory.
+ *
+ * Both readers used to spell this list out on their own, and hermesoffice#1879
+ * changed the shell without either of them, so the CLI went on looking for a
+ * directory nothing wrote to any more.
+ */
+export function hermesofficeUserDataDirs(env: NodeJS.ProcessEnv): string[] {
+  if (env.HERMESOFFICE_USER_DATA) return [env.HERMESOFFICE_USER_DATA]
+  const packaged = hermesofficeUserDataDir(env)
+  return [packaged, `${packaged}-Dev`, `${packaged} Dev`]
 }
 
 export interface GuiOpenDocuments {
@@ -22,15 +47,15 @@ export interface GuiOpenDocuments {
 }
 
 /**
- * Files the running HermesOffice shell has open, from the registry it publishes
- * on every tab change (apps/shell/src/main/open-documents.ts). Null when no
+ * Files the running HermesOffice shell has open, from the registries it publishes
+ * on every tab change (apps/shell/src/main/open-documents.ts). Empty when no
  * shell is running: a registry whose pid is gone is a crash leftover.
  */
-export function guiOpenDocuments(env: NodeJS.ProcessEnv): GuiOpenDocuments | null {
-  // a checkout's shell keeps its userData in "<name> Dev" beside the packaged one
-  const dirs = env.HERMESOFFICE_USER_DATA
-    ? [env.HERMESOFFICE_USER_DATA]
-    : [hermesofficeUserDataDir(env), `${hermesofficeUserDataDir(env)} Dev`]
+export function guiOpenDocuments(
+  env: NodeJS.ProcessEnv,
+  dirs = hermesofficeUserDataDirs(env),
+): GuiOpenDocuments[] {
+  const live: GuiOpenDocuments[] = []
   for (const dir of dirs) {
     const path = join(dir, 'open-documents.json')
     if (!existsSync(path)) continue
@@ -38,12 +63,15 @@ export function guiOpenDocuments(env: NodeJS.ProcessEnv): GuiOpenDocuments | nul
       const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<GuiOpenDocuments>
       if (typeof raw.pid !== 'number' || !Array.isArray(raw.paths)) continue
       if (!processAlive(raw.pid)) continue
-      return { pid: raw.pid, paths: raw.paths.filter((p): p is string => typeof p === 'string') }
+      live.push({
+        pid: raw.pid,
+        paths: raw.paths.filter((p): p is string => typeof p === 'string'),
+      })
     } catch {
       continue
     }
   }
-  return null
+  return live
 }
 
 function processAlive(pid: number): boolean {
@@ -57,18 +85,18 @@ function processAlive(pid: number): boolean {
 
 /** Refuses to write a document the editor is showing; `--force` skips this. */
 export function assertNotOpenInGui(abs: string, env: NodeJS.ProcessEnv): void {
-  const open = guiOpenDocuments(env)
-  if (!open || open.paths.length === 0) return
   const target = realizedPath(abs)
-  if (!open.paths.some((p) => realizedPath(p) === target)) return
-  throw new CliError(
-    EXIT.file,
-    `HermesOffice has this file open: ${abs}`,
-    { gui_pid: open.pid },
-    {
-      reason: 'file_open_in_gui',
-      suggestion:
-        'close the tab in HermesOffice first, or pass --force to write anyway (the editor may overwrite your change on its next save)',
-    },
-  )
+  for (const open of guiOpenDocuments(env)) {
+    if (!open.paths.some((p) => realizedPath(p) === target)) continue
+    throw new CliError(
+      EXIT.file,
+      `HermesOffice has this file open: ${abs}`,
+      { gui_pid: open.pid },
+      {
+        reason: 'file_open_in_gui',
+        suggestion:
+          'close the tab in HermesOffice first, or pass --force to write anyway (the editor may overwrite your change on its next save)',
+      },
+    )
+  }
 }

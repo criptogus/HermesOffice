@@ -16,6 +16,7 @@ import { outputDirectory, parseScale, renderToPngs } from '../formats/render'
 import {
   auditDeckBytes,
   checkPageSpec,
+  deckAuditDetail,
   findStageFiles,
   pageIndexOf,
   replaceSlideFromSpec,
@@ -29,6 +30,7 @@ import { CliError, EXIT, type CommandResult } from '../result'
 import { txnDetail, txnFailure } from './txn'
 import { BATCH_OPTIONS, batchCounts, batchMode, batchResult, failedBatch } from '../batch'
 import type { OpFailure } from '../op-errors'
+import { emuPer, isReadUnit, READ_UNITS, type ReadUnit } from '../length-units'
 
 export const slidesCommand: CommandDef = {
   name: 'slides',
@@ -56,6 +58,11 @@ export const slidesCommand: CommandDef = {
       value: 'n',
       description:
         'read: preview length per text element (default 300); clipped text ends in …(+n chars)',
+    },
+    {
+      name: 'units',
+      value: 'unit',
+      description: `read: report box and slide size lengths in ${READ_UNITS.join(', ')} (default emu; px at 96 dpi)`,
     },
     { name: 'ops', value: 'file', description: 'apply: JSON ops file, or "-" for stdin' },
     { name: 'spec', value: 'file', description: 'replace: the one-page spec file to build' },
@@ -158,6 +165,7 @@ async function read(
   args: Parameters<CommandDef['run']>[0],
   ctx: CommandContext,
 ): Promise<CommandResult> {
+  const unit = unitsFlag(args)
   const path = resolveInput(file, ctx)
   const opened = await openDeck(readInput(path))
   const index = slideFlag(args, opened.deck.slides.length)
@@ -167,15 +175,35 @@ async function read(
     flagBool(args, 'full'),
     previewChars(args, PREVIEW_CHARS),
     flagBool(args, 'layouts'),
+    unit,
   )
   return {
     summary: `${basename(path)}: ${deck.slides} slides${deck.layouts ? `, ${deck.layouts.length} layouts` : ''}`,
     detail: {
       ...deck,
-      units:
-        'EMU (914400 per inch); slide ids s_<n> and element ids e_* are durable op targets; layouts[].name/index feed addSlideWithLayout',
+      units: `${unitsNote(unit)}; slide ids s_<n> and element ids e_* are durable op targets; layouts[].name/index feed addSlideWithLayout`,
     },
   }
+}
+
+function unitsFlag(args: Parameters<CommandDef['run']>[0]): ReadUnit {
+  const value = flagString(args, 'units')
+  if (value === undefined) return 'emu'
+  if (!isReadUnit(value)) {
+    throw new CliError(
+      EXIT.usage,
+      `--units must be one of ${READ_UNITS.join(', ')}, got "${value}"`,
+      { valid_values: READ_UNITS },
+      { reason: 'invalid_argument' },
+    )
+  }
+  return value
+}
+
+function unitsNote(unit: ReadUnit): string {
+  if (unit === 'emu') return 'EMU (914400 per inch)'
+  const dpi = unit === 'px' ? ' at 96 dpi' : ''
+  return `${unit}${dpi} (${emuPer(unit)} EMU each; box and size carry unit: "${unit}"); ops take the same lengths as strings such as "1.5${unit}"`
 }
 
 async function apply(
@@ -250,32 +278,16 @@ async function audit(
   const opened = await openDeck(bytes)
   const index = slideFlag(args, opened.deck.slides.length)
   const pages = await auditDeckBytes(bytes, index)
+  const { counts, issues, slides } = deckAuditDetail(pages)
   const failing = pages.filter((p) => p.issues.length > 0)
-  const total = failing.reduce((n, p) => n + p.issues.length, 0)
-  const flat = pages.flatMap((p) => p.findings.map((f) => ({ page: p, f })))
-  const counts = { error: 0, warning: 0 }
-  for (const { f } of flat) counts[f.level]++
-  const issues = flat.map(({ page, f }, i) => ({
-    id: `${f.level[0]!.toUpperCase()}${i + 1}`,
-    code: f.code,
-    level: f.level,
-    path: `${page.id}/${f.el}`,
-    slide: page.slide,
-    el: f.el,
-    ...(f.els ? { els: f.els } : {}),
-    message: f.message,
-    box: f.box,
-    ...(f.overflowPx !== undefined ? { overflowPx: f.overflowPx } : {}),
-    ...(f.suggest ? { suggest: f.suggest } : {}),
-  }))
   return {
     summary: failing.length
-      ? `${basename(path)}: ${total} issue(s) on ${failing.length} of ${pages.length} slide(s)`
+      ? `${basename(path)}: ${counts.error + counts.warning} issue(s) on ${failing.length} of ${pages.length} slide(s)`
       : `${basename(path)}: ${pages.length} slide(s), no layout issues`,
     detail: {
       issues,
       counts,
-      slides: pages.map((p) => ({ slide: p.slide, id: p.id, issues: p.issues })),
+      slides,
       metrics: 'heuristic glyph widths; overflow figures are approximate',
       ids: 'element ids match `slides read` / `slides apply` targets; `suggest` is a setTransform op (EMU) for `slides apply`',
     },

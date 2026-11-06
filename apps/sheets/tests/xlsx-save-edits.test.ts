@@ -45,6 +45,39 @@ describe('applyCellEditsToXlsx', () => {
     expect(after.get('xl/charts/chart1.xml')).toBe(before.get('xl/charts/chart1.xml'))
   })
 
+  it('keeps inferred row and cell addresses unique after a structural save', async () => {
+    const zip = await JSZip.loadAsync(await buildEditFixture())
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row><c r="A1"><v>1</v></c><c><v>2</v></c></row>' +
+        '<row><c r="A2"><v>3</v></c><c><v>4</v></c></row>' +
+        '</sheetData></worksheet>',
+    )
+    const mutation = await applyCellEditsToXlsx(
+      await zip.generateAsync({ type: 'nodebuffer' }),
+      [],
+      [
+        {
+          sheetName: 'Data',
+          ops: [
+            { kind: 'insert-cols', index: 0, count: 1 },
+            { kind: 'set-row-size', start: 0, end: 0, size: 20 },
+          ],
+        },
+      ],
+    )
+    const worksheet = await entryText(mutation.buffer, 'xl/worksheets/sheet1.xml')
+    expect(worksheet).toContain(
+      '<row r="1" ht="20" customHeight="1"><c r="B1"><v>1</v></c><c r="C1"><v>2</v></c></row>',
+    )
+    expect(worksheet).toContain('<row r="2"><c r="B2"><v>3</v></c><c r="C2"><v>4</v></c></row>')
+    const addresses = [...worksheet.matchAll(/<c\b[^>]*\br="([A-Z]+[0-9]+)"/g)].map(
+      (match) => match[1],
+    )
+    expect(new Set(addresses).size).toBe(addresses.length)
+  })
+
   it('inserts a new cell in column order within an existing row', async () => {
     const worksheet = await editedWorksheet([edit(0, 1, { value: 7 })])
     const row = /<row r="1">([\s\S]*?)<\/row>/.exec(worksheet)?.[1] ?? ''

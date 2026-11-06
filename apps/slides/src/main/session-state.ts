@@ -1,5 +1,5 @@
 /**
- * Shared main-process state for GenOffice Slides, extracted from slides-main.ts so
+ * Shared main-process state for HermesOffice Slides, extracted from slides-main.ts so
  * the IPC modules (slides-main, ai-ipc, presenter-show) can share it:
  * per-renderer sessions, snapshot undo/redo history, runtime paths, window
  * references, and RenderSlide rebuild helpers.
@@ -7,6 +7,7 @@
 import { BrowserWindow, webContents } from 'electron'
 import type { WebContents } from 'electron'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import {
   materializeSlide,
   parseClrMap,
@@ -14,6 +15,8 @@ import {
   resolveSchemeColor,
   type OpenedPptx,
   type Slide,
+  type SlideElement,
+  type TextElement,
 } from '@hermesoffice/pptx-engine'
 import {
   buildRenderSlide,
@@ -24,12 +27,13 @@ import { createSystemFontMetrics, resetFontRegistry } from './fonts'
 import { tiffToPng } from './tiff-decode'
 import { neutralizeJpegOrientation } from './jpeg-orientation'
 import { displayMime } from './media-mime'
+import type { SlideUpdate } from '../shared/ipc'
 
 export interface RuntimePaths {
   preloadPath: string
   rendererDevUrl?: string | undefined
   rendererFilePath?: string | undefined
-  /** Shell router used to open exported PDFs in a new GenOffice tab. */
+  /** Shell router used to open exported PDFs in a new HermesOffice tab. */
   openGeneratedPath?: (path: string) => boolean
 }
 
@@ -63,20 +67,33 @@ export interface Session {
   aiSnapshots?: Map<number, HistorySnapshot>
   /** Edits that only touch archive entries (notes/comments; element-level dirty cannot detect them), reset after save */
   metaDirty?: boolean
+  /** Monotonic count of metaDirty transitions, so a save can tell a notes/comments
+      edit committed while its write was streaming from one the write carried. */
+  metaRev?: number
   /** Transform preview gesture in progress (the first preview already pushed an undo snapshot; later previews/final commit do not) */
   transformPreview?: boolean
+  /** Redo stack as it was before the preview gesture's pushHistory cleared it; a cancel puts it back */
+  previewRedo?: HistorySnapshot[]
   /** The part currently edited in master view (exception to the fidelity rule: only that part is written back) */
   masterEdit?: { partPath: string; slide: Slide } | null
   /** A history-state notification is already queued for this session (coalesces per task) */
   historyNotifyScheduled?: boolean
   /** A deck-changed broadcast is already queued for this session (coalesces per task) */
   deckBroadcastScheduled?: boolean
+  /** One entry per queued edit; null requires a full resync, otherwise patches coalesce. */
+  deckBroadcastUpdates?: Array<SlideUpdate | null>
   /** Monotonic sequence of the last journaled op entry (collab groundwork) */
   opSeq?: number
   /** Applied-op journal, capped ring — the attachment point for a future sync transport */
   opLog?: OpLogEntry[]
 }
 export const sessions = new Map<number, Session>()
+
+/** Flag an archive-only edit (notes/comments) and advance the save-snapshot counter. */
+export function markMetaDirty(session: Session): void {
+  session.metaDirty = true
+  session.metaRev = (session.metaRev ?? 0) + 1
+}
 
 // ── Op journal (collab groundwork) ──────────────────────────────────────
 // Every applied transaction appends its records here in order. Snapshot restores
@@ -162,6 +179,7 @@ export function scheduleHistoryNotify(session: Session): void {
   session.historyNotifyScheduled = true
   setImmediate(() => {
     session.historyNotifyScheduled = false
+    pruneMediaSources(session)
     // A shared session (second window on the same file, presenter audience) has
     // several attached webContents; the undo/redo button states change for all.
     for (const id of attachedIds(session)) {
@@ -201,14 +219,28 @@ export function editorAttachedIds(session: Session): number[] {
  * receives the same state again.
  */
 export function scheduleDeckBroadcast(session: Session): void {
+  ;(session.deckBroadcastUpdates ??= []).push(null)
   if (session.deckBroadcastScheduled) return
   session.deckBroadcastScheduled = true
   setImmediate(() => {
     session.deckBroadcastScheduled = false
+    const updates = session.deckBroadcastUpdates ?? []
+    session.deckBroadcastUpdates = undefined
     const ids = attachedIds(session)
     if (ids.length < 2) return
+    const last = updates.at(-1)
+    const partial = last && updates.every((update) => update !== null)
+    const changed = new Map<string | undefined, RenderSlide>()
+    if (partial) {
+      for (const update of updates) {
+        for (const slide of update!.slides) changed.set(slide.partPath, slide)
+      }
+    }
     const payload = {
-      slides: buildAllRenderSlides(session.opened, session.fitWidthPx),
+      ...(partial ? { order: last.order } : {}),
+      slides: partial
+        ? [...changed.values()].filter((s) => last.order.includes(s.partPath!))
+        : buildAllRenderSlides(session.opened, session.fitWidthPx),
       size: { cx: session.opened.deck.size.cx, cy: session.opened.deck.size.cy },
     }
     for (const id of ids) webContents.fromId(id)?.send('slides:deck-changed', payload)
@@ -353,10 +385,29 @@ export function slidesOpenQuickSwitcher(): boolean {
  *  windows have no tab strip and leave this null. */
 export const showChrome = {
   setBleed: null as ((wc: WebContents, on: boolean) => void) | null,
+  /** the window hosting a tab's WebContentsView when BrowserWindow.fromWebContents
+   *  cannot tell (a detached "Open in New Window" / torn-off editor) */
+  hostWindow: null as ((wc: WebContents) => BrowserWindow | undefined) | null,
 }
 
 export function setSlidesShowBleed(cb: (wc: WebContents, on: boolean) => void): void {
   showChrome.setBleed = cb
+}
+
+export function setSlidesHostWindowHook(
+  fn: ((wc: WebContents) => BrowserWindow | undefined) | null,
+): void {
+  showChrome.hostWindow = fn
+}
+
+/** the window a tab view lives in: its own BrowserWindow, the shell-registered
+ *  detached window, else the shell window */
+export function hostWindowFor(wc: WebContents): BrowserWindow | undefined {
+  const own = BrowserWindow.fromWebContents(wc) ?? showChrome.hostWindow?.(wc)
+  if (own && !own.isDestroyed()) return own
+  return windowRefs.shellWindow && !windowRefs.shellWindow.isDestroyed()
+    ? windowRefs.shellWindow
+    : undefined
 }
 
 export function setActiveSlidesWebContents(wc: WebContents | null): void {
@@ -393,6 +444,36 @@ export function buildAllRenderSlides(opened: OpenedPptx, fitWidthPx: number): Re
       slideNo: i + 1,
     }),
   )
+}
+
+/** Insertions only change new pages and shifted slide-number fields. Order is cheap
+ * metadata; unchanged render trees stay in the renderer, keyed by their part path. */
+export function buildSlideUpdate(session: Session, before: string[], changed: number[] = []) {
+  const previous = new Map(before.map((path, i) => [path, i]))
+  const hasNumber = (el: SlideElement): boolean =>
+    el.type === 'group'
+      ? el.children.some(hasNumber)
+      : !!(el as TextElement).text?.paragraphs.some((p) =>
+          p.runs.some((r) => r.field === 'slidenum'),
+        )
+  const update: SlideUpdate = {
+    order: session.opened.deck.slides.map((s) => s.path),
+    slides: session.opened.deck.slides.flatMap((s, i) => {
+      const oldIndex = previous.get(s.path)
+      const renumber =
+        oldIndex !== undefined &&
+        oldIndex !== i &&
+        [...s.elements, ...(s.decorations ?? [])].some(hasNumber)
+      return oldIndex === undefined || changed.includes(i) || renumber
+        ? [rebuildSlide(session, i)!]
+        : []
+    }),
+  }
+  // The transaction just queued this edit. Supply its partial state to other attached
+  // windows too; any unrelated edit in the same task still forces a full resync.
+  const pending = session.deckBroadcastUpdates
+  if (pending?.length) pending[pending.length - 1] = update
+  return update
 }
 
 /** Office theme-class slot (MsftOfcThm_<slot>_Fill/_Stroke) → schemeClr name. */
@@ -448,35 +529,110 @@ export function retintThemedSvg(svg: string, opened: OpenedPptx, slidePath?: str
   )
 }
 
-/** Image mediaRef -> dataUrl (lazily decoded). TIFF is transcoded to PNG for display
-    (Chromium can't decode it); the archive keeps the original bytes for save fidelity.
-    The mime comes from magic-byte sniffing first (legacy decks mislabel media — a PNG
-    stored as .emf must not enter the EMF parser), extension second. */
+type MediaSource = {
+  opened: WeakRef<OpenedPptx>
+  bytes: WeakRef<Uint8Array>
+  mediaRef: string
+  slidePath?: string
+}
+const mediaSources = new Map<string, MediaSource>()
+const mediaUrls = new WeakMap<OpenedPptx, Map<string, string>>()
+const mediaCleanup = new FinalizationRegistry<Map<string, string>>((urls) => {
+  for (const url of urls.values()) mediaSources.delete(url)
+})
+const byteVersions = new WeakMap<Uint8Array, number>()
+let nextByteVersion = 0
+function byteVersion(bytes: Uint8Array | null): number {
+  if (!bytes) return 0
+  let version = byteVersions.get(bytes)
+  if (version === undefined) byteVersions.set(bytes, (version = ++nextByteVersion))
+  return version
+}
+
+/** Keep archive and rollback bytes, including media used by masters, layouts and notes. */
+export function pruneMediaSources(session: Session): void {
+  const urls = mediaUrls.get(session.opened)
+  if (!urls) return
+  const snapshots = [
+    ...session.undoStack,
+    ...session.redoStack,
+    ...(session.previewRedo ?? []),
+    ...(session.historyBatch ? [session.historyBatch.before] : []),
+    ...(session.aiSnapshots?.values() ?? []),
+  ]
+  const retained = new Set(session.opened.archive.entries.values())
+  for (const snapshot of snapshots)
+    for (const bytes of snapshot.entries.values()) retained.add(bytes)
+  for (const [key, url] of urls) {
+    const bytes = mediaSources.get(url)?.bytes.deref()
+    if (!bytes || !retained.has(bytes)) {
+      urls.delete(key)
+      mediaSources.delete(url)
+    }
+  }
+}
+
+/** Resolve opaque media URLs without cloning image bytes across the IPC boundary.
+ * Weak references leave archive/history responsible for the lifetime of the bytes.
+ * A replacement gets a new URL; undo reuses the original URL and decoded image. */
 export function makeMediaResolver(opened: OpenedPptx, slidePath?: string) {
-  const cache = new Map<string, string | undefined>()
   return (mediaRef: string): string | undefined => {
-    if (cache.has(mediaRef)) return cache.get(mediaRef)
     const bytes = opened.archive.readBytes(mediaRef)
-    let url: string | undefined
-    if (bytes) {
-      const mime = displayMime(mediaRef, bytes)
-      if (mime === 'image/tiff') {
-        const decoded = tiffToPng(bytes)
-        if (decoded) url = `data:image/png;base64,${Buffer.from(decoded.png).toString('base64')}`
-      } else if (mime === 'image/svg+xml') {
-        let text = Buffer.from(bytes).toString('utf8')
-        if (text.includes('MsftOfcThm_')) text = retintThemedSvg(text, opened, slidePath)
-        url = `data:${mime};base64,${Buffer.from(text, 'utf8').toString('base64')}`
-      } else {
-        // PowerPoint ignores EXIF orientation; Chromium applies it on decode — neutralize
-        // the flag so rotated-pixel JPEGs with a shape-level rot don't double-rotate
-        const served = mime === 'image/jpeg' ? neutralizeJpegOrientation(bytes) : bytes
-        url = `data:${mime};base64,${Buffer.from(served).toString('base64')}`
+    if (!bytes) return undefined
+    const mime = displayMime(mediaRef, bytes)
+    let context = ''
+    // SVG theme classes depend on the live theme and clrMap, including per-slide overrides.
+    if (mime === 'image/svg+xml') {
+      const path = slidePath ?? opened.deck.slides[0]?.path
+      if (path) {
+        const chain = opened.archive.resolveSlideChain(path)
+        context = [path, chain.layoutPath, chain.masterPath, chain.themePath]
+          .map((p) => `${p}:${byteVersion(p ? opened.archive.readBytes(p) : null)}`)
+          .join('|')
       }
     }
-    cache.set(mediaRef, url)
+    let urls = mediaUrls.get(opened)
+    if (!urls) {
+      urls = new Map()
+      mediaUrls.set(opened, urls)
+      mediaCleanup.register(opened, urls)
+    }
+    const key = `${byteVersion(bytes)}:${mime}:${context}`
+    let url = urls.get(key)
+    if (!url) {
+      url = `hermesoffice-slide-media://archive/${randomUUID()}?mime=${encodeURIComponent(mime)}`
+      urls.set(key, url)
+      mediaSources.set(url, {
+        opened: new WeakRef(opened),
+        bytes: new WeakRef(bytes),
+        mediaRef,
+        ...(slidePath ? { slidePath } : {}),
+      })
+    }
     return url
   }
+}
+
+/** Display-only conversion; the original archive bytes are untouched for PPTX save. */
+export function readSlideMedia(url: string): { body: Uint8Array; mime: string } | null {
+  const source = mediaSources.get(url)
+  const opened = source?.opened.deref()
+  const bytes = source?.bytes.deref()
+  if (!source || !opened || !bytes) return null
+  let mime = displayMime(source.mediaRef, bytes)
+  let body = bytes
+  if (mime === 'image/tiff') {
+    const decoded = tiffToPng(bytes)
+    if (!decoded) return null
+    body = decoded.png
+    mime = 'image/png'
+  } else if (mime === 'image/svg+xml') {
+    const text = Buffer.from(bytes).toString('utf8')
+    body = Buffer.from(retintThemedSvg(text, opened, source.slidePath), 'utf8')
+  } else if (mime === 'image/jpeg') {
+    body = neutralizeJpegOrientation(bytes)
+  }
+  return { body, mime }
 }
 
 /** Rebuild a single page's RenderSlide (sent back to the renderer after an edit). */

@@ -29,7 +29,6 @@ export interface ParseMap {
 
 interface BuildState {
   nextSid: number
-  previous: ParseMap | null
 }
 
 function isElement(node: T.Node): node is T.Element {
@@ -77,26 +76,72 @@ function collect(
   walk(root, null, 0)
 }
 
-/** Reuse the previous sid for an element with the same tag, same parent sid and the closest start offset. */
+/** Previous entries bucketed by tag + path, each bucket sorted by start offset. */
+function indexPrevious(previous: ParseMap | null): Map<string, ElementEntry[]> | null {
+  if (!previous) return null
+  const buckets = new Map<string, ElementEntry[]>()
+  for (const entry of previous.elements) {
+    const key = bucketKey(entry.tag, entry.path)
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(entry)
+    else buckets.set(key, [entry])
+  }
+  // collect() emits strictly increasing start offsets, so this only makes the
+  // per-bucket order explicit; equal offsets keep document order.
+  for (const bucket of buckets.values()) bucket.sort((a, b) => a.startTag[0] - b.startTag[0])
+  return buckets
+}
+
+function bucketKey(tag: string, path: string): string {
+  return `${tag}\u0000${path}`
+}
+
+/** First index in the bucket whose start offset is >= offset. */
+function lowerBound(bucket: readonly ElementEntry[], offset: number): number {
+  let lo = 0
+  let hi = bucket.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (bucket[mid]!.startTag[0] < offset) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** Reuse the previous sid for an element with the same tag, same parent path and the
+ * closest start offset. Only the two bucket neighbours can be closest, so the
+ * nearest-offset search is a binary search instead of a scan of every entry; a
+ * matched entry is removed from its bucket so a sid is never reused. Ties go to
+ * the smaller offset, which is what the former document-order scan picked. */
 function matchSid(
   entry: Omit<ElementEntry, 'sid'>,
-  previous: ParseMap | null,
-  used: Set<number>,
+  buckets: Map<string, ElementEntry[]> | null,
 ): number | null {
-  if (!previous) return null
-  let best: ElementEntry | null = null
-  let bestDist = Infinity
-  for (const old of previous.elements) {
-    if (used.has(old.sid) || old.tag !== entry.tag || old.path !== entry.path) continue
-    const dist = Math.abs(old.startTag[0] - entry.startTag[0])
-    if (dist < bestDist) {
-      best = old
-      bestDist = dist
+  if (!buckets) return null
+  const bucket = buckets.get(bucketKey(entry.tag, entry.path))
+  if (!bucket) return null
+  const at = lowerBound(bucket, entry.startTag[0])
+  let bestAt = at - 1
+  if (at < bucket.length) {
+    if (bestAt < 0) bestAt = at
+    else {
+      const left = Math.abs(bucket[bestAt]!.startTag[0] - entry.startTag[0])
+      const right = Math.abs(bucket[at]!.startTag[0] - entry.startTag[0])
+      if (right < left) bestAt = at
     }
   }
-  if (!best) return null
-  used.add(best.sid)
-  return best.sid
+  if (bestAt < 0) return null
+  const [matched] = bucket.splice(bestAt, 1)
+  return matched!.sid
+}
+
+/** One past the highest sid of the previous build; a loop, not a spread, so a
+ * document with more entries than the argument limit cannot throw. */
+function nextSidAfter(previous: ParseMap | null): number {
+  if (!previous) return 1
+  let max = 0
+  for (const entry of previous.elements) if (entry.sid > max) max = entry.sid
+  return max + 1
 }
 
 export function buildParseMap(
@@ -115,10 +160,9 @@ export function buildParseMap(
   collect(doc, found)
 
   const state: BuildState = {
-    nextSid: previous ? Math.max(0, ...previous.elements.map((e) => e.sid)) + 1 : 1,
-    previous,
+    nextSid: nextSidAfter(previous),
   }
-  const used = new Set<number>()
+  const buckets = indexPrevious(previous)
   const sidByNode = new Map<T.Element, number>()
   const pathByNode = new Map<T.Element, string>()
   const elements: ElementEntry[] = []
@@ -154,7 +198,7 @@ export function buildParseMap(
       inner,
       path,
     }
-    const sid = matchSid(partial, state.previous, used) ?? state.nextSid++
+    const sid = matchSid(partial, buckets) ?? state.nextSid++
     sidByNode.set(node, sid)
     elements.push({ sid, ...partial })
   }

@@ -111,8 +111,8 @@ describe('deleted resource cleanup', () => {
     })!
     const modelPath = mediaParts(opened).find((path) => path.endsWith('.glb'))!
     const second = duplicateSlide(opened, 0)!
-    const duplicateModel = second.elements.find((element) =>
-      element.descr?.startsWith('aislides-3d:'),
+    const duplicateModel = second.elements.find(
+      (element) => element.type === 'picture' && element.model3d,
     )!
 
     expect(deleteElement(opened, added.slide, added.elementId)).toBe(true)
@@ -317,5 +317,68 @@ describe('superseded shape picture-fill cleanup', () => {
       }),
     ).toBe(true)
     expect(opened.archive.entries.has(media)).toBe(false)
+  })
+})
+
+describe('3D marker scan is limited to shape-tree parts', () => {
+  /** A model placeholder as decks saved before am3d support carry it: a picture whose descr names the model part. */
+  async function withModel() {
+    const opened = await openPptx(await createBlankPptx())
+    const slide = opened.deck.slides[0]!
+    const modelPath = 'ppt/media/media9.glb'
+    opened.archive.entries.set(modelPath, new Uint8Array([0x67, 0x6c, 0x54, 0x46]))
+    const picture = addPicture(opened, slide, { bytes: PNG_1PX, ext: 'png', offset: OFF })!
+    const marker = `aislides-3d:${modelPath}`
+    picture.anchor.originalXml = picture.anchor.originalXml.replace(
+      /<p:cNvPr\b/,
+      `<p:cNvPr descr="${marker}"`,
+    )
+    picture.descr = marker
+    return { opened, added: { slide, elementId: picture.id }, modelPath }
+  }
+
+  const plant = (opened: Awaited<ReturnType<typeof openPptx>>, path: string, xml: string) =>
+    opened.archive.entries.set(path, Buffer.from(xml, 'utf8'))
+
+  it('still retains a model whose marker lives in a slide layout', async () => {
+    const { opened, added, modelPath } = await withModel()
+    plant(
+      opened,
+      'ppt/slideLayouts/slideLayout1.xml',
+      `<p:sldLayout descr="aislides-3d:${modelPath}"/>`,
+    )
+
+    expect(deleteElement(opened, added.slide, added.elementId)).toBe(true)
+    expect(opened.archive.entries.has(modelPath)).toBe(true)
+  })
+
+  it('does not scan parts outside slides, layouts and masters', async () => {
+    const { opened, added, modelPath } = await withModel()
+    const pres = opened.archive.readText('ppt/presentation.xml')!
+    plant(
+      opened,
+      'ppt/presentation.xml',
+      pres.replace(
+        '</p:presentation>',
+        `<p:cNvPr descr="aislides-3d:${modelPath}"/></p:presentation>`,
+      ),
+    )
+
+    expect(deleteElement(opened, added.slide, added.elementId)).toBe(true)
+    expect(opened.archive.entries.has(modelPath)).toBe(false)
+  })
+
+  it('collects the model once the last slide placeholder is gone', async () => {
+    const { opened, added, modelPath } = await withModel()
+    const second = duplicateSlide(opened, 0)!
+    const duplicateModel = second.elements.find((element) =>
+      element.descr?.startsWith('aislides-3d:'),
+    )!
+
+    expect(deleteElement(opened, added.slide, added.elementId)).toBe(true)
+    expect(opened.archive.entries.has(modelPath)).toBe(true)
+
+    expect(deleteElement(opened, second, duplicateModel.id)).toBe(true)
+    expect(opened.archive.entries.has(modelPath)).toBe(false)
   })
 })

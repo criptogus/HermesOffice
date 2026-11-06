@@ -44,6 +44,11 @@ const GUARD_PATTERN = /[\uFDD0\uFDD1]/g
 /// CR/LF inside "..." literals become guard characters; everything else is
 /// untouched so _nodeMaker still flattens the between-token breaks.
 export function guardLiteralNewlines(formula: string): string {
+  // GUARD_PATTERN is global, so .test() starts at lastIndex and leaves it past
+  // the match. Without the reset, the second guarded formula scanned from there,
+  // missed its own guard character and was rewritten despite already carrying
+  // one - the corruption this guard exists to prevent.
+  GUARD_PATTERN.lastIndex = 0
   if (!/[\r\n]/.test(formula) || GUARD_PATTERN.test(formula)) return formula
   let out = ''
   let inDouble = false

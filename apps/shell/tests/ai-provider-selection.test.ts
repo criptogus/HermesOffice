@@ -9,7 +9,7 @@ import {
 } from '../../../packages/ai-provider/src/providers'
 
 // Execute the real settings callbacks without starting Electron or its document engines.
-function settingsHandler(module: string, stored: Record<string, unknown>) {
+async function settingsHandler(module: string, stored: Record<string, unknown>) {
   const file = new URL(`../../${module}`, import.meta.url)
   const source = ts.createSourceFile(
     file.pathname,
@@ -37,7 +37,7 @@ function settingsHandler(module: string, stored: Record<string, unknown>) {
   const code = ts.transpile(`const handler = ${callback.getText(source)}; handler({});`, {
     target: ts.ScriptTarget.ES2022,
   })
-  const result = runInNewContext(code, {
+  const result = await runInNewContext(code, {
     readJson: () => structuredClone(stored),
     writeJson: writes,
     SETTINGS_PATH: () => 'ai-settings.json',
@@ -56,8 +56,8 @@ describe.each([
   'slides/src/main/ai-ipc.ts',
   'pdf/src/main/ai-ipc.ts',
 ])('%s provider selection', (module) => {
-  it('honors Codex without requiring an API key or explicit model', () => {
-    const { result, writes } = settingsHandler(module, {
+  it('honors Codex without requiring an API key or explicit model', async () => {
+    const { result, writes } = await settingsHandler(module, {
       provider: 'codex',
       providers: { codex: { apiKey: '', model: '', cliPath: '' } },
     })
@@ -65,21 +65,23 @@ describe.each([
     expect(writes).not.toHaveBeenCalled()
   })
 
-  it('honors another fully configured provider', () => {
+  it('honors another fully configured provider', async () => {
     expect(
-      settingsHandler(module, {
-        provider: 'anthropic',
-        providers: { anthropic: { apiKey: 'test-key', model: 'test-model' } },
-      }).result.provider,
+      (
+        await settingsHandler(module, {
+          provider: 'anthropic',
+          providers: { anthropic: { apiKey: 'test-key', model: 'test-model' } },
+        })
+      ).result.provider,
     ).toBe('anthropic')
   })
 
-  it('uses Hermes for fresh installations', () => {
-    expect(settingsHandler(module, {}).result.provider).toBe('hermes')
+  it('uses Hermes for fresh installations', async () => {
+    expect((await settingsHandler(module, {})).result.provider).toBe('hermes')
   })
 
-  it('falls back without overwriting an incomplete saved selection', () => {
-    const { result, writes } = settingsHandler(module, {
+  it('falls back without overwriting an incomplete saved selection', async () => {
+    const { result, writes } = await settingsHandler(module, {
       provider: 'anthropic',
       providers: { anthropic: { apiKey: '', model: '' } },
     })

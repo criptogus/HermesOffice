@@ -54,6 +54,7 @@ export const th = {
   aiSumInsertFootnote: 'แทรกเชิงอรรถแล้ว',
   aiSumInsertEndnote: 'แทรกอ้างอิงท้ายเรื่องแล้ว',
   aiSumDeleteNote: 'ลบหมายเหตุแล้ว',
+  aiSumEditNote: 'แก้ไขหมายเหตุแล้ว',
   aiSumReadNotes: 'อ่านหมายเหตุ',
   aiSumAddComment: 'เพิ่มข้อคิดเห็น',
   aiSumDeleteComment: 'ลบข้อคิดเห็น',
@@ -97,6 +98,11 @@ export const th = {
     'เปิดการติดตามการเปลี่ยนแปลง: การแก้ไขเนื้อหาของ AI จะถูกทำเครื่องหมายเป็นการเปลี่ยนแปลง (แทรกขีดเส้นใต้ ลบขีดทับ) ยอมรับหรือปฏิเสธได้ในรีวิว',
   aiTrackOffTitle:
     'ปิดการติดตามการเปลี่ยนแปลง: การแก้ไขของ AI มีผลทันที (ยังย้อนกลับได้ผ่านสแนปช็อตของเวอร์ชัน)',
+  aiRevisionBarTitle: 'การแก้ไข',
+  aiRevisionCount: 'การเปลี่ยนแปลง {count} รายการ',
+  aiRevisionRejectAll: 'ปฏิเสธทั้งหมด',
+  aiRevisionAcceptAll: 'ยอมรับทั้งหมด',
+  aiRevisionPara: 'ย่อหน้า {n}',
   aiTurnLimit:
     '(ถึงขีดจำกัดรอบการเรียกเครื่องมือของคำขอนี้แล้ว คำตอบด้านบนอิงจากขั้นตอนที่เสร็จสิ้นแล้ว อาจไม่สมบูรณ์)',
   aiStopped: '(หยุดแล้ว)',
@@ -108,6 +114,8 @@ export const th = {
   aiUnknownError: 'ข้อผิดพลาดที่ไม่รู้จัก',
   aiTimeoutError:
     'คำขอ AI หมดเวลา: เครือข่ายไม่ตอบสนอง จึงหยุดการทำงาน โปรดตรวจสอบการเชื่อมต่อแล้วลองใหม่',
+  aiRegionError:
+    'ผู้ให้บริการของโมเดลนี้ไม่ให้บริการในภูมิภาคปัจจุบันของคุณ — โปรดเลือกโมเดลอื่นหรือเปลี่ยนเครือข่าย',
   aiOverloadedError: 'บริการ AI มีผู้ใช้งานจำนวนมากในขณะนี้ โปรดลองอีกครั้งในอีกสักครู่',
   aiNetworkError:
     'เครือข่ายมีปัญหา ไม่สามารถเชื่อมต่อบริการ AI ได้ โปรดตรวจสอบการเชื่อมต่อแล้วลองใหม่',
@@ -117,6 +125,9 @@ export const th = {
   aiSumImageAttachment: 'รูปภาพแนบ {name}',
   aiSumRead: 'อ่าน {name}',
   aiSumReadAttachmentName: 'อ่านสิ่งที่แนบ {name}',
+  aiSumSkillsList: 'รายการสกิลที่ติดตั้ง',
+  aiSumSkillRead: 'อ่านสกิล {name}',
+  aiSumRunCli: 'รัน {args} แล้ว',
   aiSumWebSearch: 'ค้นหาเว็บ',
   aiSumWebSearchDone: 'ค้นหา "{query}" ({count} รายการ)',
   aiSumImageSearch: 'ค้นหารูปภาพ',
@@ -163,6 +174,7 @@ export const th = {
   aiCmdNone: 'ไม่พบบล็อกที่ต้องแก้ไข เอกสารไม่มีการเปลี่ยนแปลง',
   aiCmdNoneSkipped:
     'ไม่มีบล็อกที่แก้ไขได้ เอกสารไม่มีการเปลี่ยนแปลง (ข้ามบล็อกที่ได้รับการป้องกัน {count} บล็อก ตาราง/รูปภาพไม่สามารถแก้ไขด้วยคำสั่งสไตล์ได้)',
+  aiCmdNoneUnchanged: 'บล็อกที่ตรงกัน {count} บล็อกไม่ได้ถูกแก้ไข เอกสารไม่มีการเปลี่ยนแปลง',
   aiCmdTextStyle: 'อัปเดตสไตล์ข้อความของ {count} บล็อกแล้ว',
   aiCmdMatchedStyle: 'ปรับสไตล์ข้อความที่ตรงกัน {count} จุดแล้ว ({blocks} บล็อก)',
   aiCmdParaStyle: 'อัปเดตการจัดรูปแบบย่อหน้าของ {count} บล็อกแล้ว',
@@ -177,4 +189,22 @@ export const th = {
   aiCmdImages: 'อัปเดตรูปภาพ {count} รูปแล้ว',
   aiCmdToc: 'แทรกสารบัญแล้ว ({count} รายการ)',
   aiCmdSkipped: ' (ข้ามบล็อกที่ได้รับการป้องกัน {count} บล็อก)',
+  aiStarterMindMap: 'สร้างแผนที่ความคิดของเอกสารนี้',
+  aiMindMapBtn: 'แผนที่ความคิด AI',
+  aiMindMapPrompt:
+    'สร้างแผนที่ความคิดของเอกสารนี้ โดยจัดเรียงหัวข้อหลักและแนวคิดสำคัญตามโครงสร้างส่วนต่างๆ',
+  aiSumMindMap: 'สร้างแผนที่ความคิด',
+  aiMindMapTitle: 'แผนที่ความคิด',
+  aiMindMapNodes: '{count} โหนด',
+  aiMindMapAskPrompt: 'บอกฉันเกี่ยวกับ「{label}」ในเอกสารนี้',
+  aiMindMapJump: 'ไปยังย่อหน้าที่อ้างอิง',
+  aiMindMapExport: 'ส่งออก PNG',
+  aiMindMapExportSvg: 'ส่งออก SVG',
+  aiMindMapInsert: 'แทรกลงในเอกสาร',
+  aiMindMapReset: 'รีเซ็ตมุมมอง',
+  aiMindMapExpand: 'ขยายสาขา',
+  aiMindMapCollapse: 'ย่อสาขา',
+  aiMindMapToggleLayout: 'สลับเลย์เอาต์',
+  aiMindMapLayoutTopDown: 'สลับเป็นเลย์เอาต์แบบบนลงล่าง',
+  aiMindMapLayoutLeftRight: 'สลับเป็นเลย์เอาต์แบบซ้ายไปขวา',
 } satisfies Record<keyof typeof zh, string>

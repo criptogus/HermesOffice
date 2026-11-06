@@ -10,6 +10,9 @@
     "./custgeom": "./src/custgeom.ts",
     "./table-grid": "./src/table-grid.ts",
     "./identity": "./src/identity.ts",
+    "./chart-workbook": "./src/chart-workbook.ts",
+    "./dgm-hier": "./src/dgm-hier.ts",
+    "./model3d": "./src/model3d.ts",
     "./named-action": "./src/named-action.ts",
     "./background-promote": "./src/background-promote.ts"
   },
@@ -19,13 +22,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@hermesoffice/zip-gate": "*",
     "fast-xml-parser": "^5.3.4",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "@hermesoffice/agent-core": "*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "pptxgenjs": "^4.0.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

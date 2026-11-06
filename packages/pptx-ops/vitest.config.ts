@@ -15,6 +15,10 @@ export default defineConfig({
         here,
         '../pptx-engine/src/background-promote.ts',
       ),
+      '@hermesoffice/pptx-engine/chart-workbook': resolve(
+        here,
+        '../pptx-engine/src/chart-workbook.ts',
+      ),
       '@hermesoffice/pptx-engine': resolve(here, '../pptx-engine/src/index.ts'),
       '@hermesoffice/docx-engine/math': resolve(here, '../docx-engine/src/math.ts'),
     },

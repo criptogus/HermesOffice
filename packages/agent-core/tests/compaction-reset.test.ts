@@ -26,7 +26,7 @@ function controlledTransport() {
   return { transport, calls }
 }
 
-async function startCompaction() {
+async function startCompaction(advance: () => Promise<unknown> = flush) {
   const { transport, calls } = controlledTransport()
   const skill: AgentSkill = {
     id: 'test',
@@ -45,17 +45,17 @@ async function startCompaction() {
   // Build history through public calls. The long first reply exceeds the budget;
   // a second user turn supplies a boundary at which that history can be folded.
   loop.run('Old conversation instruction')
-  await flush()
+  await advance()
   calls[0]!.callbacks.onDelta('Old answer '.repeat(80))
   calls[0]!.callbacks.onDone()
   loop.run('Recent question')
-  await flush()
+  await advance()
   calls[1]!.callbacks.onDelta('Recent answer')
   calls[1]!.callbacks.onDone()
 
   onDone.mockClear()
   loop.run('Continue the old conversation')
-  await flush()
+  await advance()
   expect(calls).toHaveLength(3)
   expect(calls[2]!.request.tools).toEqual([])
   expect(calls[2]!.request.messages).toContainEqual({
@@ -80,6 +80,26 @@ describe('AgentLoop reset during compaction', () => {
     expect(loop.busy).toBe(false)
     expect(calls).toHaveLength(3)
     expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it('cancels a timed-out summary before starting the real turn', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, loop, summary } = await startCompaction(() => vi.advanceTimersByTimeAsync(0))
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(summary.cancel).toHaveBeenCalledOnce()
+      expect(calls).toHaveLength(4)
+      const continuation = calls[3]!
+      expect(continuation.request.messages[0]).toEqual({
+        role: 'user',
+        text: expect.stringContaining('[Summary of earlier conversation'),
+      })
+      continuation.callbacks.onDelta('Continued answer')
+      continuation.callbacks.onDone()
+      expect(loop.busy).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('preserves a new conversation started immediately after reset', async () => {

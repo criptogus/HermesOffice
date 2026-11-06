@@ -59,6 +59,17 @@ describe('flattenSvgPath', () => {
     const rings = flattenSvgPath('M 0 0 L 20 0 L 20 20 L 0 20 Z M 5 5 L 15 5 L 15 15 L 5 15 Z')
     expect(rings).toHaveLength(2)
   })
+
+  it('sanitizes hostile tokens to finite numbers', () => {
+    const rings = flattenSvgPath('M NaN Infinity L 1e400 -1e400 C 0 0 0 0 NaN NaN Z')
+    for (const ring of rings) {
+      expect(ring.length).toBeGreaterThan(0)
+      for (const v of ring) expect(Number.isFinite(v)).toBe(true)
+    }
+    expect(flattenSvgPath('M 0 0 C 0 10 10 10 10 0 Z', 10000)[0]!.length).toBeLessThanOrEqual(
+      32 * 2 + 2,
+    )
+  })
 })
 
 describe('ring helpers', () => {

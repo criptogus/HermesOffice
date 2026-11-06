@@ -5,7 +5,7 @@ Upstream: emf-converter 2.0.2 (Apache-2.0) — https://github.com/ChristopherVR/
 `index.mjs` / `index.d.mts` are the published npm dist files, plus local WMF fixes
 (marked below); wrapper-level changes still go in `src/metafile.ts`.
 
-Local modifications to `index.mjs` (2026-08, GenOffice):
+Local modifications to `index.mjs` (2026-08, HermesOffice):
 - LOGFONT16 FaceName read at offset +18 (upstream read +14, landing in the
   precision/quality bytes, so every WMF font family came out empty)
 - Font escapement parsed and applied (rotated text), TA_* text alignment honored
@@ -33,10 +33,28 @@ Local modifications to `index.mjs` (2026-08, GenOffice):
   globalAlpha, source sub-rect scaled onto the destination
 - EMF canvases replay in rclFrame space (converted to device units via
   szlDevice/szlMillimeters) when rclBounds clearly disagree with the frame
-  (>5% per edge). Word maps the frame onto the picture extent, so a
+  (>1% per edge). Word maps the frame onto the picture extent, so a
   bounds-tight canvas got stretched to the frame's aspect by the display box
   (e.g. OLE preview text filling a third of a page-wide frame drew giant and
   deformed); matching frames keep the established bounds mapping
+- EMF+ dual-mode files (EmfPlusHeader flag bit 0) replay the EMF+ records only; the
+  GDI fallback records are painted just inside an EmfPlusGetDC window (MS-EMFPLUS
+  2.3.1.3), instead of drawing every shape and caption twice
+- EMR_EXTTEXTOUTW honours the Dx advance array (per-glyph placement, ETO_PDY),
+  TA_UPDATECP current-position text, ETO_CLIPPED / ETO_OPAQUE rectangles and the
+  symbol-font PUA remap; substituted fonts no longer overrun or hide neighbours
+- EmfPlusDrawDriverString: GlyphPos follows the glyph array without padding (odd
+  glyph counts read garbage positions), every glyph is placed at its own position,
+  the optional TransformMatrix is applied, glyph-index strings (no CmapLookup) skip
+- EMF+ page coordinates map through the GDI bounds origin and canvas scale
+  (deviceMap) so dual-mode fills line up with their GDI text and survive canvas
+  clamping; nested metafiles keep the plain dpi scale
+- EMF+ images are painted in z-order: files with image objects replay twice — a dry
+  pass collects the payloads, they are decoded, the real pass draws each in place
+- Continued EMF+ objects (64 KiB chunks) reassemble across EMR_COMMENT records and
+  finish when the declared TotalObjectSize is reached; every chunk drops its 4-byte
+  size prefix (only the first was skipped, so multi-chunk PNG/JPEG payloads and nested
+  metafiles came out corrupt or never completed)
 - LOGFONTW FaceName read at offset +32 (upstream read +28, landing in the
   OutPrecision/ClipPrecision/Quality/PitchAndFamily bytes — GDI+-generated EMFs
   set those non-zero, prefixing the family with control chars; the invalid CSS
@@ -50,7 +68,9 @@ Local modifications to `index.mjs` (2026-08, GenOffice):
 - EMR_CREATEDIBPATTERNBRUSHPT / EMR_CREATEMONOBRUSH implemented as repeating canvas
   patterns (upstream left them unhandled, so the previously selected solid brush
   painted the PATCOPY blits — Excel OLE previews drew their dotted cell borders as
-  solid lines)
+  solid lines); the tile is blown up to the device scale without smoothing, since GDI
+  tiles a pattern brush in device pixels (a 1-px checkerboard at 2x otherwise averages
+  to grey once the picture is fitted to the page)
 - Font strings carry a `sans-serif` generic fallback after the (quoted) facename; an
   unknown facename otherwise fell to the browser default serif, so CJK Office text in
   EMF previews (Meiryo UI, MS PGothic) drew in Mincho/Song
@@ -63,3 +83,21 @@ Local modifications to `index.mjs` (2026-08, GenOffice):
   plot with SetClipRect and widen the clip back with SetClipRegion; the region
   never resolved, so titles, legends and axis labels outside the plot area
   vanished
+- META_TEXTOUT / META_EXTTEXTOUT honour TA_UPDATECP like EMR_EXTTEXTOUTW already
+  did: with the flag set the record coords are ignored in favor of the current
+  position, and the position advances by the measured text extent. MathType OLE
+  previews place every run with MOVETO + a zero-coord text record, so all runs
+  stacked at the origin (a MathType equation rendered as its fraction line only,
+  hermesoffice#2316)
+- META_EXTTEXTOUT honors its Dx array (per-glyph logical advances) and
+  advances the TA_UPDATECP current point by the Dx sum, so MathType previews
+  that interleave runs keep their spacing instead of packing glyphs by the
+  substitute font's widths
+- `symbolTextMap` option: host-supplied Unicode decode for Symbol/Wingdings
+  text (the wrapper passes `decodeSymbolText`), so a MathType "=" or "+" in
+  the Symbol face renders on macOS/Linux instead of the U+F0xx PUA tofu
+- WMF strings decode in the font's code page: LOGFONT charset 128/129/134/136
+  -> Shift_JIS/EUC-KR/GBK/Big5, and with charset 0 the code page is inferred
+  from a non-ASCII facename (CJK MathType previews write GBK bytes for both
+  the face and the text under charset 0); the per-byte Dx array is folded to
+  one advance per decoded glyph

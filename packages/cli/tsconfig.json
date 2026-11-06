@@ -7,6 +7,7 @@
     "types": ["node"],
     // resolve sibling source packages by path (worktree-safe, see pdf2docx/tsconfig.json)
     "paths": {
+      "@hermesoffice/doc2docx": ["../doc2docx/src/index.ts"],
       "@hermesoffice/docx-engine": ["../docx-engine/src/index.ts"],
       "@hermesoffice/pptx-engine": ["../pptx-engine/src/index.ts"],
       "@hermesoffice/pdf2docx": ["../pdf2docx/src/index.ts"],

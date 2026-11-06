@@ -4,7 +4,19 @@ import { describe, expect, it } from 'vitest'
 import type { Rect } from '../src/geometry'
 import type { IrPage, Line, Span, TableBlock, TableCellBlock, TextBlock } from '../src/ir'
 import { parseCellValue } from '../src/rebuild-xlsx/numbers'
-import { ptToColumnChars, rebuildXlsx } from '../src/rebuild-xlsx/rebuild'
+import {
+  MAX_XLSX_CELL_TEXT,
+  MAX_XLSX_CELL_LINE_FEEDS,
+  MAX_XLSX_COLUMNS,
+  MAX_XLSX_COLUMN_WIDTH,
+  MAX_XLSX_HEADER_FOOTER_TEXT,
+  MAX_XLSX_ROW_HEIGHT_PT,
+  MAX_XLSX_ROWS,
+  normalizeSheetSpec,
+  worksheetXml,
+} from '../src/rebuild-xlsx/workbook'
+import { flattenBlockText, ptToColumnChars, rebuildXlsx } from '../src/rebuild-xlsx/rebuild'
+import { splitBandRows } from '../src/rebuild-xlsx/rowsplit'
 
 const span = (text: string, over: Partial<Span> = {}): Span => ({
   text,
@@ -92,6 +104,12 @@ describe('parseCellValue', () => {
     expect(parseCellValue('1,200%')).toEqual(num(12, '0%'))
   })
 
+  it('clamps the percent round-trip precision to what toFixed accepts', () => {
+    // 99 decimal places + the 2 guard digits = 101, one past toFixed's 0-100 range
+    expect(parseCellValue(`0.${'0'.repeat(98)}1%`)).toEqual(num(0, `0.${'0'.repeat(99)}%`))
+    expect(parseCellValue('45.3%')).toEqual(num(0.453, '0.0%'))
+  })
+
   it('parses currency prefixes and suffixes', () => {
     expect(parseCellValue('$1,200')).toEqual(num(1200, '"$"#,##0'))
     expect(parseCellValue('$1,200.50')).toEqual(num(1200.5, '"$"#,##0.00'))
@@ -142,6 +160,19 @@ describe('parseCellValue', () => {
     expect(parseCellValue('123456789012345678').kind).toBe('text')
     expect(parseCellValue('1e5')).toEqual(num(100000))
     expect(parseCellValue('1.5E-3')).toEqual(num(0.0015))
+  })
+
+  it('keeps huge comma-grouped integers as text', () => {
+    expect(parseCellValue('123,456,789,012,345,678').kind).toBe('text')
+    expect(parseCellValue('-123,456,789,012,345,678').kind).toBe('text')
+    expect(parseCellValue('$1,234,567,890,123,456').kind).toBe('text')
+    expect(parseCellValue('1,234,567,890,123,456\u5143').kind).toBe('text')
+    expect(parseCellValue('1,234,567,890,123,456%').kind).toBe('text')
+  })
+
+  it('parses comma-grouped integers within Excel precision as numbers', () => {
+    expect(parseCellValue('123,456,789,012,345')).toEqual(num(123456789012345, '#,##0'))
+    expect(parseCellValue('1,234,567,890,123.45')).toEqual(num(1234567890123.45, '#,##0.00'))
   })
 })
 
@@ -591,6 +622,27 @@ describe('splitBandRows via rebuildXlsx (P40)', () => {
     }
   }
 
+  it('split sub-rows keep the list marker and the TOC page number (hermesoffice#1380)', () => {
+    const table = bandTable(4)
+    const [refCell, descCell] = table.rows[1]! as [TableCellBlock, TableCellBlock]
+    const refBlock = refCell.blocks[0] as TextBlock
+    const descBlock = descCell.blocks[0] as TextBlock
+    refBlock.list = { kind: 'bullet', level: 0, marker: '\u2022' }
+    descBlock.tocEntry = { level: 0, pageNumber: '12' }
+    const split = splitBandRows(table)
+    expect(split.rows.length).toBeGreaterThan(2)
+    const joined = (col: number) =>
+      split.rows
+        .slice(1)
+        .map((r) => r[col]!.blocks.map(flattenBlockText).join('\n'))
+        .filter((t) => t !== '')
+        .join('\n')
+    expect(joined(0)).toBe(flattenBlockText(refBlock))
+    expect(joined(1)).toBe(flattenBlockText(descBlock))
+    expect(joined(0).startsWith('\u2022 R-0\nR-1')).toBe(true)
+    expect(joined(1).endsWith('DETAIL-3\t12')).toBe(true)
+  })
+
   it('splits a glued statement band into one row per transaction', async () => {
     const { sheets } = await rebuildXlsx([page({ blocks: [bandTable(4)] })])
     const cells = sheets[0]!.cells.filter((c) => c.value !== undefined)
@@ -681,5 +733,130 @@ describe('splitBandRows via rebuildXlsx (P40)', () => {
       expect(rowOfText(`C-${i}`)).toBe(rowOfText(`A-${i}`))
       expect(rowOfText(`D-${i}`)).toBe(rowOfText(`A-${i}`))
     }
+  })
+})
+
+describe('Excel worksheet limits', () => {
+  it('bounds cells, line feeds, headers, footers, widths, heights, and merges', () => {
+    const longText = 'x'.repeat(MAX_XLSX_CELL_TEXT + 1)
+    const lineFeedText = Array.from(
+      { length: MAX_XLSX_CELL_LINE_FEEDS + 2 },
+      (_, i) => `line${i}`,
+    ).join('\n')
+    const input = {
+      name: 'Page 1',
+      cells: [
+        { row: 0, col: 0, styleId: 0, value: { kind: 'text' as const, text: longText } },
+        {
+          row: MAX_XLSX_ROWS - 1,
+          col: MAX_XLSX_COLUMNS - 1,
+          styleId: 0,
+          value: { kind: 'text' as const, text: 'edge' },
+        },
+        {
+          row: 0,
+          col: 1,
+          styleId: 0,
+          value: { kind: 'text' as const, text: lineFeedText },
+        },
+        {
+          row: MAX_XLSX_ROWS,
+          col: 0,
+          styleId: 0,
+          value: { kind: 'text' as const, text: 'row' },
+        },
+        {
+          row: 0,
+          col: MAX_XLSX_COLUMNS,
+          styleId: 0,
+          value: { kind: 'text' as const, text: 'col' },
+        },
+      ],
+      colWidths: [MAX_XLSX_COLUMN_WIDTH + 1],
+      rowHeightsPt: new Map([
+        [0, MAX_XLSX_ROW_HEIGHT_PT + 1],
+        [MAX_XLSX_ROWS, 10],
+      ]),
+      merges: ['A1:B2', 'A1:XFE1', 'A1:B1048577'],
+      headerFooter: {
+        oddHeader: 'h'.repeat(MAX_XLSX_HEADER_FOOTER_TEXT + 1),
+        oddFooter: 'f'.repeat(MAX_XLSX_HEADER_FOOTER_TEXT + 1),
+      },
+    }
+    const { sheet, warnings } = normalizeSheetSpec(input)
+    expect(sheet.cells).toHaveLength(3)
+    expect(sheet.cells[0]!.value).toMatchObject({
+      kind: 'text',
+      text: longText.slice(0, MAX_XLSX_CELL_TEXT),
+    })
+    expect(sheet.cells[1]).toMatchObject({
+      row: MAX_XLSX_ROWS - 1,
+      col: MAX_XLSX_COLUMNS - 1,
+    })
+    const lineFeeds = (sheet.cells[2]!.value as { text: string }).text.match(/\n/g)?.length ?? 0
+    expect(lineFeeds).toBe(MAX_XLSX_CELL_LINE_FEEDS)
+    expect(sheet.headerFooter?.oddHeader).toHaveLength(MAX_XLSX_HEADER_FOOTER_TEXT)
+    expect(sheet.headerFooter?.oddFooter).toHaveLength(MAX_XLSX_HEADER_FOOTER_TEXT)
+    expect(sheet.colWidths?.[0]).toBe(MAX_XLSX_COLUMN_WIDTH)
+    expect(sheet.rowHeightsPt?.get(0)).toBe(MAX_XLSX_ROW_HEIGHT_PT)
+    expect(sheet.merges).toEqual(['A1:B2'])
+    expect(warnings.some((warning) => warning.includes('dropped cells'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('truncated cell text'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('removed cell line feeds beyond'))).toBe(
+      true,
+    )
+    expect(warnings.some((warning) => warning.includes('truncated header/footer text'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('clamped column widths'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('clamped row heights'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('dropped merges'))).toBe(true)
+
+    const xml = worksheetXml(input)
+    expect(xml).toContain('r="XFD1048576"')
+    expect(xml).not.toContain('r="1048577"')
+    expect(xml).not.toContain('r="XFE1"')
+    expect(xml).toContain('width="255"')
+    expect(xml).toContain('ht="409"')
+    expect(xml.match(/\n/g) ?? []).toHaveLength(MAX_XLSX_CELL_LINE_FEEDS)
+    expect(/<oddHeader>(.*?)<\/oddHeader>/.exec(xml)?.[1]).toHaveLength(MAX_XLSX_HEADER_FOOTER_TEXT)
+    expect(/<oddFooter>(.*?)<\/oddFooter>/.exec(xml)?.[1]).toHaveLength(MAX_XLSX_HEADER_FOOTER_TEXT)
+  })
+
+  it('reports line-feed and header/footer limits through the PDF rebuild result', async () => {
+    const text = `${'\n'.repeat(MAX_XLSX_CELL_LINE_FEEDS + 1)}${'x'.repeat(MAX_XLSX_CELL_TEXT + 1)}`
+    const furnitureText = 'h'.repeat(MAX_XLSX_HEADER_FOOTER_TEXT + 5)
+    const { sheets, warnings, xlsx } = await rebuildXlsx(
+      [page({ blocks: [textBlock(text, { x0: 72, y0: 700, x1: 300, y1: 715 })] })],
+      [
+        {
+          band: 'top',
+          text: furnitureText,
+          pageNo: false,
+          fontSizePt: 9,
+          fontFamily: 'Helvetica',
+          bold: false,
+          italic: false,
+          color: '000000',
+          x0: 240,
+          x1: 360,
+          edgeDistPt: 20,
+          coversFirstPage: true,
+        },
+      ],
+    )
+    const cellText = (sheets[0]!.cells[0]!.value as { text: string }).text
+    expect(cellText.length).toBeLessThanOrEqual(MAX_XLSX_CELL_TEXT)
+    expect(cellText.match(/\n/g)?.length ?? 0).toBe(MAX_XLSX_CELL_LINE_FEEDS)
+    expect(sheets[0]!.headerFooter?.oddHeader).toHaveLength(MAX_XLSX_HEADER_FOOTER_TEXT)
+    expect(warnings.some((warning) => warning.includes('truncated cell text'))).toBe(true)
+    expect(warnings.some((warning) => warning.includes('removed cell line feeds beyond'))).toBe(
+      true,
+    )
+    expect(warnings.some((warning) => warning.includes('truncated header/footer text'))).toBe(true)
+
+    const parts = await unzip(xlsx)
+    const sheetXml = parts.get('xl/worksheets/sheet1.xml')!
+    expect(/<oddHeader>(.*?)<\/oddHeader>/.exec(sheetXml)?.[1]).toBe(
+      `&amp;C${'h'.repeat(MAX_XLSX_HEADER_FOOTER_TEXT - 2)}`,
+    )
   })
 })

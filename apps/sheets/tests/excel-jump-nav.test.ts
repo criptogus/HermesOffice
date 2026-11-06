@@ -68,7 +68,7 @@ describe('findNextGapRange (DOWN)', () => {
     expect(range.startRow).toBe(999)
   })
 
-  it('stops at a formula block whose values are empty strings (r-genoffice-6#1)', () => {
+  it('stops at a formula block whose values are empty strings (r-hermesoffice-6#1)', () => {
     const sheet = makeSheet({
       0: { 0: { v: 10 } },
       6: { 0: { f: '=IF(B6,"","")', v: '' } },

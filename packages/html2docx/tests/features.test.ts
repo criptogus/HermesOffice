@@ -7,7 +7,7 @@ import JSZip from 'jszip'
 import { afterAll, beforeAll, test } from 'vitest'
 import type { Browser } from 'playwright-core'
 
-import { convertHtmlToDocx, EXTRACTOR_SOURCE, mapFont } from '../src'
+import { convertHtmlToDocx, EXTRACTOR_SOURCE, mapFont, runFont } from '../src'
 import { launchChrome, PlaywrightDriver } from '../src/drivers/playwright'
 
 const A4 = { width: 794, height: 1123, deviceScaleFactor: 2 }
@@ -445,6 +445,48 @@ test('splits a tall visual section into flowable screenshot slices', async () =>
   assert.equal(slices[0].height, 700)
   assert.equal(slices[1].height, 600)
   assert.match(screenshotText, /Consumer map/)
+})
+
+test('caps hostile screenshot geometry at the slice bound and keeps the content', async () => {
+  const { ir, xml } = await convertHtml(
+    `<!doctype html><html><head><style>
+      img { display:block; width:100px; height:100px; }
+    </style></head><body>
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="hostile">
+      <p>Following content</p>
+      <script>
+        const image = document.querySelector('img');
+        const original = image.getBoundingClientRect.bind(image);
+        image.getBoundingClientRect = () => {
+          const rect = original();
+          return {
+            left: rect.left,
+            top: rect.top,
+            right: rect.left + rect.width,
+            bottom: rect.top + 100000000,
+            width: rect.width,
+            height: 100000000,
+            x: rect.left,
+            y: rect.top,
+          };
+        };
+      </script>
+    </body></html>`,
+    'hostile-screenshot-geometry',
+  )
+  // Clamped, not rejected: a bounded number of slices that start at the
+  // element's top, and the surrounding text still converts.
+  const slices = ir.filter((node) => node.type === 'image' && node.clip)
+  assert.equal(slices.length, 64, JSON.stringify(ir))
+  slices.forEach((slice, index) => {
+    assert.equal(slice.height, 700)
+    assert.equal(slice.clip.y, slices[0].clip.y + index * 700)
+  })
+  assert.ok(
+    slices[0].clip.y < 100,
+    `first slice should start at the element top, got ${slices[0].clip.y}`,
+  )
+  assert.match((await xml('word/document.xml')) ?? '', /Following content/)
 })
 
 test('keeps a KPI row horizontal inside a card nested in a layout row', async () => {
@@ -953,6 +995,23 @@ test('maps kana extensions, radicals, and astral CJK to CJK fonts', () => {
   assert.equal(mapFont('', false, '⺁'), 'Microsoft YaHei')
   assert.equal(mapFont('', false, '𠀋'), 'Microsoft YaHei')
   assert.equal(mapFont('', false, 'hello'), 'Arial')
+})
+
+test('keeps Latin proportional when a run maps to a CJK font', () => {
+  assert.deepEqual(runFont('"Noto Serif SC", "Songti SC", serif', false, '\u6458\u8981 ABSTRACT'), {
+    ascii: 'Times New Roman',
+    hAnsi: 'Times New Roman',
+    cs: 'Times New Roman',
+    eastAsia: 'SimSun',
+  })
+  assert.deepEqual(runFont('', false, '\u6807\u9898 Title'), {
+    ascii: 'Arial',
+    hAnsi: 'Arial',
+    cs: 'Arial',
+    eastAsia: 'Microsoft YaHei',
+  })
+  assert.equal(runFont('"Open Sans", sans-serif', false, 'hello'), 'Arial')
+  assert.equal(runFont('Menlo', true, '\u4ee3\u7801'), 'Consolas')
 })
 
 test('preserves colored literal bullets as editable runs', async () => {

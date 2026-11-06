@@ -5,6 +5,39 @@ import { test, expect } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl, screenshotPath } from './helpers'
 
 test.describe('markdown editor', () => {
+  test('newly opened long Markdown starts at the title', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-md-scroll-'))
+    const mdPath = join(dir, 'scroll-repro.md')
+    const lines = Array.from(
+      { length: 30 },
+      (_, index) =>
+        `${String(index + 1).padStart(2, '0')}. This line increases the document height for the scroll position check.`,
+    )
+    await writeFile(
+      mdPath,
+      `# Weekly note\n\n## Context\n\nFirst section.\n\n## Actions\n\n- [ ] Prepare a short summary.\n\n## Reference notes\n\n${lines.join('\n')}\n`,
+    )
+
+    const launched = await launchShell({
+      onboardingSeen: true,
+      videoDir: 'markdown-initial-scroll',
+      openFile: mdPath,
+    })
+    try {
+      const page = await waitForPageWithUrl(launched.app, '://markdown/')
+      await expect(page.locator('.doc-editor h1')).toHaveText('Weekly note')
+      await page.locator('.doc-editor').focus()
+      await expect
+        .poll(() =>
+          page.locator('.editor-scroll').evaluate((el) => el.scrollHeight > el.clientHeight),
+        )
+        .toBe(true)
+      await expect.poll(() => page.locator('.editor-scroll').evaluate((el) => el.scrollTop)).toBe(0)
+    } finally {
+      await closeAndSaveVideo(launched, 'markdown-initial-scroll')
+    }
+  })
+
   test('AI Markdown quick card opens a markdown editor tab', async () => {
     const launched = await launchShell({ onboardingSeen: true, videoDir: 'new-markdown-tab' })
     const { app, page } = launched
@@ -89,9 +122,33 @@ test.describe('markdown editor', () => {
       await expect(editor.locator('h1')).toHaveText('Hello')
       await expect(editor.locator('strong')).toHaveText('bold')
 
-      // type at the end of the document, save with ⌘/Ctrl+S
-      await editor.click()
-      await editorPage.keyboard.press('ControlOrMeta+End')
+      // the shell hands focus to the view late and ProseMirror restores its
+      // start-of-doc selection on that focus; place the caret until it stays
+      await editor.focus()
+      await expect
+        .poll(async () => {
+          await editor.evaluate((element) => {
+            const last = element.lastElementChild
+            const selection = window.getSelection()
+            if (!last || !selection) throw new Error('Markdown editor has no final block')
+            const range = document.createRange()
+            range.selectNodeContents(last)
+            range.collapse(false)
+            selection.removeAllRanges()
+            selection.addRange(range)
+          })
+          await editorPage.waitForTimeout(150)
+          return editor.evaluate((element) => {
+            const selection = window.getSelection()
+            const last = element.lastElementChild
+            return Boolean(
+              selection?.isCollapsed &&
+              selection.anchorNode &&
+              last?.contains(selection.anchorNode),
+            )
+          })
+        })
+        .toBe(true)
       await editorPage.keyboard.press('Enter')
       await editorPage.keyboard.type('Appended line.')
       await editorPage.keyboard.press('ControlOrMeta+s')
@@ -211,7 +268,7 @@ test.describe('markdown editor', () => {
   })
 
   test('Ctrl+F finds across the document and Replace All rewrites the saved file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-md-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-md-'))
     const mdPath = join(dir, 'find.md')
     await writeFile(mdPath, '# Alpha\n\nalpha beta **alpha**\n')
 

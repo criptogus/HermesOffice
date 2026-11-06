@@ -1,4 +1,9 @@
 export type {
+  AiCustomCompat,
+  AiCustomEndpoint,
+  AiCustomModelProfile,
+  AiCustomProfile,
+  AiCustomProtocol,
   AiChatRequest,
   AiChatResponse,
   AiMediaProviderConfig,
@@ -17,6 +22,7 @@ export type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
+  AiTokenUsage,
   GenSparkAccountStatus,
   LegacyAiSettings,
 } from './types'
@@ -33,6 +39,24 @@ export {
   maxOutputTokensOf,
   resolveAiSettings,
 } from './providers'
+export {
+  activeCustomEndpoint,
+  customEndpointLabel,
+  newCustomEndpointId,
+  removeCustomEndpoint,
+  resolveCustomEndpoints,
+  selectCustomEndpoint,
+  upsertCustomEndpoint,
+} from './custom-endpoints'
+export {
+  AI_CUSTOM_PROTOCOLS,
+  declaredModelProfile,
+  normalizeCustomProfile,
+  resolveCustomProfile,
+} from './custom-profile'
+export type { ResolvedCustomProfile } from './custom-profile'
+export { resolveProfileCredential } from './credential-env'
+export type { EnvLookup } from './credential-env'
 export {
   AI_MEDIA_PROVIDERS,
   GEMINI_MEDIA_BASE_URL,
@@ -67,17 +91,32 @@ export type {
   GenerateImageInput,
   MediaBlob,
 } from './media-protocols'
-export { AI_PROVIDER_ADAPTERS, getProviderAdapter, modelLacksVision } from './registry'
+export {
+  AI_PROVIDER_ADAPTERS,
+  getProviderAdapter,
+  modelLacksVision,
+  normalizeBaseUrl,
+} from './registry'
 export type {
   AiProtocol,
   ProviderAdapter,
   ProviderCapabilities,
   ResolvedEndpoint,
 } from './registry'
+export { sanitizeAiSettings, sanitizeCliPath, validCliPath } from './ai-settings-guard'
+export {
+  isThinkingEffort,
+  resolveThinkingEffort,
+  thinkingShapeFor,
+  THINKING_LEVELS,
+  type ThinkingEffort,
+  type ThinkingShape,
+} from './thinking-effort'
 export { chatForProvider } from './chat'
 export { setAiUserAgent, setRescueFetch } from './fetch'
 export { isAiNetworkError } from './network-error'
 export { isAiOverloadedError } from './overload-error'
+export { isAiRegionBlockedError } from './region-error'
 export { parseOutputCapRejection } from './output-cap'
 export { AiCreditsError, sseLines, streamForProvider } from './stream'
 export type { StreamCallbacks } from './stream'

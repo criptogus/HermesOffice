@@ -6,7 +6,7 @@
  * Pure logic only — the Electron-side host that actually renders the file
  * lives in the shell main process (apps/shell/src/main/headless-export.ts).
  * Keeping the grammar and the exit codes here makes them unit-testable and
- * gives the external `genoffice` CLI one place to read the contract from.
+ * gives the external `hermesoffice` CLI one place to read the contract from.
  *
  * The renderer-side waiting helpers at the bottom live here too (imported as
  * `@hermesoffice/electron-utils/headless-export`, never through the package root,
@@ -17,18 +17,18 @@
 export type HeadlessExportModule = 'docs' | 'sheets' | 'slides' | 'markdown' | 'html'
 
 /** Conversion targets the headless entry accepts; see HEADLESS_TARGETS for which module renders which. */
-export type HeadlessExportFormat = 'pdf' | 'docx' | 'html'
+export type HeadlessExportFormat = 'pdf' | 'docx' | 'html' | 'md'
 
 /** Targets each editor module can render without a dialog. */
 export const HEADLESS_TARGETS: Record<HeadlessExportModule, readonly HeadlessExportFormat[]> = {
-  docs: ['pdf', 'html'],
+  docs: ['pdf', 'html', 'md'],
   sheets: ['pdf'],
   slides: ['pdf'],
   markdown: ['pdf'],
   html: ['pdf', 'docx'],
 }
 
-const ALL_TARGETS: readonly HeadlessExportFormat[] = ['pdf', 'docx', 'html']
+const ALL_TARGETS: readonly HeadlessExportFormat[] = ['pdf', 'docx', 'html', 'md']
 
 /** What a hidden renderer window is asked to produce. */
 export interface HeadlessExportTarget {
@@ -39,7 +39,7 @@ export interface HeadlessExportTarget {
 export const HEADLESS_EXPORT_FLAG = '--headless-export'
 
 /**
- * Process exit codes, matching the genoffice envelope convention.
+ * Process exit codes, matching the hermesoffice envelope convention.
  * 1 bad args / 2 input file error / 3 conversion failure.
  */
 export const HEADLESS_EXIT = {
@@ -73,7 +73,7 @@ export type HeadlessExportOutcome =
 
 const MODULE_BY_EXTENSION: ReadonlyArray<readonly [RegExp, HeadlessExportModule]> = [
   [/\.docx$/i, 'docs'],
-  [/\.(xlsx|xlsm|xls|csv)$/i, 'sheets'],
+  [/\.(xlsx|xlsm|xls|csv|tsv)$/i, 'sheets'],
   [/\.pptx$/i, 'slides'],
   [/\.(md|markdown)$/i, 'markdown'],
   [/\.(html|htm)$/i, 'html'],

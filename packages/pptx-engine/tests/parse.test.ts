@@ -6,7 +6,7 @@ import JSZip from 'jszip'
 import { openPptx, savePptx, reassembleSlideXml, generateParagraphXml } from '../src/index'
 import { parseSlide } from '../src/parse'
 import { tableRowGridCols } from '../src/table-grid'
-import { parsePlaceholderMap, parseMasterTextStyles } from '../src/placeholder'
+import { parsePlaceholderMap, parseMasterTextStyles, parseLstStyleLevels } from '../src/placeholder'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fx = (name: string) => readFileSync(join(here, 'fixtures', name))
@@ -122,6 +122,50 @@ describe('fill / color-mod / background parsing', () => {
     const el = slide.elements[0] as any
     expect(el.fill.type).toBe('gradient')
     expect(el.fill.scaled).toBe(true)
+  })
+
+  it('txBox="1" with prstGeom rect is a text box, not a shape', () => {
+    const sp =
+      '<p:sp><p:nvSpPr><p:cNvPr id="2" name="TextBox 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>' +
+      '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm>' +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/>' +
+      '<a:p><a:r><a:rPr lang="en-US"/><a:t>hi</a:t></a:r></a:p></p:txBody></p:sp>'
+    const el = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: slideWith(sp),
+      ctx: { theme },
+    }).elements[0] as any
+    expect(el.type).toBe('text')
+    expect(el.txBox).toBe(true)
+    expect(el.presetGeometry).toBe('rect')
+  })
+
+  it('txBox="1" on a non-rect geometry stays a shape', () => {
+    const sp =
+      '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Oval 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>' +
+      '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm>' +
+      '<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/>' +
+      '<a:p><a:r><a:rPr lang="en-US"/><a:t>hi</a:t></a:r></a:p></p:txBody></p:sp>'
+    const el = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: slideWith(sp),
+      ctx: { theme },
+    }).elements[0] as any
+    expect(el.type).toBe('shape')
+  })
+
+  it('rect geometry without txBox is a shape', () => {
+    const sp =
+      '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Rectangle 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>' +
+      '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm>' +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/>' +
+      '<a:p><a:r><a:rPr lang="en-US"/><a:t>hi</a:t></a:r></a:p></p:txBody></p:sp>'
+    const el = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: slideWith(sp),
+      ctx: { theme },
+    }).elements[0] as any
+    expect(el.type).toBe('shape')
   })
 
   it('gradFill with no a:lin/a:path defaults to a vertical ramp (PowerPoint-measured)', () => {
@@ -748,6 +792,19 @@ describe('table (p:graphicFrame a:tbl) parsing', () => {
     expect(el.rows[1][1].merged).toBe(true)
   })
 
+  it('no tableStyleId and no cell borders → PowerPoint "No Style, Table Grid" dk1 lines', () => {
+    const bare = tableXml.replace(/<a:ln[LRTB][^>]*>.*?<\/a:ln[LRTB]>/gs, '')
+    expect(bare).not.toContain('<a:lnB')
+    const slide = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: slideXml.replace(tableXml, bare),
+      ctx: {},
+    })
+    const c00 = (slide.elements[0] as any).rows[0][0]
+    expect(c00.borders.b).toEqual({ fill: { type: 'solid', color: '#000000' }, width: 12700 })
+    expect(c00.borders.l).toEqual({ fill: { type: 'solid', color: '#000000' }, width: 12700 })
+  })
+
   it('table element keeps byte fidelity (originalXml passthrough on save)', () => {
     const slide = parseSlide({ path: 'ppt/slides/slide1.xml', slideXml, ctx: {} })
     expect(reassembleSlideXml(slide)).toBe(slideXml)
@@ -815,6 +872,24 @@ describe('group (p:grpSp) parsing', () => {
     expect(c2.transform.offset.x).toBe(2000)
   })
 
+  it('keeps deeply nested groups as byte-preserving passthroughs', () => {
+    let group = '<p:sp><p:nvSpPr/><p:spPr/></p:sp>'
+    for (let i = 0; i < 2_000; i++) {
+      group = `<p:grpSp><p:nvGrpSpPr/><p:grpSpPr/>${group}</p:grpSp>`
+    }
+    const slideXml =
+      '<?xml version="1.0"?><p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree>' +
+      '<p:nvGrpSpPr/><p:grpSpPr/>' +
+      group +
+      '</p:spTree></p:cSld></p:sld>'
+
+    const slide = parseSlide({ path: 'ppt/slides/slide1.xml', slideXml, ctx: {} })
+
+    expect(slide.elements).toHaveLength(1)
+    expect(slide.elements[0]?.type).toBe('passthrough')
+    expect(reassembleSlideXml(slide)).toBe(slideXml)
+  })
+
   it('group emits original bytes on reassemble (fidelity: no child roundtrip)', () => {
     const slide = parseSlide({ path: 'ppt/slides/slide1.xml', slideXml: groupSlideXml, ctx: {} })
     expect(reassembleSlideXml(slide)).toBe(groupSlideXml)
@@ -867,6 +942,18 @@ describe('bullet (buChar/buAutoNum/buNone) and paragraph indent parsing', () => 
     expect(p.indent).toBe(-127000)
   })
 
+  it('keeps invalid numeric bullet references without aborting slide parsing', () => {
+    const slide = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: sldWith('<a:pPr><a:buChar char="&#x110000;"/></a:pPr>'),
+      ctx: {},
+    })
+    expect((slide.elements[0] as any).text.paragraphs[0].bullet).toEqual({
+      type: 'char',
+      char: '&#x110000;',
+    })
+  })
+
   it('buAutoNum / buNone', () => {
     const num = parseSlide({
       path: 'ppt/slides/slide1.xml',
@@ -880,6 +967,29 @@ describe('bullet (buChar/buAutoNum/buNone) and paragraph indent parsing', () => 
       ctx: {},
     })
     expect((none.elements[0] as any).text.paragraphs[0].bullet.type).toBe('none')
+  })
+
+  it('clamps buAutoNum startAt to the spec ceiling on slides and list styles', () => {
+    const huge = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: sldWith(
+        '<a:pPr><a:buAutoNum type="romanLcPeriod" startAt="100000000000000000000"/></a:pPr>',
+      ),
+      ctx: {},
+    })
+    expect((huge.elements[0] as any).text.paragraphs[0].bullet.startAt).toBe(32767)
+    const sane = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: sldWith('<a:pPr><a:buAutoNum type="arabicPeriod" startAt="7"/></a:pPr>'),
+      ctx: {},
+    })
+    expect((sane.elements[0] as any).text.paragraphs[0].bullet.startAt).toBe(7)
+    const lst = parseLstStyleLevels({
+      'a:lvl1pPr': { 'a:buAutoNum': { '@_type': 'alphaLcPeriod', '@_startAt': '1e20' } },
+      'a:lvl2pPr': { 'a:buAutoNum': { '@_type': 'alphaLcPeriod', '@_startAt': '99999' } },
+    })
+    expect(lst?.levels[0]?.bullet?.startAt).toBeUndefined()
+    expect(lst?.levels[1]?.bullet?.startAt).toBe(32767)
   })
 
   it('buBlip picture bullet resolves the blip through the slide rels; buSzPts is absolute pt', () => {
@@ -945,6 +1055,11 @@ describe('slide master bodyStyle bullet/indent inheritance', () => {
     expect(p.bullet).toEqual({ type: 'char', char: '•' })
     expect(p.marL).toBe(342900)
     expect(p.indent).toBe(-342900)
+  })
+
+  it('keeps invalid numeric bullet references in master list styles', () => {
+    const master = parseMasterTextStyles(masterXml.replace('&#x2022;', '&#x110000;'))
+    expect(master.body?.levels[0]?.bullet).toEqual({ type: 'char', char: '&#x110000;' })
   })
 
   it('buFontTx on an inheriting paragraph keeps the glyph but drops the chain font', () => {

@@ -5,6 +5,7 @@
  * then reads like any other document. A .docx chunk is parsed directly.
  */
 import type JSZip from 'jszip'
+import { resolveRelationshipTargetPath } from './parse-package'
 import type { RelInfo } from './parse-xml-text'
 
 export type AltChunkHtmlConverter = (html: string) => Promise<Uint8Array | null>
@@ -13,6 +14,11 @@ let htmlConverter: AltChunkHtmlConverter | null = null
 
 export function setAltChunkHtmlConverter(fn: AltChunkHtmlConverter | null): void {
   htmlConverter = fn
+}
+
+/** an HTML/MHT chunk can only expand where the host installed a converter */
+export function hasAltChunkHtmlConverter(): boolean {
+  return htmlConverter !== null
 }
 
 export type AltChunkKind = 'html' | 'mht' | 'docx'
@@ -147,21 +153,41 @@ function splitMultipart(body: Uint8Array, boundary: string): MimePart[] {
 }
 
 export function decodeQuotedPrintable(text: string): Uint8Array {
-  const out: number[] = []
   const src = text.replace(/=\r?\n/g, '')
+  // Two passes over the string, writing straight into the output bytes: the
+  // old number[] sink cost ~8 bytes of heap per output byte (measured at 27×
+  // the payload's size for a 32 MiB part; in place it is ~1×).
+  let len = 0
+  for (let i = 0; i < src.length; i++) {
+    const c = src.charCodeAt(i)
+    if (c === 0x3d && i + 2 < src.length) {
+      const a = src.charCodeAt(i + 1)
+      const b = src.charCodeAt(i + 2)
+      // both hex digits?
+      if (
+        ((a >= 48 && a <= 57) || (a >= 65 && a <= 70) || (a >= 97 && a <= 102)) &&
+        ((b >= 48 && b <= 57) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102))
+      ) {
+        i += 2
+      }
+    }
+    len++
+  }
+  const out = new Uint8Array(len)
+  let w = 0
   for (let i = 0; i < src.length; i++) {
     const c = src.charCodeAt(i)
     if (c === 0x3d && i + 2 < src.length) {
       const hex = src.slice(i + 1, i + 3)
       if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
-        out.push(parseInt(hex, 16))
+        out[w++] = parseInt(hex, 16)
         i += 2
         continue
       }
     }
-    out.push(c & 0xff)
+    out[w++] = c & 0xff
   }
-  return Uint8Array.from(out)
+  return out
 }
 
 function decodeBase64(text: string): Uint8Array {
@@ -195,40 +221,47 @@ export function decodeMhtToHtml(bytes: Uint8Array): string | null {
   if (!htmlPart) return null
   const htmlBytes = decodeTransfer(htmlPart)
   const charset = headerParam(htmlPart.headers.get('content-type'), 'charset')
-  let html = charset ? decodeWithCharset(htmlBytes, charset) : decodeHtmlBytes(htmlBytes)
+  const html = charset ? decodeWithCharset(htmlBytes, charset) : decodeHtmlBytes(htmlBytes)
   const baseLocation = htmlPart.headers.get('content-location') ?? ''
+  // one map + one pass over the html: per-part regexes made this parts x html
+  const inline = new Map<string, string>()
   for (const part of parts) {
     if (part === htmlPart) continue
     const ct = (part.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
     if (!ct.startsWith('image/')) continue
     const dataUrl = `data:${ct};base64,${btoa(latin1(decodeTransfer(part)))}`
-    const refs = new Set<string>()
     const location = part.headers.get('content-location')
     if (location) {
-      refs.add(location)
+      inline.set(location.toLowerCase(), dataUrl)
       if (baseLocation) {
         const base = baseLocation.replace(/[^/]*$/, '')
-        if (location.startsWith(base)) refs.add(location.slice(base.length))
+        if (location.startsWith(base))
+          inline.set(location.slice(base.length).toLowerCase(), dataUrl)
       }
     }
     const cid = part.headers.get('content-id')?.replace(/^<|>$/g, '')
-    if (cid) refs.add(`cid:${cid}`)
-    for (const ref of refs) {
-      const escaped = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      html = html.replace(
-        new RegExp(`(src|href)\\s*=\\s*(["']?)${escaped}\\2`, 'gi'),
-        (_m, attr: string, q: string) => `${attr}=${q || '"'}${dataUrl}${q || '"'}`,
-      )
-    }
+    if (cid) inline.set(`cid:${cid}`.toLowerCase(), dataUrl)
   }
-  return html
+  if (inline.size === 0) return html
+  return html.replace(
+    /\b(src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi,
+    (m, attr: string, dq?: string, sq?: string, uq?: string) => {
+      const dataUrl = inline.get((dq ?? sq ?? uq ?? '').toLowerCase())
+      if (!dataUrl) return m
+      const q = sq !== undefined ? "'" : '"'
+      return `${attr}=${q}${dataUrl}${q}`
+    },
+  )
 }
 
-export function altChunkPartPath(rels: Map<string, RelInfo>, rId: string): string | null {
+export function altChunkPartPath(
+  rels: Map<string, RelInfo>,
+  rId: string,
+  sourcePath = 'word/document.xml',
+): string | null {
   const rel = rels.get(rId)
   if (!rel || rel.targetMode === 'External' || !ALT_CHUNK_REL.test(rel.type)) return null
-  const path = rel.target.startsWith('/') ? rel.target.slice(1) : `word/${rel.target}`
-  return path.replace(/^word\/\.\.\//, '')
+  return resolveRelationshipTargetPath(sourcePath, rel.target)
 }
 
 /**
@@ -240,8 +273,9 @@ export async function altChunkToDocx(
   rels: Map<string, RelInfo>,
   rId: string,
   contentTypeOf: (path: string) => Promise<string | undefined>,
+  sourcePath = 'word/document.xml',
 ): Promise<Uint8Array | null> {
-  const path = altChunkPartPath(rels, rId)
+  const path = altChunkPartPath(rels, rId, sourcePath)
   const file = path ? zip.file(path) : null
   if (!path || !file) return null
   const bytes = await file.async('uint8array')

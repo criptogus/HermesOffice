@@ -137,6 +137,12 @@ describe('shiftFormulaRefs: sheet prefixes', () => {
     )
   })
 
+  it('matches sheet qualifiers case-insensitively', () => {
+    expect(shift("=sHeEt1!B5+'sHeEt1'!C5", insertRows(3), false).formula).toBe(
+      "=sHeEt1!B6+'sHeEt1'!C6",
+    )
+  })
+
   it('leaves prefixed refs to other sheets alone', () => {
     expect(shift('=Other!B5', insertRows(3), true).formula).toBe('=Other!B5')
   })

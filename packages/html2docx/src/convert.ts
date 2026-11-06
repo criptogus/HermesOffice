@@ -31,6 +31,32 @@ export interface ConvertResult {
   stats: { screenshots: number; rasterizedDocumentText: boolean }
 }
 
+export function widestAuthoredWidth(): number | null {
+  // Some document templates constrain body directly; responsive webpages
+  // more often constrain repeated `.inner`/`.container` wrappers. At the
+  // initial A4 viewport those pages may already have crossed into their
+  // mobile breakpoint, destroying desktop grids before extraction.
+  const candidates = [document.body, ...document.body.querySelectorAll('*')]
+  let widest = 0
+  let seen = 0
+  for (const el of candidates) {
+    const rect = el.getBoundingClientRect()
+    const maxWidth = parseFloat(getComputedStyle(el).maxWidth)
+    if (
+      !Number.isFinite(maxWidth) ||
+      maxWidth <= window.innerWidth ||
+      maxWidth > 1600 ||
+      rect.width < window.innerWidth * 0.55 ||
+      rect.height < 20
+    ) {
+      continue
+    }
+    seen++
+    if (maxWidth > widest) widest = maxWidth
+  }
+  return seen ? Math.round(widest) : null
+}
+
 /** Single validated top-level IR node produced by the in-page extractor. */
 export interface ValidatedIr {
   type: string
@@ -91,13 +117,15 @@ export function normalizeIr(raw: unknown): ValidatedIr[] {
       )
     }
     // Numeric geometry flows from page JS into division (renderer scale =
-    // maxPx / node.width) and image dimensions. Reject NaN/Infinity/negative
-    // here so a hostile page cannot produce corrupt-geometry docx.
-    for (const key of ['width', 'height', 'widthFrac', 'heightPx', 'xPx', 'yPx'] as const) {
+    // maxPx / node.width), image dimensions and a spacer's exact line height.
+    // Reject NaN/Infinity/negative here so a hostile page cannot produce
+    // corrupt-geometry docx.
+    for (const key of ['width', 'height', 'widthFrac', 'heightPx', 'xPx', 'yPx', 'px'] as const) {
       const v = candidate[key]
       if (v !== undefined && v !== null) {
         const n = Number(v)
-        if (!Number.isFinite(n) || n < 0) {
+        const signed = key === 'xPx' || key === 'yPx'
+        if (!Number.isFinite(n) || (!signed && n < 0)) {
           throw new Error(
             `html2docx: extractor returned malformed IR at index ${index} ` +
               `(invalid numeric "${key}"); refusing to continue with compromised page JavaScript`,
@@ -157,25 +185,7 @@ export async function convertHtmlToDocx(
   // Authoring templates commonly use an 880px design canvas and are then
   // scaled to A4. Extract at that authored width so narrower A4 reflow does
   // not create artificial wraps and inflated table-row heights.
-  const authoredWidth = await driver.evaluate<number | null>(() => {
-    // Some document templates constrain body directly; responsive webpages
-    // more often constrain repeated `.inner`/`.container` wrappers. At the
-    // initial A4 viewport those pages may already have crossed into their
-    // mobile breakpoint, destroying desktop grids before extraction.
-    const candidates = [document.body, ...document.body.querySelectorAll('*')]
-    const widths = candidates.flatMap((el) => {
-      const rect = el.getBoundingClientRect()
-      const maxWidth = parseFloat(getComputedStyle(el).maxWidth)
-      return Number.isFinite(maxWidth) &&
-        maxWidth > window.innerWidth &&
-        maxWidth <= 1600 &&
-        rect.width >= window.innerWidth * 0.55 &&
-        rect.height >= 20
-        ? [maxWidth]
-        : []
-    })
-    return widths.length ? Math.round(Math.max(...widths)) : null
-  })
+  const authoredWidth = await driver.evaluate<number | null>(widestAuthoredWidth)
   // Content that overflows the A4 viewport horizontally (a 6-column table
   // whose last column collapses to 1px) renders broken at 794px while the
   // evaluation baseline at 1024px shows it intact. Reload wider whenever
@@ -571,7 +581,11 @@ export async function convertHtmlToDocx(
               backdrop.setAttribute('style', backdrop.getAttribute('data-h2d-old-style') || '')
               backdrop.removeAttribute('data-h2d-old-style')
             }
-            for (const child of document.body.children as HTMLCollectionOf<HTMLElement>) {
+            // Page JS may append body children between set and restore; only
+            // stamped nodes were touched.
+            for (const child of document.querySelectorAll<HTMLElement>(
+              '[data-h2d-old-visibility]',
+            )) {
               child.style.visibility = child.getAttribute('data-h2d-old-visibility') || ''
               child.removeAttribute('data-h2d-old-visibility')
             }

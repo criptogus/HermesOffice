@@ -22,6 +22,7 @@ import {
   duplicateSlide,
   insertBlankSlide,
   insertSlideWithLayout,
+  autofitGeneratedTextBoxes,
   listSlideLayouts,
   mergeSlideFromSource,
   moveSection,
@@ -264,6 +265,7 @@ register({
     )
     if (!slide) throw new GuidedError('op "insertSlidePptx": the source page could not be merged.')
     promoteSlideBackground(slide, opened.deck.size)
+    autofitGeneratedTextBoxes(slide)
     const at = op.at as number | undefined
     // The merge appends at index=total; move into place, then (replace) drop the displaced old page
     if (at != null && at < total && !moveSlide(opened, total, at)) {
@@ -565,6 +567,7 @@ register({
           ? { direction: raw.direction as SlideAnimation['direction'] }
           : {}),
         ...(typeof raw.presetXml === 'string' ? { presetXml: raw.presetXml } : {}),
+        ...(el!.type === 'picture' && el!.media ? { mediaKind: el!.media.kind } : {}),
       })
     }
     if (unresolved.length) {
@@ -588,16 +591,21 @@ register({
     if (typeof op.replace !== 'string') throw new GuidedError('op "findReplace" needs "replace".')
   },
   apply(op, ctx): OpRecord {
-    const { count } = replaceAllInDeck(ctx.opened.deck, String(op.find), String(op.replace), {
-      matchCase: op.matchCase as boolean | undefined,
-      firstOnly: op.firstOnly as boolean | undefined,
-      slideIndex: op.slideIndex as number | undefined,
-      elementId: op.elementId as string | undefined,
-    })
+    const { count, changedSlides } = replaceAllInDeck(
+      ctx.opened.deck,
+      String(op.find),
+      String(op.replace),
+      {
+        matchCase: op.matchCase as boolean | undefined,
+        firstOnly: op.firstOnly as boolean | undefined,
+        slideIndex: op.slideIndex as number | undefined,
+        elementId: op.elementId as string | undefined,
+      },
+    )
     if (!count) {
       throw new GuidedError(`op "findReplace": "${op.find}" was not found anywhere in the deck.`)
     }
-    return { op, after: { count } }
+    return { op, after: { count, changedSlides } }
   },
 })
 
@@ -739,7 +747,7 @@ register({
       )
     }
     for (const [k, v] of Object.entries(colors as Record<string, unknown>)) {
-      if (typeof v !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(v)) {
+      if (typeof v !== 'string' || !/^#?[0-9a-fA-F]{6}$/.test(v.trim())) {
         throw new GuidedError(`op "applyTheme": colors.${k} must be a "#RRGGBB" string.`)
       }
     }

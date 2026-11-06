@@ -172,6 +172,13 @@ describe('defaultThreshold', () => {
     expect(defaultThreshold('iconSet', 2, 3)).toEqual({ kind: 'percent', value: '67' })
     expect(defaultThreshold('iconSet', 3, 4)).toEqual({ kind: 'percent', value: '75' })
   })
+
+  it('falls back to min on degenerate counts instead of emitting Infinity/NaN', () => {
+    expect(defaultThreshold('iconSet', 1, 0)).toEqual({ kind: 'min' })
+    expect(defaultThreshold('iconSet', 1, -2)).toEqual({ kind: 'min' })
+    expect(defaultThreshold('iconSet', 1, NaN)).toEqual({ kind: 'min' })
+    expect(defaultThreshold('iconSet', 1, 1.5)).toEqual({ kind: 'min' })
+  })
 })
 
 describe('percentileInc', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateTableModelXml, parseDocx } from '../src/index'
+import { generateTableModelXml, parseDocx, reconcileGridColumns } from '../src/index'
 import { buildDocx } from './helpers/build-docx'
 
 function tc(text: string, tcPr = ''): string {
@@ -121,13 +121,14 @@ describe('grid reconciliation from tcW boundaries', () => {
         `<w:tr>${cell}</w:tr></w:tbl>`,
     )
     expect(declared.colWidthsTwips).toEqual([10469])
-    // a percent width is declared too: the grid stays authoritative
+    // a percent width: a grid that does not sum to the pct width is not Word's
+    // layout, the cells' preferred widths win (probe 2026-10-29)
     const pct = await tableOf(
       '<w:tbl><w:tblPr><w:tblW w:w="100%" w:type="pct"/></w:tblPr>' +
         gridXml([10469]) +
         `<w:tr>${cell}</w:tr></w:tbl>`,
     )
-    expect(pct.colWidthsTwips).toEqual([10469])
+    expect(pct.colWidthsTwips).toEqual([6480])
   })
 
   it('keeps the grid of an undeclared-width table whose preferred widths overflow the column', async () => {
@@ -223,6 +224,32 @@ describe('grid reconciliation from tcW boundaries', () => {
     const plain = await tableOf(tbl(''))
     expect(plain.colWidthsTwips).toEqual([4200, 2100, 4300])
     expect(plain.layoutGrid).toBeUndefined()
+  })
+})
+
+describe('content autofit flag', () => {
+  const pctTbl = (cells: string, layout = '') =>
+    `<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/>${layout}</w:tblPr>` +
+    gridXml([3960, 3960]) +
+    `<w:tr>${cells}</w:tr></w:tbl>`
+
+  it('a pct table with no w:tcW on any cell autofits to content', async () => {
+    const table = await tableOf(pctTbl(tc('Domaine') + tc('Resultat')))
+    expect(table.contentAutofit).toBe(true)
+    expect(table.autoLayout).toBe(true)
+  })
+
+  it('any w:tcW, a fixed layout or a dxa width keeps the grid path', async () => {
+    const tcw = await tableOf(pctTbl(tc('a', '<w:tcW w:w="3960" w:type="dxa"/>') + tc('b')))
+    expect(tcw.contentAutofit).toBeUndefined()
+    const fixed = await tableOf(pctTbl(tc('a') + tc('b'), '<w:tblLayout w:type="fixed"/>'))
+    expect(fixed.contentAutofit).toBeUndefined()
+    const dxa = await tableOf(
+      '<w:tbl><w:tblPr><w:tblW w:w="7920" w:type="dxa"/></w:tblPr>' +
+        gridXml([3960, 3960]) +
+        `<w:tr>${tc('a') + tc('b')}</w:tr></w:tbl>`,
+    )
+    expect(dxa.contentAutofit).toBeUndefined()
   })
 })
 
@@ -348,9 +375,30 @@ describe('tblW-auto layout grid flag', () => {
     )
     expect(autoCells.colWidthsTwips).toEqual([3813, 2508, 929, 2110])
     expect(autoCells.layoutGrid).toBe(true)
+    // tblW dxa without w:tblLayout fixed autofits too: Word draws the saved grid
+    // (probe: 10316 dxa, grid 440/1510/4249/1006/1223/1888 drawn at the grid, not tcW)
+    const declared = await tableOf(
+      '<w:tbl><w:tblPr><w:tblW w:w="9016" w:type="dxa"/></w:tblPr>' +
+        gridXml([3554, 1411, 4051]) +
+        row([3554, 1411, 4051]) +
+        '</w:tbl>',
+    )
+    expect(declared.layoutGrid).toBe(true)
+    expect(declared.autoFit).toBe('fixed')
+    // a Word-saved dxa table whose tcW differ from the grid by several percent
+    // (per-column ratio off by 4.6) is still drawn at the grid: the grid is the
+    // autofit result of tcW + content, so only an evenly split grid yields to tcW
+    const disagreeing = await tableOf(
+      '<w:tbl><w:tblPr><w:tblW w:w="8356" w:type="dxa"/></w:tblPr>' +
+        gridXml([907, 1557, 5892]) +
+        row([525, 1594, 6237]) +
+        '</w:tbl>',
+    )
+    expect(disagreeing.colWidthsTwips).toEqual([907, 1557, 5892])
+    expect(disagreeing.layoutGrid).toBe(true)
   })
 
-  it('leaves placeholder grids, tcW-driven widths and declared-width tables unflagged', async () => {
+  it('leaves placeholder grids, tcW-driven widths and fixed-layout tables unflagged', async () => {
     const placeholder = await tableOf(
       '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' +
         gridXml([2000, 2000, 2000]) +
@@ -359,13 +407,20 @@ describe('tblW-auto layout grid flag', () => {
     )
     expect(placeholder.colWidthsTwips).toEqual([3000, 3000, 3000])
     expect(placeholder.layoutGrid).toBeUndefined()
-    const declared = await tableOf(
-      '<w:tbl><w:tblPr><w:tblW w:w="9016" w:type="dxa"/></w:tblPr>' +
+    const uniformDxa = await tableOf(
+      '<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/></w:tblPr>' +
+        gridXml([3000, 3000, 3000]) +
+        row([3000, 3000, 3000]) +
+        '</w:tbl>',
+    )
+    expect(uniformDxa.layoutGrid).toBeUndefined()
+    const fixed = await tableOf(
+      '<w:tbl><w:tblPr><w:tblW w:w="9016" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>' +
         gridXml([3554, 1411, 4051]) +
         row([3554, 1411, 4051]) +
         '</w:tbl>',
     )
-    expect(declared.layoutGrid).toBeUndefined()
+    expect(fixed.layoutGrid).toBeUndefined()
   })
 
   it('legacy compat lets the shrunk layout hang by the cell margins', async () => {
@@ -387,5 +442,39 @@ describe('tblW-auto layout grid flag', () => {
     const modern = await of(15)
     expect(modern.colWidthsTwips).toEqual([1300, 3600, 1700, 2400])
     expect(modern.layoutGrid).toBeUndefined()
+  })
+})
+
+describe('hostile colSpan values', () => {
+  it('clamps non-finite and huge spans instead of throwing or emitting invalid OOXML', async () => {
+    const start = Date.now()
+    const xml = generateTableModelXml({
+      rows: [
+        [
+          { paras: ['a'], colSpan: Infinity },
+          { paras: ['b'], colSpan: 1e9 },
+        ],
+      ],
+    })
+    expect(Date.now() - start).toBeLessThan(5000)
+    expect(xml).not.toContain('Infinity')
+    expect(xml).toContain('<w:gridSpan w:val="1000"/>')
+    // the clamped model round-trips through the parser with a finite grid
+    const doc = await parseDocx(await buildDocx({ bodyXml: xml }))
+    expect(doc.blocks[0].table).toBeDefined()
+  })
+
+  it('reconciles a table with more rows than the argument limit', () => {
+    const rows = Array.from({ length: 150_000 }, () => [{ paras: ['a'] }])
+    const rowTcws = rows.map(() => [1000])
+    expect(reconcileGridColumns(rows, rowTcws, undefined)).toBeUndefined()
+    // a ragged row still rebuilds the grid from the tcW boundaries
+    const ragged = [...rows.slice(0, 149_999), [{ paras: ['a'] }, { paras: ['b'] }]]
+    const widths = reconcileGridColumns(
+      ragged,
+      [...rowTcws.slice(0, 149_999), [1000, 1000]],
+      undefined,
+    )
+    expect(widths).toEqual([1000, 1000])
   })
 })

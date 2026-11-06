@@ -42,7 +42,7 @@ describe('element clipboard OS marker', () => {
 
   it('recognizes the token in the HTML image marker when custom formats are absent', () => {
     electron.clipboard.readHTML.mockReturnValue(
-      '<img src="data:image/png;base64,cG5n" data-genoffice-slides-elements="copy-token-1">',
+      '<img src="data:image/png;base64,cG5n" data-hermesoffice-slides-elements="copy-token-1">',
     )
 
     expect(elementClipboardMarkerMatches(token)).toBe(true)
@@ -72,7 +72,7 @@ describe('element clipboard PNG writer', () => {
     expect(electron.clipboard.write).toHaveBeenCalledOnce()
     expect(electron.clipboard.write).toHaveBeenCalledWith({
       image: decoded,
-      html: '<img src="data:image/png;base64,bm9ybWFsaXplZC1wbmc=" data-genoffice-slides-elements="copy%20token">',
+      html: '<img src="data:image/png;base64,bm9ybWFsaXplZC1wbmc=" data-hermesoffice-slides-elements="copy%20token">',
     })
     expect(electron.nativeImage.createFromBuffer).toHaveBeenCalledOnce()
   })

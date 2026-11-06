@@ -348,8 +348,24 @@ describe('text-level hyphenation detection (P21 B)', () => {
     expect(blocks[0]!.lines[0]!.endsWithHyphen).toBe(true)
   })
 
-  it('joins a broken compound too — indistinguishable from hyphenation', () => {
-    const blocks = groupIntoBlocks([line('it is self-', 700), line('contained', 688)])
+  it('keeps an authored compound hyphen when the line had room to continue', () => {
+    // "self-" stops at x=200 while the next line runs to the 540 wrap edge and
+    // its first unit ("contained", ~1/4 of that line) still fits the 340pt
+    // leftover: space never forced this break, so the hyphen is the author's
+    const blocks = groupIntoBlocks([
+      line('it is self-', 700, LEFT + 128),
+      line('contained and more text here', 688, RIGHT),
+    ])
+    expect(blocks[0]!.lines[0]!.endsWithHyphen).toBe(false)
+  })
+
+  it('joins a compound broken flush to the wrap edge (no evidence either way)', () => {
+    // leftover 0 — the same evidence a greedy hyphenation leaves, so the
+    // hyphen is dropped exactly as before
+    const blocks = groupIntoBlocks([
+      line('it is self-', 700, RIGHT),
+      line('contained here', 688, RIGHT),
+    ])
     expect(blocks[0]!.lines[0]!.endsWithHyphen).toBe(true)
   })
 
@@ -370,6 +386,14 @@ describe('text-level hyphenation detection (P21 B)', () => {
 
   it('always joins a soft hyphen (U+00AD), even before uppercase', () => {
     const blocks = groupIntoBlocks([line('Vertrags\u00ad', 700), line('Partner sind', 688)])
+    expect(blocks[0]!.lines[0]!.endsWithHyphen).toBe(true)
+  })
+
+  it('joins a soft hyphen even when the next word would have fitted', () => {
+    const blocks = groupIntoBlocks([
+      line('Ver\u00ad', 700),
+      line('trag und weitere Bedingungen des Abschnitts', 688),
+    ])
     expect(blocks[0]!.lines[0]!.endsWithHyphen).toBe(true)
   })
 })

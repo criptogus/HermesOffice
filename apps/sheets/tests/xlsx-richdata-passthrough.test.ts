@@ -99,3 +99,71 @@ describe('richData passthrough on save', () => {
     expect(sheet).toContain('<c r="B2" t="e" vm="1"><v>#VALUE!</v></c>')
   })
 })
+
+describe('WPS in-cell picture passthrough on save', () => {
+  it('preserves image parts and DISPIMG formulas when other cells or picture formatting change', async () => {
+    const zip = await JSZip.loadAsync(await buildRichDataFixture())
+    zip.remove('xl/metadata.xml')
+    zip.remove('xl/richData')
+    zip.file(
+      '[Content_Types].xml',
+      contentTypes
+        .replace(/\s*<Override PartName="\/xl\/(?:metadata\.xml|richData\/[^"]+)"[^>]*\/>/g, '')
+        .replace(
+          '</Types>',
+          '<Override PartName="/xl/cellimages.xml" ContentType="application/vnd.wps-officedocument.cellimage+xml"/></Types>',
+        ),
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://www.wps.cn/officeDocument/2017/relationships/cellImage" Target="cellimages.xml"/></Relationships>',
+    )
+    zip.file(
+      'xl/cellimages.xml',
+      '<etc:cellImages xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData" xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="ID_photo"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></etc:cellImage></etc:cellImages>',
+    )
+    zip.file(
+      'xl/_rels/cellimages.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>',
+    )
+    const picture = '<f>_xlfn.DISPIMG(&quot;ID_photo&quot;,1)</f><v>cached image text</v>'
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="2"><c r="B2" t="str">${picture}</c><c r="C2" t="str">${picture}</c></row></sheetData></worksheet>`,
+    )
+    const mutation = await applyCellEditsToXlsx(
+      await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
+      [
+        { sheetName: 'Sheet1', row: 0, column: 0, writeValue: true, cell: { value: 'hello' } },
+        {
+          sheetName: 'Sheet1',
+          row: 1,
+          column: 1,
+          writeValue: false,
+          cell: { value: null },
+          style: { bold: true },
+        },
+      ],
+    )
+    expect(() => assertOnlyTouchedEntriesChanged(mutation)).not.toThrow()
+    const before = new Map(mutation.beforeEntries.map((entry) => [entry.path, entry.sha256]))
+    const after = new Map(mutation.afterEntries.map((entry) => [entry.path, entry.sha256]))
+    for (const part of [
+      'xl/cellimages.xml',
+      'xl/_rels/cellimages.xml.rels',
+      'xl/media/image1.png',
+    ]) {
+      expect(after.get(part), part).toBe(before.get(part))
+    }
+    const saved = await JSZip.loadAsync(mutation.buffer)
+    const relationships = await saved.file('xl/_rels/workbook.xml.rels')?.async('string')
+    expect(relationships).toContain(
+      '<Relationship Id="rId2" Type="http://www.wps.cn/officeDocument/2017/relationships/cellImage" Target="cellimages.xml"/>',
+    )
+    const sheet = await saved.file('xl/worksheets/sheet1.xml')?.async('string')
+    expect(sheet).toMatch(/<c r="B2"[^>]* s="\d+"/)
+    expect(sheet?.match(/<f>_xlfn\.DISPIMG/g)).toHaveLength(2)
+    expect(sheet).toContain(picture)
+    expect(sheet).toContain(`<c r="C2" t="str">${picture}</c>`)
+  })
+})

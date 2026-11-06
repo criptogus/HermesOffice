@@ -32,6 +32,24 @@ describe('floatPosition', () => {
     expect(floatPosition({ x: 950, y: 200, width: 50, height: 20 }, layout).left).toBe(696)
     expect(floatPosition({ x: -30, y: 200, width: 50, height: 20 }, layout).left).toBe(4)
   })
+
+  it('returns finite in-bounds positions for hostile inputs', () => {
+    const hostile = { x: NaN, y: Infinity, width: 50, height: -Infinity }
+    const pos = floatPosition(
+      hostile as never,
+      {
+        zoom: NaN,
+        offsetX: Infinity,
+        offsetY: -Infinity,
+        stageWidth: NaN,
+        barWidth: Infinity,
+        barHeight: NaN,
+      } as never,
+    )
+    expect(Number.isFinite(pos.left)).toBe(true)
+    expect(Number.isFinite(pos.top)).toBe(true)
+    expect(pos.left).toBeGreaterThanOrEqual(4)
+  })
 })
 
 describe('parseDeclarations', () => {

@@ -15,13 +15,14 @@ function createRenderContext(docSettings: any = {}, options: any = {}) {
     const n = finiteOr(v, MARGIN_DXA / 15)
     return n < 0 ? MARGIN_DXA / 15 : n
   }
+  const pageDim = (v: any, fallback: number): number => (Number.isFinite(v) && v > 0 ? v : fallback)
   const pageWidthDxa = Math.max(
     1440,
-    Math.round(finiteOr(docSettings.pageSizePx?.width, DEFAULT_PAGE_WIDTH_PX) * 15),
+    Math.round(pageDim(docSettings.pageSizePx?.width, DEFAULT_PAGE_WIDTH_PX) * 15),
   )
   const pageHeightDxa = Math.max(
     1440,
-    Math.round(finiteOr(docSettings.pageSizePx?.height, DEFAULT_PAGE_HEIGHT_PX) * 15),
+    Math.round(pageDim(docSettings.pageSizePx?.height, DEFAULT_PAGE_HEIGHT_PX) * 15),
   )
   const viewportW = finiteOr(docSettings.viewportWidthPx, 0)
   const baseScale = viewportW > 0 ? Math.min(1, pageWidthDxa / 15 / viewportW) : 1
@@ -49,7 +50,11 @@ function createRenderContext(docSettings: any = {}, options: any = {}) {
     pageWidthDxa,
     pageHeightDxa,
     pageMargins,
-    contentDxa: pageWidthDxa - pageMargins.left - pageMargins.right,
+    // Each margin is clamped on its own, but two healthy ones can still add up
+    // past the page width. A negative content width scales every downstream
+    // extent (floating images included) negative, and Word reads that as a
+    // corrupt file, so floor it at the 1in minimum the page width already uses.
+    contentDxa: Math.max(1440, pageWidthDxa - pageMargins.left - pageMargins.right),
     measurementScale,
     fontScale,
     marginDxa: MARGIN_DXA,

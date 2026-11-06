@@ -38,7 +38,7 @@ function at(cells: ICellData[][], ref: string): CellStyle {
   return (cells[row]?.[column]?.s ?? {}) as CellStyle
 }
 
-/// Calibration workbook shape (genoffice-sample/sheets/calib/gen_pivot_calib.py):
+/// Calibration workbook shape (hermesoffice-sample/sheets/calib/gen_pivot_calib.py):
 /// A1:D11, two header rows, row-label column A, grand-total column D, rows
 /// 3/7 level-1 subheadings, 4/5/8/9 data, 6/10 subtotals, 11 grand total.
 const CALIB_LAYOUT = {

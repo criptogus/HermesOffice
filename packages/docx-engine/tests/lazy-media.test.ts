@@ -88,16 +88,16 @@ describe('lazy media placeholders', () => {
 
   it('builds and parses URLs', () => {
     const url = lazyMediaUrl(HASH, 'word/media/image1.png')
-    expect(url).toBe(`genoffice-docx-media://${HASH}/word/media/image1.png`)
+    expect(url).toBe(`hermesoffice-docx-media://${HASH}/word/media/image1.png`)
     expect(parseLazyMediaUrl(url)).toEqual({ hash: HASH, partPath: 'word/media/image1.png' })
     expect(parseLazyMediaUrl('data:image/png;base64,AAAA')).toBeNull()
   })
 
   it('rejects bad hashes and traversal/overlong part paths', () => {
     expect(() => lazyMediaUrl('not-a-hash', 'word/media/image1.png')).toThrow(/sha256/)
-    expect(parseLazyMediaUrl(`genoffice-docx-media://${HASH}/word/media/../evil.png`)).toBeNull()
+    expect(parseLazyMediaUrl(`hermesoffice-docx-media://${HASH}/word/media/../evil.png`)).toBeNull()
     expect(
-      parseLazyMediaUrl(`genoffice-docx-media://${HASH}/word/media/${'a'.repeat(600)}.png`),
+      parseLazyMediaUrl(`hermesoffice-docx-media://${HASH}/word/media/${'a'.repeat(600)}.png`),
     ).toBeNull()
   })
 })

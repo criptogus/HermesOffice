@@ -1,22 +1,23 @@
 {
   "name": "@hermesoffice/shell",
   "productName": "HermesOffice",
-  "version": "0.9.0",
+  "version": "0.12.0",
   "license": "Apache-2.0",
   "homepage": "https://github.com/criptogus/HermesOffice",
   "private": true,
-  "description": "Unified HermesOffice shell hosting Docs, Sheets, Slides, PDF, Markdown and HTML",
+  "description": "Unified HermesOffice shell: one app hosting the docs and sheets modules behind a home/launcher window",
   "main": "out/main/index.js",
   "desktopName": "hermesoffice.desktop",
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build": "electron-vite build",
+    "notices": "node ../../tools/gen-third-party-notices.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "electron-vite build && electron .",
-    "dist:mac": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --mac",
-    "dist:win": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --win",
-    "dist:linux": "node ../../tools/write-build-info.mjs && electron-vite build && electron-builder --linux"
+    "dist:mac": "npm run notices && electron-vite build && electron-builder --mac",
+    "dist:win": "npm run notices && electron-vite build && electron-builder --win",
+    "dist:linux": "npm run notices && electron-vite build && electron-builder --linux"
   },
   "devDependencies": {
     "@hermesoffice/agent-core": "*",
@@ -32,22 +33,24 @@
     "@hermesoffice/pptx-render": "*",
     "@hermesoffice/sheets": "*",
     "@hermesoffice/slides": "*",
+    "@hermesoffice/project-store": "*",
     "@hermesoffice/ui": "*",
     "@hermesoffice/xlsx-gateway": "*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
-    "electron": "^43.3.0",
+    "electron": "^43.8.3",
     "electron-builder": "^26.0.12",
     "electron-updater": "^6.8.9",
     "electron-vite": "^5.0.0",
+    "jszip": "^3.10.1",
     "officecrypto-tool": "^0.0.19",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1",
-    "vitest": "^4.1.11"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   },
-  "author": "GenOffice"
+  "author": "HermesOffice"
 }

@@ -45,6 +45,24 @@ describe('buildStandaloneHtml', () => {
     expect(out).toMatch(/^<!DOCTYPE html>/)
   })
 
+  it('keeps the raised-run offset but drops the paragraph leading shift', () => {
+    const root = mount(
+      '<p class="doc-p" style="position:relative;top:-2px">base' +
+        '<span style="position:relative;top:-3pt">up</span></p>',
+    )
+    const out = buildStandaloneHtml(root, { title: 'T' })
+    expect(out).toMatch(/<span style="[^"]*position:relative;top:-3pt[^"]*">up<\/span>/)
+    expect(out).toMatch(/<p>base</)
+  })
+
+  it('keeps the offset on a character-scaled (inline-block) raised run', () => {
+    const root = mount(
+      '<p class="doc-p"><span style="display:inline-block;position:relative;top:-3pt">up</span></p>',
+    )
+    const out = buildStandaloneHtml(root, { title: 'T' })
+    expect(out).toMatch(/<span style="[^"]*position:relative;top:-3pt[^"]*">up<\/span>/)
+  })
+
   it('exports tab leaders as a border, not the on-screen glyph run', () => {
     const root = mount(
       '<p class="doc-p has-tab-stops">Intro<span class="doc-tab doc-tab-leader-dot" ' +
@@ -83,5 +101,13 @@ describe('resolveContent', () => {
       list.appendChild(li)
     }
     expect(resolveContent('counter(doc-ol) "."', list.children[2])).toBe('3.')
+  })
+
+  it('emits the replacement character instead of throwing on out-of-range escapes', () => {
+    const el = document.createElement('p')
+    expect(resolveContent('"\\FFFFFF "', el)).toBe('�')
+    expect(resolveContent('"\\110000 "', el)).toBe('�')
+    expect(resolveContent('"\\D800 "', el)).toBe('�')
+    expect(resolveContent('"\\41 "', el)).toBe('A')
   })
 })

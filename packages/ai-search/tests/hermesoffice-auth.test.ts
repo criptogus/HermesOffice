@@ -116,7 +116,7 @@ describe('startGenofficeLogin', () => {
     // the key create call must ride on the session cookie
     const createCall = fetchMock.mock.calls.find(([u]) => String(u).includes('/api_tokens/create'))!
     const init = createCall[1]!
-    expect((init.headers as Record<string, string>).Cookie).toBe('session_id=sess-abc')
+    expect(new Headers(init.headers).get('Cookie')).toBe('session_id=sess-abc')
     expect(JSON.parse(String(init.body))).toEqual({ key_name: 'hermesoffice' })
   })
 
@@ -276,7 +276,7 @@ describe('hermesofficeLogout', () => {
     expect(hermesofficeApiKey()).toBe('')
     const revokeCall = fetchMock.mock.calls.find(([u]) => String(u).includes('/api_tokens/revoke'))!
     const init = revokeCall[1]!
-    expect((init.headers as Record<string, string>).Cookie).toBe('session_id=sess-abc')
+    expect(new Headers(init.headers).get('Cookie')).toBe('session_id=sess-abc')
     expect(JSON.parse(String(init.body))).toEqual({ key_id: 'kid-1' })
   })
 

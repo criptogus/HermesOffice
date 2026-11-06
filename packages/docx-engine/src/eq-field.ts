@@ -145,7 +145,10 @@ function parseCommandInner(p: Parser): Piece | null {
   const argOf = (name: string) => switches.find((s) => s.name === name)?.arg
   switch (cmd) {
     case 'a': {
-      const cols = Math.max(1, parseInt(argOf('co') ?? '1', 10) || 1)
+      // \co arrives from the file: a huge count fills each row's padding
+      // loop (while cells.length < cols) and writes an invalid m:count.
+      const rawCols = parseInt(argOf('co') ?? '1', 10)
+      const cols = Number.isFinite(rawCols) ? Math.min(Math.max(1, rawCols), 64) : 1
       const jc = has('al') ? 'left' : has('ar') ? 'right' : 'center'
       const rows: string[] = []
       const lines: string[] = []

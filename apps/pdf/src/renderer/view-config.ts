@@ -9,7 +9,7 @@ export const MAX_SCALE = ZOOM_STEPS[ZOOM_STEPS.length - 1]
 export const PAGE_GAP = 16
 export const SCROLL_PAD = 24
 // ── Sidebar (thumbnails / outline) width: drag the divider to resize; persisted ──
-export const SIDEBAR_W_KEY = 'genoffice-pdf-sidebar-width'
+export const SIDEBAR_W_KEY = 'hermesoffice-pdf-sidebar-width'
 export const SIDEBAR_W_DEFAULT = 150
 export const SIDEBAR_W_MIN = 120
 /** pane padding (10px × 2) + thumb box borders (2px × 2) */

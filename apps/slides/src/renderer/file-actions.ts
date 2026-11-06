@@ -5,9 +5,12 @@
  */
 import type { RenderSlide } from '@hermesoffice/pptx-render'
 import type { ExportPdfLink } from '../shared/ipc'
+import { baseName } from '../shared/base-name'
+import { modelSaveAsName } from './file-naming'
 import type { ActionCtx } from './action-context'
 import { collectExportPdfLinks } from './export-links'
-import { renderSlidesToPngBase64 } from './export-render'
+import { renderSlidesToPdfPages } from './export-pages'
+import { renderSlidesToImageBase64 } from './export-render'
 import { t } from './i18n/locale'
 import { showToast } from '@hermesoffice/ui'
 
@@ -30,23 +33,22 @@ export async function flushActiveEdit(ctx: ActionCtx): Promise<void> {
  * the render tree, mapping selection/edit state to new ids by per-page node ordinal.
  */
 export function adoptSavedSlides(ctx: ActionCtx, next: RenderSlide[]): void {
-  if (!ctx.slides[ctx.current]) {
-    ctx.setSlides([])
-    ctx.setSelectedIds([])
-    ctx.setEnteredGroupId(null)
-    ctx.setEditing(null)
-    ctx.setEditingCell(null)
-    return
-  }
-
+  const page = ctx.slides[ctx.current]
   const remap = (id: string) => {
-    const i = ctx.slides[ctx.current]?.nodes.findIndex((n) => n.sourceId === id) ?? -1
-    return next[ctx.current]?.nodes[i]?.sourceId ?? null
+    const i = page?.nodes.findIndex((n) => n.sourceId === id) ?? -1
+    return i >= 0 ? (next[ctx.current]?.nodes[i]?.sourceId ?? null) : null
   }
   ctx.setSelectedIds((ids) => ids.map(remap).filter((x): x is string => x !== null))
   ctx.setEnteredGroupId(null) // Group children ids can't be mapped by top-level ordinal; exit in-group editing after save
-  ctx.setEditing((e) => (e && remap(e.sourceId) ? { sourceId: remap(e.sourceId)! } : e))
-  ctx.setEditingCell((c) => (c && remap(c.sourceId) ? { ...c, sourceId: remap(c.sourceId)! } : c))
+  // A stale edit target (page gone, deck shrunk) cannot be mapped: drop it rather than keep an id no node owns
+  ctx.setEditing((e) => {
+    const id = e && remap(e.sourceId)
+    return id ? { sourceId: id } : null
+  })
+  ctx.setEditingCell((c) => {
+    const id = c && remap(c.sourceId)
+    return id && c ? { ...c, sourceId: id } : null
+  })
   ctx.setSlides(next)
 }
 
@@ -92,6 +94,9 @@ export async function save(getCtx: () => ActionCtx, quiet = false): Promise<bool
     const ctx = getCtx()
     await flushActiveEdit(ctx)
     await ctx.flushNotes()
+    // No name is proposed here: a save never waits on a model round-trip. An
+    // untitled deck keeps the app's own name, the localized "Untitled
+    // presentation" the main process produces in `pickDraftPath`.
     const r = await window.slidesApi.save()
     if (r.ok) {
       if (r.slides) adoptSavedSlides(ctx, r.slides)
@@ -112,14 +117,47 @@ export async function save(getCtx: () => ActionCtx, quiet = false): Promise<bool
 }
 
 export async function saveAs(getCtx: () => ActionCtx): Promise<void> {
+  await saveAsWithName(getCtx, null)
+}
+
+/**
+ * Ask the model to name this deck, on request, then open Save As with its
+ * answer prefilled.
+ *
+ * The stem goes into the dialog rather than renaming the file on disk: a deck
+ * that may be open elsewhere, presented from another machine, or synced is not
+ * something to move behind the reader's back. A declined or empty answer
+ * leaves the dialog on the deck's current name, so this is a no-op rather than
+ * a failure.
+ */
+export async function nameWithAi(getCtx: () => ActionCtx): Promise<void> {
+  const ctx = getCtx()
+  // the model reads the deck, so an edit still being typed has to land first
+  const editing = ctx.editingActiveRef.current
+  await flushActiveEdit(ctx)
+  // that commit can replace the deck, so read it again rather than from the
+  // snapshot taken before the flush
+  const deck = editing ? getCtx() : ctx
+  const stem = await modelSaveAsName(deck.slides)
+  if (!stem) return
+  await saveAsWithName(getCtx, `${stem}.pptx`)
+}
+
+/**
+ * Save As with a name the reader (or the model, via `nameWithAi`) chose.
+ *
+ * A null name means "the deck's current name", which is read inside the queue:
+ * a save that landed while this call was waiting may have changed it.
+ */
+export async function saveAsWithName(getCtx: () => ActionCtx, name: string | null): Promise<void> {
   // Same queue as save(): Save + Save As (or double Save As) write through
   // the same main-process pipe and would interleave without it.
   await runSerialized(async () => {
     const ctx = getCtx()
     await flushActiveEdit(ctx)
     await ctx.flushNotes()
-    const name = ctx.path?.split('/').pop() ?? 'presentation.pptx'
-    const r = await window.slidesApi.saveAs(name)
+    const target = name ?? (baseName(ctx.path ?? '') || 'presentation.pptx')
+    const r = await window.slidesApi.saveAs(target)
     if (r.ok) {
       if (r.slides) adoptSavedSlides(ctx, r.slides)
       ctx.setPath(r.path ?? ctx.path)
@@ -139,11 +177,11 @@ export async function saveAs(getCtx: () => ActionCtx): Promise<void> {
 
 /** Export base name: file name without the .pptx extension */
 export function exportBaseName(ctx: ActionCtx): string {
-  return (ctx.path?.split('/').pop() ?? t('appUntitledPresentation')).replace(/\.pptx$/i, '')
+  return (baseName(ctx.path ?? '') || t('appUntitledPresentation')).replace(/\.pptx$/i, '')
 }
 
-/** Export as images: each page (skipping hidden ones) rendered offscreen to 2x PNG, written to disk by the main process */
-export async function exportImages(ctx: ActionCtx): Promise<void> {
+/** Export as images: each page (skipping hidden ones) rendered offscreen to 2x PNG or JPG, written to disk by the main process */
+export async function exportImages(ctx: ActionCtx, format: 'png' | 'jpg' = 'png'): Promise<void> {
   const visible = ctx.slides.filter((s) => !s.hidden)
   if (visible.length === 0) {
     ctx.setStatus(t('appExportNoSlides'))
@@ -153,11 +191,12 @@ export async function exportImages(ctx: ActionCtx): Promise<void> {
   if (!dir) return
   ctx.setStatus(t('appExportImagesProgress', { count: visible.length }))
   try {
-    const pngs = await renderSlidesToPngBase64(visible, ctx.images)
+    const pages = await renderSlidesToImageBase64(visible, ctx.images, { format })
     const r = await window.slidesApi.exportImages({
       dir,
       baseName: exportBaseName(ctx),
-      pngsBase64: pngs,
+      format,
+      pngsBase64: pages,
     })
     ctx.setStatus(
       r.ok
@@ -190,7 +229,8 @@ async function collectPdfLinks(ctx: ActionCtx): Promise<ExportPdfLink[][]> {
 }
 
 /**
- * Export as PDF: each page (skipping hidden ones) rendered offscreen to 2x PNG;
+ * Export as PDF: each page (skipping hidden ones) rendered to vector SVG (text
+ * stays text; a page the SVG backend cannot build falls back to its 2x PNG);
  * main process printToPDF in a hidden window.
  *
  * `outPath` skips the save dialog — the headless CLI entry already knows where
@@ -206,14 +246,15 @@ export async function exportPdf(ctx: ActionCtx, outPath?: string): Promise<boole
   if (!target) return false
   ctx.setStatus(t('appExportPdfProgress'))
   try {
-    const pngs = await renderSlidesToPngBase64(visible, ctx.images)
+    const { pages, fontCss } = await renderSlidesToPdfPages(visible, ctx.images)
     const links = await collectPdfLinks(ctx)
     const r = await window.slidesApi.exportPdf({
       filePath: target,
-      pngsBase64: pngs,
+      pages,
       widthPx: visible[0].widthPx,
       heightPx: visible[0].heightPx,
       links,
+      fontCss,
     })
     ctx.setStatus(
       r.ok

@@ -15,7 +15,7 @@
  * valAxis2.
  */
 import { XMLParser } from 'fast-xml-parser'
-import { type Theme } from './theme'
+import { resolveFontRef, type Theme } from './theme'
 import { applyColorMods, resolveColorNode, scaleLuminance } from './color'
 import type { Fill } from './types'
 
@@ -32,6 +32,8 @@ export type ChartKind =
 
 export interface ChartSeries {
   name?: string
+  /** Bar series with <c:spPr><a:noFill/>: an invisible spacer (waterfall base), never painted */
+  noFill?: boolean
   /** Series main color #RRGGBB (explicit spPr color; render layer fills in from the theme palette otherwise) */
   color?: string
   values: Array<number | null>
@@ -50,6 +52,31 @@ export interface ChartSeries {
   paletteIdx?: number
   /** Per-series data-label visibility (own c:dLbls, else the plot-level c:dLbls); undefined = fall back to the chart-level flag */
   dataLabels?: boolean
+  /** Per-point <c:dLbl> overrides: a point's own show flags replace the series-level set
+   *  (PowerPoint writes the complete flag set on each dLbl); `hidden` = <c:delete val="1"/> */
+  dLblOverrides?: Array<{
+    idx: number
+    hidden?: boolean
+    val?: boolean
+    cat?: boolean
+    ser?: boolean
+    pct?: boolean
+    sizePt?: number
+    color?: string
+    /** <c:tx><c:rich> literal label text (replaces the composed series/category/value text) */
+    text?: string
+    bold?: boolean
+    /** Point dLbl spPr box colors; null = explicit a:noFill (clears the series box) */
+    fill?: string | null
+    border?: string | null
+  }>
+  /** The series block shows nothing and only point-level dLbls turned labels on: points without their own dLbl stay unlabeled */
+  dLblOnlyPoints?: boolean
+  /** Series-level c:dLbls/c:numFmt (wins over the chart-level format) */
+  dataLabelFmt?: string
+  /** Series-level c:dLbls/c:spPr: label box fill / outline color */
+  dataLabelFill?: string
+  dataLabelBorder?: string
   /** Line/scatter series stroke dash (c:spPr a:prstDash, non-solid only) */
   dash?: string
   /** Line/scatter series stroke width (pt, c:spPr a:ln @w) */
@@ -59,6 +86,8 @@ export interface ChartSeries {
   marker?: boolean
   /** Explicit per-point colors <c:dPt> (common for pies; render layer palette otherwise) */
   pointColors?: Array<string | undefined>
+  /** Per-point picture/gradient/pattern fills <c:dPt><c:spPr> (bars painted with a bitmap) */
+  pointFills?: Array<Fill | undefined>
   /** Pie: <c:dPt><c:spPr><a:noFill/> — the wedge is outline-only */
   pointNoFill?: Array<boolean | undefined>
   /** Pie: per-point outline <c:dPt><c:spPr><a:ln> (color null = explicit no line) */
@@ -69,6 +98,8 @@ export interface ChartSeries {
   pointExplosionPct?: Array<number | undefined>
   /** Combo dual axes: this series is on the secondary value axis (independent right-side range; decided by the plot's c:axId) */
   secondaryAxis?: boolean
+  /** Source cell number format of the values (c:numCache/c:formatCode, omitted for "General"); data-table cells use it */
+  valFmt?: string
   /** Series belongs to c:stockChart: no connecting lines, participates in whisker/up-down-bar roles */
   fromStock?: boolean
 }
@@ -88,15 +119,22 @@ export interface ChartAxisStyle {
 
   /** Explicit tick-label rotation from txPr bodyPr rot (degrees, e.g. -45) */
   labelRotDeg?: number
+  /** txPr defRPr cap="all" / spc (letter spacing, pt) on the tick labels */
+  labelCaps?: boolean
+  labelSpcPt?: number
   /** <c:delete val="1"/>: axis hidden (no tick labels or axis line) but its scale still applies */
   hidden?: boolean
   /** Tick labels off (<c:tickLblPos val="none"/>): no labels, no reserved space */
   tickLblHidden?: boolean
+  /** <c:tickLblPos val="low"/"high">: labels pinned to the plot edge instead of next to the axis line */
+  tickLblPos?: 'low' | 'high'
   /** Labels not rendered but their space still reserved (invalid txPr baseline sentinel) */
   tickLblGarbage?: boolean
   /** <c:numFmt formatCode>: source-linked data labels format numbers with this (omitted for "General") */
   numFmt?: string
   lineColor?: string
+  /** <c:spPr><a:ln><a:noFill/>: the axis line is not drawn (labels/ticks unaffected) */
+  lineHidden?: boolean
   gridColor?: string
   /** gridColor is the fallback (no explicit spPr color); the render layer picks the real default by hasStylePart */
   gridColorAuto?: boolean
@@ -121,8 +159,23 @@ export interface ChartAxisStyle {
   titleOverlay?: boolean
   /** <c:orientation val="maxMin"/>: categories/values reversed (common for bar charts with the first category on top) */
   reversed?: boolean
+  /** <c:logBase>: logarithmic value axis (ticks at powers of the base) */
+  logBase?: number
+  /** <c:crosses>: where this axis crosses the other one (max = at the far end) */
+  crosses?: 'autoZero' | 'min' | 'max'
   /** The category axis is a c:dateAx (PowerPoint rotates its labels as soon as they collide) */
   isDate?: boolean
+}
+
+/** <c:dTable>: the data table PowerPoint draws under the category axis */
+export interface ChartDataTable {
+  showKeys: boolean
+  horzBorder: boolean
+  vertBorder: boolean
+  outline: boolean
+  sizePt?: number
+  textColor?: string
+  lineColor?: string
 }
 
 export interface ChartModel {
@@ -141,8 +194,13 @@ export interface ChartModel {
   /** Legend text size (pt) from c:legend/c:txPr default run properties */
   legendPt?: number
   legendBold?: boolean
+  /** Legend txPr defRPr solid fill (legend text color; absent = axis label color) */
+  legendColor?: string
   /** <c:legend><c:overlay val="1"/>: the legend floats over the plot, reserving no space */
   legendOverlay?: boolean
+  /** Series indices in PowerPoint's legend display order with c:legendEntry deletions applied
+   *  (absent = document order, nothing deleted) */
+  legendOrder?: number[]
   /** c:legend manual layout: factor = offset from the auto position, edge = absolute, fractions of the frame */
   legendLayout?: {
     x?: number
@@ -159,6 +217,8 @@ export interface ChartModel {
   /** Plot-area inner rectangle (c:plotArea/c:layout/c:manualLayout layoutTarget=inner), fractions of the chart frame */
   plotLayout?: { x: number; y: number; w: number; h: number }
   valAxis?: ChartAxisStyle
+  /** Data table under the plot (c:plotArea/c:dTable) */
+  dataTable?: ChartDataTable
   /** Secondary value axis (right side, combo column+line dual axes; undefined without a right value axis or style info) */
   valAxis2?: ChartAxisStyle
   catAxis?: ChartAxisStyle
@@ -176,6 +236,13 @@ export interface ChartModel {
   dataLabels?: boolean
   /** Data labels show percentages only (showPercent only, common for pies) */
   dataLabelsPct?: boolean
+  /** Data labels show both the value and the percentage ("0.28, 11%") */
+  dataLabelsValPct?: boolean
+  /** c:ofPieChart: the last splitPos points break out into a secondary pie (secondPieSize %
+   *  of the main pie, gapWidth % of its diameter apart) */
+  ofPie?: { splitPos: number; secondPieSize: number; gapWidth: number }
+  /** Percent data labels divide by this instead of the series sum (pie-of-pie secondary pie) */
+  pctBase?: number
   /** Data labels include the series name / category name (c:showSerName / c:showCatName) */
   dataLabelSerName?: boolean
   dataLabelCatName?: boolean
@@ -186,6 +253,10 @@ export interface ChartModel {
   /** Data-label text size (pt) / bold from c:dLbls/c:txPr */
   dataLabelPt?: number
   dataLabelBold?: boolean
+  /** c:dLbls/c:txPr bodyPr rot (degrees; -90 = reads bottom-to-top) */
+  dataLabelRotDeg?: number
+  dataLabelCaps?: boolean
+  dataLabelSpcPt?: number
   /** Chart title (concatenated rich text of c:chart/c:title) */
   title?: string
   /** Title font size (pt) from c:title/c:txPr default run properties */
@@ -196,6 +267,9 @@ export interface ChartModel {
   titleBold?: boolean
   titleItalic?: boolean
   titleColor?: string
+  /** Title run cap="all" / spc (letter spacing, pt) */
+  titleCaps?: boolean
+  titleSpcPt?: number
   /** chartSpace-level <c:spPr> fill (whole-chart background, e.g. picture fill) */
   bgFill?: Fill
   /** Plot-area fill (c:plotArea's own spPr) */
@@ -232,6 +306,8 @@ export interface ChartModel {
   }>
   /** chartSpace-level <c:txPr> default text size (pt); chart text without its own txPr uses this */
   defaultTextPt?: number
+  /** Chart text typeface (chartSpace txPr, else the first axis / legend / label / title txPr); render layer defaults to Calibri */
+  fontFamily?: string
   /** chartSpace-level <c:txPr> default text color, or the legacy <c:style> row default (41-48 → lt1) */
   defaultTextColor?: string
   /** 3D chart type (pie3D/bar3D/…): render layer draws a pseudo-3D look on the 2D pipeline */
@@ -274,6 +350,7 @@ export function parseChartXml(
   } catch {
     return null
   }
+  tailPaddingLeft = MAX_TAIL_PADDING
   const date1904Node = doc['c:chartSpace']?.['c:date1904']
   const date1904Raw =
     typeof date1904Node === 'object' && date1904Node !== null
@@ -307,7 +384,12 @@ export function parseChartXml(
     cartesian.push({ kind: 'line', plot: p })
   for (const p of plots(stockPlot)) cartesian.push({ kind: 'line', plot: p, stock: true })
 
-  const piePlot = plotArea['c:pieChart'] ?? plotArea['c:pie3DChart'] ?? plotArea['c:doughnutChart']
+  // Pie-of-pie / bar-of-pie draw their primary pie only (the secondary breakout is not modelled)
+  const piePlot =
+    plotArea['c:pieChart'] ??
+    plotArea['c:pie3DChart'] ??
+    plotArea['c:doughnutChart'] ??
+    plotArea['c:ofPieChart']
 
   const is3D = !!(
     plotArea['c:bar3DChart'] ||
@@ -318,6 +400,7 @@ export function parseChartXml(
 
   let kind: ChartKind
   let plot: any
+  let ofPie: ChartModel['ofPie']
   if (cartesian.length) {
     // Primary type is the first (bar > area > line): axis/bar params read from it; other combo series carry plotKind
     kind = cartesian[0]!.kind
@@ -325,6 +408,17 @@ export function parseChartXml(
   } else if (piePlot) {
     kind = 'pie'
     plot = piePlot
+    if (plotArea['c:ofPieChart']) {
+      const num = (k: string, dflt: number) => {
+        const v = parseInt(piePlot[k]?.['@_val'], 10)
+        return Number.isFinite(v) && v > 0 ? v : dflt
+      }
+      ofPie = {
+        splitPos: num('c:splitPos', 2),
+        secondPieSize: num('c:secondPieSize', 75),
+        gapWidth: num('c:gapWidth', 150),
+      }
+    }
   } else if (plotArea['c:scatterChart'] || plotArea['c:bubbleChart']) {
     // Bubble rides the scatter pipeline: same x/y value model, sized markers via bubbleSizes
     kind = 'scatter'
@@ -354,7 +448,9 @@ export function parseChartXml(
   }
 
   const series: ChartSeries[] = []
+  const plotGroups: Array<{ start: number; end: number; stacked: boolean; hbar: boolean }> = []
   let categories: string[] = []
+  let catSerials: number[] | undefined
   let categoryGroups: Array<{ label: string; start: number }> | undefined
   const parsePlotSeries = (
     plotNode: any,
@@ -363,11 +459,13 @@ export function parseChartXml(
     secondary = false,
     fromStock = false,
   ) => {
+    const groupStart = series.length
     const sersRaw = plotNode['c:ser']
     const sers: any[] = Array.isArray(sersRaw) ? sersRaw : sersRaw ? [sersRaw] : []
     const plotMarkerNode = plotNode['c:marker']
     const plotMarker = plotMarkerNode != null && plotMarkerNode?.['@_val'] !== '0'
     for (const ser of sers) {
+      if (series.length >= MAX_CHART_SERIES) break
       // Scatter: y values in c:yVal, x values in c:xVal; other types use c:val
       const s: ChartSeries = {
         values: readNumPoints(plotKind === 'scatter' ? ser['c:yVal'] : ser['c:val']),
@@ -375,11 +473,14 @@ export function parseChartXml(
       // A numRef with no numCache has no renderable data: PowerPoint plots nothing and
       // omits the series from the legend (external workbook data is never re-fetched)
       if (!s.values.length) continue
+      const valFmt = cacheFormatCode(plotKind === 'scatter' ? ser['c:yVal'] : ser['c:val'])
+      if (valFmt) s.valFmt = valFmt
       if (tagPlotKind) s.plotKind = plotKind as 'line' | 'bar' | 'area'
       // Excel/PowerPoint pick automatic series colors by c:idx, not document order
       const palIdx = parseInt(ser['c:idx']?.['@_val'], 10)
       if (Number.isFinite(palIdx)) s.paletteIdx = palIdx
       if (secondary) s.secondaryAxis = true
+      if (plotKind === 'bar' && ser['c:spPr'] && 'a:noFill' in ser['c:spPr']) s.noFill = true
       if (fromStock) s.fromStock = true
       if (plotKind === 'scatter') {
         const xs = readNumPoints(ser['c:xVal'])
@@ -429,6 +530,68 @@ export function parseChartXml(
         (d['c:showVal']?.['@_val'] === '1' || d['c:showPercent']?.['@_val'] === '1')
       const serDl = ser['c:dLbls']
       s.dataLabels = serDl && typeof serDl === 'object' ? dlOn(serDl) : dlOn(plotNode['c:dLbls'])
+      if (serDl && typeof serDl === 'object') {
+        const fmt = serDl['c:numFmt']?.['@_formatCode']
+        if (typeof fmt === 'string' && fmt && fmt !== 'General') s.dataLabelFmt = fmt
+        const box = labelBox(serDl['c:spPr'], theme)
+        if (box.fill) s.dataLabelFill = box.fill
+        if (box.border) s.dataLabelBorder = box.border
+      }
+      const dLblRaw = serDl?.['c:dLbl']
+      const overrides = (Array.isArray(dLblRaw) ? dLblRaw : dLblRaw ? [dLblRaw] : [])
+        .map((d: any): NonNullable<ChartSeries['dLblOverrides']>[number] | null => {
+          const idx = parseInt(d?.['c:idx']?.['@_val'], 10)
+          if (!Number.isFinite(idx)) return null
+          if (d['c:delete']?.['@_val'] === '1') return { idx, hidden: true }
+          const flag = (k: string) => d[k]?.['@_val'] === '1'
+          // A rich-text label is authored text: PowerPoint shows it verbatim, styled by its first run
+          const rich = d['c:tx']?.['c:rich']
+          const richText = rich ? collectText(rich) : undefined
+          if (
+            richText == null &&
+            !['c:showVal', 'c:showCatName', 'c:showSerName', 'c:showPercent'].some((k) => k in d)
+          )
+            return null
+          const dP = d['c:txPr']?.['a:p']
+          const rP = rich?.['a:p']
+          const rP0 = Array.isArray(rP) ? rP[0] : rP
+          const rR0 = Array.isArray(rP0?.['a:r']) ? rP0['a:r'][0] : rP0?.['a:r']
+          const rPr =
+            rR0?.['a:rPr'] ??
+            rP0?.['a:pPr']?.['a:defRPr'] ??
+            (Array.isArray(dP) ? dP[0] : dP)?.['a:pPr']?.['a:defRPr']
+          const sz = parseInt(rPr?.['@_sz'], 10)
+          const color = resolveColorNode(rPr?.['a:solidFill'], theme)
+          const box = labelBox(d['c:spPr'], theme)
+          return {
+            idx,
+            val: flag('c:showVal'),
+            cat: flag('c:showCatName'),
+            ser: flag('c:showSerName'),
+            pct: flag('c:showPercent'),
+            ...(richText != null ? { text: richText, bold: rPr?.['@_b'] === '1' } : {}),
+            ...(Number.isFinite(sz) && sz > 0 ? { sizePt: sz / 100 } : {}),
+            ...(color ? { color } : {}),
+            ...box,
+          }
+        })
+        .filter((o) => o != null)
+      if (overrides.length) {
+        s.dLblOverrides = overrides
+        const serShowsAny =
+          !!serDl &&
+          typeof serDl === 'object' &&
+          serDl['c:delete']?.['@_val'] !== '1' &&
+          ['c:showVal', 'c:showPercent', 'c:showCatName', 'c:showSerName'].some(
+            (k) => serDl[k]?.['@_val'] === '1',
+          )
+        if (
+          overrides.some((o) => !o.hidden && (o.val || o.cat || o.ser || o.pct || o.text != null))
+        ) {
+          s.dataLabels = true
+          if (!serShowsAny) s.dLblOnlyPoints = true
+        }
+      }
       const markerSym = ser['c:marker']?.['c:symbol']?.['@_val']
       if (plotKind === 'line')
         // Stock OHLC series show markers by default (PowerPoint draws marker-only lines);
@@ -448,16 +611,21 @@ export function parseChartXml(
       const dPts: any[] = ser['c:dPt'] ?? []
       if (dPts.length) {
         const pointColors: Array<string | undefined> = []
+        const pointFills: Array<Fill | undefined> = []
         const pointNoFill: Array<boolean | undefined> = []
         const pointLines: Array<{ color: string | null; widthPt?: number } | undefined> = []
         const pointExpl: Array<number | undefined> = []
         for (const dPt of dPts) {
           const idx = parseInt(dPt['c:idx']?.['@_val'], 10)
-          if (Number.isNaN(idx)) continue
+          if (!Number.isFinite(idx) || idx < 0 || idx >= s.values.length) continue
           const dSp = dPt['c:spPr']
           const c = resolveColorNode(dSp?.['a:solidFill'], theme)
           if (c != null) pointColors[idx] = c
           if (dSp && 'a:noFill' in dSp) pointNoFill[idx] = true
+          else if (dSp && c == null) {
+            const f = resolveFill?.(dSp)
+            if (f && f.type !== 'none') pointFills[idx] = f
+          }
           const dLn = dSp?.['a:ln']
           if (dLn && typeof dLn === 'object') {
             const lnColor = 'a:noFill' in dLn ? null : resolveColorNode(dLn['a:solidFill'], theme)
@@ -472,13 +640,17 @@ export function parseChartXml(
           if (Number.isFinite(pe)) pointExpl[idx] = pe
         }
         if (pointColors.length) s.pointColors = pointColors
+        if (pointFills.length) s.pointFills = pointFills
         if (pointNoFill.length) s.pointNoFill = pointNoFill
         if (pointLines.length) s.pointLines = pointLines
         if (pointExpl.length) s.pointExplosionPct = pointExpl
       }
       series.push(s)
       // Categories: take the first non-empty series' cat
-      if (!categories.length) categories = readStrPoints(ser['c:cat'], date1904)
+      if (!categories.length) {
+        categories = readStrPoints(ser['c:cat'], date1904)
+        catSerials = readDateSerials(ser['c:cat'])
+      }
       // Multi-level category axis: the outer level groups leaf categories (CA | SF, LA)
       if (!categoryGroups) {
         const multi = ser['c:cat']?.['c:multiLvlStrRef']?.['c:multiLvlStrCache']
@@ -500,6 +672,15 @@ export function parseChartXml(
         }
       }
     }
+    const grouping = plotNode['c:grouping']?.['@_val']
+    plotGroups.push({
+      start: groupStart,
+      end: series.length,
+      stacked:
+        (plotKind === 'bar' || plotKind === 'area') &&
+        (grouping === 'stacked' || grouping === 'percentStacked'),
+      hbar: plotKind === 'bar' && plotNode['c:barDir']?.['@_val'] === 'bar',
+    })
   }
   if (cartesian.length > 1) {
     for (const c of cartesian)
@@ -514,11 +695,13 @@ export function parseChartXml(
   if (!series.length) return null
   if (!categories.length) {
     // With no category cache, keep names empty (length from the longest series); never inject placeholders
-    const n = Math.max(...series.map((s) => s.values.length), 0)
+    let n = 0
+    for (const s of series) if (s.values.length > n) n = s.values.length
     categories = Array.from({ length: n }, () => '')
   }
 
   const model: ChartModel = { kind, categories, series }
+  if (ofPie) model.ofPie = ofPie
   if (categoryGroups) model.categoryGroups = categoryGroups
 
   if (is3D) {
@@ -564,8 +747,11 @@ export function parseChartXml(
   if (kind === 'bar') {
     const dir = plot['c:barDir']?.['@_val']
     model.barDir = dir === 'bar' ? 'bar' : 'col'
-    const gap = plot['c:gapWidth']?.['@_val']
-    model.gapWidthPct = gap != null ? parseInt(gap, 10) : 150
+    // A malformed c:gapWidth (val="abc", an empty element, ...) parses to NaN, which
+    // would flow into the chart geometry and into Math.round on write-back and make
+    // every bar disappear. Guard it like the up/down-bar and chartEx gapWidths do.
+    const gap = parseInt(plot['c:gapWidth']?.['@_val'], 10)
+    model.gapWidthPct = Number.isFinite(gap) ? gap : 150
     const ov = plot['c:overlap']?.['@_val']
     if (ov != null) model.overlapPct = parseInt(ov, 10) || 0
   }
@@ -638,8 +824,40 @@ export function parseChartXml(
     const legSz = parseInt(legRPr?.['@_sz'], 10)
     if (Number.isFinite(legSz) && legSz > 0) model.legendPt = legSz / 100
     if (legRPr?.['@_b'] === '1') model.legendBold = true
+    const legColor = resolveColorNode(legRPr?.['a:solidFill'], theme)
+    if (legColor) model.legendColor = legColor
     const legPPr = (Array.isArray(legP) ? legP[0] : legP)?.['a:pPr']
     if (legPPr?.['@_rtl'] === '1') model.legendRtl = true
+    // PowerPoint lists entries per plot group; a stacked group next to a side legend runs
+    // top-of-stack first (reversed). c:legendEntry idx counts positions in that display
+    // order (probe: idx 0/1/2 hid the 1st/2nd/3rd displayed entry of a stacked+line combo)
+    const sideLegend =
+      model.legendPos === 'r' || model.legendPos === 'l' || model.legendPos === 'tr'
+    // A maxMin category axis puts series 1 on top of each bar group, so the bottom-up
+    // listing flips back to document order (probe: horizontal bars, first category on top)
+    const catAxes = [plotArea['c:catAx'], plotArea['c:dateAx']].flatMap((raw: any) =>
+      Array.isArray(raw) ? raw : raw ? [raw] : [],
+    )
+    const catReversed = catAxes.some(
+      (ax: any) =>
+        ax?.['c:delete']?.['@_val'] !== '1' &&
+        ax?.['c:scaling']?.['c:orientation']?.['@_val'] === 'maxMin',
+    )
+    const order = plotGroups.flatMap((g) => {
+      const idx: number[] = []
+      for (let i = g.start; i < g.end; i++) idx.push(i)
+      // horizontal bars list bottom-up (Series N first), like the renderer stacks them
+      return (g.hbar && !catReversed) || (g.stacked && sideLegend) ? idx.reverse() : idx
+    })
+    const entriesRaw = legendNode['c:legendEntry']
+    const entries: any[] = Array.isArray(entriesRaw) ? entriesRaw : entriesRaw ? [entriesRaw] : []
+    const deleted = new Set(
+      entries
+        .filter((e) => e?.['c:delete']?.['@_val'] === '1')
+        .map((e) => parseInt(e?.['c:idx']?.['@_val'], 10)),
+    )
+    const shown = order.filter((_, pos) => !deleted.has(pos))
+    if (shown.length !== series.length || shown.some((si, k) => si !== k)) model.legendOrder = shown
   }
 
   // Plot-area inner rectangle (edge-mode fractions of the chart frame); PowerPoint positions
@@ -742,8 +960,9 @@ export function parseChartXml(
   }
 
   // Title text: rich text, or the cached cell-linked string (c:tx/c:strRef)
+  // each title paragraph is its own line (PowerPoint never reflows across them)
   const chartTitle =
-    collectText(chart['c:title']?.['c:tx']?.['c:rich']) ||
+    collectText(chart['c:title']?.['c:tx']?.['c:rich'], '\n') ||
     readStrPoints(chart['c:title']?.['c:tx'])[0]
   if (chart['c:title']?.['c:overlay']?.['@_val'] === '1') model.titleOverlay = true
   if (chartTitle) model.title = chartTitle
@@ -769,17 +988,26 @@ export function parseChartXml(
     const r0 = Array.isArray(p0?.['a:r']) ? p0['a:r'][0] : p0?.['a:r']
     const titleRPr = r0?.['a:rPr'] ?? p0?.['a:pPr']?.['a:defRPr']
     if (!model.titlePt) {
-      const runSz = parseInt(titleRPr?.['@_sz'], 10)
+      const runSz = parseInt(titleRPr?.['@_sz'] ?? p0?.['a:pPr']?.['a:defRPr']?.['@_sz'], 10)
       if (Number.isFinite(runSz) && runSz > 0) model.titlePt = runSz / 100
     }
-    const styleRPr = titleRPr ?? (Array.isArray(titP) ? titP[0] : titP)?.['a:pPr']?.['a:defRPr']
-    if (styleRPr) {
-      // Explicit b="0" must reach the render layer (its default for chart titles is bold)
-      if (styleRPr['@_b'] != null) model.titleBold = styleRPr['@_b'] === '1'
-      if (styleRPr['@_i'] === '1') model.titleItalic = true
-      const c = resolveColorNode(styleRPr['a:solidFill'], theme)
-      if (c) model.titleColor = c
-    }
+    // Run rPr → paragraph defRPr → txPr defRPr, attribute by attribute: Office writes
+    // `<a:rPr lang=…/>` on the runs and the weight/color on the paragraph default, and an
+    // explicit b="0" there must reach the render layer (its default for titles is bold)
+    const styleLayers = [
+      r0?.['a:rPr'],
+      p0?.['a:pPr']?.['a:defRPr'],
+      (Array.isArray(titP) ? titP[0] : titP)?.['a:pPr']?.['a:defRPr'],
+    ].filter(Boolean)
+    const styleAttr = (k: string) => styleLayers.map((l) => l[k]).find((v) => v != null)
+    const b = styleAttr('@_b')
+    if (b != null) model.titleBold = b === '1'
+    if (styleAttr('@_i') === '1') model.titleItalic = true
+    const c = resolveColorNode(styleAttr('a:solidFill'), theme)
+    if (c) model.titleColor = c
+    if (styleAttr('@_cap') === 'all') model.titleCaps = true
+    const spc = letterSpacingPt(styleAttr('@_spc'))
+    if (spc) model.titleSpcPt = spc
   }
 
   // Data labels: plot-level or any series-level c:dLbls (delete=1 counts as none)
@@ -788,12 +1016,16 @@ export function parseChartXml(
   ): {
     on: boolean
     pct: boolean
+    valPct?: boolean
     ser?: boolean
     cat?: boolean
     val?: boolean
     fmt?: string
     sizePt?: number
     bold?: boolean
+    rotDeg?: number
+    caps?: boolean
+    spcPt?: number
   } => {
     const d = owner?.['c:dLbls']
     if (!d || typeof d !== 'object' || d['c:delete']?.['@_val'] === '1')
@@ -806,28 +1038,60 @@ export function parseChartXml(
     const dP = d['c:txPr']?.['a:p']
     const dRPr = (Array.isArray(dP) ? dP[0] : dP)?.['a:pPr']?.['a:defRPr']
     const dSz = parseInt(dRPr?.['@_sz'], 10)
+    const dRot = parseInt(d['c:txPr']?.['a:bodyPr']?.['@_rot'], 10)
+    const dSpc = letterSpacingPt(dRPr?.['@_spc'])
     return {
       on: showVal || showPct || showSer || showCat,
       pct: showPct && !showVal,
+      valPct: showPct && showVal,
       ser: showSer,
       cat: showCat,
       val: showVal || showPct,
       ...(typeof fmt === 'string' && fmt && fmt !== 'General' ? { fmt } : {}),
       ...(Number.isFinite(dSz) && dSz > 0 ? { sizePt: dSz / 100 } : {}),
       ...(dRPr?.['@_b'] === '1' ? { bold: true } : {}),
+      ...(Number.isFinite(dRot) && dRot !== 0 && Math.abs(dRot) <= 5400000
+        ? { rotDeg: dRot / 60000 }
+        : {}),
+      ...(dRPr?.['@_cap'] === 'all' ? { caps: true } : {}),
+      ...(dSpc ? { spcPt: dSpc } : {}),
     }
   }
+  // Series-level c:dLbls override the plot-level block (PowerPoint reads the series first)
   const dLblOwners: any[] = (cartesian.length > 1 ? cartesian.map((c) => c.plot) : [plot]).flatMap(
     (p) => [
-      p,
       ...((Array.isArray(p['c:ser']) ? p['c:ser'] : p['c:ser'] ? [p['c:ser']] : []) as any[]),
+      p,
     ],
   )
   const dLblResults = dLblOwners.map(dLblsInfo)
+  const latinOf = (txPr: any): string | undefined => {
+    const p = txPr?.['a:p']
+    const p0 = Array.isArray(p) ? p[0] : p
+    const r = p0?.['a:r']
+    const rPr = (Array.isArray(r) ? r[0] : r)?.['a:rPr']
+    const face =
+      rPr?.['a:latin']?.['@_typeface'] ?? p0?.['a:pPr']?.['a:defRPr']?.['a:latin']?.['@_typeface']
+    return typeof face === 'string' && face ? resolveFontRef(face, theme) : undefined
+  }
+  const axisNodes = ['c:catAx', 'c:valAx', 'c:dateAx', 'c:serAx'].flatMap((k) => {
+    const raw = plotArea[k]
+    return Array.isArray(raw) ? raw : raw ? [raw] : []
+  })
+  // Tick labels size the plot, so the axis face outranks the title's when chartSpace names none
+  const fontFamily =
+    latinOf(doc['c:chartSpace']?.['c:txPr']) ??
+    axisNodes.map((a) => latinOf(a?.['c:txPr'])).find(Boolean) ??
+    latinOf(chart['c:legend']?.['c:txPr']) ??
+    dLblOwners.map((o) => latinOf(o?.['c:dLbls']?.['c:txPr'])).find(Boolean) ??
+    latinOf(chart['c:title']?.['c:tx']?.['c:rich']) ??
+    latinOf(chart['c:title']?.['c:txPr'])
+  if (fontFamily) model.fontFamily = fontFamily
   const found = dLblResults.find((r) => r.on)
   if (found) {
     model.dataLabels = true
     if (found.pct) model.dataLabelsPct = true
+    if (found.valPct) model.dataLabelsValPct = true
     if (found.ser) model.dataLabelSerName = true
     if (found.cat) model.dataLabelCatName = true
     if (found.on && !found.val) model.dataLabelNoValue = true
@@ -836,6 +1100,11 @@ export function parseChartXml(
     const sizePt = found.sizePt ?? dLblResults.find((r) => r.sizePt)?.sizePt
     if (sizePt) model.dataLabelPt = sizePt
     if (found.bold ?? dLblResults.some((r) => r.bold)) model.dataLabelBold = true
+    const rotDeg = found.rotDeg ?? dLblResults.find((r) => r.rotDeg)?.rotDeg
+    if (rotDeg) model.dataLabelRotDeg = rotDeg
+    if (found.caps ?? dLblResults.some((r) => r.caps)) model.dataLabelCaps = true
+    const spcPt = found.spcPt ?? dLblResults.find((r) => r.spcPt)?.spcPt
+    if (spcPt) model.dataLabelSpcPt = spcPt
   }
 
   // Axes: scatter charts have dual value axes (x at the bottom axPos=b, y on the left); the x axis goes in the catAxis slot
@@ -870,12 +1139,50 @@ export function parseChartXml(
     const catAx = parseAxis(pick?.n, theme)
     if (catAx || pick?.date)
       model.catAxis = { ...(catAx ?? {}), ...(pick?.date ? { isDate: true } : {}) }
+    // A date axis plots chronologically whatever the sheet order (PowerPoint: Jun..Jan
+    // data on a maxMin date axis still reads Jun..Jan left to right, i.e. sorted then flipped)
+    if (pick?.date && catSerials && !categoryGroups) sortByDate(model, catSerials)
   }
   // Source-linked data labels inherit the value axis's number format
   if (model.dataLabels && !model.dataLabelFmt && model.valAxis?.numFmt)
     model.dataLabelFmt = model.valAxis.numFmt
 
+  const dTable = plotArea['c:dTable']
+  if (dTable !== undefined && model.kind !== 'pie') model.dataTable = parseDataTable(dTable, theme)
+
   return model
+}
+
+function parseDataTable(node: any, theme?: Theme): ChartDataTable {
+  const on = (k: string) => node?.[k]?.['@_val'] !== '0'
+  const out: ChartDataTable = {
+    showKeys: on('c:showKeys'),
+    horzBorder: on('c:showHorzBorder'),
+    vertBorder: on('c:showVertBorder'),
+    outline: on('c:showOutline'),
+  }
+  const p = node?.['c:txPr']?.['a:p']
+  const rPr = (Array.isArray(p) ? p[0] : p)?.['a:pPr']?.['a:defRPr']
+  const sz = parseInt(rPr?.['@_sz'], 10)
+  if (Number.isFinite(sz) && sz > 0) out.sizePt = sz / 100
+  const tc = resolveColorNode(rPr?.['a:solidFill'], theme)
+  if (tc) out.textColor = tc
+  const lc = resolveColorNode(node?.['c:spPr']?.['a:ln']?.['a:solidFill'], theme)
+  if (lc) out.lineColor = lc
+  return out
+}
+
+/** a:rPr spc (1/100 pt) as pt; 0/absent → undefined */
+function letterSpacingPt(raw: unknown): number | undefined {
+  const v = parseInt(String(raw ?? ''), 10)
+  return Number.isFinite(v) && v !== 0 ? v / 100 : undefined
+}
+
+/** Non-General c:formatCode of a value cache. */
+function cacheFormatCode(node: any): string | undefined {
+  const fmt = (node?.['c:numRef']?.['c:numCache'] ?? node?.['c:numLit'])?.['c:formatCode']
+  const str = typeof fmt === 'string' ? fmt : fmt?.['#text'] != null ? String(fmt['#text']) : ''
+  return str && str !== 'General' ? str : undefined
 }
 
 /** Numeric cache inside <c:val>/<c:cat>/<c:tx> → number[] (idx order kept, empty points null). */
@@ -922,6 +1229,48 @@ function readStrPoints(node: any, date1904 = false): string[] {
   return []
 }
 
+/** Numeric date serials of a category cache (undefined unless every point is a dated number). */
+function readDateSerials(node: any): number[] | undefined {
+  const numCache = node?.['c:numRef']?.['c:numCache']
+  if (!numCache) return undefined
+  const fmt = numCache['c:formatCode']
+  const fmtStr = typeof fmt === 'string' ? fmt : String(fmt?.['#text'] ?? '')
+  if (!/[ymd]/i.test(fmtStr) || /[#0?]/.test(fmtStr)) return undefined
+  const serials = readPoints(numCache).map((v) => (v == null ? NaN : parseFloat(v)))
+  return serials.every((v) => Number.isFinite(v)) ? serials : undefined
+}
+
+/** Reorder categories and every per-point series array chronologically. */
+function sortByDate(model: ChartModel, serials: number[]): void {
+  const n = model.categories.length
+  if (serials.length !== n) return
+  const order = serials.map((_, i) => i).sort((a, b) => serials[a]! - serials[b]!)
+  if (order.every((i, k) => i === k)) return
+  // Indexed arrays follow the sheet point index; points beyond the categories keep their
+  // slot. Per-point arrays are sparse, so trailing gaps are trimmed again.
+  const permute = <T>(arr: T[]): T[] => [...order.map((i) => arr[i] as T), ...arr.slice(n)]
+  const pick = <T>(arr: T[] | undefined): T[] | undefined => {
+    if (!arr) return arr
+    const out = permute(arr)
+    let end = out.length
+    while (end > 0 && out[end - 1] === undefined) end--
+    return end ? out.slice(0, end) : undefined
+  }
+  model.categories = order.map((i) => model.categories[i]!)
+  const newIdx = new Map(order.map((i, k) => [i, k]))
+  for (const s of model.series) {
+    s.values = permute(s.values).map((v) => v ?? null)
+    if (s.pointLabels) s.pointLabels = permute(s.pointLabels)
+    s.pointColors = pick(s.pointColors)
+    s.pointFills = pick(s.pointFills)
+    s.pointNoFill = pick(s.pointNoFill)
+    s.pointLines = pick(s.pointLines)
+    s.pointExplosionPct = pick(s.pointExplosionPct)
+    if (s.dLblOverrides)
+      s.dLblOverrides = s.dLblOverrides.map((d) => ({ ...d, idx: newIdx.get(d.idx) ?? d.idx }))
+  }
+}
+
 function formatDateSerial(serial: number, fmt: string, date1904: boolean): string {
   const ms = (serial - (date1904 ? 24107 : 25569)) * 86400000
   const d = new Date(ms)
@@ -954,14 +1303,36 @@ function formatDateSerial(serial: number, fmt: string, date1904: boolean): strin
 }
 
 /** c:pt list → value array ordered by idx. */
+/** Largest point count honored: a hostile ptCount must not allocate the array. */
+const MAX_CHART_POINTS = 1_048_576
+/** Empty slots a chart's declared counts may add past their real points, in total.
+ *  One series may still be padded to MAX_CHART_POINTS (a chart over a mostly empty
+ *  range); 256 hostile series declaring a million each share this one budget. */
+const MAX_TAIL_PADDING = MAX_CHART_POINTS
+let tailPaddingLeft = MAX_TAIL_PADDING
+/** Largest series count honored: bounds the series spreads and per-series work. */
+const MAX_CHART_SERIES = 256
+
 function readPoints(cache: any): Array<string | null> {
   const ptsRaw = cache?.['c:pt']
   const pts: any[] = Array.isArray(ptsRaw) ? ptsRaw : ptsRaw ? [ptsRaw] : []
   const count = cache?.['c:ptCount']?.['@_val']
-  const n = count != null ? parseInt(count, 10) : pts.length
-  const out: Array<string | null> = new Array(Math.max(n, pts.length)).fill(null)
+  // Allocation follows the data, not the declaration alone: the declared count
+  // may only pad past the real points while the chart-wide budget lasts.
+  const declaredRaw = count != null ? parseInt(count, 10) : pts.length
+  const declared = Number.isFinite(declaredRaw) ? Math.max(0, declaredRaw) : pts.length
+  const maxIdx = pts.reduce(
+    (m: number, pt: any) => Math.max(m, parseInt(pt?.['@_idx'], 10) || 0),
+    -1,
+  )
+  const n = Math.min(Math.max(declared, maxIdx + 1), maxIdx + 1 + tailPaddingLeft, MAX_CHART_POINTS)
+  tailPaddingLeft -= Math.max(0, n - (maxIdx + 1))
+  const out: Array<string | null> = new Array(n).fill(null)
   for (const pt of pts) {
     const idx = parseInt(pt['@_idx'], 10) || 0
+    // A sparse hostile idx would grow the array without bound: ignore
+    // out-of-range entries instead.
+    if (idx < 0 || idx >= n) continue
     const v = pt['c:v']
     out[idx] = typeof v === 'string' ? v : v != null ? String(v['#text'] ?? v) : null
   }
@@ -978,23 +1349,60 @@ function serColor(ser: any, theme: Theme | undefined, preferLine: boolean): stri
   return preferLine ? (lnColor ?? fillColor) : (fillColor ?? lnColor)
 }
 
+/** c:dLbls / c:dLbl spPr: solid label-box fill and outline colors; an explicit a:noFill
+ *  is null (a point clearing the series box), absent = inherit. */
+function labelBox(spPr: any, theme?: Theme): { fill?: string | null; border?: string | null } {
+  if (!spPr || typeof spPr !== 'object') return {}
+  const out: { fill?: string | null; border?: string | null } = {}
+  // empty elements parse as '' — test for presence, not truthiness
+  if ('a:noFill' in spPr) out.fill = null
+  else {
+    const fill = resolveColorNode(spPr['a:solidFill'], theme)
+    if (fill) out.fill = fill
+  }
+  const ln = spPr['a:ln']
+  if (ln && typeof ln === 'object') {
+    if ('a:noFill' in ln) out.border = null
+    else {
+      const border = resolveColorNode(ln['a:solidFill'], theme)
+      if (border) out.border = border
+    }
+  }
+  return out
+}
+
 function parseAxis(ax: any, theme?: Theme): ChartAxisStyle | undefined {
   if (!ax || typeof ax !== 'object') return undefined
   const out: ChartAxisStyle = {}
   if (ax['c:delete']?.['@_val'] === '1') out.hidden = true
   const scaling = ax['c:scaling']
-  if (scaling?.['c:min']?.['@_val'] != null) out.min = Number(scaling['c:min']['@_val'])
-  if (scaling?.['c:max']?.['@_val'] != null) out.max = Number(scaling['c:max']['@_val'])
+  // Corrupt axis bounds (c:min val="Infinity") would poison chart scale math:
+  // assign only finite values, else the axis auto-scales.
+  const min = Number(scaling?.['c:min']?.['@_val'])
+  if (scaling?.['c:min']?.['@_val'] != null && Number.isFinite(min)) out.min = min
+  const max = Number(scaling?.['c:max']?.['@_val'])
+  if (scaling?.['c:max']?.['@_val'] != null && Number.isFinite(max)) out.max = max
   if (scaling?.['c:orientation']?.['@_val'] === 'maxMin') out.reversed = true
-  if (ax['c:tickLblPos']?.['@_val'] === 'none') out.tickLblHidden = true
+  const logBase = Number(scaling?.['c:logBase']?.['@_val'])
+  if (Number.isFinite(logBase) && logBase >= 2 && logBase <= 1000) out.logBase = logBase
+  const crosses = ax['c:crosses']?.['@_val']
+  if (crosses === 'autoZero' || crosses === 'min' || crosses === 'max') out.crosses = crosses
+  const tickLblPos = ax['c:tickLblPos']?.['@_val']
+  if (tickLblPos === 'none') out.tickLblHidden = true
+  else if (tickLblPos === 'low' || tickLblPos === 'high') out.tickLblPos = tickLblPos
   const defRPr =
     ax['c:txPr']?.['a:p']?.[0]?.['a:pPr']?.['a:defRPr'] ??
     ax['c:txPr']?.['a:p']?.['a:pPr']?.['a:defRPr']
   if (defRPr) {
     const c = resolveColorNode(defRPr['a:solidFill'], theme)
     if (c) out.labelColor = c
-    if (defRPr['@_sz']) out.labelSizePt = parseInt(defRPr['@_sz'], 10) / 100
+    // sz="auto" parses to NaN, and a NaN labelSizePt beats the render default
+    const axSz = parseInt(defRPr['@_sz'], 10)
+    if (Number.isFinite(axSz) && axSz > 0) out.labelSizePt = axSz / 100
     if (defRPr['@_b'] === '1') out.labelBold = true
+    if (defRPr['@_cap'] === 'all') out.labelCaps = true
+    const spc = letterSpacingPt(defRPr['@_spc'])
+    if (spc) out.labelSpcPt = spc
     // INT_MIN baseline sentinel (Aspose-written): PowerPoint reserves the label space
     // but renders nothing there
     if (defRPr['@_baseline'] === '-2147483648') out.tickLblGarbage = true
@@ -1006,6 +1414,8 @@ function parseAxis(ax: any, theme?: Theme): ChartAxisStyle | undefined {
   if (typeof numFmt === 'string' && numFmt && numFmt !== 'General') out.numFmt = numFmt
   const lineColor = resolveColorNode(ax['c:spPr']?.['a:ln']?.['a:solidFill'], theme)
   if (lineColor) out.lineColor = lineColor
+  const axLn = ax['c:spPr']?.['a:ln']
+  if (axLn && typeof axLn === 'object' && 'a:noFill' in axLn) out.lineHidden = true
   // A self-closing <c:majorGridlines/> (no spPr) parses to an empty string; still counts as having gridlines
   const grid = ax['c:majorGridlines']
   if (grid !== undefined) {
@@ -1042,8 +1452,13 @@ function parseAxis(ax: any, theme?: Theme): ChartAxisStyle | undefined {
   const markSkip = parseInt(ax['c:tickMarkSkip']?.['@_val'], 10)
   if (Number.isFinite(markSkip) && markSkip > 1) out.tickMarkSkip = markSkip
   // Axis title (all a:t inside c:title/c:tx/c:rich concatenated)
+  // rich text, else a cell-linked strRef cache; a <c:title> with no c:tx at all shows
+  // PowerPoint's "Axis Title" placeholder
   const titleNode = ax['c:title']
-  const title = collectText(titleNode?.['c:tx']?.['c:rich'])
+  const title =
+    collectText(titleNode?.['c:tx']?.['c:rich']) ??
+    readStrPoints(titleNode?.['c:tx'])[0] ??
+    (titleNode && !titleNode['c:tx'] ? 'Axis Title' : undefined)
   if (title) {
     out.title = title
     if (titleNode?.['c:overlay']?.['@_val'] === '1') out.titleOverlay = true
@@ -1068,17 +1483,19 @@ function parseAxis(ax: any, theme?: Theme): ChartAxisStyle | undefined {
 }
 
 /** Collect all a:t inside a rich text node. */
-function collectText(rich: any): string | undefined {
+function collectText(rich: any, paraSep = ''): string | undefined {
   if (!rich) return undefined
   const paras: any[] = Array.isArray(rich['a:p']) ? rich['a:p'] : rich['a:p'] ? [rich['a:p']] : []
-  const parts: string[] = []
+  const paraTexts: string[] = []
   for (const p of paras) {
     const runs: any[] = Array.isArray(p['a:r']) ? p['a:r'] : p['a:r'] ? [p['a:r']] : []
+    const parts: string[] = []
     for (const r of runs) {
       const t = r['a:t']
       parts.push(typeof t === 'string' ? t : String(t?.['#text'] ?? ''))
     }
+    paraTexts.push(parts.join(''))
   }
-  const s = parts.join('')
+  const s = paraTexts.join(paraSep)
   return s.trim() ? s : undefined
 }

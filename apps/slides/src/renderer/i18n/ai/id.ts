@@ -111,6 +111,8 @@ export const id = {
   aiErrUnknown: 'Kesalahan tidak dikenal',
   aiErrStreamTimeout:
     'Permintaan AI habis waktu: jaringan tidak merespons sehingga proses dihentikan. Periksa koneksi Anda lalu coba lagi',
+  aiErrRegion:
+    'Penyedia model ini tidak melayani wilayah Anda saat ini — pilih model lain atau ganti jaringan',
   aiErrOverloaded: 'Layanan AI sedang sibuk — silakan coba lagi sebentar lagi',
   aiErrNetwork:
     'Masalah jaringan: tidak dapat terhubung ke layanan AI. Periksa koneksi Anda lalu coba lagi',
@@ -135,6 +137,7 @@ export const id = {
   aiClarifyOther: 'Lainnya (isi sendiri)',
   aiClarifySkip: 'Lewati survei',
   aiClarifyNext: 'Berikutnya',
+  aiClarifyPrev: 'Sebelumnya',
   aiClarifySubmit: 'Buat',
   aiSumReadAttachment: 'Baca lampiran',
   aiSumReadAttachmentName: 'Baca lampiran {name}',

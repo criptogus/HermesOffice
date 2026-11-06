@@ -1,40 +1,43 @@
 <p align="center">
-  <a href="https://genoffice.ai/">
+  <a href="https://hermesoffice.ai/">
     <picture>
       <source srcset="../assets/readme/hero-dark.webp" media="(prefers-color-scheme: dark)">
-      <img src="../assets/readme/hero.webp" alt="GenOffice — حزمة المكتب المفتوحة المصدر المدعومة بالذكاء الاصطناعي: Docs و Sheets و Slides و PDF و Markdown و HTML مع لوحة ذكاء اصطناعي مدمجة" width="100%">
+      <img src="../assets/readme/hero.webp" alt="HermesOffice — حزمة المكتب المفتوحة المصدر المدعومة بالذكاء الاصطناعي: Docs و Sheets و Slides و PDF و Markdown و HTML مع لوحة ذكاء اصطناعي مدمجة" width="100%">
     </picture>
   </a>
 </p>
 
-<h1 align="center" dir="rtl">GenOffice</h1>
+<h1 align="center" dir="rtl">HermesOffice</h1>
 
 <p align="center" dir="rtl"><b>أول حزمة Office متكاملة المزايا ومفتوحة المصدر تعمل بالذكاء الاصطناعي في العالم.</b><br>
 ملفات Word و Excel و PowerPoint و PDF، يحرّرها أنت والذكاء الاصطناعي الخاص بك، وتُحفظ بالصيغ الأصلية نفسها.</p>
 
 <p align="center">
-  <a href="../../LICENSE"><img src="https://img.shields.io/github/license/genspark-ai/genoffice" alt="الترخيص: Apache-2.0"></a>
-  <a href="https://github.com/genspark-ai/genoffice/releases/latest"><img src="https://img.shields.io/github/v/release/genspark-ai/genoffice" alt="أحدث إصدار"></a>
-  <a href="https://github.com/genspark-ai/genoffice/releases"><img src="https://img.shields.io/github/downloads/genspark-ai/genoffice/total" alt="عدد التنزيلات"></a>
-  <a href="https://github.com/genspark-ai/genoffice/stargazers"><img src="https://img.shields.io/github/stars/genspark-ai/genoffice?style=flat" alt="نجوم GitHub"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/github/license/genspark-ai/hermesoffice" alt="الترخيص: Apache-2.0"></a>
+  <a href="https://github.com/genspark-ai/hermesoffice/releases/latest"><img src="https://img.shields.io/github/v/release/genspark-ai/hermesoffice" alt="أحدث إصدار"></a>
+  <a href="https://github.com/genspark-ai/hermesoffice/releases"><img src="https://img.shields.io/github/downloads/genspark-ai/hermesoffice/total" alt="عدد التنزيلات"></a>
+  <a href="https://github.com/genspark-ai/hermesoffice/stargazers"><img src="https://img.shields.io/github/stars/genspark-ai/hermesoffice?style=flat" alt="نجوم GitHub"></a>
 </p>
 
-<p align="center"><a href="../../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a> · <b>العربية</b> · <a href="README.ru.md">Русский</a> · <a href="README.it.md">Italiano</a> · <a href="README.nl.md">Nederlands</a> · <a href="README.pl.md">Polski</a> · <a href="README.cs.md">Čeština</a> · <a href="README.id.md">Bahasa Indonesia</a> · <a href="README.ms.md">Bahasa Melayu</a> · <a href="README.th.md">ไทย</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.he.md">עברית</a></p>
+<p align="center"><a href="../../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a> · <b>العربية</b> · <a href="README.ru.md">Русский</a> · <a href="README.it.md">Italiano</a> · <a href="README.nl.md">Nederlands</a> · <a href="README.pl.md">Polski</a> · <a href="README.cs.md">Čeština</a> · <a href="README.id.md">Bahasa Indonesia</a> · <a href="README.ms.md">Bahasa Melayu</a> · <a href="README.th.md">ไทย</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.he.md">עברית</a> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.tr.md">Türkçe</a></p>
 
 <p align="center" dir="rtl">
   <a href="#download"><b>التنزيل</b></a> ·
+  <a href="#skills"><b>المهارات</b></a> ·
   <a href="#command-line-and-agent-skill"><b>CLI</b></a> ·
   <a href="#mcp-server"><b>MCP</b></a> ·
-  <a href="https://genoffice.ai/"><b>الموقع الإلكتروني</b></a> ·
-  <a href="https://genoffice.ai/join"><b>المجتمع</b></a> ·
+  <a href="https://hermesoffice.ai/"><b>الموقع الإلكتروني</b></a> ·
+  <a href="https://hermesoffice.ai/join"><b>المجتمع</b></a> ·
   <a href="../../PRIVACY.md"><b>الخصوصية</b></a>
 </p>
 
-GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office على macOS و Windows
+HermesOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office على macOS و Windows
 و Linux. يفتح البرنامج ويحفظ مباشرة ملفات `.docx` و `.xlsx` و `.pptx` الأصلية،
 ويحرّر ملفات PDF و Markdown و HTML، ويضع وكيل ذكاء اصطناعي إلى جانب كل مستند —
 لا كمربع محادثة مُلحق بشكل عرضي، بل كمحرّر يقرأ الملف، وينفّذ التغيير، ويوضّح
-لك تحديدًا ما لمسه.
+لك تحديدًا ما لمسه. وتُفتح ملفات ODF (`.odt` و `.ods` و `.odp` وقوالب
+`.ott`/`.ots`/`.otp`) كنسخ OOXML قابلة للتحرير؛ والاستيراد في اتجاه واحد فقط
+(open-only) — يكتب الحفظ بصيغة OOXML ولا يكتب ODF أبدًا.
 
 - **صِيَغ أصلية، حفظ يحافظ على البايتات.** يُعاد كتابة الجزء الذي تحرّره فقط،
   وتبقى بقية الملف كما هي حرفيًا بايتًا ببايت، فتستمر المستندات في العمل
@@ -42,7 +45,11 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 - **ذكاء اصطناعي يمكنك مراجعته.** تصل التعديلات على شكل تتبّع للتغييرات
   وفروقات (diffs) قابلة للتراجع بضغطة واحدة. تحصل جداول البيانات على صِيَغ
   حيّة، لا أرقام ملصقة؛ وتُولَّد الشرائح والصفحات مباشرة على لوحة الرسم وتبقى
-  قابلة للتحرير بالكامل.
+  قابلة للتحرير بالكامل. أخفِ تحديدًا في Docs أو نطاق خلايا في Sheets عن النموذج
+  فيرى الذكاء الاصطناعي عنصرًا نائبًا مسمّى (placeholder) فقط؛ وتبقى الكلمات
+  الأصلية في الملف وتعود كما كانت. ويشمل الإخفاء ذكاء التطبيق نفسه — فسطر
+  الأوامر وأدوات MCP والتصدير بلا واجهة يقرؤون الملف مباشرة ويظلون يرون هذه
+  الكلمات.
 - **محلي بالتصميم.** تُفتح الملفات وتُحرَّر وتُحفَظ وتُحوَّل على جهازك مباشرة.
   جميع عمليات التحويل — PDF إلى Word / Excel / PowerPoint، وMarkdown إلى Word،
   وHTML إلى Word — تعمل على الجهاز نفسه. لا يغادر جهازك شيء سوى طلبات الذكاء
@@ -51,14 +58,14 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
   أو استخدم مفتاحك الخاص مع Claude أو OpenAI أو Gemini أو DeepSeek أو Kimi أو
   GLM أو Qwen أو Doubao أو MiniMax أو Grok أو Mistral أو OpenRouter أو Requesty، أو أي
   نقطة نهاية متوافقة مع OpenAI، بما في ذلك الخوادم المحلية.
-- **قابل للبرمجة وجاهز للوكلاء.** يأتي التطبيق مع سطر أوامر `genoffice` ومهارة
+- **قابل للبرمجة وجاهز للوكلاء.** يأتي التطبيق مع سطر أوامر `hermesoffice` ومهارة
   لكل من Claude Code وCodex وCursor وGemini CLI وGitHub Copilot وOpenCode
   وWindsurf، ليتمكّن وكيل البرمجة من إنشاء ملفات Office حقيقية وتحويلها
   وقراءتها وتحريرها على جهازك دون فتح أي نافذة.
 
-**الحصول عليه:** [macOS](https://github.com/genspark-ai/genoffice/releases/latest) (Apple Silicon و Intel) ·
-[Windows](https://github.com/genspark-ai/genoffice/releases/latest) (x64 و Arm) ·
-[Linux](https://github.com/genspark-ai/genoffice/releases/latest) (deb، rpm، AppImage) —
+**الحصول عليه:** [macOS](https://github.com/genspark-ai/hermesoffice/releases/latest) (Apple Silicon و Intel) ·
+[Windows](https://github.com/genspark-ai/hermesoffice/releases/latest) (x64 و Arm) ·
+[Linux](https://github.com/genspark-ai/hermesoffice/releases/latest) (deb، rpm، AppImage) —
 التفاصيل والمتطلبات في [التنزيل](#download).
 
 ## العرض التوضيحي
@@ -71,12 +78,12 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/docs-report.webp" alt="تطبيق GenOffice Docs يعرض صفحة تقرير سنوي بعمودين مع صورة غلاف بعرض الصفحة كاملة، وجدول مؤشرات أداء مظلّل، وترويسة وتذييل، بتكبير 80% مع لوحة الذكاء الاصطناعي مطوية"></td>
-<td width="50%"><img src="../assets/readme/docs-ai.webp" alt="GenOffice Docs: نظرة عامة عن الشركة مع صورة بانر؛ أعاد الذكاء الاصطناعي صياغة قسم النظرة العامة بإحكام وأضاف قسمًا جديدًا بنقاط، وتوفّر اللوحة تراجعًا بضغطة واحدة"></td>
+<td width="50%"><img src="../assets/readme/docs-report.webp" alt="تطبيق HermesOffice Docs يعرض صفحة تقرير سنوي بعمودين مع صورة غلاف بعرض الصفحة كاملة، وجدول مؤشرات أداء مظلّل، وترويسة وتذييل، بتكبير 80% مع لوحة الذكاء الاصطناعي مطوية"></td>
+<td width="50%"><img src="../assets/readme/docs-ai.webp" alt="HermesOffice Docs: نظرة عامة عن الشركة مع صورة بانر؛ أعاد الذكاء الاصطناعي صياغة قسم النظرة العامة بإحكام وأضاف قسمًا جديدًا بنقاط، وتوفّر اللوحة تراجعًا بضغطة واحدة"></td>
 </tr>
 <tr>
-<td dir="rtl"><b>يفتح الملف كما يعرضه Word تمامًا</b> — أقسام بعمودين، صور بعرض الصفحة كاملة، جداول مظلّلة، ترويسات وتذييلات، وتقسيم إلى صفحات بحسب مقاييس أسطر Word. الأنماط والتعليقات وتتبّع التغييرات والمعادلات والكتابة بالحبر تبقى سليمة دون تغيير عند الحفظ.</td>
-<td dir="rtl"><b>اطلب التعديل</b> — يقرأ الذكاء الاصطناعي الكتل النصية التي يحتاجها، ويعيد كتابة قسم النظرة العامة ويضيف قسمًا جديدًا بنقاط. كل خطوة ذكاء اصطناعي هي لقطة يمكنك التراجع عنها؛ ومع تفعيل <b>تتبّع التغييرات</b>، تصل التعديلات كمراجعات على طراز Word.</td>
+<td dir="rtl"><b>يفتح الملف كما يعرضه Word تمامًا</b> — أقسام بعمودين، صور بعرض الصفحة كاملة، جداول مظلّلة، ترويسات وتذييلات، وتقسيم إلى صفحات بحسب مقاييس أسطر Word. الأنماط والتعليقات وتتبّع التغييرات والمعادلات والكتابة بالحبر وعناصر تحكم المحتوى (content controls) تبقى سليمة دون تغيير عند الحفظ. ويحوّل تبويب <b>Mailings</b> المستند إلى قالب دمج: اختر قائمة مستلمين بصيغة <code>.xlsx</code> أو <code>.csv</code>، وأدرج حقول <code>MERGEFIELD</code> حقيقية، وعاين سجلًا بسجل، ثم ادمج في مستند واحد أو في ملف <code>.docx</code> لكل سجل.</td>
+<td dir="rtl"><b>اطلب التعديل</b> — يقرأ الذكاء الاصطناعي الكتل النصية التي يحتاجها، ويعيد كتابة قسم النظرة العامة ويضيف قسمًا جديدًا بنقاط. كل خطوة ذكاء اصطناعي هي لقطة يمكنك التراجع عنها؛ ومع تفعيل <b>تتبّع التغييرات</b>، تصل التعديلات كمراجعات على طراز Word. اطلب بدلًا من ذلك خريطة ذهنية (mind map) فيكون الجواب مخططًا تفاعليًا للمستند بأكمله: فروع قابلة للطي، وتكبير وتحريك، والنقر على عقدة يطرح سؤالًا متابِعًا، والاستشهادات تقفز إلى الكتلة التي جاءت منها.</td>
 </tr>
 </table>
 
@@ -84,36 +91,40 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/sheets-ai.webp" alt="GenOffice Sheets: أضاف الذكاء الاصطناعي ورقة ملخّص (Summary) تعرض الإيرادات بحسب المنطقة والفئة باستخدام صِيَغ SUMIF، إضافة إلى رسم بياني بالأعمدة، مع تقرير بـ 43 تغييرًا مُطبَّقًا وزر تراجع"></td>
-<td width="50%"><img src="../assets/readme/sheets-qa.webp" alt="GenOffice Sheets: عند سؤاله عن المنطقة الأعلى إيرادًا في الربع الثاني، يجيب الذكاء الاصطناعي بأوروبا مع تفصيل حسب الفئة، ويستشهد بالخلايا التي استخدمها كروابط، إلى جانب ورقة Orders"></td>
+<td width="50%"><img src="../assets/readme/sheets-ai.webp" alt="HermesOffice Sheets: أضاف الذكاء الاصطناعي ورقة ملخّص (Summary) تعرض الإيرادات بحسب المنطقة والفئة باستخدام صِيَغ SUMIF، إضافة إلى رسم بياني بالأعمدة، مع تقرير بـ 43 تغييرًا مُطبَّقًا وزر تراجع"></td>
+<td width="50%"><img src="../assets/readme/sheets-qa.webp" alt="HermesOffice Sheets: عند سؤاله عن المنطقة الأعلى إيرادًا في الربع الثاني، يجيب الذكاء الاصطناعي بأوروبا مع تفصيل حسب الفئة، ويستشهد بالخلايا التي استخدمها كروابط، إلى جانب ورقة Orders"></td>
 </tr>
 <tr>
 <td dir="rtl"><b>ابنِه</b> — من جملة واحدة، يضيف الوكيل ورقة ملخّص بصِيَغ <code>SUMIF</code> فعلية حسب المنطقة والفئة، ويُدرج رسمًا بيانيًا بالأعمدة، ويطبّق الـ43 تغييرًا كدفعة واحدة قابلة للتراجع.</td>
-<td dir="rtl"><b>اسأله</b> — تُجاب الأسئلة عن المصنّف مع شرح المنطق والخلايا الدقيقة المستخدمة كاستشهادات قابلة للنقر. ويعمل خلف الكواليس: محرّك <code>.xlsx</code> داخلي مطوَّر بلغة Rust، وجداول محورية، ومرشِّحات تقطيع (slicers)، وتنسيق شرطي، وتتبّع للصِّيَغ.</td>
+<td dir="rtl"><b>اسأله</b> — تُجاب الأسئلة عن المصنّف مع شرح المنطق والخلايا الدقيقة المستخدمة كاستشهادات قابلة للنقر. ويعمل خلف الكواليس: محرّك <code>.xlsx</code> داخلي مطوَّر بلغة Rust، وجداول محورية، ومرشِّحات تقطيع (slicers)، وتنسيق شرطي، وتتبّع للصِّيَغ، وصور مُضمَّنة في الخلايا كقيم غنية (rich values) أصلية في Excel — يعيد Excel فتحها فتبقى في الخلية.يمكن أن تحمل ملاحظة الخلية صورة، تُعرض أسفل نافذة الملاحظة المنبثقة.</td>
 </tr>
 </table>
 
 ### 3 · Slides — من توجيه (prompt) إلى عرض تقديمي `.pptx` كامل
 
-<img src="../assets/readme/slides-generate.webp" alt="لقطات متسارعة لـ GenOffice Slides وهو يُنشئ عرض المستثمرين Aurora Home: يخطط الذكاء الاصطناعي القصة في اللوحة، وتظهر الشرائح على القماش واحدة تلو الأخرى، وينتهي العرض المكتمل بطلب الإغلاق (closing ask)" width="100%">
+<img src="../assets/readme/slides-generate.webp" alt="لقطات متسارعة لـ HermesOffice Slides وهو يُنشئ عرض المستثمرين Aurora Home: يخطط الذكاء الاصطناعي القصة في اللوحة، وتظهر الشرائح على القماش واحدة تلو الأخرى، وينتهي العرض المكتمل بطلب الإغلاق (closing ask)" width="100%">
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/slides-cover.webp" alt="GenOffice Slides: شريحة الغلاف لعرض تقديمي لمستثمري Aurora Home من إنشاء الذكاء الاصطناعي على لوحة الرسم، مع التوجيه الأصلي المكوَّن من سطر واحد وملخّص الذكاء الاصطناعي لما بناه في اللوحة"></td>
-<td width="50%"><img src="../assets/readme/slides-ai.webp" alt="GenOffice Slides: الشريحة الختامية المصمَّمة لنفس العرض المكوَّن من 11 شريحة، مع شريط المصغّرات على اليسار ولوحة الذكاء الاصطناعي تلخّص السرد القصصي"></td>
+<td width="50%"><img src="../assets/readme/slides-cover.webp" alt="HermesOffice Slides: شريحة الغلاف لعرض تقديمي لمستثمري Aurora Home من إنشاء الذكاء الاصطناعي على لوحة الرسم، مع التوجيه الأصلي المكوَّن من سطر واحد وملخّص الذكاء الاصطناعي لما بناه في اللوحة"></td>
+<td width="50%"><img src="../assets/readme/slides-ai.webp" alt="HermesOffice Slides: الشريحة الختامية المصمَّمة لنفس العرض المكوَّن من 11 شريحة، مع شريط المصغّرات على اليسار ولوحة الذكاء الاصطناعي تلخّص السرد القصصي"></td>
 </tr>
 <tr>
-<td dir="rtl"><b>سطر واحد كمُدخل</b> — "أنشئ عرضًا تقديميًا من 10 شرائح لعرضه على المستثمرين لصالح Aurora Home…". يخطّط GenOffice للسرد القصصي، ويبحث عن الأرقام، ويُعِدّ مسودة كل شريحة على لوحة الرسم كملف <code>.pptx</code> فعلي.</td>
-<td dir="rtl"><b>عرض تقديمي جاهز كمُخرَج</b> — إحدى عشرة شريحة مصمَّمة بخطوط وصور متّسقة ودعوة ختامية لاتخاذ إجراء؛ استمر في التحرير عبر الشرائح الرئيسية والتخطيطات والأدلة الذكية والقصّ غير المدمِّر، أو اطلب من اللوحة إعادة التصميم أو الصياغة أو إعادة الترتيب.</td>
+<td dir="rtl"><b>سطر واحد كمُدخل</b> — "أنشئ عرضًا تقديميًا من 10 شرائح لعرضه على المستثمرين لصالح Aurora Home…". يخطّط HermesOffice للسرد القصصي، ويبحث عن الأرقام، ويُعِدّ مسودة كل شريحة على لوحة الرسم كملف <code>.pptx</code> فعلي.</td>
+<td dir="rtl"><b>عرض تقديمي جاهز كمُخرَج</b> — إحدى عشرة شريحة مصمَّمة بخطوط وصور متّسقة ودعوة ختامية لاتخاذ إجراء؛ استمر في التحرير عبر الشرائح الرئيسية والتخطيطات والأدلة الذكية والقصّ غير المدمِّر، أو اطلب من اللوحة إعادة التصميم أو الصياغة أو إعادة الترتيب. وأدرج ملف <code>.glb</code> فيصير نموذجًا ثلاثي الأبعاد حقيقيًا: أدره بالسحب داخل المحرِّر، ويُخزَّن بالطريقة نفسها التي يخزّن بها PowerPoint النماذج ثلاثية الأبعاد، ويبقى ثلاثي الأبعاد في PowerPoint.</td>
 </tr>
 </table>
+
+**Slide Show → Record** يسجّل سردًا صوتيًا للعرض شريحةً شريحة، مع إيقاف مؤقت
+واستئناف. يُحفظ السرد الصوتي وأزمنة الانتقال التلقائي التي يقيسها في ملف
+`.pptx`، ويعيد PowerPoint تشغيلها بالطريقة نفسها.
 
 ### 4 · PDF — حرّر نص PDF في مكانه، وحوّل PDF إلى Word على الجهاز مباشرة
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/pdf-edit.webp" alt="GenOffice PDF: يحدّد وضع تحرير النص كل كتلة نصية في الصفحة للتحرير في مكانها، بينما تجيب لوحة الذكاء الاصطناعي عن سؤال حول التقرير مع استشهادات بأرقام الصفحات"></td>
-<td width="50%"><img src="../assets/readme/pdf-convert.webp" alt="تطبيق GenOffice Docs يعرض مستند Word محوَّلًا محليًا من ملف PDF الخاص بالمراجعة الفصلية لشركة Helios، مفتوحًا في تبويب ثانٍ إلى جانب ملف PDF الأصلي"></td>
+<td width="50%"><img src="../assets/readme/pdf-edit.webp" alt="HermesOffice PDF: يحدّد وضع تحرير النص كل كتلة نصية في الصفحة للتحرير في مكانها، بينما تجيب لوحة الذكاء الاصطناعي عن سؤال حول التقرير مع استشهادات بأرقام الصفحات"></td>
+<td width="50%"><img src="../assets/readme/pdf-convert.webp" alt="تطبيق HermesOffice Docs يعرض مستند Word محوَّلًا محليًا من ملف PDF الخاص بالمراجعة الفصلية لشركة Helios، مفتوحًا في تبويب ثانٍ إلى جانب ملف PDF الأصلي"></td>
 </tr>
 <tr>
 <td dir="rtl"><b>حرّر داخل الصفحة</b> — يحدّد وضع تحرير النص كل كتلة نصية لإعادة الكتابة في مكانها؛ ويُعاد كتابة تدفّق المحتوى عبر PDFium بالخطوط الأصلية نفسها، لا بتعليق تغطية فوق النص. اسأل الذكاء الاصطناعي عن تقرير طويل واحصل على إجابات مع استشهادات بأرقام الصفحات.</td>
@@ -128,11 +139,11 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 الألوان، والخطوط، وتوجهات الأسلوب — ثم يبني ملف `.html` واحدًا مستقلًا بالكامل
 استنادًا إلى تلك العناصر (tokens).
 
-<img src="../assets/readme/html-restyle-motion.webp" alt="لقطات متسارعة لـ GenOffice HTML وهو يعيد تصميم صفحة الوصول الخاصة بـ Lumen: طلب Restyle واحد في اللوحة يحوّل صفحة Midnight Studio الداكنة إلى نسخة Solar Daybreak الدافئة، بينما يبقى كل قسم وكل المحتوى في مكانه" width="100%">
+<img src="../assets/readme/html-restyle-motion.webp" alt="لقطات متسارعة لـ HermesOffice HTML وهو يعيد تصميم صفحة الوصول الخاصة بـ Lumen: طلب Restyle واحد في اللوحة يحوّل صفحة Midnight Studio الداكنة إلى نسخة Solar Daybreak الدافئة، بينما يبقى كل قسم وكل المحتوى في مكانه" width="100%">
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/html-ai.webp" alt="GenOffice HTML: صفحة هبوط تم إنشاؤها لمصباح مكتبي يعمل بالطاقة الشمسية باتجاه Midnight Studio الداكن، معروضة في المعاينة المباشرة مع لوحة الذكاء الاصطناعي تلخّص الصفحة التي بنتها للتو"></td>
+<td width="50%"><img src="../assets/readme/html-ai.webp" alt="HermesOffice HTML: صفحة هبوط تم إنشاؤها لمصباح مكتبي يعمل بالطاقة الشمسية باتجاه Midnight Studio الداكن، معروضة في المعاينة المباشرة مع لوحة الذكاء الاصطناعي تلخّص الصفحة التي بنتها للتو"></td>
 <td width="50%"><img src="../assets/readme/html-restyle.webp" alt="نفس صفحة هبوط Lumen بعد إعادة تصميمها بواسطة الذكاء الاصطناعي إلى اتجاه Solar Daybreak الدافئ: خلفية بلون الورق، وعناوين بخط Serif، ولمسة برتقالية، مع الحفاظ على جميع الأقسام والنصوص"></td>
 </tr>
 <tr>
@@ -142,8 +153,8 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 </table>
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/html-dashboard.webp" alt="GenOffice HTML: واجهة لوحة تحكم شخصية تم إنشاؤها لمصمِّم مستقل بأسلوب كتّاني دافئ، مع شريط جانبي أيسر، وترحيب بخط Serif، وأربع بطاقات مقاييس"></td>
-<td width="50%"><img src="../assets/readme/html-report.webp" alt="GenOffice HTML: تقرير بيانات عن سوق السيارات الكهربائية تم إنشاؤه بأسلوب الصحيفة الكبيرة (broadsheet)، مع ترويسة بخط Serif، ورقم عنوان رئيسي بقيمة 17.3 مليون، وصفّ إحصاءات"></td>
+<td width="50%"><img src="../assets/readme/html-dashboard.webp" alt="HermesOffice HTML: واجهة لوحة تحكم شخصية تم إنشاؤها لمصمِّم مستقل بأسلوب كتّاني دافئ، مع شريط جانبي أيسر، وترحيب بخط Serif، وأربع بطاقات مقاييس"></td>
+<td width="50%"><img src="../assets/readme/html-report.webp" alt="HermesOffice HTML: تقرير بيانات عن سوق السيارات الكهربائية تم إنشاؤه بأسلوب الصحيفة الكبيرة (broadsheet)، مع ترويسة بخط Serif، ورقم عنوان رئيسي بقيمة 17.3 مليون، وصفّ إحصاءات"></td>
 </tr>
 <tr>
 <td dir="rtl"><b>نماذج واجهات (UI mockups)</b> — تحوّل قالب البداية "لوحة التحكم الشخصية" شخصية افتراضية إلى تخطيط عملي: شريط جانبي، ترحيب، رسم Sparkline لساعات العمل القابلة للفوترة، وبطاقات فواتير ونسب استغلال، وكل ذلك HTML فعلي يمكنك تسليمه لمطوِّر.</td>
@@ -155,8 +166,8 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/markdown-ai.webp" alt="GenOffice Markdown: فقرة محدَّدة تعرض نافذة منبثقة Ask AI مع تعليمات مكتوبة وشرائح اقتراحات مثل Polish وMake more concise وExpand وFix grammar، إضافة إلى زرَّي Send now وAdd to queue"></td>
-<td width="50%"><img src="../assets/readme/markdown-render.webp" alt="تطبيق GenOffice Markdown يعرض مستند ملاحظات إطلاق يحتوي على جدول، ومخطط تدفّق Mermaid، وقائمة مهام، مع توجيهات البداية الخاصة بلوحة الذكاء الاصطناعي على اليسار"></td>
+<td width="50%"><img src="../assets/readme/markdown-ai.webp" alt="HermesOffice Markdown: فقرة محدَّدة تعرض نافذة منبثقة Ask AI مع تعليمات مكتوبة وشرائح اقتراحات مثل Polish وMake more concise وExpand وFix grammar، إضافة إلى زرَّي Send now وAdd to queue"></td>
+<td width="50%"><img src="../assets/readme/markdown-render.webp" alt="تطبيق HermesOffice Markdown يعرض مستند ملاحظات إطلاق يحتوي على جدول، ومخطط تدفّق Mermaid، وقائمة مهام، مع توجيهات البداية الخاصة بلوحة الذكاء الاصطناعي على اليسار"></td>
 </tr>
 <tr>
 <td dir="rtl"><b>اسأل الذكاء الاصطناعي عن نص محدَّد</b> — حدِّد أي فقرة فتظهر شريحة <b>Ask AI</b>: اكتب تعليمًا أو اختر اقتراحًا، وأرسله فورًا، أو أضِف عدة تعديلات مرتبطة بمواضع محدَّدة إلى قائمة انتظار ونفِّذها في مرة واحدة. نفس المدخل موجود في كل التطبيقات.</td>
@@ -164,40 +175,45 @@ GenOffice بديل مجاني ومفتوح المصدر لـ Microsoft Office ع
 </tr>
 </table>
 
-### 7 · CLI — وكيل البرمجة الخاص بك يقود GenOffice، على جهازك
+**ملاحظات مترابطة على طريقة Obsidian.** روابط `[[wiki links]]` تنقلك إلى
+الملاحظة التي تسمّيها، وكتابة `[[` تُظهر إكمالًا لأسماء الملاحظات، و`![[…]]`
+تُضمِّن ملاحظة أو صورة داخل النص. تعرض لوحة **Backlinks** كل ملاحظة تشير إلى
+الملاحظة المفتوحة، وترسم واجهة **Graph** خريطة لروابط الـ vault بأكملها.
 
-يأتي GenOffice مع سطر أوامر `genoffice` ومهارة وكيل. ثبّت المهارة، وسيتمكّن
+### 7 · CLI — وكيل البرمجة الخاص بك يقود HermesOffice، على جهازك
+
+يأتي HermesOffice مع سطر أوامر `hermesoffice` ومهارة وكيل. ثبّت المهارة، وسيتمكّن
 Claude Code أو Codex أو Cursor أو Gemini CLI أو GitHub Copilot أو OpenCode أو
 Windsurf من إنشاء ملفات Office حقيقية وتحويلها وقراءتها وتحريرها عبر المحرّكات
 نفسها التي تستخدمها التطبيقات، دون فتح أي نافذة.
 
-<img src="../assets/readme/cli-deck-in-app.webp" alt="GenOffice Slides يعرض عرضًا تقديميًا من ثماني شرائح عن المجموعة الشمسية بناه وكيل برمجة عبر سطر أوامر genoffice: شريحة الغلاف على لوحة الرسم، وثماني مصغّرات على اليسار، ولوحة الذكاء الاصطناعي مفتوحة" width="100%">
+<img src="../assets/readme/cli-deck-in-app.webp" alt="HermesOffice Slides يعرض عرضًا تقديميًا من ثماني شرائح عن المجموعة الشمسية بناه وكيل برمجة عبر سطر أوامر hermesoffice: شريحة الغلاف على لوحة الرسم، وثماني مصغّرات على اليسار، ولوحة الذكاء الاصطناعي مفتوحة" width="100%">
 
 <table>
 <tr>
 <td width="50%"><img src="../assets/readme/cli-slides-grid.webp" alt="الشرائح الثماني المُصيَّرة لعرض المجموعة الشمسية جنبًا إلى جنب: الغلاف، والجدول الزمني للاستكشاف، وأربعة أرقام رئيسية، ورسم بياني بالأعمدة لأقطار الكواكب، والعوالم الصخرية مقابل العمالقة، ورقم الشمس البارز 99.8%، وشبكة العمالقة الأربعة، والخلاصات"></td>
-<td width="50%"><img src="../assets/readme/cli-integrations.webp" alt="إعدادات GenOffice، صفحة Integrations: مهارة genoffice مثبَّتة في Claude Code، مع أزرار Install بجوار Codex وCursor"></td>
+<td width="50%"><img src="../assets/readme/cli-integrations.webp" alt="إعدادات HermesOffice، صفحة Integrations: مهارة hermesoffice مثبَّتة في Claude Code، مع أزرار Install بجوار Codex وCursor"></td>
 </tr>
 <tr>
-<td dir="rtl"><b>توجيه واحد إلى وكيلك</b> — "أنشئ عرضًا تقديميًا من ثماني شرائح عن المجموعة الشمسية." يقرأ الوكيل المهارة، ويكتب ورقة أنماط ومخططًا ومواصفة صفحة واحدة لكل شريحة، ويولّد الصورتين بواسطة <code>genoffice image</code>، ويترك <code>genoffice slides check</code> يرفض أي عنصر يتجاوز الحدود أو يتداخل قبل أن يجمّع <code>genoffice create</code> ملف <code>.pptx</code> ويُعيد <code>slides render</code> صورة PNG لكل شريحة لمعاينتها.</td>
-<td dir="rtl"><b>ثبّت مرة واحدة، من الإعدادات → التكاملات</b> — يسرد GenOffice وكلاء البرمجة الذين يجدهم على هذا الجهاز ويكتب المهارة في كل وكيل تختاره. أو نزّل المهارة كملف zip، أو شغّل <code>npx skills add genspark-ai/genoffice</code>. الأوامر وسير العمل الكامل في <a href="#command-line-and-agent-skill">سطر الأوامر ومهارة الوكيل</a>.</td>
+<td dir="rtl"><b>توجيه واحد إلى وكيلك</b> — "أنشئ عرضًا تقديميًا من ثماني شرائح عن المجموعة الشمسية." يقرأ الوكيل المهارة، ويكتب ورقة أنماط ومخططًا ومواصفة صفحة واحدة لكل شريحة، ويولّد الصورتين بواسطة <code>hermesoffice image</code>، ويترك <code>hermesoffice slides check</code> يرفض أي عنصر يتجاوز الحدود أو يتداخل قبل أن يجمّع <code>hermesoffice create</code> ملف <code>.pptx</code> ويُعيد <code>slides render</code> صورة PNG لكل شريحة لمعاينتها.</td>
+<td dir="rtl"><b>ثبّت مرة واحدة، من الإعدادات → التكاملات</b> — يسرد HermesOffice وكلاء البرمجة الذين يجدهم على هذا الجهاز ويكتب المهارة في كل وكيل تختاره. أو نزّل المهارة كملف zip، أو شغّل <code>npx skills add genspark-ai/hermesoffice</code>. الأوامر وسير العمل الكامل في <a href="#command-line-and-agent-skill">سطر الأوامر ومهارة الوكيل</a>.</td>
 </tr>
 </table>
 
 ### 8 · MCP — نفس الأدوات عبر Model Context Protocol
 
-كل أمر من أوامر `genoffice` هو أيضًا أداة MCP. يمكن لـ Claude Code وClaude
-Desktop وCursor وأي عميل MCP آخر تشغيل `genoffice mcp` بأنفسهم، دون الحاجة
+كل أمر من أوامر `hermesoffice` هو أيضًا أداة MCP. يمكن لـ Claude Code وClaude
+Desktop وCursor وأي عميل MCP آخر تشغيل `hermesoffice mcp` بأنفسهم، دون الحاجة
 إلى تثبيت مهارة أو فتح نافذة، والحصول على 29 أداة بالإضافة إلى مراجع
 العمليات كموارد (resources). كما يتيح خادم HTTP ثانٍ داخل التطبيق للوكيل
 بناء مستند Word في تبويب محرِّر مرئي بينما تشاهد.
 
-<img src="../assets/readme/mcp-deck-motion.webp" alt="لقطات متسارعة لـ Claude Code وهو يبني عرضًا استثماريًا من ثماني شرائح عن الطاقة المتجدّدة عبر خادم MCP الخاص بـ genoffice: يبحث عن الرسوم البيانية والصور، ويتحقق من كل صورة مرشّحة عبر media، وdeck_start يكتب ورقة الأنماط والمخطط، وdeck_page يضيف صفحة واحدة مُتحقَّقة في كل مرة، وdeck_build يجمّع ملف .pptx، وslides_render يعيد صورة كل شريحة؛ ثم يُفتح العرض النهائي في GenOffice Slides" width="100%">
+<img src="../assets/readme/mcp-deck-motion.webp" alt="لقطات متسارعة لـ Claude Code وهو يبني عرضًا استثماريًا من ثماني شرائح عن الطاقة المتجدّدة عبر خادم MCP الخاص بـ hermesoffice: يبحث عن الرسوم البيانية والصور، ويتحقق من كل صورة مرشّحة عبر media، وdeck_start يكتب ورقة الأنماط والمخطط، وdeck_page يضيف صفحة واحدة مُتحقَّقة في كل مرة، وdeck_build يجمّع ملف .pptx، وslides_render يعيد صورة كل شريحة؛ ثم يُفتح العرض النهائي في HermesOffice Slides" width="100%">
 
 <table>
 <tr>
-<td width="50%"><img src="../assets/readme/mcp-deck-in-app.webp" alt="GenOffice Slides يعرض عرض Renewable Energy 2026 من ثماني شرائح الذي بناه Claude Code عبر خادم MCP الخاص بـ genoffice: شريحة الغلاف مع صورة فوتوغرافية لمزرعة رياح على لوحة الرسم وثماني مصغّرات على اليسار"></td>
-<td width="50%"><img src="../assets/readme/mcp-integrations.webp" alt="إعدادات GenOffice، صفحة Integrations، جزء MCP: أمر claude mcp add من سطر واحد لـ Claude Code، وكتلة JSON لـ Cursor وClaude Desktop وعملاء MCP الآخرين، وخيار خادم HTTP المحلي أسفل ذلك"></td>
+<td width="50%"><img src="../assets/readme/mcp-deck-in-app.webp" alt="HermesOffice Slides يعرض عرض Renewable Energy 2026 من ثماني شرائح الذي بناه Claude Code عبر خادم MCP الخاص بـ hermesoffice: شريحة الغلاف مع صورة فوتوغرافية لمزرعة رياح على لوحة الرسم وثماني مصغّرات على اليسار"></td>
+<td width="50%"><img src="../assets/readme/mcp-integrations.webp" alt="إعدادات HermesOffice، صفحة Integrations، جزء MCP: أمر claude mcp add من سطر واحد لـ Claude Code، وكتلة JSON لـ Cursor وClaude Desktop وعملاء MCP الآخرين، وخيار خادم HTTP المحلي أسفل ذلك"></td>
 </tr>
 <tr>
 <td dir="rtl"><b>توجيه واحد، 38 استدعاءً للأدوات، بلا طرفية</b> — "ابنِ عرضًا استثماريًا من ثماني شرائح عن الطاقة المتجدّدة في 2026، بصورة حقيقية على الغلاف وحيثما تفيد صورة." يسحب الوكيل الرسوم البيانية والصور عبر <code>search</code>، ويسأل <code>media</code> عمّا إذا كانت كل صورة مرشّحة صورة فوتوغرافية حقيقية، ثم يستدعي <code>deck_start</code> بورقة أنماط ومخطط، ثم <code>deck_page</code> لكل شريحة؛ تُفحص كل صفحة مقابل المخطط والباليت قبل الاحتفاظ بها، ويجمّع <code>deck_build</code> ملف <code>.pptx</code>، ويبحث <code>slides_audit</code> عن التجاوزات، ويعيد <code>slides_render</code> صورة PNG لكل شريحة كمحتوى صوري يمكن للنموذج النظر إليه، ويُصلح <code>deck_replace</code> الصفحات الثلاث التي لم تعجبه.</td>
@@ -205,7 +221,7 @@ Desktop وCursor وأي عميل MCP آخر تشغيل `genoffice mcp` بأنف�
 </tr>
 </table>
 
-## لماذا GenOffice
+## لماذا HermesOffice
 
 - **مفتوح المصدر**، برخصة Apache-2.0، ويُطوَّر علنًا على GitHub.
 - **لك لتشغيله.** تطبيقات أصلية لأنظمة macOS و Windows و Linux؛ تبقى الملفات
@@ -221,7 +237,8 @@ Desktop وCursor وأي عميل MCP آخر تشغيل `genoffice mcp` بأنف�
 - **PDF يُعالَج كما ينبغي.** حرِّر النص داخل الصفحة مباشرة، وحوِّل PDF إلى Word
   أو Excel أو PowerPoint على جهازك، مع OCR للنظام لملفات المسح الممسوحة.
 - **Markdown و HTML أيضًا**، بنفس لوحة الذكاء الاصطناعي وتصدير محلي إلى Word.
-- **قابل للبرمجة.** سطر أوامر `genoffice`، ومهارة وكيل، وخادم MCP يضعون كل
+- **المهارات.** مهارات جاهزة أو ملف `SKILL.md` خاص بك، تُرفق من قائمة **+** في أي لوحة ذكاء اصطناعي.
+- **قابل للبرمجة.** سطر أوامر `hermesoffice`، ومهارة وكيل، وخادم MCP يضعون كل
   محرّك في خدمة Claude Code وClaude Desktop وCodex وCursor وغيرها من الوكلاء،
   مع بقاء كل شيء على الجهاز.
 - **مجاني**، للأفراد والفرق على حد سواء.
@@ -234,25 +251,44 @@ Desktop وCursor وأي عميل MCP آخر تشغيل `genoffice mcp` بأنف�
 
 **أو استخدم مفتاحك الخاص.** تسرد صفحة Settings → AI مزوِّدين مثل Claude
 وOpenAI وGemini وDeepSeek وKimi وGLM وQwen وDoubao وMiniMax وGrok وMistral
-وOpenRouter وRequesty وOpenCode Zen/Go، إضافة إلى خانة مخصَّصة لأي نقطة نهاية متوافقة مع
+وOpenRouter وRequesty
+وOpper
+وCheaper Inference
+وAtlas Cloud
+وSiliconFlow
+وPPIO
+وCommand Code وOpenCode Zen/Go، إضافة إلى خانة مخصَّصة لأي نقطة نهاية متوافقة مع
 OpenAI (عنوان أساسي + مفتاح)، بما في ذلك خوادم النماذج المحلية. ولكل من
 البحث والوسائط مزوِّدوه الخاصون بحسب القدرة تحت **AI Media & Search**: Serper
-أو Tavily للبحث عبر الويب، وOpenAI أو Gemini أو Doubao/Seedream أو GLM أو
-Grok أو Qwen أو MiniMax أو أي نقطة نهاية للصور متوافقة مع OpenAI لتوليد
-الصور وتحليل الصور والفيديو.
+أو Serply أو SearchApi أو Tavily أو Parallel أو Keenable أو Exa أو Firecrawl للبحث عبر
+الويب — وKeenable كذلك لا يحتاج إلى مفتاح، فالمفتاح يرفع حدود الاستخدام فقط؛
+وOpenAI أو Gemini أو Doubao/Seedream أو GLM أو Grok أو Qwen أو MiniMax أو Stability أو FLUX أو أي
+نقطة نهاية للصور متوافقة مع OpenAI لتوليد الصور وتحليل الصور والفيديو.
 
 تأتي الحزمة كاملةً بثلاثة مظاهر: فاتح وداكن ومظهر النظام. تغيّر المظاهر فقط ما
 يظهر على الشاشة: تحتفظ ملفات التصدير والطباعة والحفظ دائمًا بألوان المستند
 نفسه.
 
+<a id="skills"></a>
+
+## المهارات
+
+المهارة ملف `SKILL.md` يخبر الذكاء الاصطناعي كيف يُنجز مهمة واحدة بإتقان: تقرير أسبوعي، اتفاقية عدم إفصاح، خطة درس.
+يأتي HermesOffice بمجموعة منها ويقبل مهاراتك الخاصة بالتنسيق نفسه الذي تستخدمه وكلاء البرمجة.
+
+- **الإعدادات ← المهارات.** **ثبّت** مهارة موصى بها، أو **استورد** مجلدًا أو ملف zip أو ملف `SKILL.md` واحدًا. لا يُشغَّل شيء عند الاستيراد. ويوضح تبويب **الكل** الدليل الموصى به كاملاً في مكان واحد، مع أوصاف تتبع لغة التطبيق.
+- **في المحادثة.** افتح قائمة **+** بجوار مربع الكتابة في أي لوحة ذكاء اصطناعي، اختر **المهارات**، حدد واحدة وأرسل. تُرفق المهارة بتلك الرسالة فقط.
+
+---
+
 <a id="command-line-and-agent-skill"></a>
 
 ## سطر الأوامر ومهارة الوكيل
 
-كل ما تستطيع التطبيقات فعله بملف، يستطيع سطر أوامر `genoffice` فعله من
+كل ما تستطيع التطبيقات فعله بملف، يستطيع سطر أوامر `hermesoffice` فعله من
 الطرفية: فحص ملفات Word وExcel وPowerPoint وPDF وMarkdown وHTML وتحويلها
 وإنشاؤها وقراءتها وتحريرها على المحرّكات نفسها، دون واجهة رسومية. يُثبَّت مع
-GenOffice، ولا يحتاج إلى بيئة تشغيل خاصة به، ولا يرسل أي مستند إلى أي مكان.
+HermesOffice، ولا يحتاج إلى بيئة تشغيل خاصة به، ولا يرسل أي مستند إلى أي مكان.
 وبالاقتران مع **مهارة الوكيل** المرفقة، يحوّل وكيل البرمجة إلى عامل مستندات
 يُنتج ملفات Office حقيقية بدلًا من تقريبات بصيغة Markdown.
 
@@ -262,31 +298,32 @@ GenOffice، ولا يحتاج إلى بيئة تشغيل خاصة به، ولا 
 
 ### تثبيت المهارة
 
-| الطريقة                                | ما يحدث                                                                                                                                            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **الإعدادات → التكاملات** في التطبيق   | يسرد الوكلاء الموجودين على هذا الجهاز؛ وبنقرة واحدة يكتب المهارة في كل وكيل تختاره. ويظهر زر **Update** عندما يصدر إصدار من GenOffice بمهارة أحدث. |
-| **التنزيل كملف zip** من الصفحة نفسها   | التنسيق الذي يقبله claude.ai وتطبيقات Claude لسطح المكتب والمساعدون الآخرون كمهارة مرفوعة.                                                         |
-| `npx skills add genspark-ai/genoffice` | يثبّت من هذا المستودع في أي وكيل متوافق مع المهارات.                                                                                               |
+| الطريقة                                   | ما يحدث                                                                                                                                               |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **الإعدادات → التكاملات** في التطبيق      | يسرد الوكلاء الموجودين على هذا الجهاز؛ وبنقرة واحدة يكتب المهارة في كل وكيل تختاره. ويظهر زر **Update** عندما يصدر إصدار من HermesOffice بمهارة أحدث. |
+| **التنزيل كملف zip** من الصفحة نفسها      | التنسيق الذي يقبله claude.ai وتطبيقات Claude لسطح المكتب والمساعدون الآخرون كمهارة مرفوعة.                                                            |
+| `npx skills add genspark-ai/hermesoffice` | يثبّت من هذا المستودع في أي وكيل متوافق مع المهارات.                                                                                                  |
 
 ثم ابدأ محادثة جديدة واطلب مستندًا. تعلّم المهارة الوكيل متى يلجأ إلى
-`genoffice`، وكيف يقرأ الملف قبل تحريره، وكيف يتحقّق من عمله بنفسه.
+`hermesoffice`، وكيف يقرأ الملف قبل تحريره، وكيف يتحقّق من عمله بنفسه.
 
 ### بداية سريعة من الطرفية
 
 ```bash
-genoffice --version
-genoffice info report.docx --json                  # headings and blocks; or sheets, slides, pages
-genoffice convert report.md --to pdf               # md/html/docx/xlsx/pptx → pdf, pdf → docx/xlsx/pptx, …
-genoffice create --type docx --from notes.md --out notes.docx
-genoffice create --type xlsx --from table.json --out sales.xlsx   # "=SUM(B2:B9)" cells stay live formulas
-genoffice docs read report.docx --range 0-9 --json # then `docs apply --ops edits.json` edits in place
-genoffice render report.docx --out shots/          # one PNG per page, to look at what you made
-genoffice open sales.xlsx                          # hand the result to the editor
+hermesoffice --version
+hermesoffice info report.docx --json                  # headings and blocks; or sheets, slides, pages
+hermesoffice convert report.md --to pdf               # md/html/docx/xlsx/pptx → pdf, pdf → docx/xlsx/pptx/md/html, odt/ods/odp → docx/xlsx/pptx, doc/dot → docx, …
+hermesoffice create --type docx --from notes.md --out notes.docx
+hermesoffice create --type xlsx --from table.json --out sales.xlsx   # "=SUM(B2:B9)" cells stay live formulas
+hermesoffice docs read report.docx --range 0-9 --json # then `docs apply --ops edits.json` edits in place
+hermesoffice docs compare original.docx revised.docx --out redline.docx   # the differences as tracked Word revisions
+hermesoffice render report.docx --out shots/          # one PNG per page, to look at what you made
+hermesoffice open sales.xlsx                          # hand the result to the editor
 ```
 
 يطبع كل أمر ملخّصًا من سطر واحد، أو كائن JSON واحدًا مع `--json`. التعديلات
 ذرّية: العملية المرفوضة تترك الملف كما هو وتعود برسالة خطأ إرشادية. يسرد
-`genoffice help` مجموعة الأوامر الحالية؛ والمرجع الكامل في
+`hermesoffice help` مجموعة الأوامر الحالية؛ والمرجع الكامل في
 [packages/cli/README.md](../../packages/cli/README.md).
 
 ### ما الذي يشغّله الوكيل فعليًا
@@ -296,21 +333,21 @@ genoffice open sales.xlsx                          # hand the result to the edit
 كل مرحلة قبل أن تبدأ التالية:
 
 ```bash
-genoffice capabilities --json                        # which cloud tools GenOffice has configured
-genoffice guide slides design                        # the deck workflow and layout library
-genoffice image "the eight planets in a row …" --aspect 16:9 --out deck/assets/cover.jpg
-genoffice slides check deck/outline.json --json      # 8 pages, no findings
-genoffice slides check deck/pages/01.json --json     # builds one slide, audits overflow and overlap
+hermesoffice capabilities --json                        # which cloud tools HermesOffice has configured
+hermesoffice guide slides design                        # the deck workflow and layout library
+hermesoffice image "the eight planets in a row …" --aspect 16:9 --out deck/assets/cover.jpg
+hermesoffice slides check deck/outline.json --json      # 8 pages, no findings
+hermesoffice slides check deck/pages/01.json --json     # builds one slide, audits overflow and overlap
 …                                                    # one page file per slide, fixed until each check is clean
-genoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/solar-system.pptx --json
-genoffice slides render deck/solar-system.pptx --out deck/shots --json
-genoffice slides audit deck/solar-system.pptx --json    # 8 slides, no layout issues
-genoffice slides replace deck/solar-system.pptx --slide 4 --spec deck/pages/05.json --json
-genoffice open deck/solar-system.pptx
+hermesoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/solar-system.pptx --json
+hermesoffice slides render deck/solar-system.pptx --out deck/shots --json
+hermesoffice slides audit deck/solar-system.pptx --json    # 8 slides, no layout issues
+hermesoffice slides replace deck/solar-system.pptx --slide 4 --spec deck/pages/05.json --json
+hermesoffice open deck/solar-system.pptx
 ```
 
-لا يحدث أي استدعاء لنموذج داخل `genoffice`: الوكيل هو من يفكّر، وسطر الأوامر
-هو من يبني ويتحقّق، وتُفتح النتيجة في GenOffice أو PowerPoint كملف `.pptx` عادي.
+لا يحدث أي استدعاء لنموذج داخل `hermesoffice`: الوكيل هو من يفكّر، وسطر الأوامر
+هو من يبني ويتحقّق، وتُفتح النتيجة في HermesOffice أو PowerPoint كملف `.pptx` عادي.
 
 <a id="mcp-server"></a>
 
@@ -321,14 +358,14 @@ genoffice open deck/solar-system.pptx
 طريقتان للدخول، وكلتاهما موضَّحتان بمقتطفات جاهزة للنسخ في **الإعدادات →
 التكاملات → MCP**:
 
-| الطريقة                            | ما هي                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A · `genoffice mcp`** (موصى بها) | خادم stdio يشغّله المساعد بنفسه؛ لا حاجة لفتح GenOffice. أداة واحدة لكل أمر (`info`، `convert`، `create_docx`، `create_xlsx`، `create_pptx`، `create_pdf`، `docs_read` / `docs_apply` / `docs_check`، `sheet_*`، `slides_*`، `render`، `guide`، `search`، `image`، `media`، `open`) بالإضافة إلى تدفّق العرض المرحلي `deck_start` → `deck_page` → `deck_build` → `deck_replace`. تُمرَّر العمليات والمواصفات وMarkdown مباشرة ضمن الطلب، لذا يعمل حتى العميل بلا نظام ملفات. |
-| **B · خادم HTTP محلي**             | يعمل داخل تطبيق GenOffice على `http://127.0.0.1:3093/mcp` (Streamable HTTP، مع دعم SSE القديم). تُشغِّل أدواته تبويب محرِّر Word المرئي: `create_session`، `insert_content`، `replace_blocks`، `apply_ops`، `read_document`، `save_session`، وتشاهد المستند وهو يتشكّل. مُعطَّل افتراضيًا؛ فعِّله من لوحة الإعدادات نفسها.                                                                                                                                                   |
+| الطريقة                               | ما هي                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A · `hermesoffice mcp`** (موصى بها) | خادم stdio يشغّله المساعد بنفسه؛ لا حاجة لفتح HermesOffice. أداة واحدة لكل أمر (`info`، `convert`، `create_docx`، `create_xlsx`، `create_pptx`، `create_pdf`، `docs_read` / `docs_apply` / `docs_check`، `sheet_*`، `slides_*`، `render`، `guide`، `search`، `image`، `media`، `open`) بالإضافة إلى تدفّق العرض المرحلي `deck_start` → `deck_page` → `deck_build` → `deck_replace`. تُمرَّر العمليات والمواصفات وMarkdown مباشرة ضمن الطلب، لذا يعمل حتى العميل بلا نظام ملفات. |
+| **B · خادم HTTP محلي**                | يعمل داخل تطبيق HermesOffice على `http://127.0.0.1:3093/mcp` (Streamable HTTP، مع دعم SSE القديم). تُشغِّل أدواته تبويب محرِّر Word المرئي: `create_session`، `insert_content`، `replace_blocks`، `apply_ops`، `read_document`، `save_session`، وتشاهد المستند وهو يتشكّل. مُعطَّل افتراضيًا؛ فعِّله من لوحة الإعدادات نفسها.                                                                                                                                                   |
 
 ```bash
 # Claude Code
-claude mcp add --transport stdio genoffice -- genoffice mcp
+claude mcp add --transport stdio hermesoffice -- hermesoffice mcp
 ```
 
 ```jsonc
@@ -336,17 +373,17 @@ claude mcp add --transport stdio genoffice -- genoffice mcp
 { "mcpServers": { "hermesoffice": { "command": "hermesoffice", "args": ["mcp"] } } }
 ```
 
-`genoffice` هنا هو سطر الأوامر المرفق داخل التطبيق (على macOS في
-`/Applications/GenOffice.app/Contents/Resources/cli/genoffice`؛ تعرض لوحة
+`hermesoffice` هنا هو سطر الأوامر المرفق داخل التطبيق (على macOS في
+`/Applications/HermesOffice.app/Contents/Resources/cli/hermesoffice`؛ تعرض لوحة
 الإعدادات المسار الدقيق لتثبيتك). يحمل الخادم تعليمات سير عمله الخاصة
-ويعرض مراجع العمليات كموارد `genoffice://guide/*`، لذا لا حاجة لأي مهارة؛
+ويعرض مراجع العمليات كموارد `hermesoffice://guide/*`، لذا لا حاجة لأي مهارة؛
 يمكن للمهارة وخادم MCP التعايش معًا، ويختار المساعد أحدهما. الميزات
 السحابية (`search`، `image`، `media`) لا تزال تمرّ عبر المزوِّد المُعدّ في
-GenOffice؛ أما كل شيء آخر فيعمل محليًا، ويحصر `GENOFFICE_ALLOWED_ROOTS` كل
+HermesOffice؛ أما كل شيء آخر فيعمل محليًا، ويحصر `HERMESOFFICE_ALLOWED_ROOTS` كل
 أداة ضمن المجلدات التي تحدّدها.
 
 عرض الطاقة المتجدّدة في العرض التوضيحي أعلاه هو ما يبدو عليه توجيه واحد في
-Claude Code، مع تفعيل خادم MCP الخاص بـ `genoffice` فقط، من جهة البروتوكول:
+Claude Code، مع تفعيل خادم MCP الخاص بـ `hermesoffice` فقط، من جهة البروتوكول:
 
 ```text
 capabilities · guide(slides, spec) · guide(slides, design)
@@ -366,40 +403,40 @@ deck_replace(dir, n, page) ×3 · slides_render(file, out)
 ثمانية وثلاثون استدعاءً، في نحو ثلاث عشرة دقيقة، دون أن يلمس المساعد أي طرفية:
 الرسوم البيانية والصور وكل الأدلة والفحوصات والعروض المصيَّرة انتقلت كنتائج
 لاستدعاءات أدوات MCP. غادر الجهاز فقط `search` و`media`، إلى المزوّد المهيَّأ
-في GenOffice.
+في HermesOffice.
 
 <a id="download"></a>
 
 ## التنزيل
 
-| المنصة                               | المتطلبات                                             | التنزيل                                                                              |
-| ------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **macOS** — شريحة Apple (arm64)      | macOS 11+                                             | [أحدث نسخة `.dmg` (arm64)](https://github.com/genspark-ai/genoffice/releases/latest) |
-| **macOS** — Intel (x64)              | macOS 11+                                             | [أحدث نسخة `.dmg` (x64)](https://github.com/genspark-ai/genoffice/releases/latest)   |
-| **Windows** (x64، لمعظم الأجهزة)     | Windows 10+، معالجات Intel/AMD                        | [أحدث مثبِّت `-x64.exe`](https://github.com/genspark-ai/genoffice/releases/latest)   |
-| **Windows** على Arm (ARM64)          | Windows 11 على Arm (معالج Snapdragon X وما شابهه)     | [أحدث مثبِّت `-arm64.exe`](https://github.com/genspark-ai/genoffice/releases/latest) |
-| **Linux** — Debian / Ubuntu          | x86_64، glibc 2.34+ (Ubuntu 22.04 أو أحدث)            | [أحدث نسخة `.deb`](https://github.com/genspark-ai/genoffice/releases/latest)         |
-| **Linux** — Fedora / RHEL / openSUSE | x86_64، glibc 2.34+ (Fedora 35+، RHEL 9+، Leap 15.6+) | [أحدث نسخة `.rpm`](https://github.com/genspark-ai/genoffice/releases/latest)         |
-| **Linux** — توزيعات أخرى             | x86_64، glibc 2.34+، وFUSE 2                          | [أحدث نسخة `.AppImage`](https://github.com/genspark-ai/genoffice/releases/latest)    |
+| المنصة                               | المتطلبات                                             | التنزيل                                                                                 |
+| ------------------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **macOS** — شريحة Apple (arm64)      | macOS 11+                                             | [أحدث نسخة `.dmg` (arm64)](https://github.com/genspark-ai/hermesoffice/releases/latest) |
+| **macOS** — Intel (x64)              | macOS 11+                                             | [أحدث نسخة `.dmg` (x64)](https://github.com/genspark-ai/hermesoffice/releases/latest)   |
+| **Windows** (x64، لمعظم الأجهزة)     | Windows 10+، معالجات Intel/AMD                        | [أحدث مثبِّت `-x64.exe`](https://github.com/genspark-ai/hermesoffice/releases/latest)   |
+| **Windows** على Arm (ARM64)          | Windows 11 على Arm (معالج Snapdragon X وما شابهه)     | [أحدث مثبِّت `-arm64.exe`](https://github.com/genspark-ai/hermesoffice/releases/latest) |
+| **Linux** — Debian / Ubuntu          | x86_64، glibc 2.34+ (Ubuntu 22.04 أو أحدث)            | [أحدث نسخة `.deb`](https://github.com/genspark-ai/hermesoffice/releases/latest)         |
+| **Linux** — Fedora / RHEL / openSUSE | x86_64، glibc 2.34+ (Fedora 35+، RHEL 9+، Leap 15.6+) | [أحدث نسخة `.rpm`](https://github.com/genspark-ai/hermesoffice/releases/latest)         |
+| **Linux** — توزيعات أخرى             | x86_64، glibc 2.34+، وFUSE 2                          | [أحدث نسخة `.AppImage`](https://github.com/genspark-ai/hermesoffice/releases/latest)    |
 
 جميع الإصدارات مبنية من الفرع `main`؛ ومثبِّتات macOS و Windows موقَّعة رقميًا.
-الإصدارات الأقدم متوفرة في صفحة [Releases](https://github.com/genspark-ai/genoffice/releases).
+الإصدارات الأقدم متوفرة في صفحة [Releases](https://github.com/genspark-ai/hermesoffice/releases).
 
 <details>
 <summary><b>التثبيت على Linux</b></summary>
 
-يتم تثبيت حزمة deb باستخدام apt — فيسحب التبعيات المطلوبة ويضيف GenOffice إلى
+يتم تثبيت حزمة deb باستخدام apt — فيسحب التبعيات المطلوبة ويضيف HermesOffice إلى
 قائمة التطبيقات:
 
 ```bash
-sudo apt install ./genoffice_<version>_amd64.deb
+sudo apt install ./hermesoffice_<version>_amd64.deb
 ```
 
 على Fedora / عائلة RHEL / openSUSE، ثبِّت حزمة rpm بدلًا من ذلك:
 
 ```bash
-sudo dnf install ./genoffice-<version>.x86_64.rpm     # Fedora / RHEL family
-sudo zypper install ./genoffice-<version>.x86_64.rpm  # openSUSE
+sudo dnf install ./hermesoffice-<version>.x86_64.rpm     # Fedora / RHEL family
+sudo zypper install ./hermesoffice-<version>.x86_64.rpm  # openSUSE
 ```
 
 يعمل ملف AppImage مباشرة من مكانه: ثبِّت بيئة تشغيل FUSE 2
@@ -407,9 +444,11 @@ sudo zypper install ./genoffice-<version>.x86_64.rpm  # openSUSE
 ثم اجعل الملف قابلاً للتنفيذ، وشغِّله:
 
 ```bash
-chmod +x GenOffice-<version>.AppImage
-./GenOffice-<version>.AppImage
+chmod +x HermesOffice-<version>.AppImage
+./HermesOffice-<version>.AppImage
 ```
+
+على جهاز Chromebook، تعمل الحزم نفسها داخل بيئة لينكس (Crostini) — التفاصيل في [docs/platforms/chromeos.md](../platforms/chromeos.md).
 
 </details>
 
@@ -455,36 +494,36 @@ npm run dist:linux   # package Linux AppImage + deb + rpm
 
 ## المجتمع
 
-GenOffice قيد تطوير نشط، وملاحظاتك هي ما يشكِّل مستقبله.
+HermesOffice قيد تطوير نشط، وملاحظاتك هي ما يشكِّل مستقبله.
 
 - **أبلغ عن خطأ أو اطلب ميزة جديدة** عبر
-  [GitHub Issues](https://github.com/genspark-ai/genoffice/issues).
-- **انضم إلى محادثة مجموعة GenOffice** على
-  [GenTeam](https://genoffice.ai/join) للتواصل مع الفريق والمستخدمين الآخرين.
-- **أضِف نجمة (Star) للمستودع** إذا كان GenOffice مفيدًا لك — فهذه أفضل طريقة
+  [GitHub Issues](https://github.com/genspark-ai/hermesoffice/issues).
+- **انضم إلى محادثة مجموعة HermesOffice** على
+  [GenTeam](https://hermesoffice.ai/join) للتواصل مع الفريق والمستخدمين الآخرين.
+- **أضِف نجمة (Star) للمستودع** إذا كان HermesOffice مفيدًا لك — فهذه أفضل طريقة
   لدعم المشروع.
 
 ## الأسئلة الشائعة
 
 <details>
-<summary><b>هل GenOffice مجاني؟</b></summary>
+<summary><b>هل HermesOffice مجاني؟</b></summary>
 
-نعم. GenOffice مجاني ومفتوح المصدر بموجب ترخيص Apache-2.0 — لا نسخة تجريبية
+نعم. HermesOffice مجاني ومفتوح المصدر بموجب ترخيص Apache-2.0 — لا نسخة تجريبية
 ولا باقة مدفوعة للتطبيقات نفسها.
 
 </details>
 
 <details>
-<summary><b>هل يمكن لـ GenOffice فتح ملفات Microsoft Word و Excel و PowerPoint؟</b></summary>
+<summary><b>هل يمكن لـ HermesOffice فتح ملفات Microsoft Word و Excel و PowerPoint؟</b></summary>
 
-نعم. يفتح GenOffice ملفات `.docx` و `.xlsx` و `.pptx` الأصلية ويحفظها.
+نعم. يفتح HermesOffice ملفات `.docx` و `.xlsx` و `.pptx` الأصلية ويحفظها.
 والحفظ يحافظ على البايتات: تُكتب الأجزاء التي لم تلمسها من الملف كما هي
 حرفيًا بايتًا ببايت، فتستمر المستندات في العمل في Microsoft Office.
 
 </details>
 
 <details>
-<summary><b>هل يعمل GenOffice دون اتصال بالإنترنت؟</b></summary>
+<summary><b>هل يعمل HermesOffice دون اتصال بالإنترنت؟</b></summary>
 
 تحرير المستندات محلي بالكامل — لا تغادر الملفات جهازك أبدًا عند الفتح أو
 التحرير أو الحفظ أو التحويل. تحتاج ميزات الذكاء الاصطناعي (الوكلاء، والبحث،
@@ -494,7 +533,7 @@ GenOffice قيد تطوير نشط، وملاحظاتك هي ما يشكِّل �
 </details>
 
 <details>
-<summary><b>هل يمكن لـ GenOffice تحرير ملفات PDF؟</b></summary>
+<summary><b>هل يمكن لـ HermesOffice تحرير ملفات PDF؟</b></summary>
 
 نعم — تحرير حقيقي لنص وصور PDF يعيد كتابة تدفّق محتوى الصفحة مع الحفاظ على
 الخطوط الأصلية، وليس بتعليقات تغطية فوق النص.
@@ -502,7 +541,7 @@ GenOffice قيد تطوير نشط، وملاحظاتك هي ما يشكِّل �
 </details>
 
 <details>
-<summary><b>هل يمكن لـ GenOffice تحويل PDF إلى Word أو Excel أو PowerPoint؟</b></summary>
+<summary><b>هل يمكن لـ HermesOffice تحويل PDF إلى Word أو Excel أو PowerPoint؟</b></summary>
 
 نعم — بالكامل على الجهاز: استخراج على مستوى الحروف عبر PDFium إلى جانب تحليل
 للتخطيط يعتمد على الأشكال الهندسية، دون أي خدمة سحابية أو رفع للملفات. وتشمل
@@ -515,7 +554,7 @@ macOS و Windows، فتُحوَّل إلى نص قابل للتحرير بدلً
 <summary><b>هل يمكنني استخدام نموذج ذكاء اصطناعي أو مفتاح API خاص بي؟</b></summary>
 
 نعم. إلى جانب تسجيل الدخول بواسطة Genspark الذي لا يتطلب أي مفتاح، يدعم
-GenOffice استخدام مفتاحك الخاص مع Claude وOpenAI وGemini وDeepSeek وKimi
+HermesOffice استخدام مفتاحك الخاص مع Claude وOpenAI وGemini وDeepSeek وKimi
 وGLM وQwen وDoubao وMiniMax وGrok وMistral وOpenRouter وRequesty وOpenCode Zen/Go،
 إضافة إلى أي نقطة نهاية متوافقة مع OpenAI — بما في ذلك خوادم النماذج المحلية.
 ولكل من البحث وتوليد الصور وتحليل الصور والفيديو مفاتيحه الخاصة تحت
@@ -524,7 +563,17 @@ Settings → AI Media & Search.
 </details>
 
 <details>
-<summary><b>هل يمكن لـ GenOffice تحويل HTML إلى Word؟</b></summary>
+<summary><b>هل يمكنني إيقاف لوحة الذكاء الاصطناعي؟</b></summary>
+
+نعم. يحمل Settings → AI مفتاح تفعيل باسم **Show the AI sidebar**. أوقفه فتُخفي
+كل المحرِّرات الشريط الجانبي، وتتوقف المستندات الجديدة عن فتحه من تلقاء نفسها.
+ويظل أي إجراء ذكاء اصطناعي صريح — زر في الشريط (ribbon) أو بند في القائمة —
+يفتح اللوحة لذلك المستند، وبإغلاقها تعود إلى الوضع المخفي.
+
+</details>
+
+<details>
+<summary><b>هل يمكن لـ HermesOffice تحويل HTML إلى Word؟</b></summary>
 
 نعم — يُنتج خيار Export as Word في تطبيق HTML ملف `.docx` أصليًا قابلًا
 للتحرير، بالكامل على الجهاز. تُعرَض الصفحة داخل محرك Chromium المدمج وتُحوَّل
@@ -535,9 +584,9 @@ Settings → AI Media & Search.
 </details>
 
 <details>
-<summary><b>هل يمكنني تشغيل GenOffice من Claude Code أو Codex أو Cursor أو من سكربت؟</b></summary>
+<summary><b>هل يمكنني تشغيل HermesOffice من Claude Code أو Codex أو Cursor أو من سكربت؟</b></summary>
 
-نعم. يثبّت GenOffice سطر أوامر `genoffice` يشغّل المحرّكات نفسها دون واجهة
+نعم. يثبّت HermesOffice سطر أوامر `hermesoffice` يشغّل المحرّكات نفسها دون واجهة
 رسومية: افحص المستندات وحوّلها وأنشئها واقرأها وحرّرها من الطرفية أو من
 سكربت، مع مخرجات `--json` للبرامج. وتعلّم مهارة الوكيل المرفقة Claude Code
 وCodex وCursor وGemini CLI وGitHub Copilot وOpenCode وWindsurf استخدامه؛ ثبّتها
@@ -547,12 +596,12 @@ Settings → AI Media & Search.
 </details>
 
 <details>
-<summary><b>هل يجمع GenOffice أي بيانات؟</b></summary>
+<summary><b>هل يجمع HermesOffice أي بيانات؟</b></summary>
 
 ترسل الإصدارات الرسمية المعبَّأة بيانات استخدام محدودة بشكل افتراضي، ويمكنك
 تعطيل هذا الإرسال في أي وقت من Settings → General. لا تُرسَل عبر هذه البيانات
 أبدًا محتويات المستندات، أو أسماء الملفات، أو مساراتها، أو هوية الحساب، أو
-عناوين البريد الإلكتروني. راجع [GenOffice Privacy](../../PRIVACY.md)
+عناوين البريد الإلكتروني. راجع [HermesOffice Privacy](../../PRIVACY.md)
 للاطلاع على الإفصاح الكامل عن الأحداث والبيانات المُجمَّعة.
 
 </details>
@@ -565,7 +614,7 @@ Settings → AI Media & Search.
 
 ## شكر وتقدير
 
-ما كان لـ GenOffice أن يكون ممكنًا لولا هذه المشاريع المفتوحة المصدر:
+ما كان لـ HermesOffice أن يكون ممكنًا لولا هذه المشاريع المفتوحة المصدر:
 
 - [Electron](https://www.electronjs.org/) — بيئة تشغيل سطح المكتب لكل التطبيقات.
 - [Univer](https://github.com/dream-num/univer) (Apache-2.0) — نواة واجهة جدول
@@ -609,10 +658,10 @@ MIT/Apache-2.0/BSD-3-Clause/OFL.
 
 ## الترخيص
 
-يخضع GenOffice لترخيص [Apache License 2.0](../../LICENSE)، مع استثناء واحد:
+يخضع HermesOffice لترخيص [Apache License 2.0](../../LICENSE)، مع استثناء واحد:
 دليل `ee/` محجوز لوحدات المؤسسات (enterprise) المستقبلية ويخضع لـ
-[GenOffice Enterprise License](../../ee/LICENSE).
+[HermesOffice Enterprise License](../../ee/LICENSE).
 
-اسما وشعارا GenOffice و Genspark هما علامتان تجاريتان مملوكتان لشركة
+اسما وشعارا HermesOffice و Genspark هما علامتان تجاريتان مملوكتان لشركة
 Mainfunc, Inc. لا يمنح ترخيص Apache-2.0 إذنًا باستخدامهما (راجع البند 6)؛
 ويجب أن تستخدم النسخ المتفرعة (forks) هويتها البصرية الخاصة.

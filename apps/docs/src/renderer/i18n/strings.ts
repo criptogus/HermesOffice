@@ -158,6 +158,23 @@ export const strings = {
     ...aiStrings.hi,
     ...zoteroStrings.hi,
   },
+
+  vi: {
+    ...appStrings.vi,
+    ...ribbonStrings.vi,
+    ...tableStrings.vi,
+    ...editorStrings.vi,
+    ...aiStrings.vi,
+    ...zoteroStrings.vi,
+  },
+  tr: {
+    ...appStrings.tr,
+    ...ribbonStrings.tr,
+    ...tableStrings.tr,
+    ...editorStrings.tr,
+    ...aiStrings.tr,
+    ...zoteroStrings.tr,
+  },
   'zh-TW': {
     ...appStrings['zh-TW'],
     ...ribbonStrings['zh-TW'],

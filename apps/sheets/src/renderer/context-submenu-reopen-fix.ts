@@ -3,7 +3,7 @@
  * re-enters within Univer's 500 ms close delay never shows again: the
  * re-enter resets the position-ready flag while the submenu is still
  * mounted, and the positioning effect only re-runs on a visibility toggle
- * or a window resize/scroll, so nothing sets the flag back (genoffice#337).
+ * or a window resize/scroll, so nothing sets the flag back (hermesoffice#337).
  *
  * A submenu still hidden after the frame Univer uses for its first
  * measurement is stuck; a synthetic scroll event on it reaches the effect's

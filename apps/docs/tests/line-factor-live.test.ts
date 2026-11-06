@@ -87,7 +87,7 @@ describe('fontTable-driven per-block factor', () => {
     ],
   } as never
 
-  it('a missing hangul-named run face with a sans PANOSE bakes the Malgun factor', () => {
+  it('a missing hangul-named run face with a sans PANOSE still bakes the Batang factor (probe 2026-10-22)', () => {
     // registry must be set before content, mirroring file-actions' open order
     setDocFontTable([{ name: '원신한 Light', panose: '020B0303000000000000' }])
     const editor = new Editor({
@@ -95,7 +95,7 @@ describe('fontTable-driven per-block factor', () => {
       extensions: editorExtensions,
       content: krParagraph,
     })
-    expect(factorOf(editor)).toBe('1.7371')
+    expect(factorOf(editor)).toBe('1.3')
     editor.destroy()
   })
 
@@ -105,7 +105,7 @@ describe('fontTable-driven per-block factor', () => {
       extensions: editorExtensions,
       content: krParagraph,
     })
-    expect(factorOf(editor)).toBe('1.3029')
+    expect(factorOf(editor)).toBe('1.3')
     editor.destroy()
   })
 })
@@ -166,8 +166,16 @@ describe('declared run fonts drive the Latin factor and the paragraph face', () 
           content: runs.map((r) => ({
             type: 'text',
             text: r.text,
+            // a run declaring the face in every slot (ascii, hAnsi and eastAsia)
             ...(r.font
-              ? { marks: [{ type: 'docTextStyle', attrs: { font: r.font, fontAscii: r.font } }] }
+              ? {
+                  marks: [
+                    {
+                      type: 'docTextStyle',
+                      attrs: { font: r.font, fontAscii: r.font, eastAsiaFont: r.font },
+                    },
+                  ],
+                }
               : {}),
           })),
         },
@@ -195,6 +203,23 @@ describe('declared run fonts drive the Latin factor and the paragraph face', () 
     expect(factorOf(editor)).toBe('max(var(--doc-line-factor-latin,1.2), 1.22)')
     const p = editor.view.dom.querySelector('p') as HTMLElement
     expect(p.style.fontFamily).toBe('')
+    editor.destroy()
+  })
+
+  it('a break-only paragraph lays its line with the Latin mark factor like an empty one', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          { type: 'docParagraph', content: [{ type: 'hardBreak', attrs: { pageBreak: true } }] },
+          { type: 'docParagraph' },
+        ],
+      } as never,
+    })
+    expect(factorOf(editor, 0)).toBe('var(--doc-line-factor-latin,1.2)')
+    expect(factorOf(editor, 1)).toBe('var(--doc-line-factor-latin,1.2)')
     editor.destroy()
   })
 
@@ -230,7 +255,7 @@ describe('declared run fonts drive the Latin factor and the paragraph face', () 
       extensions: editorExtensions,
       content: fontParagraph([{ text: '日本語本文', font: 'Noto Sans CJK JP' }]),
     })
-    expect(factorOf(editor)).toBe('1.3029')
+    expect(factorOf(editor)).toBe('1.3')
     editor.destroy()
   })
 
@@ -248,6 +273,89 @@ describe('declared run fonts drive the Latin factor and the paragraph face', () 
     const p = editor.view.dom.querySelector('p') as HTMLElement
     expect(p.style.fontFamily).toBe('')
     editor.destroy()
+  })
+})
+
+describe('ascii-only CJK face: CJK lines keep the EA var, ascii-slot glyphs lift', () => {
+  const yahei = '\u5fae\u8f6f\u96c5\u9ed1'
+  const markedDoc = (text: string, attrs: Record<string, string>) =>
+    ({
+      type: 'doc',
+      content: [
+        {
+          type: 'docParagraph',
+          content: [{ type: 'text', text, marks: [{ type: 'docTextStyle', attrs }] }],
+        },
+      ],
+    }) as never
+  const asciiOnlyDoc = (text: string, eastAsiaFont?: string) =>
+    markedDoc(text, { font: yahei, fontAscii: yahei, ...(eastAsiaFont ? { eastAsiaFont } : {}) })
+  const liftSpans = (editor: Editor) =>
+    Array.from(editor.view.dom.querySelectorAll('span.doc-run-lf')).map((s) => [
+      s.textContent,
+      (s as HTMLElement).style.getPropertyValue('--doc-line-factor'),
+    ])
+
+  it('a pure-CJK paragraph takes the document EA factor, not the ascii face', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: asciiOnlyDoc('\u56e2\u961f\u5bb9\u6613\u62b1\u6028\u3002'),
+    })
+    expect(factorOf(editor)).toBe('var(--doc-line-factor-cjk,1.7)')
+    editor.destroy()
+  })
+
+  it('the same face declared in the eastAsia slot keeps its own factor', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: asciiOnlyDoc('\u56e2\u961f\u5bb9\u6613\u62b1\u6028\u3002', yahei),
+    })
+    expect(factorOf(editor)).toBe('1.7157')
+    editor.destroy()
+  })
+
+  it('digits and curly quotes drawn by the ascii face lift only their own stretch', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: asciiOnlyDoc('\u56e2\u961f 12 \u201c\u6210\u5458\u201d'),
+    })
+    expect(factorOf(editor)).toBe('var(--doc-line-factor-latin,1.2)')
+    expect(liftSpans(editor)).toEqual([
+      ['\u56e2\u961f', 'var(--doc-line-factor-cjk,1.7)'],
+      [' 12 \u201c', '1.7157'],
+      ['\u6210\u5458', 'var(--doc-line-factor-cjk,1.7)'],
+      ['\u201d', '1.7157'],
+    ])
+    editor.destroy()
+  })
+
+  it('the SimSun gap lift follows the same slot rule', () => {
+    const simsun = '\u5b8b\u4f53'
+    const gapSpans = (editor: Editor) =>
+      Array.from(editor.view.dom.querySelectorAll('p span')).filter((s) =>
+        (s as HTMLElement).style.lineHeight.includes('1.7157'),
+      ).length
+    const asciiOnly = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: markedDoc('\u56e2\u961f\u30fb\u6210\u5458', { font: simsun, fontAscii: simsun }),
+    })
+    expect(gapSpans(asciiOnly)).toBe(0)
+    asciiOnly.destroy()
+    const eaSlot = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: markedDoc('\u56e2\u961f\u30fb\u6210\u5458', {
+        font: simsun,
+        fontAscii: simsun,
+        eastAsiaFont: simsun,
+      }),
+    })
+    expect(gapSpans(eaSlot)).toBe(1)
+    eaSlot.destroy()
   })
 })
 
@@ -269,7 +377,7 @@ describe('SimSun-substitution ・/〜 line lift decorations', () => {
       (s) => (s as HTMLElement).style.lineHeight !== '',
     ) as HTMLElement[]
 
-  it('wraps ・ and 〜 in a 1.7143 line-height span under a SimSun-substituted face', () => {
+  it('wraps \u30fb and \u301c in a 1.7157 line-height span under a SimSun-substituted face', () => {
     const editor = new Editor({
       element: document.createElement('div'),
       extensions: editorExtensions,
@@ -277,10 +385,64 @@ describe('SimSun-substitution ・/〜 line lift decorations', () => {
     })
     const spans = liftSpans(editor)
     expect(spans.map((s) => s.textContent)).toEqual(['・', '〜'])
+    // no own spacing: the inherited (style / docDefaults) multiple scales the lift
     expect(spans[0].style.lineHeight).toBe(
-      'round(up, calc(1.7143 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px))',
+      'max(calc(var(--doc-grid-pitch,0.0001px) * var(--doc-line-mult,1)), calc(round(up, calc(1.7157 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px)) * var(--doc-grid-single-mult,var(--doc-line-mult,1))))',
     )
     editor.destroy()
+    const single = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: gapDoc('\u9805\u76ee\u30fb\u5185\u5bb9', 'Noto Sans CJK JP', {
+        lineRule: 'auto',
+        lineRawTwips: 240,
+      }),
+    })
+    expect(liftSpans(single)[0].style.lineHeight).toBe(
+      'round(up, calc(1.7157 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px))',
+    )
+    single.destroy()
+  })
+
+  it('lifts runs without their own font through the inherited style face', () => {
+    const styledDoc = (styleId: string) =>
+      ({
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            attrs: { styleId },
+            content: [{ type: 'text', text: '\u9805\u76ee\u30fb\u5185\u5bb9' }],
+          },
+        ],
+      }) as never
+    const style = (styleId: string, extra: Record<string, unknown>) =>
+      [styleId, { styleId, name: styleId, type: 'paragraph', ...extra }] as const
+    const open = (styles: ReadonlyArray<readonly [string, object]>, styleId: string) => {
+      const editor = new Editor({
+        element: document.createElement('div'),
+        extensions: editorExtensions,
+      })
+      editor.storage.listNumbering.styles = new Map(styles) as never
+      editor.commands.setContent(styledDoc(styleId))
+      return editor
+    }
+    const normal = style('Normal', {
+      isDefault: true,
+      display: { font: 'Noto Sans CJK JP', fontAscii: 'Noto Sans CJK JP' },
+    })
+    const body = style('Body', { basedOn: 'Normal', display: {} })
+    for (const styleId of ['Normal', 'Body', 'Missing']) {
+      const editor = open([normal, body], styleId)
+      expect(liftSpans(editor).map((s) => s.textContent)).toEqual(['\u30fb'])
+      editor.destroy()
+    }
+    const yahei = open(
+      [style('Normal', { isDefault: true, display: { font: 'Microsoft YaHei' } })],
+      'Normal',
+    )
+    expect(liftSpans(yahei)).toEqual([])
+    yahei.destroy()
   })
 
   it('scales the lift by an explicit line-spacing multiple', () => {
@@ -290,7 +452,7 @@ describe('SimSun-substitution ・/〜 line lift decorations', () => {
       content: gapDoc('項目・内容', 'Noto Sans JP', { lineRule: 'auto', lineSpacing: 2 }),
     })
     expect(liftSpans(editor)[0].style.lineHeight).toBe(
-      'max(calc(var(--doc-grid-pitch,0.0001px) * 2), calc(round(up, calc(1.7143 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px)) * var(--doc-grid-single-mult,2)))',
+      'max(calc(var(--doc-grid-pitch,0.0001px) * 2), calc(round(up, calc(1.7157 * 1em - var(--doc-grid-pitch,0.0001px) * 0.004), var(--doc-grid-pitch,0.0001px)) * var(--doc-grid-single-mult,2)))',
     )
     editor.destroy()
   })
@@ -345,8 +507,8 @@ describe('empty paragraph line size (emptyRunSize attr)', () => {
     expect(tnr.style.getPropertyValue('--doc-line-factor')).toBe('1.15')
     expect(tnr.style.fontFamily).toContain('Times New Roman')
     // empty-line probe 2026-08-25: CJK marks size by their own face too
-    expect(malgun.style.getPropertyValue('--doc-line-factor')).toBe('1.7371')
-    expect(simsun.style.getPropertyValue('--doc-line-factor')).toBe('1.3029')
+    expect(malgun.style.getPropertyValue('--doc-line-factor')).toBe('1.7291')
+    expect(simsun.style.getPropertyValue('--doc-line-factor')).toBe('1.3')
     editor.destroy()
   })
 
@@ -374,6 +536,46 @@ describe('empty paragraph line size (emptyRunSize attr)', () => {
       'var(--doc-line-factor-latin,1.2)',
     )
     expect(cjk.style.getPropertyValue('--doc-line-factor')).toBe('var(--doc-line-factor-cjk,1.7)')
+    editor.destroy()
+  })
+
+  it('a space plus page-break paragraph is mark-sized like a break-only one', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            attrs: { emptyRunFont: 'Times New Roman', emptyRunSize: 22 },
+            content: [
+              { type: 'text', text: ' ' },
+              { type: 'hardBreak', attrs: { pageBreak: true } },
+            ],
+          },
+          {
+            type: 'docParagraph',
+            attrs: { emptyRunFont: 'Times New Roman' },
+            content: [{ type: 'hardBreak', attrs: { pageBreak: true } }],
+          },
+          {
+            type: 'docParagraph',
+            attrs: { emptyRunFont: 'Times New Roman' },
+            content: [{ type: 'text', text: ' ' }, { type: 'hardBreak' }],
+          },
+        ],
+      } as never,
+    })
+    const [spaced, bare, softBreak] = Array.from(
+      editor.view.dom.querySelectorAll('p'),
+    ) as HTMLElement[]
+    expect(spaced.style.getPropertyValue('--doc-line-factor')).toBe('1.15')
+    expect(spaced.style.fontFamily).toContain('Times New Roman')
+    expect(spaced.style.fontSize).toBe('11pt')
+    expect(bare.style.getPropertyValue('--doc-line-factor')).toBe('1.15')
+    // a soft line break is content: the paragraph keeps the content path
+    expect(softBreak.style.fontFamily).not.toContain('Times New Roman')
     editor.destroy()
   })
 })
@@ -410,14 +612,17 @@ describe('per-line factors in mixed-script paragraphs', () => {
       `max(var(--doc-line-factor-latin,1.2), ${lineHeightFactor('Arial')})`,
     )
     const lifted = stretches(editor)
-    // Script-font decorations may split a stretch without changing its line metrics.
-    expect(lifted.map((s) => s.textContent).join('')).toBe('수소는 결정결함결합해')
+    // Script-font decorations may split a stretch without changing its line
+    // metrics; the space between the words keeps the paragraph line box.
+    expect(lifted.map((s) => s.textContent).join('')).toBe('수소는결정결함결합해')
     for (const s of lifted) {
-      expect(s.style.getPropertyValue('--doc-line-factor')).toBe('var(--doc-line-factor-kr,1.3029)')
+      expect(s.style.getPropertyValue('--doc-line-factor')).toBe('var(--doc-line-factor-kr,1.3)')
       expect(s.style.getPropertyValue('line-height')).toBe('')
     }
     const latin = editor.view.dom.querySelector('p span[data-doc-style]') as HTMLElement
-    expect(latin.textContent).toBe('(Dangling bond)')
+    // the Korean no-break joiner widget sits at the hangul/paren seam
+    expect(latin.textContent?.replace(/\u2060/g, '')).toBe('(Dangling bond)')
+    expect(latin.querySelector('.doc-kr-wj')).not.toBeNull()
     expect(latin.querySelector('.doc-run-lf')).toBeNull()
     editor.destroy()
   })
@@ -433,7 +638,7 @@ describe('per-line factors in mixed-script paragraphs', () => {
       type: 'doc',
       content: [{ type: 'docParagraph', content: [{ type: 'text', text: '수소는 결정 결함' }] }],
     } as never)
-    expect(factorOf(editor)).toBe('var(--doc-line-factor-kr,1.3029)')
+    expect(factorOf(editor)).toBe('var(--doc-line-factor-kr,1.3)')
     expect(stretches(editor)).toHaveLength(0)
     editor.destroy()
   })

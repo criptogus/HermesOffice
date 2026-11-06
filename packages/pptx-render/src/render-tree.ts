@@ -12,7 +12,7 @@
  */
 import type { Fill, Stroke } from '@hermesoffice/pptx-engine'
 import type { PlacedBox } from './coords'
-import type { ExtrusionFaceRender } from './scene3d'
+import type { ExtrusionRender } from './scene3d'
 
 export type RenderNodeType =
   | 'shape' // vector shape (may contain text)
@@ -205,6 +205,13 @@ export interface GlyphRun {
   rotate270?: boolean
   /** Bullet glyph (non-body content injected by layout; text editors should skip it) */
   isBullet?: boolean
+  /**
+   * Withheld from the model: this run's words are marked, and `text` still holds
+   * them — the canvas draws the real thing, only the model's view substitutes the
+   * label. Set from the engine's `TextRun.redact`; layout splits a run into tokens,
+   * so every token of a marked run carries the same label.
+   */
+  redact?: string
   /** Numbered bullet: its buAutoNum scheme (ribbon highlight / toggle semantics) */
   numType?: string
   /** Numbered bullet: the paragraph's explicit startAt (editing preview counts from it) */
@@ -328,15 +335,26 @@ export interface ShapeRenderNode extends RenderNodeBase {
   glow?: RenderGlow
   reflection?: RenderReflection
   /** scene3d+sp3d extrusion: pre-projected shaded faces (painter order) replacing the flat geometry */
-  extrusion?: { faces: ExtrusionFaceRender[]; wireframe?: boolean }
+  extrusion?: ExtrusionRender
   text?: RenderTextLayout
 }
 
 export interface PictureRenderNode extends RenderNodeBase {
   type: 'picture'
+  /**
+   * Withheld from the model. A picture, a video or an audio clip has no words to
+   * redact: the point is that the model is not handed a reference it could fetch.
+   * Note the render tree carries only `media`'s *kind* — `PictureRenderNode.media`
+   * is `'video' | 'audio'`, never the target — so an external `r:link` URL does
+   * not reach this layer at all. This flag is what keeps it from reaching the
+   * model view.
+   */
+  redact?: string
   dataUrl?: string
   /** Opaque backdrop behind the image (OLE previews render on a white canvas; metafiles are often transparent) */
   bgColor?: string
+  /** Read-only preview of an embedded OLE object (PowerPoint treats the frame as a shape, not a picture) */
+  ole?: true
   /** Shape fill from the pic's own spPr, always drawn behind the (possibly translucent) image */
   fill?: RenderFill
   /** [dark, light] duotone colors applied to the picture pixels */
@@ -357,6 +375,8 @@ export interface PictureRenderNode extends RenderNodeBase {
   softEdgePx?: number
   /** Audio/video (the image is the poster frame): the render layer overlays a play/speaker badge */
   media?: 'video' | 'audio'
+  /** A 3D model (the image is its latest rendering): am3d:rot, 60,000ths of a degree */
+  model3d?: { ax: number; ay: number; az: number }
   stroke?: RenderStroke
   shadow?: RenderShadow
   glow?: RenderGlow
@@ -401,6 +421,8 @@ export interface TableCellRender {
   fill: RenderFill
   /** Border lines on the four sides (default none) */
   borders?: { l?: RenderStroke; r?: RenderStroke; t?: RenderStroke; b?: RenderStroke }
+  /** <a:cell3D> bevel bands drawn over the (already darkened) fill */
+  bevel?: import('./cell-bevel').CellBevelRender
   text?: RenderTextLayout
 }
 
@@ -430,8 +452,16 @@ export interface ChartLabel {
   color: string
   bold?: boolean
   italic?: boolean
+  /** Chart text typeface (ChartModel.fontFamily); unset = the renderer's Calibri stack */
+  fontFamily?: string
   /** Rotation angle (e.g. -90 for a value-axis title) */
   rotationDeg?: number
+  /** <a:rPr spc> letter spacing (px after each char) */
+  letterSpacingPx?: number
+  /** Data-label box (c:dLbls/c:spPr): fill / outline color and the measured text width it wraps */
+  fill?: string
+  stroke?: string
+  w?: number
 }
 
 /** Current chart style (for the Ribbon "Chart Design" display; kind aligns with EditChartOp.kind). */
@@ -498,7 +528,7 @@ export interface ChartRenderNode extends RenderNodeBase {
   /** Tick / category / legend / axis-title text */
   labels: ChartLabel[]
   /** Bars */
-  bars: Array<{ x: number; y: number; w: number; h: number; color: string }>
+  bars: Array<{ x: number; y: number; w: number; h: number; color: string; fill?: RenderFill }>
   /** Polylines (points is flat [x0,y0,x1,y1,...]); closed+fill for filled radar charts etc. */
   polylines: Array<{
     points: number[]
@@ -553,6 +583,8 @@ export interface RenderSlide {
   nodes: RenderNode[]
   /** Hidden slide (<p:sld show="0">): thumbnails get a badge, skipped during presentation */
   hidden?: boolean
+  /** Slide part path (ppt/slides/slideN.xml): stable identity across insert/delete/reorder */
+  partPath?: string
 }
 
 // Convenience type re-exports (for internal render logic)

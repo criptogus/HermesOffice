@@ -1,13 +1,16 @@
 import { createRoot } from 'react-dom/client'
-import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { htmlDir, htmlLang, type Lang } from '@hermesoffice/i18n'
 import App from './App'
 import { LocaleProvider } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/ai-model-picker.css'
+import '@hermesoffice/ui/ai-queue-strip.css'
+import '@hermesoffice/ui/ai-usage.css'
+import '@hermesoffice/ui/ai-skills.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
-import '@hermesoffice/ui/app-dialog.css'
 import '@hermesoffice/ui/ribbon-collapse.css'
 import '@hermesoffice/ui/markdown.css'
 import '@hermesoffice/ui/ai-panel-prefs.css'
@@ -28,9 +31,10 @@ void (async () => {
     window.pdfApi.getTheme().catch(() => 'system' as const),
   ])
   document.documentElement.lang = htmlLang(lang as Lang)
+  document.documentElement.dir = htmlDir(lang)
   applyTheme(theme)
   window.pdfApi.onThemeChanged(applyTheme)
-  void window.pdfApi
+  await window.pdfApi
     ?.getAiPanelPrefs?.()
     .then(applyAiPanelPrefs)
     .catch(() => {})

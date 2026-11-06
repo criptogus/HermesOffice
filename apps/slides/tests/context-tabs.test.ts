@@ -4,6 +4,7 @@ import {
   autoContextTabForElement,
   contextElementTypeForNode,
   contextTabForElement,
+  contextualTabFor,
 } from '../src/renderer/components/context-tabs'
 
 describe('slides contextual ribbon tabs', () => {
@@ -13,6 +14,7 @@ describe('slides contextual ribbon tabs', () => {
     expect(contextTabForElement('textShape')).toBe('shapeFormat')
     expect(contextTabForElement('table')).toBe('tableDesign')
     expect(contextTabForElement('chart')).toBe('chartDesign')
+    expect(contextTabForElement('model3d')).toBe('model3dFormat')
   })
 
   it('keeps picture-format for mixed selections so outline stays available', () => {
@@ -33,11 +35,20 @@ describe('slides contextual ribbon tabs', () => {
     expect(contextElementTypeForNode(textGroup)).toBe('textShape')
   })
 
+  it('an OLE preview is a shape (PowerPoint shows Shape Format for embedded objects)', () => {
+    const plain = { type: 'picture' } as unknown as RenderNode
+    const ole = { type: 'picture', ole: true } as unknown as RenderNode
+    expect(contextElementTypeForNode(plain)).toBe('picture')
+    expect(contextElementTypeForNode(ole)).toBe('shape')
+    expect(contextualTabFor(ole)).toBe('shapeFormat')
+  })
+
   it('auto-switches for dedicated object tools but only reveals the shape tab', () => {
     expect(autoContextTabForElement('picture')).toBe('pictureFormat')
     expect(autoContextTabForElement('mixed')).toBe('pictureFormat')
     expect(autoContextTabForElement('table')).toBe('tableDesign')
     expect(autoContextTabForElement('chart')).toBe('chartDesign')
+    expect(autoContextTabForElement('model3d')).toBe('model3dFormat')
     expect(autoContextTabForElement('shape')).toBeNull()
     expect(autoContextTabForElement('textShape')).toBeNull()
     expect(autoContextTabForElement(null)).toBeNull()
@@ -45,5 +56,19 @@ describe('slides contextual ribbon tabs', () => {
 
   it('does not expose a contextual tab without a supported selection', () => {
     expect(contextTabForElement(null)).toBeNull()
+  })
+
+  it('maps a node straight to the tab a double-click opens', () => {
+    const node = (n: object) => n as unknown as RenderNode
+    expect(contextualTabFor(node({ type: 'picture' }))).toBe('pictureFormat')
+    expect(contextualTabFor(node({ type: 'picture', media: 'video' }))).toBe('pictureFormat')
+    expect(contextualTabFor(node({ type: 'picture', model3d: { ax: 0, ay: 0, az: 0 } }))).toBe(
+      'model3dFormat',
+    )
+    expect(contextualTabFor(node({ type: 'chart' }))).toBe('chartDesign')
+    expect(contextualTabFor(node({ type: 'table' }))).toBe('tableDesign')
+    expect(contextualTabFor(node({ type: 'shape', line: {} }))).toBe('shapeFormat')
+    expect(contextualTabFor(node({ type: 'group', children: [] }))).toBe('shapeFormat')
+    expect(contextualTabFor(node({ type: 'placeholder-chip' }))).toBeNull()
   })
 })

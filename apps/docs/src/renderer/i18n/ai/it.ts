@@ -58,6 +58,7 @@ export const it = {
   aiSumInsertFootnote: 'Nota a piè di pagina inserita',
   aiSumInsertEndnote: 'Nota di chiusura inserita',
   aiSumDeleteNote: 'Nota eliminata',
+  aiSumEditNote: 'Nota modificata',
   aiSumReadNotes: 'Note lette',
   aiSumAddComment: 'Commento aggiunto',
   aiSumDeleteComment: 'Commento eliminato',
@@ -101,6 +102,11 @@ export const it = {
     "Revisioni attivate: le modifiche ai contenuti dell'IA sono contrassegnate come revisioni (inserimenti sottolineati, eliminazioni barrate); accettale o rifiutale in Revisione",
   aiTrackOffTitle:
     "Revisioni disattivate: le modifiche dell'IA vengono applicate subito (puoi comunque ripristinare tramite gli snapshot delle versioni)",
+  aiRevisionBarTitle: 'Revisioni',
+  aiRevisionCount: '{count} modifiche in sospeso',
+  aiRevisionRejectAll: 'Rifiuta tutto',
+  aiRevisionAcceptAll: 'Accetta tutto',
+  aiRevisionPara: 'Paragrafo {n}',
   aiTurnLimit:
     '(Raggiunto il limite di chiamate agli strumenti per questa richiesta; la risposta sopra riflette i passaggi completati finora e potrebbe essere incompleta.)',
   aiStopped: '(Interrotto)',
@@ -114,6 +120,8 @@ export const it = {
   aiUnknownError: 'Errore sconosciuto',
   aiTimeoutError:
     'Richiesta IA scaduta: nessuna risposta dalla rete, esecuzione interrotta. Controlla la connessione e riprova',
+  aiRegionError:
+    'Il fornitore di questo modello non serve la tua regione attuale — scegli un altro modello o cambia rete',
   aiOverloadedError: 'Il servizio IA è momentaneamente sovraccarico — riprova tra poco',
   aiNetworkError:
     'Problema di rete: impossibile raggiungere il servizio IA. Controlla la connessione e riprova',
@@ -123,6 +131,9 @@ export const it = {
   aiSumImageAttachment: 'Immagine allegata {name}',
   aiSumRead: 'Lettura di {name}',
   aiSumReadAttachmentName: 'Lettura allegato {name}',
+  aiSumSkillsList: 'Skill installate elencate',
+  aiSumSkillRead: 'Skill {name} letta',
+  aiSumRunCli: 'Ha eseguito {args}',
   aiSumWebSearch: 'Ricerca web',
   aiSumWebSearchDone: 'Ricerca di "{query}" ({count} risultati)',
   aiSumImageSearch: 'Ricerca immagini',
@@ -170,6 +181,8 @@ export const it = {
   aiCmdNone: 'Nessun blocco corrispondente; il documento non è stato modificato.',
   aiCmdNoneSkipped:
     'Nessun blocco modificabile; il documento non è stato modificato ({count} blocchi protetti ignorati — tabelle/immagini non possono essere modificate con comandi di stile).',
+  aiCmdNoneUnchanged:
+    '{count} blocco/i corrispondente/i sono rimasti invariati; il documento non è stato modificato.',
   aiCmdTextStyle: 'Stile del testo aggiornato in {count} blocco/i',
   aiCmdMatchedStyle: 'Stile applicato a {count} occorrenze in {blocks} blocchi',
   aiCmdParaStyle: 'Formato del paragrafo aggiornato in {count} blocco/i',
@@ -184,4 +197,22 @@ export const it = {
   aiCmdImages: '{count} immagine/i aggiornata/e',
   aiCmdToc: 'Sommario inserito ({count} voci)',
   aiCmdSkipped: ' ({count} blocco/i protetto/i ignorato/i)',
+  aiStarterMindMap: 'Genera una mappa mentale di questo documento',
+  aiMindMapBtn: 'Mappa mentale IA',
+  aiMindMapPrompt:
+    'Genera una mappa mentale di questo documento, organizzando i temi principali e i concetti chiave secondo la struttura delle sezioni',
+  aiSumMindMap: 'Genera mappa mentale',
+  aiMindMapTitle: 'Mappa mentale',
+  aiMindMapNodes: '{count} nodi',
+  aiMindMapAskPrompt: 'Parlami di "{label}" in questo documento',
+  aiMindMapJump: 'Vai al passaggio citato',
+  aiMindMapExport: 'Esporta PNG',
+  aiMindMapExportSvg: 'Esporta SVG',
+  aiMindMapInsert: 'Inserisci nel documento',
+  aiMindMapReset: 'Reimposta vista',
+  aiMindMapExpand: 'Espandi ramo',
+  aiMindMapCollapse: 'Comprimi ramo',
+  aiMindMapToggleLayout: 'Cambia layout',
+  aiMindMapLayoutTopDown: 'Passa al layout dall’alto verso il basso',
+  aiMindMapLayoutLeftRight: 'Passa al layout da sinistra a destra',
 } satisfies Record<keyof typeof zh, string>

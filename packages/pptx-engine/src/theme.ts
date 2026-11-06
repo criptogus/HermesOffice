@@ -275,8 +275,9 @@ const CLR_MAP_NAMES = [
 function clrMapFromTag(tag: string): Record<string, string> | undefined {
   const out: Record<string, string> = {}
   for (const name of CLR_MAP_NAMES) {
-    const m = new RegExp(`\\b${name}="([^"]+)"`).exec(tag)
-    if (m) out[name] = m[1]
+    // OPC allows single quotes, so match the attribute value either way round
+    const v = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`).exec(tag)?.[2]
+    if (v) out[name] = v
   }
   return Object.keys(out).length ? out : undefined
 }

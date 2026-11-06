@@ -11,6 +11,7 @@ import type { WorkbookChartEdit, WorkbookVisualEdit } from '../shared/edit-schem
 import type { SheetFilterState } from './xlsx-filter'
 import type { DefinedNamesState } from './xlsx-defined-names'
 import type { SheetPageSetupState } from './xlsx-page-setup'
+import type { SheetRedactionState } from './xlsx-redaction'
 import type {
   CellEdit,
   BulkConstantFill,
@@ -23,12 +24,17 @@ import type {
   SheetNoteState,
   SheetProtectedRangesState,
   SheetProtectionState,
+  SheetTabColorState,
   SheetPivotAddition,
+  SheetSlicerState,
   SheetSparklineAddition,
   SheetStructuralOps,
   SheetTableAddition,
+  SheetTableEdit,
   SheetVisualAddition,
   SheetFormulaValues,
+  SheetCellImageAddition,
+  ExternalLinkOps,
 } from './xlsx-gateway'
 import { planCellEditsToXlsx, syncFileBestEffort } from './xlsx-gateway'
 import { normalizeOoxmlPartPrefix } from './xlsx-namespace'
@@ -96,16 +102,27 @@ export interface StreamingSaveRequest {
   readonly pageSetupStates?: readonly SheetPageSetupState[] | undefined
   readonly noteStates?: readonly SheetNoteState[] | undefined
   readonly tableAdditions?: readonly SheetTableAddition[] | undefined
+  readonly tableEdits?: readonly SheetTableEdit[] | undefined
+  /// Session-created pictures in cells ("Place in Cell").
+  readonly cellImageAdditions?: readonly SheetCellImageAddition[] | undefined
   readonly pivotAdditions?: readonly SheetPivotAddition[] | undefined
   readonly pivotCacheRefreshPaths?: readonly string[] | undefined
   readonly pivotRefreshUpdates?: readonly PivotRefreshUpdate[] | undefined
   readonly visualEdits?: readonly WorkbookVisualEdit[] | undefined
   readonly sparklineAdditions?: readonly SheetSparklineAddition[] | undefined
+  /// Session slicer/timeline panels written as x14/x15 slicer parts; null =
+  /// no slicer changes ride this save.
+  readonly slicerState?: SheetSlicerState | null | undefined
   /// Recalculated formula-cell values written into <v>
   readonly formulaValues?: readonly SheetFormulaValues[] | undefined
+  /// External-link breaks and source retargets, resolved on the final contents
+  readonly externalLinkOps?: ExternalLinkOps | null | undefined
   readonly themeState?: WorkbookThemeState | null | undefined
   readonly workbookProtectionState?: { readonly lockStructure: boolean } | null | undefined
   readonly protectedRangeStates?: readonly SheetProtectedRangesState[] | undefined
+  readonly tabColorStates?: readonly SheetTabColorState[] | undefined
+  /** null/undefined = the caller does not know the marks; the part is left as it is */
+  readonly redactionStates?: readonly SheetRedactionState[] | null | undefined
 }
 
 export interface StreamingSaveResult {
@@ -134,6 +151,32 @@ export async function readArchiveEntryText(
   }
 }
 
+/// One-shot text read of several archive entries via the sidecar (extract to a
+/// temp dir, read, clean up). The sidecar fails the whole request when one of
+/// the names is missing, so the caller must ask for names it knows exist.
+export async function readArchiveEntriesText(
+  client: ArchiveClient,
+  sourcePath: string,
+  entryNames: readonly string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (entryNames.length === 0) return out
+  const workDir = await mkdtemp(join(tmpdir(), 'ai-excel-read-'))
+  try {
+    const extracted = readEntriesResultSchema.parse(
+      await client.readEntries({ path: sourcePath, entries: [...entryNames], outputDir: workDir }),
+    )
+    for (const [index, entry] of extracted.entries.entries()) {
+      const name = entryNames[index]
+      if (name === undefined || !entry.path) continue
+      out.set(name, normalizeOoxmlPartPrefix(readFileSync(entry.path, 'utf8')))
+    }
+    return out
+  } finally {
+    await rm(workDir, { recursive: true, force: true })
+  }
+}
+
 /// Streaming save channel: the gateway plans patched entry contents in
 /// memory, the sidecar reassembles the archive on disk — untouched entries
 /// are raw-copied compressed bytes, verified afterwards via CRC manifests.
@@ -141,7 +184,10 @@ export async function saveWorkbookViaSidecar(
   request: StreamingSaveRequest,
 ): Promise<StreamingSaveResult> {
   const workDir = await mkdtemp(join(tmpdir(), 'ai-excel-save-'))
-  const temporaryTarget = join(dirname(request.targetPath), `.${randomUUID()}.tmp.xlsx`)
+  const temporaryTarget = join(
+    dirname(request.targetPath),
+    `${basename(request.targetPath)}.${randomUUID()}.tmp`,
+  )
   try {
     const manifest = manifestResultSchema.parse(
       await request.client.archiveManifest(request.sourcePath),
@@ -173,6 +219,12 @@ export async function saveWorkbookViaSidecar(
       request.workbookProtectionState ?? null,
       request.protectedRangeStates ?? [],
       request.bulkConstantFills ?? [],
+      request.tabColorStates ?? [],
+      request.tableEdits ?? [],
+      request.cellImageAdditions ?? [],
+      request.externalLinkOps ?? null,
+      request.redactionStates ?? null,
+      request.slicerState ?? null,
     )
 
     const replacements = await writePlanContents(workDir, 'replace', plan.replaced)

@@ -15,6 +15,7 @@ import {
   journalSize,
   recordPageSetup,
   recordProtectedRangesChange,
+  recordRemoveNumfmt,
   recordSetNumfmt,
   recordSetRangeValues,
   recordThemeColors,
@@ -22,6 +23,7 @@ import {
   recordWorkbookProtection,
   recordSheetDuplicate,
   recordSheetHidden,
+  recordSheetTabColor,
   recordSheetInsert,
   recordSheetOrderChange,
   recordSheetRemove,
@@ -39,7 +41,9 @@ import {
   toSavePivotAdds,
   toSaveTableAdds,
   toSaveSheetOps,
+  toSavePageSetupStates,
   toSaveStructuralOps,
+  recordCellImageAdd,
 } from '../src/renderer/edit-journal'
 
 describe('bulk constant-fill journal', () => {
@@ -510,6 +514,28 @@ describe('recordSetRangeValues', () => {
   })
 })
 
+describe('recordRemoveNumfmt', () => {
+  it('journals a cleared format as General so the save drops the old one', () => {
+    const journal = createEditJournal()
+    const recorded = recordRemoveNumfmt(journal, 'sheet-1', {
+      ranges: [{ startRow: 0, endRow: 1, startColumn: 6, endColumn: 6 }],
+    })
+    expect(recorded).toHaveLength(2)
+    expect(journal.cells.get('sheet-1')?.get('0:6')?.style).toEqual({ numberFormat: 'General' })
+    expect(journal.cells.get('sheet-1')?.get('1:6')?.style).toEqual({ numberFormat: 'General' })
+  })
+
+  it('ignores malformed or unbounded ranges', () => {
+    const journal = createEditJournal()
+    expect(recordRemoveNumfmt(journal, 'sheet-1', {})).toEqual([])
+    expect(
+      recordRemoveNumfmt(journal, 'sheet-1', {
+        ranges: [{ startRow: 0, endRow: Number.NaN, startColumn: 0, endColumn: 0 }],
+      }),
+    ).toEqual([])
+  })
+})
+
 describe('recordSetNumfmt', () => {
   it('expands pattern ranges into per-cell style entries', () => {
     const journal = createEditJournal()
@@ -571,6 +597,11 @@ describe('style conversion', () => {
   })
 
   it('maps text rotation and double underline both ways', () => {
+    expect(toNeutralStyle({ va: 3 })).toEqual({ vertAlign: 'superscript' })
+    expect(toNeutralStyle({ va: 2 })).toEqual({ vertAlign: 'subscript' })
+    expect(toNeutralStyle({ va: null })).toEqual({ vertAlign: null })
+    expect(fromNeutralStyle({ vertAlign: 'subscript' })).toEqual({ va: 2 })
+    expect(fromNeutralStyle({ vertAlign: null })).toEqual({ va: null })
     expect(toNeutralStyle({ tr: { a: 45 } })).toEqual({ textRotation: 45 })
     expect(toNeutralStyle({ tr: { a: -45 } })).toEqual({ textRotation: 135 })
     expect(toNeutralStyle({ tr: { a: 0, v: 1 } })).toEqual({ textRotation: 255 })
@@ -958,6 +989,34 @@ describe('sheet visibility and order journal', () => {
       { kind: 'reorder-sheets' },
     ])
   })
+
+  it('journals tab colors normalized to #RRGGBB and drops a revert', () => {
+    const journal = createEditJournal()
+    recordSheetTabColor(journal, 'sheet-1', '#92d050', null)
+    expect(journalSize(journal)).toBe(1)
+    expect(toSaveSheetOps(journal)).toEqual([
+      { kind: 'set-sheet-tab-color', sheetId: 'sheet-1', color: '#92D050' },
+    ])
+    recordSheetTabColor(journal, 'sheet-1', undefined, null)
+    expect(journalSize(journal)).toBe(0)
+    recordSheetTabColor(journal, 'sheet-2', '', '#FF0000')
+    expect(toSaveSheetOps(journal)).toEqual([
+      { kind: 'set-sheet-tab-color', sheetId: 'sheet-2', color: null },
+    ])
+    recordSheetTabColor(journal, 'sheet-2', 'ff0000', '#FF0000')
+    expect(journalSize(journal)).toBe(0)
+  })
+
+  it('copies a pending tab color onto a duplicate of the sheet', () => {
+    const journal = createEditJournal()
+    recordSheetTabColor(journal, 'sheet-1', '#92D050', null)
+    recordSheetDuplicate(journal, 'u-copy', 'Copy', 'sheet-1')
+    expect(toSaveSheetOps(journal)).toContainEqual({
+      kind: 'set-sheet-tab-color',
+      sheetId: 'u-copy',
+      color: '#92D050',
+    })
+  })
 })
 
 describe('rich-text run capture', () => {
@@ -1238,5 +1297,58 @@ describe('recordStructuralOp page-break remapping', () => {
     recordStructuralOp(journal, 'sheet-1', { kind: 'remove-rows', index: 0, count: 4 })
     expect(journal.structuralOps.get('sheet-1')).toBeUndefined()
     expect(journal.pageSetup.get('sheet-1')?.rowBreaks).toEqual([6])
+  })
+})
+
+describe('right-to-left page-setup journal', () => {
+  it('merges the direction flag with other sheet-view state and saves it', () => {
+    const journal = createEditJournal()
+    recordPageSetup(journal, 'sheet-1', { showGridlines: false })
+    recordPageSetup(journal, 'sheet-1', { rightToLeft: true })
+    recordPageSetup(journal, 'sheet-2', { rightToLeft: false })
+    expect(toSavePageSetupStates(journal)).toEqual([
+      { sheetId: 'sheet-1', showGridlines: false, rightToLeft: true },
+      { sheetId: 'sheet-2', rightToLeft: false },
+    ])
+  })
+})
+
+describe('cell picture journal', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo='
+  it('counts an embedded picture as a pending edit unless its sheet is removed', () => {
+    const journal = createEditJournal()
+    recordCellImageAdd(journal, {
+      sheetId: 's1',
+      row: 1,
+      column: 1,
+      mediaType: 'image/png',
+      dataUrl: png,
+    })
+    recordCellImageAdd(journal, {
+      sheetId: 's2',
+      row: 1,
+      column: 1,
+      mediaType: 'image/png',
+      dataUrl: png,
+    })
+    expect(journalSize(journal)).toBe(2)
+    recordSheetRemove(journal, 's2')
+    expect(journalSize(journal)).toBe(2) // s1 picture + the sheet removal
+  })
+
+  it('a second picture in the same cell displaces the first', () => {
+    const journal = createEditJournal()
+    const first = {
+      sheetId: 's1',
+      row: 3,
+      column: 4,
+      mediaType: 'image/png' as const,
+      dataUrl: png,
+    }
+    expect(recordCellImageAdd(journal, first)).toBeUndefined()
+    expect(
+      recordCellImageAdd(journal, { ...first, dataUrl: 'data:image/gif;base64,R0lGODlh' }),
+    ).toEqual(first)
+    expect(journal.cellImageAdds).toHaveLength(1)
   })
 })

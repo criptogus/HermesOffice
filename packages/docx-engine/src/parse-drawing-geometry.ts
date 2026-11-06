@@ -2,6 +2,7 @@
 // anchor metadata and page-position resolution, group transforms.
 import { attrsOf, childrenOf, findChild, nameOf, type XNode } from './xml-utils'
 import { EMU_PER_PX } from './parse-xml-text'
+import { DEFAULT_THEME_COLORS } from './theme'
 import type { SectionSettings, TextGlow, TextOutline, TextboxDisplay, ThemeColors } from './types'
 
 /**
@@ -69,6 +70,14 @@ export function lineBoxOf(shape: XNode, theme?: ThemeColors | null): TextboxDisp
     if (xfrmAttrs['flipH'] === '1' || xfrmAttrs['flipH'] === 'true') box.flipH = true
     if (xfrmAttrs['flipV'] === '1' || xfrmAttrs['flipV'] === 'true') box.flipV = true
   }
+  // a:xfrm rot (60000ths of a degree) and a:ln w (EMU) round-trip on lines the
+  // same way they do on text-bearing shapes, so a rotated/resized connector
+  // keeps its transform across save and reload
+  const rot = parseInt(xfrmAttrs['rot'] ?? '', 10)
+  if (Number.isFinite(rot) && rot !== 0) box.rotDeg = Math.round(rot / 60000)
+  const lnW = parseInt(ln ? (attrsOf(ln)['w'] ?? '') : '', 10)
+  if (Number.isFinite(lnW) && lnW > 0)
+    box.borderWidthPx = Math.round((lnW / EMU_PER_PX) * 100) / 100
   if (Number.isFinite(cy) && cy > 0) {
     box.heightPx = Math.round(cy / EMU_PER_PX)
     box.minHeightPx = box.heightPx
@@ -148,12 +157,11 @@ function gradStopRgb(gs: XNode, theme?: ThemeColors | null): number[] | null {
   if (!base && scheme) {
     const slot = SCHEME_CLR_SLOTS[attrsOf(scheme)['val'] ?? '']
     if (!slot) return null
-    base =
-      (theme?.[slot] as string | undefined) ??
-      (slot === 'dk1' ? '000000' : slot === 'lt1' ? 'FFFFFF' : undefined)
+    base = (theme?.[slot] as string | undefined) ?? DEFAULT_THEME_COLORS[slot]
   }
-  if (!base || !/^[0-9A-Fa-f]{6}$/.test(base)) return null
-  let rgb = [0, 2, 4].map((i) => parseInt(base!.slice(i, i + 2), 16))
+  const baseTrimmed = (base ?? '').trim()
+  if (!baseTrimmed || !/^[0-9A-Fa-f]{6}$/.test(baseTrimmed)) return null
+  let rgb = [0, 2, 4].map((i) => parseInt(baseTrimmed.slice(i, i + 2), 16))
   if (scheme) {
     const pct = (name: string): number | null => {
       const v = parseInt(attrsOf(findChild(scheme, name) ?? {})['val'] ?? '', 10)
@@ -189,6 +197,20 @@ export function colorNodeHex(
     .join('')
 }
 
+const COLOR_NODE_NAMES = ['a:srgbClr', 'a:schemeClr', 'a:sysClr', 'a:prstClr']
+
+/** a:alpha of a solid fill's color as 0..1; undefined when opaque or absent */
+export function solidFillAlpha(solidFill: XNode | undefined): number | undefined {
+  if (!solidFill) return undefined
+  for (const name of COLOR_NODE_NAMES) {
+    const color = findChild(solidFill, name)
+    if (!color) continue
+    const raw = parseInt(attrsOf(findChild(color, 'a:alpha') ?? {})['val'] ?? '', 10)
+    return Number.isFinite(raw) && raw >= 0 && raw < 100000 ? raw / 100000 : undefined
+  }
+  return undefined
+}
+
 /** anchored-drawing placement of one top-level w:drawing fragment */
 export interface DrawingAnchorMeta {
   offsetXEmu?: number
@@ -203,6 +225,8 @@ export interface DrawingAnchorMeta {
   pageYEmu?: number
   /** wp:wrapTopAndBottom: body text is excluded from the drawing's vertical band */
   topBottom?: boolean
+  /** layoutInCell="0": a cell-anchored drawing positions against the page/column, not its cell */
+  outsideCell?: boolean
   anchored?: boolean
   /** wp:positionH/V relativeFrom */
   relH?: string
@@ -216,9 +240,11 @@ export interface DrawingAnchorMeta {
   /** wp:extent (drawing size) */
   extentXEmu?: number
   extentYEmu?: number
-  /** wp:anchor distL/distR: text clearance beside a side-wrapped drawing */
+  /** wp:anchor distL/distR/distT/distB: text clearance around a side-wrapped drawing */
   distLEmu?: number
   distREmu?: number
+  distTEmu?: number
+  distBEmu?: number
   /** relativeHeight − Word's 251658240 base: paint order among overlapping anchors */
   z?: number
 }
@@ -278,14 +304,17 @@ export function drawingAnchorMeta(frag: string): DrawingAnchorMeta {
   }
   meta.offsetXEmu = posOf('H')
   meta.offsetYEmu = posOf('V')
-  for (const side of ['L', 'R'] as const) {
-    const v = parseInt(new RegExp(`\\bdist${side}="(\\d+)"`).exec(anchorTag)?.[1] ?? '', 10)
+  for (const side of ['L', 'R', 'T', 'B'] as const) {
+    const v = parseInt(
+      new RegExp(`\\bdist${side}\\s*=\\s*["'](\\d+)["']`).exec(anchorTag)?.[1] ?? '',
+      10,
+    )
     if (Number.isFinite(v)) meta[`dist${side}Emu`] = v
   }
   for (const dir of ['H', 'V'] as const) {
     const m = new RegExp(`<wp:position${dir}\\b([^>]*)>([\\s\\S]*?)</wp:position${dir}>`).exec(frag)
     if (!m) continue
-    const rel = /relativeFrom="(\w+)"/.exec(m[1])?.[1]
+    const rel = /relativeFrom\s*=\s*["'](\w+)["']/.exec(m[1])?.[1]
     const align = /<wp:align>(\w+)<\/wp:align>/.exec(m[2])?.[1]
     const pct = parseInt(
       new RegExp(`<wp14:pctPos${dir}Offset[^>]*>(-?\\d+)<`).exec(m[2])?.[1] ?? '',
@@ -301,23 +330,24 @@ export function drawingAnchorMeta(frag: string): DrawingAnchorMeta {
       if (Number.isFinite(pct)) meta.pctV = pct
     }
   }
-  const extent = /<wp:extent[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(frag)
-  if (extent) {
-    meta.extentXEmu = parseInt(extent[1], 10)
-    meta.extentYEmu = parseInt(extent[2], 10)
-  }
+  const extentTag = /<wp:extent[^>]*\/?>/.exec(frag)?.[0] ?? ''
+  const extentX = parseInt(/\bcx\s*=\s*["'](\d+)["']/.exec(extentTag)?.[1] ?? '', 10)
+  const extentY = parseInt(/\bcy\s*=\s*["'](\d+)["']/.exec(extentTag)?.[1] ?? '', 10)
+  if (Number.isFinite(extentX)) meta.extentXEmu = extentX
+  if (Number.isFinite(extentY)) meta.extentYEmu = extentY
   // the anchor's own wrap element sits before a:graphic; a nested drawing's
   // wrap must not leak up. behindDoc is z-order only: a behind-text picture
   // with wrapTight/wrapSquare/wrapTopAndBottom still excludes the text
   const graphicAt = frag.indexOf('<a:graphic')
   const ownXml = graphicAt === -1 ? frag : frag.slice(0, graphicAt)
-  const behind = /behindDoc="(?:1|true)"/.test(anchorTag)
+  const behind = /behindDoc\s*=\s*["'](?:1|true)["']/.test(anchorTag)
   const ownWrapped = /<wp:wrap(?:Square|Tight|Through|TopAndBottom)\b/.test(ownXml)
   if (frag.includes('<wp:wrapNone') || (behind && !ownWrapped)) meta.noWrap = true
   if (behind) meta.behind = true
-  const relHeight = Number(/relativeHeight="(\d+)"/.exec(anchorTag)?.[1] ?? NaN)
+  const relHeight = Number(/relativeHeight\s*=\s*["'](\d+)["']/.exec(anchorTag)?.[1] ?? NaN)
   if (Number.isFinite(relHeight) && relHeight - 251658240 !== 0) meta.z = relHeight - 251658240
   if (ownXml.includes('<wp:wrapTopAndBottom')) meta.topBottom = true
+  if (/layoutInCell\s*=\s*["'](?:0|false)["']/.test(anchorTag)) meta.outsideCell = true
   return meta
 }
 
@@ -358,10 +388,8 @@ export function resolveAnchorPagePos(
   if (relH !== 'page' && relH !== 'margin') return null
   if (meta.pctH === undefined && meta.alignH === undefined) return null
   const pageW = sect.pageWidth * EMU_PER_TWIP
-  const pageH = sect.pageHeight * EMU_PER_TWIP
   const marL = sect.marginLeft * EMU_PER_TWIP
   const marR = sect.marginRight * EMU_PER_TWIP
-  const marT = sect.marginTop * EMU_PER_TWIP
   const w = meta.extentXEmu ?? 0
   const refW = relH === 'page' ? pageW : pageW - marL - marR
   const relX =
@@ -377,24 +405,37 @@ export function resolveAnchorPagePos(
     xEmu: pageX - marL,
     outsideColumn: pageX + w <= marL || pageX >= pageW - marR,
   }
-  if (
-    (meta.relV === 'page' || meta.relV === 'margin') &&
-    (meta.pctV !== undefined || meta.alignV !== undefined)
-  ) {
-    const marB = sect.marginBottom * EMU_PER_TWIP
-    const h = meta.extentYEmu ?? 0
-    const refH = meta.relV === 'page' ? pageH : pageH - marT - marB
-    const relY =
-      meta.pctV !== undefined
-        ? Math.round((refH * meta.pctV) / 100000)
-        : meta.alignV === 'center'
-          ? Math.round((refH - h) / 2)
-          : meta.alignV === 'bottom' || meta.alignV === 'outside'
-            ? refH - h
-            : 0
-    pos.yEmu = (meta.relV === 'page' ? relY : marT + relY) - marT
-  }
+  const yEmu = resolveAnchorPageYEmu(meta, sect)
+  if (yEmu !== undefined) pos.yEmu = yEmu
   return pos
+}
+
+/**
+ * Page/margin-relative V placement (wp14:pctPosVOffset or wp:align) as an EMU
+ * offset from the body top, independent of how X is anchored. Undefined for
+ * plain posOffset or paragraph/line-relative anchors.
+ */
+export function resolveAnchorPageYEmu(
+  meta: DrawingAnchorMeta,
+  sect: SectionSettings | undefined,
+): number | undefined {
+  if (!sect) return undefined
+  if (meta.relV !== 'page' && meta.relV !== 'margin') return undefined
+  if (meta.pctV === undefined && meta.alignV === undefined) return undefined
+  const pageH = sect.pageHeight * EMU_PER_TWIP
+  const marT = sect.marginTop * EMU_PER_TWIP
+  const marB = sect.marginBottom * EMU_PER_TWIP
+  const h = meta.extentYEmu ?? 0
+  const refH = meta.relV === 'page' ? pageH : pageH - marT - marB
+  const relY =
+    meta.pctV !== undefined
+      ? Math.round((refH * meta.pctV) / 100000)
+      : meta.alignV === 'center'
+        ? Math.round((refH - h) / 2)
+        : meta.alignV === 'bottom' || meta.alignV === 'outside'
+          ? refH - h
+          : 0
+  return (meta.relV === 'page' ? relY : marT + relY) - marT
 }
 
 /**
@@ -442,12 +483,11 @@ function w14ColorRgb(node: XNode, theme?: ThemeColors | null): number[] | null {
   if (isScheme) {
     const slot = SCHEME_CLR_SLOTS[base ?? '']
     if (!slot) return null
-    base =
-      (theme?.[slot] as string | undefined) ??
-      (slot === 'dk1' ? '000000' : slot === 'lt1' ? 'FFFFFF' : undefined)
+    base = (theme?.[slot] as string | undefined) ?? DEFAULT_THEME_COLORS[slot]
   }
-  if (!base || !/^[0-9A-Fa-f]{6}$/.test(base)) return null
-  let rgb = [0, 2, 4].map((i) => parseInt(base!.slice(i, i + 2), 16))
+  const baseTrimmed = (base ?? '').trim()
+  if (!baseTrimmed || !/^[0-9A-Fa-f]{6}$/.test(baseTrimmed)) return null
+  let rgb = [0, 2, 4].map((i) => parseInt(baseTrimmed.slice(i, i + 2), 16))
   const pct = (name: string): number | null => {
     const v = parseInt(attrsOf(findChild(colorNode, name) ?? {})['w14:val'] ?? '', 10)
     return Number.isFinite(v) && v >= 0 ? v / 100000 : null

@@ -49,6 +49,14 @@ export interface CellStyleSpec {
 
 export type CellValue = { kind: 'text'; text: string } | { kind: 'number'; value: number }
 
+export const MAX_XLSX_ROWS = 1_048_576
+export const MAX_XLSX_COLUMNS = 16_384
+export const MAX_XLSX_CELL_TEXT = 32_767
+export const MAX_XLSX_CELL_LINE_FEEDS = 253
+export const MAX_XLSX_COLUMN_WIDTH = 255
+export const MAX_XLSX_ROW_HEIGHT_PT = 409
+export const MAX_XLSX_HEADER_FOOTER_TEXT = 255
+
 export interface SheetCell {
   /** 0-based */
   row: number
@@ -195,8 +203,9 @@ export class StylePool {
         if (font.bold) parts.push('<b/>')
         if (font.italic) parts.push('<i/>')
         parts.push(`<sz val="${font.sizePt ?? 11}"/>`)
-        if (font.color && /^[0-9a-fA-F]{6}$/.test(font.color)) {
-          parts.push(`<color rgb="FF${font.color.toUpperCase()}"/>`)
+        const color = (font.color ?? '').trim()
+        if (color && /^[0-9a-fA-F]{6}$/.test(color)) {
+          parts.push(`<color rgb="FF${color.toUpperCase()}"/>`)
         }
         parts.push(`<name val="${escapeXml(font.name ?? 'Calibri')}"/>`)
         return `<font>${parts.join('')}</font>`
@@ -258,6 +267,205 @@ function sanitizeText(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
 }
 
+function validSheetIndex(value: number, limit: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value < limit
+}
+
+function truncateText(value: string, limit: number): string {
+  if (value.length <= limit) return value
+  let end = limit
+  const high = value.charCodeAt(end - 1)
+  const low = value.charCodeAt(end)
+  if (high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) end--
+  return value.slice(0, end)
+}
+
+function normalizeCellText(value: string): {
+  text: string
+  truncated: boolean
+  lineFeedsRemoved: boolean
+} {
+  const truncatedText = truncateText(value, MAX_XLSX_CELL_TEXT)
+  let lineFeeds = 0
+  const text = truncatedText.replaceAll('\n', (lineFeed) => {
+    lineFeeds += 1
+    return lineFeeds <= MAX_XLSX_CELL_LINE_FEEDS ? lineFeed : ''
+  })
+  return {
+    text,
+    truncated: truncatedText !== value,
+    lineFeedsRemoved: text !== truncatedText,
+  }
+}
+
+function parseAddress(value: string): { row: number; col: number } | undefined {
+  const match = /^([A-Z]+)([1-9]\d*)$/i.exec(value)
+  if (!match) return undefined
+  let col = 0
+  for (const ch of match[1]!.toUpperCase()) {
+    const digit = ch.charCodeAt(0) - 64
+    if (digit < 1 || digit > 26) return undefined
+    col = col * 26 + digit
+  }
+  col -= 1
+  const row = Number(match[2]) - 1
+  if (!validSheetIndex(row, MAX_XLSX_ROWS) || !validSheetIndex(col, MAX_XLSX_COLUMNS)) {
+    return undefined
+  }
+  return { row, col }
+}
+
+function validMerge(value: string): boolean {
+  const parts = value.split(':')
+  if (parts.length !== 2) return false
+  const first = parseAddress(parts[0]!)
+  const second = parseAddress(parts[1]!)
+  return first != null && second != null
+}
+
+export interface SheetNormalizationResult {
+  sheet: SheetSpec
+  warnings: string[]
+}
+
+export function normalizeSheetSpec(input: SheetSpec): SheetNormalizationResult {
+  let droppedCells = false
+  let truncatedText = false
+  let removedCellLineFeeds = false
+  let truncatedHeaderFooter = false
+  let adjustedWidths = false
+  let adjustedHeights = false
+  let droppedHeights = false
+  let droppedMerges = false
+
+  const cells: SheetCell[] = []
+  for (const cell of input.cells) {
+    if (!validSheetIndex(cell.row, MAX_XLSX_ROWS) || !validSheetIndex(cell.col, MAX_XLSX_COLUMNS)) {
+      droppedCells = true
+      continue
+    }
+    if (cell.value?.kind === 'number' && !Number.isFinite(cell.value.value)) {
+      droppedCells = true
+      continue
+    }
+    if (cell.value?.kind === 'text') {
+      const normalized = normalizeCellText(cell.value.text)
+      if (normalized.truncated) truncatedText = true
+      if (normalized.lineFeedsRemoved) removedCellLineFeeds = true
+      if (normalized.text !== cell.value.text) {
+        cells.push({
+          ...cell,
+          value: { kind: 'text', text: normalized.text },
+        })
+        continue
+      }
+    }
+    cells.push(cell)
+  }
+
+  let colWidths: Array<number | undefined> | undefined
+  if (input.colWidths) {
+    colWidths = input.colWidths.slice(0, MAX_XLSX_COLUMNS)
+    if (input.colWidths.length > MAX_XLSX_COLUMNS) adjustedWidths = true
+    for (let i = 0; i < colWidths.length; i++) {
+      const width = colWidths[i]
+      if (width === undefined) continue
+      if (!Number.isFinite(width)) {
+        colWidths[i] = undefined
+        adjustedWidths = true
+        continue
+      }
+      const bounded = Math.min(MAX_XLSX_COLUMN_WIDTH, Math.max(0, width))
+      if (bounded !== width) adjustedWidths = true
+      colWidths[i] = bounded
+    }
+  }
+
+  let rowHeightsPt: Map<number, number> | undefined
+  if (input.rowHeightsPt) {
+    rowHeightsPt = new Map()
+    for (const [row, height] of input.rowHeightsPt) {
+      if (!validSheetIndex(row, MAX_XLSX_ROWS) || !Number.isFinite(height)) {
+        droppedHeights = true
+        continue
+      }
+      const bounded = Math.min(MAX_XLSX_ROW_HEIGHT_PT, Math.max(0, height))
+      if (bounded !== height) adjustedHeights = true
+      rowHeightsPt.set(row, bounded)
+    }
+  }
+
+  const merges = input.merges?.filter((merge) => {
+    if (validMerge(merge)) return true
+    droppedMerges = true
+    return false
+  })
+
+  let headerFooter: SheetSpec['headerFooter']
+  if (input.headerFooter) {
+    const oddHeader =
+      input.headerFooter.oddHeader === undefined
+        ? undefined
+        : truncateText(input.headerFooter.oddHeader, MAX_XLSX_HEADER_FOOTER_TEXT)
+    const oddFooter =
+      input.headerFooter.oddFooter === undefined
+        ? undefined
+        : truncateText(input.headerFooter.oddFooter, MAX_XLSX_HEADER_FOOTER_TEXT)
+    if (oddHeader !== input.headerFooter.oddHeader || oddFooter !== input.headerFooter.oddFooter) {
+      truncatedHeaderFooter = true
+    }
+    headerFooter = {
+      ...input.headerFooter,
+      ...(oddHeader === undefined ? {} : { oddHeader }),
+      ...(oddFooter === undefined ? {} : { oddFooter }),
+    }
+  }
+
+  const warnings: string[] = []
+  if (droppedCells) {
+    warnings.push(
+      `Excel limits: dropped cells outside the ${MAX_XLSX_ROWS}-row by ${MAX_XLSX_COLUMNS}-column worksheet`,
+    )
+  }
+  if (truncatedText) {
+    warnings.push(`Excel limits: truncated cell text to ${MAX_XLSX_CELL_TEXT} characters`)
+  }
+  if (removedCellLineFeeds) {
+    warnings.push(`Excel limits: removed cell line feeds beyond ${MAX_XLSX_CELL_LINE_FEEDS}`)
+  }
+  if (truncatedHeaderFooter) {
+    warnings.push(
+      `Excel limits: truncated header/footer text to ${MAX_XLSX_HEADER_FOOTER_TEXT} characters`,
+    )
+  }
+  if (adjustedWidths) {
+    warnings.push(`Excel limits: clamped column widths to ${MAX_XLSX_COLUMN_WIDTH} characters`)
+  }
+  if (droppedHeights) {
+    warnings.push(`Excel limits: dropped row heights outside the ${MAX_XLSX_ROWS}-row worksheet`)
+  }
+  if (adjustedHeights) {
+    warnings.push(`Excel limits: clamped row heights to ${MAX_XLSX_ROW_HEIGHT_PT} points`)
+  }
+  if (droppedMerges) {
+    warnings.push(
+      `Excel limits: dropped merges outside the ${MAX_XLSX_ROWS}-row by ${MAX_XLSX_COLUMNS}-column worksheet`,
+    )
+  }
+
+  return {
+    sheet: {
+      ...input,
+      cells,
+      ...(colWidths ? { colWidths } : {}),
+      ...(rowHeightsPt ? { rowHeightsPt } : {}),
+      ...(merges ? { merges } : {}),
+      ...(headerFooter ? { headerFooter } : {}),
+    },
+    warnings,
+  }
+}
+
 /** 0-based column index → A1 letters */
 export function columnLabel(column: number): string {
   let label = ''
@@ -287,7 +495,8 @@ function cellXml(cell: SheetCell): string {
   )
 }
 
-export function worksheetXml(sheet: SheetSpec): string {
+export function worksheetXml(input: SheetSpec): string {
+  const { sheet } = normalizeSheetSpec(input)
   const byRow = new Map<number, SheetCell[]>()
   let maxRow = 0
   let maxCol = 0
@@ -298,8 +507,8 @@ export function worksheetXml(sheet: SheetSpec): string {
     if (row) row.push(cell)
     else byRow.set(cell.row, [cell])
   }
-  for (const [, width] of (sheet.colWidths ?? []).entries()) {
-    if (width !== undefined) maxCol = Math.max(maxCol, 0)
+  for (const [i, width] of (sheet.colWidths ?? []).entries()) {
+    if (width !== undefined) maxCol = Math.max(maxCol, i)
   }
 
   const rowsXml = [...byRow.entries()]

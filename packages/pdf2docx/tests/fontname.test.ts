@@ -40,6 +40,33 @@ describe('familyFromPsName', () => {
     expect(familyFromPsName('PingFangSC-Semibold')).toBe('PingFang SC')
   })
 
+  it('passes CJK system families whose PS name is the family verbatim (hermesoffice#1890)', () => {
+    // splitting these unresolves the name and Word substitutes another face
+    expect(familyFromPsName('DFKai-SB')).toBe('DFKai-SB')
+    expect(familyFromPsName('PMingLiU')).toBe('PMingLiU')
+    expect(familyFromPsName('MingLiU-ExtB')).toBe('MingLiU-ExtB')
+    expect(familyFromPsName('MingLiU_HKSCS')).toBe('MingLiU_HKSCS')
+    expect(familyFromPsName('SimSun')).toBe('SimSun')
+    expect(familyFromPsName('NSimSun')).toBe('NSimSun')
+    expect(familyFromPsName('SimHei')).toBe('SimHei')
+    expect(familyFromPsName('KaiTi_GB2312')).toBe('KaiTi_GB2312')
+    expect(familyFromPsName('ABCDEF+DFKai-SB')).toBe('DFKai-SB')
+  })
+
+  it.each(['DFKaiShu-SB-Estd-BF', 'XLRIPU+DFKaiShu-SB-Estd-BF'])(
+    'maps the DFKai-SB PostScript alias %s to its installed family',
+    (name) => {
+      expect(familyFromPsName(name)).toBe('DFKai-SB')
+      expect(weightFromPsName(name)).toBe(null)
+      expect(italicFromPsName(name)).toBe(false)
+    },
+  )
+
+  it('does not apply the DFKai-SB alias to other faces or suffixed names', () => {
+    expect(familyFromPsName('DFKaiShu-Md-HK-BF')).toBe('DFKai Shu HK BF')
+    expect(familyFromPsName('DFKaiShu-SB-Estd-BF-Other')).toBe('DFKai Shu SB Estd BF Other')
+  })
+
   it('passes names that already contain spaces through untouched', () => {
     expect(familyFromPsName('Noto Sans SC')).toBe('Noto Sans SC')
     expect(familyFromPsName('PingFang SC')).toBe('PingFang SC')

@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface, type Interface } from 'node:readline'
 
+import type { ExternalLinksResult, ExternalLinksUpdateResult } from '../shared/desktop-api'
+
 const PROTOCOL_VERSION = 1
 const REQUEST_TIMEOUT_MS = 30_000
 // Archive commands stream whole workbooks; large files need more headroom.
@@ -18,7 +20,13 @@ interface PendingRequest {
 
 /** Pure reads a departing consumer can abandon; skipping a queued close (or
  * save) instead would leave its side effects permanently undone. */
-const CANCELLABLE_READS = new Set(['read_range', 'read_formula_cells', 'read_media'])
+const CANCELLABLE_READS = new Set([
+  'read_range',
+  'read_formula_cells',
+  'read_row_outline',
+  'read_media',
+  'find_cells',
+])
 
 interface SidecarResponse {
   readonly version: number
@@ -36,8 +44,27 @@ export class XlsxSidecarClient {
   private lines: Interface | null = null
   private readonly pending = new Map<string, PendingRequest>()
   private stderr = ''
+  /// Notified when the sidecar process dies and the NEXT request will spawn a
+  /// replacement that has never heard of the session ids we are holding. This
+  /// is a positive crash signal, and deliberately NOT the same thing as a
+  /// session guard rejecting an id: closing a workbook (or the Save swap that
+  /// replaces its session) only sends a `close` command down the live pipe, so
+  /// it never reaches here. A renderer that keyed recovery off a guard's error
+  /// text could not tell those two apart, and would re-open the file on every
+  /// ordinary save.
+  private readonly exitListeners = new Set<() => void>()
 
   constructor(private readonly binaryPath: string) {}
+
+  /** Subscribe to unexpected sidecar process death; returns an unsubscribe. */
+  onProcessExit(listener: () => void): () => void {
+    this.exitListeners.add(listener)
+    return () => this.exitListeners.delete(listener)
+  }
+
+  private notifyExit(): void {
+    for (const listener of this.exitListeners) listener()
+  }
 
   async open(path: string, locale = 'zh', shortDateFormat?: string): Promise<unknown> {
     return this.request({
@@ -66,6 +93,19 @@ export class XlsxSidecarClient {
     readonly sheetId: string
   }): Promise<unknown> {
     return this.request({ command: 'read_formula_cells', ...input })
+  }
+
+  async findCells(
+    input: Readonly<Record<string, unknown>> & { readonly sessionId: string },
+  ): Promise<unknown> {
+    return this.request({ command: 'find_cells', ...input })
+  }
+
+  async readRowOutline(input: {
+    readonly sessionId: string
+    readonly sheetId: string
+  }): Promise<unknown> {
+    return this.request({ command: 'read_row_outline', ...input })
   }
 
   async close(sessionId: string): Promise<void> {
@@ -122,7 +162,11 @@ export class XlsxSidecarClient {
 
   /** IronCalc-backed recalculation: load the file, apply the pending edits,
    * evaluate, and return the requested cells' computed values. Fail-soft —
-   * callers keep cached values when this errors. */
+   * callers keep cached values when this errors. `reportStale` also returns
+   * the formula cells whose cached `<v>` disagrees with the engine (and the
+   * array spill cells it cannot refresh); the answer then carries
+   * `auditSkipped` instead when the engine had to decline the audit, e.g. on
+   * a `date1904` workbook. */
   async recalcCells(input: {
     readonly path: string
     readonly edits: readonly {
@@ -140,8 +184,47 @@ export class XlsxSidecarClient {
         readonly endColumn: number
       }
     }[]
+    readonly reportStale?: boolean
   }): Promise<unknown> {
     return this.request({ command: 'recalc_cells', ...input }, ARCHIVE_TIMEOUT_MS)
+  }
+
+  /** External links (hermesoffice#2109): list the workbook's `[n]` links with
+   * their resolved sources and, for each external-formula cell, the freshly
+   * computed value when the source is reachable — the stored formula keeps
+   * its indexed spelling, so the caller updates only the cached `<v>`. Cell
+   * `row`/`column` are 0-based in the report (IronCalc, which computes the
+   * values, addresses the same cells 1-based). */
+  async updateExternalLinks(input: { readonly path: string }): Promise<ExternalLinksUpdateResult> {
+    return this.request<ExternalLinksUpdateResult>(
+      { command: 'update_external_links', ...input },
+      ARCHIVE_TIMEOUT_MS,
+    )
+  }
+
+  /** The link list only: no source is opened, nothing is evaluated. */
+  async readExternalLinks(input: { readonly path: string }): Promise<unknown> {
+    return this.request({ command: 'read_external_links', ...input }, ARCHIVE_TIMEOUT_MS)
+  }
+
+  /** The formula cells referencing each `[n]` link with the value a break
+   * would freeze them at — a file-level scan, so `t="e"` error caches
+   * survive (a model pass would lose them). */
+  async readExternalLinkUsage(input: { readonly path: string }): Promise<unknown> {
+    return this.request({ command: 'read_external_link_usage', ...input }, ARCHIVE_TIMEOUT_MS)
+  }
+
+  /**
+   * The links panel's listing: identity fields only, and the targets are not
+   * probed (no reachability) — opening a workbook must not stat a dead
+   * network share. CLI's `readExternalLinks` above answers reachability for
+   * its explicit link report; the panel's Update asks `updateExternalLinks`.
+   */
+  async listExternalLinks(input: { readonly path: string }): Promise<ExternalLinksResult> {
+    return this.request<ExternalLinksResult>(
+      { command: 'list_external_links', ...input },
+      ARCHIVE_TIMEOUT_MS,
+    )
   }
 
   /**
@@ -191,10 +274,10 @@ export class XlsxSidecarClient {
     )
   }
 
-  private request(
+  private request<T = unknown>(
     command: Readonly<Record<string, unknown>>,
     timeoutMs: number = REQUEST_TIMEOUT_MS,
-  ): Promise<unknown> {
+  ): Promise<T> {
     const child = this.ensureStarted()
     const requestId = crypto.randomUUID()
     const payload = JSON.stringify({
@@ -216,7 +299,9 @@ export class XlsxSidecarClient {
         reject(new Error('XLSX sidecar request timed out.'))
       }, timeoutMs)
       this.pending.set(requestId, {
-        resolve,
+        // the queue erases T: the reply arrives as unknown and typed callers
+        // assert through the request<T> return type
+        resolve: resolve as (value: unknown) => void,
         reject,
         timeout,
         command: String(commandName),
@@ -257,19 +342,34 @@ export class XlsxSidecarClient {
     child.stderr.on('data', (chunk: string) => {
       this.stderr = `${this.stderr}${chunk}`.slice(-MAX_STDERR_LENGTH)
     })
-    child.once('error', (error) => {
-      this.process = null
-      this.rejectPending(error)
-    })
-    child.once('exit', (code, signal) => {
+    const teardown = (reason: Error): void => {
+      if (this.process !== child) return
       this.process = null
       this.lines?.close()
       this.lines = null
+      this.rejectPending(reason)
+      // The process is gone, so every session id we hold is now unknown to
+      // the next spawn. stop() (app quit) sets this.process to null first,
+      // which makes the guard above return, so a deliberate shutdown never
+      // reaches this and never reads as a crash.
+      this.notifyExit()
+    }
+    child.once('error', teardown)
+    // An externally killed child keeps `killed` false, so the next write emits
+    // an async EPIPE that would otherwise be an uncaught exception.
+    child.stdin.on('error', () => {
+      teardown(
+        new Error(
+          `XLSX sidecar stdin failed (${this.stderr.trim() || 'broken pipe'}).`.slice(0, 200),
+        ),
+      )
+    })
+    child.once('exit', (code, signal) => {
       const detail = this.stderr.trim()
       const reason = detail
         ? `XLSX sidecar exited: ${detail}`
         : `XLSX sidecar exited with code ${String(code)} and signal ${String(signal)}.`
-      this.rejectPending(new Error(reason))
+      teardown(new Error(reason))
     })
     return child
   }

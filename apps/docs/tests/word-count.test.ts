@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { asianCharCount, countWords, nonAsianWordCount } from '../src/renderer/word-count'
+import { Editor } from '@tiptap/core'
+import { editorExtensions } from '../src/renderer/editor/extensions'
+import {
+  asianCharCount,
+  countWords,
+  documentTextForWordCount,
+  nonAsianWordCount,
+} from '../src/renderer/word-count'
 
 describe('word count CJK rule', () => {
   it('counts asian chars one by one, punctuation included', () => {
@@ -64,5 +71,67 @@ describe('word count CJK rule', () => {
     expect(asianCharCount(String.fromCodePoint(0xf0000))).toBe(0)
     expect(asianCharCount(String.fromCodePoint(0x100000))).toBe(0)
     expect(asianCharCount(String.fromCodePoint(0xe0100))).toBe(0)
+  })
+})
+
+describe('document word-count text', () => {
+  it('includes readable formula and ruby text without counting note or index markers', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            content: [
+              { type: 'text', text: 'Alpha ' },
+              { type: 'docInlineMath', attrs: { text: 'E = mc 2' } },
+              { type: 'text', text: ' beta ' },
+              { type: 'docRuby', attrs: { base: 'ruby', rt: 'ルビ' } },
+              { type: 'docNoteRef', attrs: { num: 7 } },
+              { type: 'docXeMark', attrs: { term: 'index' } },
+            ],
+          },
+          { type: 'docParagraph', content: [{ type: 'text', text: 'gamma' }] },
+        ],
+      },
+    })
+
+    try {
+      expect(editor.state.doc.textContent).not.toContain('E = mc 2')
+      const text = documentTextForWordCount(editor.state.doc)
+      expect(countWords(text)).toBe(7)
+      expect(text).toContain('E = mc 2')
+      expect(text).toContain('ruby')
+      expect(text).not.toContain('index')
+      expect(text).not.toContain('7')
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('recognizes a paragraph containing only an inline formula as non-empty', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            content: [{ type: 'docInlineMath', attrs: { text: 'x = 1' } }],
+          },
+        ],
+      },
+    })
+
+    try {
+      const paragraph = editor.state.doc.firstChild!
+      expect(paragraph.textContent).toBe('')
+      expect(documentTextForWordCount(paragraph)).toBe('x = 1')
+    } finally {
+      editor.destroy()
+    }
   })
 })

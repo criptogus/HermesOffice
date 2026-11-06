@@ -6,7 +6,7 @@
  * P4. Pure geometry, fully unit-testable.
  */
 import type { Rect } from '../geometry'
-import { approxEq, coversBox, intersectArea, rectArea } from '../geometry'
+import { approxEq, bboxOfPoints, coversBox, intersectArea, rectArea } from '../geometry'
 import type { Fill, PageShapes, RawPath, RawSubpath, Stroke } from '../ir'
 
 /** points this close are the same coordinate when detecting rectangles/axis lines */
@@ -111,11 +111,7 @@ function allEdgesAxisAligned(sub: RawSubpath): boolean {
   return true
 }
 
-const bboxOf = (sub: RawSubpath): Rect => {
-  const xs = sub.points.map((p) => p.x)
-  const ys = sub.points.map((p) => p.y)
-  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }
-}
+const bboxOf = (sub: RawSubpath): Rect => bboxOfPoints(sub.points)
 
 /** thin + elongated → the rect IS a line */
 function thinRectStroke(rect: Rect, color: string): Stroke | null {
@@ -441,11 +437,12 @@ const BG_WHITE_MIN = 0xf7
 
 /** all RGB channels near 255 — the default page color, not a background */
 export function isNearWhite(hex: string): boolean {
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false
+  const v = (hex ?? '').trim()
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return false
   return (
-    parseInt(hex.slice(0, 2), 16) >= BG_WHITE_MIN &&
-    parseInt(hex.slice(2, 4), 16) >= BG_WHITE_MIN &&
-    parseInt(hex.slice(4, 6), 16) >= BG_WHITE_MIN
+    parseInt(v.slice(0, 2), 16) >= BG_WHITE_MIN &&
+    parseInt(v.slice(2, 4), 16) >= BG_WHITE_MIN &&
+    parseInt(v.slice(4, 6), 16) >= BG_WHITE_MIN
   )
 }
 
@@ -669,10 +666,11 @@ const PLATE_CARD_MAX_SHARE = 0.85
 
 /** relative luminance of a RRGGBB hex, 0 (black) – 1 (white) */
 export function hexLuminance(hex: string): number {
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return 0
-  const r = parseInt(hex.slice(0, 2), 16)
-  const g = parseInt(hex.slice(2, 4), 16)
-  const b = parseInt(hex.slice(4, 6), 16)
+  const v = (hex ?? '').trim()
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return 0
+  const r = parseInt(v.slice(0, 2), 16)
+  const g = parseInt(v.slice(2, 4), 16)
+  const b = parseInt(v.slice(4, 6), 16)
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255
 }
 

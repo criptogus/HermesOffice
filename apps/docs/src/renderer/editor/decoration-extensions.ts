@@ -1,4 +1,4 @@
-import { Extension } from '@tiptap/core'
+import { Extension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
@@ -12,12 +12,21 @@ import { type TabStop } from '@hermesoffice/docx-engine'
  * `aiChanged` (diff highlighting for AI edits).
  */
 
-import { SearchHighlight } from './extensions'
+import { SearchHighlight, type ListNumberingStorage } from './extensions'
 import { revisionDisplayState } from './marks'
-import { borderMergeFlags, type ParaBorderAttrs } from './para-border-merge'
+import type { RevisionDisplayMode } from './revision-view'
+import {
+  affectsBorderGroup,
+  borderGroupKey,
+  borderMergeFlags,
+  type ParaBorderAttrs,
+  type StyleBorderLookup,
+} from './para-border-merge'
 import { rangeSlot } from '../dom-range'
 import { PHASED_CONTENT_SETTLED_EVENT, isPhasedContentPending } from '../phased-content'
+import { DOC_CSS_COMMITTED_EVENT, WRAP_WIDTHS_COMMITTED_EVENT } from './cjk-punct-shrink'
 import { appendsAtEnd, touchedTopLevelBlocks } from './touched-blocks'
+import { blockDecorationPlugin } from './local-edit'
 
 const alignRange = rangeSlot()
 
@@ -188,7 +197,23 @@ function textDecorationState(
 
 // ---- tab stop rendering extension ----
 
-const tabStopPluginKey = new PluginKey<DecorationSet>('tabStops')
+export const tabStopPluginKey = new PluginKey<DecorationSet>('tabStops')
+/** transaction meta: the lowest doc position whose paragraph changed height
+ *  after a tab decoration landed; the paginator resumes a pass from there */
+export const tabReflowMeta = 'tabReflow'
+
+/** first paragraph whose height moved since the heights were taken, if any */
+export function tabReflowStart(
+  before: ReadonlyMap<number, number>,
+  heightOf: (pos: number) => number | null,
+): number | null {
+  let from: number | null = null
+  for (const [pos, h] of before) {
+    const now = heightOf(pos)
+    if (now !== null && Math.abs(now - h) > 0.5 && (from === null || pos < from)) from = pos
+  }
+  return from
+}
 
 const TWIPS_PER_PX = 15
 /** fallback when the document's settings.xml declares no w:defaultTabStop (Word: 0.5") */
@@ -220,9 +245,13 @@ interface MeasuredTab {
    *  white-space:pre glues the tab to the word after it so a rounding
    *  overflow cannot strand the segment on the next line */
   glue?: boolean
-  /** first-line tab inside the hanging area: rendered as a box of this width
-   *  (layout px) because no tab-size can express its advance (see measureParagraph) */
+  /** rendered as a box of this width (layout px) because no tab-size can
+   *  express the advance: a first-line tab inside the hanging area, or a stop
+   *  closer than Chromium's minimum tab advance (see measureParagraph) */
   fixed?: number
+  /** stop past the right edge with only whitespace behind it: the tab opens a
+   *  new (blank) line and advances to its first stop there */
+  wrap?: boolean
 }
 
 export interface TabTargetInput {
@@ -242,15 +271,33 @@ export interface TabTargetInput {
   /** the segment can wrap on its own (spaces / CJK): Word keeps the stop and
    *  wraps a segment overflowing the edge by more than a space (probe 2026-09-17) */
   segBreakable?: boolean
+  /** nothing but whitespace follows this tab up to the line end */
+  restBlank?: boolean
 }
 
 export interface TabTarget {
   target: number
+  /** where the text after the tab logically starts: the stop itself for a
+   *  collapsed tab short of its stop (the rendered advance is only a
+   *  Chromium-safe approximation), so a following tab chains from the stop */
+  start: number
   val: TabStop['val']
   leader?: string
   collapsed: boolean
+  /** stop closer than Chromium's minimum tab advance: rendered as a box of the
+   *  exact advance (tab-size would skip to the following stop) */
+  boxed: boolean
   glue: boolean
+  /** left stop past the edge with a blank rest: Word wraps the tab on to a
+   *  new line instead of packing it against the edge (corpus 2026-10-21) */
+  wrap: boolean
 }
+
+// Word takes any stop strictly ahead of the tab, however close (probe
+// 2026-10-22: one twip short of a default or custom stop still lands on it;
+// exactly on it goes to the next). The slack only absorbs LayoutUnit (1/64 px)
+// measurement noise for text ending exactly on a stop.
+const STOP_SLACK = 1 / 32
 
 /**
  * Where a tab at `x` lands: the next custom stop, else the default grid.
@@ -282,9 +329,8 @@ export interface TabTarget {
  */
 export function resolveTabTarget(input: TabTargetInput): TabTarget {
   const { x, minAdv, segWidth, restWidth, paraW, gridPx, hangingX } = input
-  // Word takes any custom stop strictly ahead, however close: a stop nearer
-  // than the minimum advance collapses below instead of being skipped
-  let next = input.stops.find((s) => s.x > x + 0.5)
+  // a stop nearer than the minimum advance collapses below instead of being skipped
+  let next = input.stops.find((s) => s.x > x + STOP_SLACK)
   const inHang = hangingX !== undefined && x < hangingX
   if (inHang && !(next && next.x <= hangingX)) next = { x: hangingX, val: 'left' }
   let target: number
@@ -295,7 +341,8 @@ export function resolveTabTarget(input: TabTargetInput): TabTarget {
     val = next.val
     leader = next.leader
   } else if (gridPx > 0) {
-    target = (Math.floor((x + minAdv) / gridPx) + 1) * gridPx
+    // same rule for the default grid: a stop barely ahead is taken, not skipped
+    target = (Math.floor((x + STOP_SLACK) / gridPx) + 1) * gridPx
   } else {
     // defaultTabStop 0: Word advances the caret imperceptibly (tdf#168607)
     target = x + minAdv
@@ -306,6 +353,17 @@ export function resolveTabTarget(input: TabTargetInput): TabTarget {
   // no flush-right pin inside the hanging area: Word wraps the first-line
   // text on to the left indent rather than stranding the label
   const overflow = target + segWidth - (paraW - 1)
+  if (val === 'left' && target > paraW - 1 && input.restBlank)
+    return {
+      target,
+      start: target,
+      val,
+      leader,
+      collapsed: false,
+      boxed: false,
+      glue: false,
+      wrap: true,
+    }
   if (
     overflow > 0 &&
     (val !== 'left' ||
@@ -314,18 +372,24 @@ export function resolveTabTarget(input: TabTargetInput): TabTarget {
   )
     target = paraW - 1 - restWidth
   let collapsed = false
+  let boxed = false
+  const start = Math.max(x, target)
   if (target < x + minAdv) {
-    // no room before the edge: Word collapses the tab to zero width. Chromium
-    // skips a tab whose distance to its stop is under half the paragraph
-    // font's space width to the *next* stop (a whole tab-size, pushing the
-    // segment onto the next line), so the smallest safe advance is half a
-    // space plus slack (minAdv = space + 1); font-size 0 does not lift it
-    collapsed = true
-    target = x + minAdv / 2 + 0.5
+    // Chromium skips a tab whose distance to its stop is under half the
+    // paragraph font's space width to the *next* stop (a whole tab-size,
+    // pushing the segment onto the next line). A stop barely ahead is Word's
+    // landing point, so it becomes a box of the exact advance; with no room
+    // before the edge Word collapses the tab to zero width, approximated by
+    // the smallest advance Chromium honours (minAdv = space + 1)
+    if (target > x) boxed = true
+    else {
+      collapsed = true
+      target = x + minAdv / 2 + 0.5
+    }
   }
   const glue =
     !collapsed && val !== 'left' && val !== 'bar' && segWidth > 0 && restWidth <= paraW / 2
-  return { target, val, leader, collapsed, glue }
+  return { target, start, val, leader, collapsed, boxed, glue, wrap: false }
 }
 
 /**
@@ -408,7 +472,44 @@ function tabGlyphLeft(view: EditorView, pos: number): number | null {
 /** inner whitespace or CJK text: a wrap opportunity inside the tab segment */
 const SEG_BREAKABLE_RE = /\s|[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/
 
+/**
+ * Leader width (layout px): the free width of the title's last line when the
+ * page number fits before the right tab stop; else the "leader + page" unit
+ * drops to the next line, bare when the title stopped short of the stop (Word
+ * wraps only the number) or filling that line up to the stop when the title
+ * ran past it (Word wraps the tab itself and lays its leader there).
+ */
+export function tocLeaderGap(
+  titleLastRight: number,
+  lineLeft: number,
+  stopRight: number,
+  pageWidth: number,
+  minGap: number,
+): number {
+  const free = stopRight - titleLastRight - pageWidth
+  if (free >= minGap) return free
+  if (titleLastRight < stopRight) return 0
+  return Math.max(0, stopRight - lineLeft - pageWidth)
+}
+
+/** last client rect of a node's contents, taking a wrapped line's trailing fragment */
+function lastLineRect(el: HTMLElement): DOMRect | null {
+  const range = alignRange()
+  range.selectNodeContents(el)
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0)
+  if (rects.length === 0) return null
+  let last = rects[0]
+  for (const r of rects)
+    if (
+      r.bottom > last.bottom + 0.5 ||
+      (Math.abs(r.bottom - last.bottom) <= 0.5 && r.right > last.right)
+    )
+      last = r
+  return last
+}
+
 const MEASURE_RETRY_MAX = 10
+const TOC_GAP_SLACK_PX = 1
 /**
  * Distinct decoration signatures tolerated between external invalidations
  * (edit / resize / font load). A convergent measure→decorate→re-measure
@@ -420,6 +521,9 @@ const MEASURE_RETRY_MAX = 10
  */
 const MEASURE_SIGS_MAX = 8
 
+/** times the tab measurer gave up converging (read by the pagination debug snapshot) */
+export const tabLayoutDiag = { freezes: 0 }
+
 class TabLayoutView {
   private lastSig = ''
   private seenSigs = new Set<string>()
@@ -428,6 +532,10 @@ class TabLayoutView {
   private retries = 0
   private resizeObserver?: ResizeObserver
   private lastDomWidth = -1
+  /** tab paragraph heights before the last decoration dispatch */
+  private heightsBefore = new Map<number, number>()
+  /** toc entries already sized, keyed by element; the gap they were given */
+  private tocGaps = new WeakMap<HTMLElement, string>()
   // font swaps change text metrics, which shifts every tab's start x
   private onFontsLoaded = () => {
     this.invalidate()
@@ -445,6 +553,10 @@ class TabLayoutView {
     this.measure()
     document.fonts?.addEventListener('loadingdone', this.onFontsLoaded)
     document.addEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
+    // section wrap widths / document CSS land after the first measure and
+    // re-wrap TOC titles without touching the editor root's width
+    document.addEventListener(DOC_CSS_COMMITTED_EVENT, this.onPhasedSettled)
+    document.addEventListener(WRAP_WIDTHS_COMMITTED_EVENT, this.onPhasedSettled)
     if (typeof ResizeObserver !== 'undefined') {
       // width-only trigger: height changes on every keystroke
       this.resizeObserver = new ResizeObserver(() => {
@@ -473,13 +585,30 @@ class TabLayoutView {
       tabStopPluginKey.getState(view.state) === tabStopPluginKey.getState(prevState)
     ) {
       return
+    } else {
+      this.signalReflow()
     }
     this.measure()
+  }
+
+  private paraHeight(pos: number): number | null {
+    const el = this.view.nodeDOM(pos)
+    return el instanceof HTMLElement ? el.getBoundingClientRect().height : null
+  }
+
+  /** decorations are not doc updates: tell the paginator when they re-wrapped a paragraph */
+  private signalReflow() {
+    const from = tabReflowStart(this.heightsBefore, (pos) => this.paraHeight(pos))
+    if (from === null) return
+    const { view } = this
+    view.dispatch(view.state.tr.setMeta(tabReflowMeta, from).setMeta('addToHistory', false))
   }
 
   destroy() {
     document.fonts?.removeEventListener('loadingdone', this.onFontsLoaded)
     document.removeEventListener(PHASED_CONTENT_SETTLED_EVENT, this.onPhasedSettled)
+    document.removeEventListener(DOC_CSS_COMMITTED_EVENT, this.onPhasedSettled)
+    document.removeEventListener(WRAP_WIDTHS_COMMITTED_EVENT, this.onPhasedSettled)
     this.resizeObserver?.disconnect()
     if (this.retryRaf) cancelAnimationFrame(this.retryRaf)
   }
@@ -507,6 +636,8 @@ class TabLayoutView {
       return
     }
 
+    this.layoutTocLines()
+
     const paras: Array<{ node: ProseMirrorNode; pos: number }> = []
     view.state.doc.descendants((node, pos) => {
       if (!node.isTextblock) return true
@@ -518,6 +649,12 @@ class TabLayoutView {
       if (hasTab) paras.push({ node, pos })
       return false
     })
+
+    this.heightsBefore = new Map()
+    for (const para of paras) {
+      const h = this.paraHeight(para.pos)
+      if (h !== null) this.heightsBefore.set(para.pos, h)
+    }
 
     const paraRanges: Array<{ from: number; to: number }> = []
     const tabs: MeasuredTab[] = []
@@ -552,6 +689,7 @@ class TabLayoutView {
       // oscillation: keep the current decorations until an edit/resize/font
       // load invalidates, instead of dispatching (and recursing) forever
       this.frozen = true
+      tabLayoutDiag.freezes++
       console.warn('[docs] tab-stop layout did not converge; keeping current tab decorations')
       return
     }
@@ -566,20 +704,96 @@ class TabLayoutView {
     for (const r of paraRanges)
       decos.push(Decoration.node(r.from, r.to, { class: 'has-tab-stops' }))
     for (const t of tabs) {
-      const leader = t.leader && t.leader !== 'none' ? ` doc-tab-leader-${t.leader}` : ''
+      // the wrap's forced break and a glyph leader share ::before; the blank
+      // line has no text to lead to, so the break wins
+      const leader = t.leader && t.leader !== 'none' && !t.wrap ? ` doc-tab-leader-${t.leader}` : ''
       const underline = t.underlined ? ' doc-tab-underline' : ''
       const fixed = t.fixed !== undefined
       const collapse = t.collapsed && !fixed ? ' doc-tab-collapse' : ''
       const glue = t.glue && !fixed ? ' doc-tab-glue' : ''
       const box = fixed ? ' doc-tab-fixed' : ''
+      const wrap = t.wrap ? ' doc-tab-wrap' : ''
       decos.push(
-        Decoration.inline(t.pos, t.pos + 1, {
-          class: `doc-tab${leader}${underline}${collapse}${glue}${box}`,
-          style: fixed ? `width:${t.fixed}px` : `tab-size:${t.cssSize}px`,
-        }),
+        Decoration.inline(
+          t.pos,
+          t.pos + 1,
+          {
+            class: `doc-tab${leader}${underline}${collapse}${glue}${box}${wrap}`,
+            style: fixed ? `width:${t.fixed}px` : `tab-size:${t.cssSize}px`,
+          },
+          { wrap: t.wrap },
+        ),
       )
     }
     view.dispatch(view.state.tr.setMeta(tabStopPluginKey, decos).setMeta('addToHistory', false))
+  }
+
+  /**
+   * TOC entries: size each leader to the free width of the title's last line
+   * so the page number closes that line, or drop leader + page to a full-width
+   * line when it cannot (Word's right tab). Written straight onto the NodeView
+   * DOM: decorations do not reach inside a protected node, and preview clones
+   * copy the inline style with the markup. Entries whose height moved tell the
+   * paginator through the tab reflow meta.
+   */
+  private layoutTocLines() {
+    const { view } = this
+    const lines = view.dom.querySelectorAll<HTMLElement>('.doc-toc-line')
+    if (lines.length === 0) return
+    const changed: Array<{ el: HTMLElement; before: number }> = []
+    const pending: Array<{ tail: HTMLElement; gap: string; el: HTMLElement }> = []
+    // read everything first, then write: alternating would relayout per entry
+    for (const el of lines) {
+      const body = el.querySelector<HTMLElement>(':scope > .doc-toc-body')
+      const title = body?.querySelector<HTMLElement>(':scope > .doc-toc-title')
+      const tail = body?.querySelector<HTMLElement>(':scope > .doc-toc-tail')
+      const page = tail?.querySelector<HTMLElement>(':scope > .doc-toc-page')
+      if (!body || !title || !tail || !page || el.offsetWidth === 0) continue
+      const bodyRect = body.getBoundingClientRect()
+      if (bodyRect.width === 0) continue
+      const zoom = el.getBoundingClientRect().width / el.offsetWidth
+      const titleLast = lastLineRect(title)
+      if (!titleLast) continue
+      const cs = getComputedStyle(body)
+      const bodyLeft = bodyRect.left + (parseFloat(cs.paddingLeft) || 0) * zoom
+      const bodyRight = bodyRect.right - (parseFloat(cs.paddingRight) || 0) * zoom
+      // the right tab stop is measured from the column edge (the wrapper's margin box)
+      const stopPt = parseFloat(cs.getPropertyValue('--doc-toc-stop'))
+      const wrap = el.parentElement
+      const stopX =
+        Number.isFinite(stopPt) && wrap
+          ? Math.min(
+              bodyRight,
+              wrap.getBoundingClientRect().left +
+                ((stopPt * 96) / 72 - (parseFloat(getComputedStyle(wrap).marginLeft) || 0)) * zoom,
+            )
+          : bodyRight
+      const pageW = page.getBoundingClientRect().width
+      // Word fills a gap narrower than one leader glyph with nothing but still
+      // keeps the number on the line; a tiny positive min keeps it measurable
+      const minGap = 1 * zoom
+      const free = tocLeaderGap(titleLast.right, bodyLeft, stopX, pageW, minGap)
+      // a unit sized to the exact free width overflows by sub-pixel rounding and
+      // wraps anyway: give back one layout px (Word's number is flush right)
+      const gapPx = free > 0 ? Math.max(0, free / zoom - TOC_GAP_SLACK_PX) : 0
+      const gap = `${gapPx.toFixed(2)}px`
+      if (this.tocGaps.get(tail) === gap) continue
+      pending.push({ tail, gap, el })
+    }
+    if (pending.length === 0) return
+    for (const p of pending) changed.push({ el: p.el, before: p.el.getBoundingClientRect().height })
+    for (const p of pending) {
+      p.tail.style.setProperty('--doc-toc-gap', p.gap)
+      this.tocGaps.set(p.tail, p.gap)
+    }
+    let from: number | null = null
+    for (const c of changed) {
+      if (Math.abs(c.el.getBoundingClientRect().height - c.before) <= 0.5) continue
+      const pos = view.posAtDOM(c.el, 0)
+      if (from === null || pos < from) from = pos
+    }
+    if (from === null) return
+    view.dispatch(view.state.tr.setMeta(tabReflowMeta, from).setMeta('addToHistory', false))
   }
 
   /** null = paragraph not measurable right now (hidden, not mounted...) */
@@ -696,6 +910,7 @@ class TabLayoutView {
     // re-measure never reaches a fixed point.
     const endsAtBreak: boolean[] = []
     const segBreakable: boolean[] = []
+    const restBlank: boolean[] = []
     const segWidths = tabPositions.map((tabPos, i) => {
       const segStart = tabPos + 1
       const nextTab = i + 1 < tabPositions.length ? tabPositions[i + 1] : paraEnd
@@ -703,6 +918,9 @@ class TabLayoutView {
       const nextBreak = breakPositions.find((b) => b >= segStart && b < nextTab)
       endsAtBreak[i] = nextBreak !== undefined
       const segEnd = nextBreak ?? nextTab
+      const lineEnd = breakPositions.find((b) => b >= segStart) ?? paraEnd
+      restBlank[i] =
+        node.textBetween(segStart - pos - 1, lineEnd - pos - 1, undefined, '\ufffc').trim() === ''
       if (segEnd <= segStart) return 0
       segBreakable[i] = SEG_BREAKABLE_RE.test(
         node.textBetween(segStart - pos - 1, segEnd - pos - 1).trim(),
@@ -731,30 +949,35 @@ class TabLayoutView {
     // a higher multiple once the line unwraps — a wrap/unwrap 2-cycle the
     // signature guard then freezes mid-flight). The chain removes that
     // dependence; a real line break between tabs resets to the measured x.
+    const current = tabStopPluginKey.getState(view.state)
     let prevLine: { top: number; bottom: number } | null = null
     let prevEnd = 0
     for (let i = 0; i < tabPositions.length; i++) {
       const tabPos = tabPositions[i]
+      // a tab this plugin already wrapped sits at the start of its own line;
+      // its Word position is the end of the text before it (previous line),
+      // or the wrap decision would flip on every re-measure
+      const wrapped = current?.find(tabPos, tabPos + 1).some((d) => d.spec.wrap === true)
       let coords: { left: number; top: number; bottom: number }
       try {
-        coords = view.coordsAtPos(tabPos, 1)
+        coords = view.coordsAtPos(tabPos, wrapped ? -1 : 1)
         // coordsAtPos measures whitespace with an empty-range caret rect, which
         // drifts inside line-height:0 runs (doc-ws-run); the glyph's own rect is exact
-        const glyphLeft = tabGlyphLeft(view, tabPos)
+        const glyphLeft = wrapped ? null : tabGlyphLeft(view, tabPos)
         if (glyphLeft !== null) coords = { ...coords, left: glyphLeft }
       } catch {
         continue
       }
       const measuredX = (coords.left - alignShiftAt(coords) - originX) / zoom
       const sameLine = prevLine != null && sameVisualLine(coords, prevLine)
-      const x = sameLine ? prevEnd : measuredX
+      let x = sameLine ? prevEnd : measuredX
       prevLine = { top: coords.top, bottom: coords.bottom }
 
       const segWidth = segWidths[i]
       const gridTwips = this.storage.defaultTabStopTwips ?? DEFAULT_TAB_TWIPS
       // first-line tab inside the hanging area (negative text-indent)
       const inHang = textIndent < 0 && x < contentEdge
-      const { target, leader, collapsed, glue } = resolveTabTarget({
+      const tabInput = {
         x,
         minAdv,
         segWidth,
@@ -764,16 +987,30 @@ class TabLayoutView {
         gridPx: gridTwips > 0 ? gridTwips / TWIPS_PER_PX : 0,
         hangingX: inHang ? contentEdge : undefined,
         segBreakable: segBreakable[i],
-      })
+        // a tab already at its line start has nowhere to wrap to
+        restBlank: restBlank[i] && x > contentEdge + STOP_SLACK,
+      }
+      let resolved = resolveTabTarget(tabInput)
+      const wrap = resolved.wrap
+      // the wrapped tab resolves again from the start of its new line, and
+      // its CSS size is relative to that line too
+      if (wrap) {
+        resolved = resolveTabTarget({ ...tabInput, x: contentEdge, restBlank: false })
+        x = contentEdge
+      }
+      const { target, start, leader, collapsed, boxed, glue } = resolved
       // convert the Word-space target to a CSS tab-size: the next multiple of
       // it past the tab's position must be the target itself, so it needs to
       // stay greater than the tab's content-edge-relative x (by the minimum
       // rendered advance, or Chromium skips to the following multiple).
       // Chromium counts 0 (the content edge) as a multiple too, so a tab left
       // of the edge can neither cross it nor reach an arbitrary point before
-      // it; such tabs become a box of the exact advance instead
+      // it; such tabs become a box of the exact advance instead. The box is
+      // sized to the stop reached (start), not the collapsed approximation:
+      // an inline-block width has no multiple to skip to, and a shorter box
+      // would leave the next tab short of the edge, on Chromium's 0 multiple
       const cssSize = inHang ? 0 : Math.max(target - contentEdge, x - contentEdge + 0.6, 0.5)
-      prevEnd = target + segWidth
+      prevEnd = start + segWidth
       // 0.5px rounding damps measure→decorate→re-measure oscillation
       out.push({
         pos: tabPos,
@@ -782,7 +1019,12 @@ class TabLayoutView {
         underlined: tabUnderlined.get(tabPos),
         collapsed,
         glue,
-        fixed: inHang ? Math.round((target - x) * 2) / 2 : undefined,
+        wrap,
+        fixed: inHang
+          ? Math.round((start - x) * 2) / 2
+          : boxed
+            ? Math.round((target - x) * 64) / 64
+            : undefined,
       })
     }
     return out
@@ -799,7 +1041,7 @@ export const TabStopExtension = Extension.create({
     // stops, or the paragraph's custom w:tabs). Lists indent and tables move
     // to the next cell — those handlers live on DocListItem / NativeTableSupport
     // and run after this one returns false. An unhandled Tab would leave the
-    // editor and cycle the ribbon buttons (github.com/genspark-ai/genoffice/issues/101).
+    // editor and cycle the ribbon buttons (github.com/genspark-ai/hermesoffice/issues/101).
     const insertTab = () => {
       if (!this.editor.isEditable) return false
       if (this.editor.isActive('docListItem')) return false
@@ -927,93 +1169,82 @@ export const WsRunLineHeightExtension = Extension.create({
   },
 })
 
-// ---- hinted East Asian curly quotes (w:hint="eastAsia") ----
-
-const eaHintQuotesPluginKey = new PluginKey<DecorationSet>('eaHintQuotes')
-
-/** the run's own w:rFonts carries w:hint="eastAsia" (revision snapshots inside w:rPrChange don't count) */
-const EA_HINT_RE = /<w:rFonts\b[^>]*\bw:hint="eastAsia"/
-
-const EA_QUOTES_RE = /[‘’“”]+/g
-
-/** quote ranges of `text` that Word renders with the East Asian font; exported for tests */
-export function eaHintQuoteRanges(
-  rawRPr: string | null | undefined,
-  text: string,
-): Array<{ from: number; to: number }> {
-  if (!rawRPr || !text || !/[‘’“”]/.test(text)) return []
-  if (!EA_HINT_RE.test(rawRPr.replace(/<w:rPrChange[\s\S]*?<\/w:rPrChange>/, ''))) return []
-  const ranges: Array<{ from: number; to: number }> = []
-  for (const m of text.matchAll(EA_QUOTES_RE)) {
-    ranges.push({ from: m.index, to: m.index + m[0].length })
-  }
-  return ranges
-}
-
-/**
- * Curly quotes U+2018/2019/201C/201D are dual-width codepoints: Word renders
- * them with the run's East Asian font (fullwidth advance) iff the run's
- * w:rFonts carries w:hint="eastAsia" — surrounding text and w:lang play no
- * part (Word for Mac probe 2026-09-01). Chromium resolves them through the
- * Latin head of the font chain (halfwidth), so hinted quotes get a
- * display-only decoration whose bundled CJK face restores the 1em advance.
- */
-export const EaHintQuotesExtension = Extension.create({
-  name: 'eaHintQuotes',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin(
-        textDecorationState(eaHintQuotesPluginKey, (node, pos, decos) => {
-          if (!node.text) return
-          const style = node.marks.find((m) => m.type.name === 'docTextStyle')
-          const raw = style?.attrs.rawRPr as string | null | undefined
-          for (const r of eaHintQuoteRanges(raw, node.text)) {
-            decos.push(Decoration.inline(pos + r.from, pos + r.to, { class: 'doc-ea-quotes' }))
-          }
-        }),
-      ),
-    ]
-  },
-})
-
 // ---- adjacent-paragraph border merging (Word border groups) ----
 
-const paraBorderMergePluginKey = new PluginKey<DecorationSet>('paraBorderMerge')
+export const paraBorderMergePluginKey = new PluginKey('paraBorderMerge')
 
 /**
  * Word border groups (ECMA-376 §17.3.1.24): adjacent top-level paragraphs with
  * identical borders/shading draw top/bottom lines only at the group edges.
  * Display-only classes; the borders attrs still serialize unchanged on save.
  */
+/** style-level w:pBdr/w:shd the body merge compares (the strips resolve theirs in the engine) */
+const styleTableIds = new WeakMap<object, number>()
+let nextStyleTableId = 0
+function styleBorderLookup(editor: Editor): {
+  lookup: StyleBorderLookup | undefined
+  sig: string
+} {
+  const styles = (editor.storage.listNumbering as ListNumberingStorage | undefined)?.styles
+  if (!styles) return { lookup: undefined, sig: '' }
+  let id = styleTableIds.get(styles)
+  if (id == null) styleTableIds.set(styles, (id = ++nextStyleTableId))
+  let defaultId: string | null = null
+  for (const info of styles.values()) {
+    if (info.isDefault && info.type === 'paragraph') defaultId = info.styleId
+  }
+  return {
+    lookup: (styleId) => {
+      const d = styles.get(styleId ?? defaultId ?? '')?.display
+      return d ? { borderSides: d.borderSides, shadingFill: d.shadingFill } : undefined
+    },
+    sig: String(id),
+  }
+}
+
 export const ParaBorderMergeExtension = Extension.create({
   name: 'paraBorderMerge',
   addProseMirrorPlugins() {
+    const styleTable = () => styleBorderLookup(this.editor)
     return [
-      new Plugin({
+      blockDecorationPlugin({
         key: paraBorderMergePluginKey,
-        props: {
-          decorations(state) {
-            const items: ParaBorderAttrs[] = []
-            const spans: Array<{ from: number; to: number }> = []
-            state.doc.forEach((node, offset) => {
-              // non-paragraph blocks (tables...) enter as border-less entries: they break adjacency
-              items.push(node.isTextblock ? (node.attrs as ParaBorderAttrs) : {})
-              spans.push({ from: offset, to: offset + node.nodeSize })
-            })
-            const decos: Decoration[] = []
-            borderMergeFlags(items).forEach((f, i) => {
-              if (!f.suppressTop && !f.suppressBottom) return
-              const cls = [
-                f.suppressTop ? 'pbdr-suppress-top' : '',
-                f.suppressBottom ? 'pbdr-suppress-bottom' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')
-              decos.push(Decoration.node(spans[i].from, spans[i].to, { class: cls }))
-            })
-            return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
-          },
+        build(doc) {
+          const { lookup } = styleTable()
+          const items: ParaBorderAttrs[] = []
+          const spans: Array<{ from: number; to: number }> = []
+          doc.forEach((node, offset) => {
+            // non-paragraph blocks (tables...) enter as border-less entries: they break adjacency
+            items.push(node.isTextblock ? (node.attrs as ParaBorderAttrs) : { break: true })
+            spans.push({ from: offset, to: offset + node.nodeSize })
+          })
+          const decos: Decoration[] = []
+          borderMergeFlags(items, lookup).forEach((f, i) => {
+            if (!f.suppressTop && !f.suppressBottom) return
+            const cls = [
+              f.suppressTop ? 'pbdr-suppress-top' : '',
+              f.suppressBottom ? 'pbdr-suppress-bottom' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+            decos.push(Decoration.node(spans[i].from, spans[i].to, { class: cls }))
+          })
+          return decos
         },
+        // a bordered block can join or leave a group; a border-less one only
+        // matters when it was grouped before (then it carried a decoration)
+        needsRecompute: (node) =>
+          node.isTextblock &&
+          affectsBorderGroup(node.attrs as ParaBorderAttrs, styleTable().lookup),
+        // a text edit inside a style-bordered paragraph keeps its group key: no rebuild
+        changed: (before, after) => {
+          const { lookup } = styleTable()
+          const key = (n: ProseMirrorNode) =>
+            n.isTextblock ? borderGroupKey(n.attrs as ParaBorderAttrs, lookup) : ''
+          return key(before) !== key(after)
+        },
+        // a reloaded style table changes which styles carry borders
+        signature: () => styleTable().sig,
       }),
     ]
   },
@@ -1117,30 +1348,41 @@ export const SdtExtension = Extension.create({
 
 // ---- move revision rendering extension ----
 
-const moveRevisionPluginKey = new PluginKey<DecorationSet>('moveRevision')
+const moveRevisionPluginKey = new PluginKey('moveRevision')
 
 export const MoveRevisionExtension = Extension.create({
   name: 'moveRevision',
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      blockDecorationPlugin({
         key: moveRevisionPluginKey,
-        props: {
-          decorations(state) {
-            const decos: Decoration[] = []
-            state.doc.forEach((node, offset) => {
-              const rev = node.attrs?.moveRevision as string | null
-              if (!rev) return
-              decos.push(
-                Decoration.node(offset, offset + node.nodeSize, {
-                  'data-move-revision': rev,
-                  class: rev === 'from' ? 'has-move-from' : 'has-move-to',
-                }),
-              )
+        build(doc) {
+          const decos: Decoration[] = []
+          doc.forEach((node, offset) => {
+            const rev = node.attrs?.moveRevision as string | null
+            if (!rev) return
+            // the paragraph attr only says "moved"; the reviewer is on its run
+            // marks, and run marks that name their move render themselves
+            let author = ''
+            let runLevel = false
+            node.descendants((child) => {
+              if (!child.isText) return
+              const m = child.marks.find((x) => x.type.name === (rev === 'from' ? 'del' : 'ins'))
+              if (m?.attrs.move) runLevel = true
+              if (m && !author) author = String(m.attrs.author ?? '')
             })
-            return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
-          },
+            if (runLevel) return
+            decos.push(
+              Decoration.node(offset, offset + node.nodeSize, {
+                'data-move-revision': rev,
+                'data-rev-author': author,
+                class: rev === 'from' ? 'has-move-from' : 'has-move-to',
+              }),
+            )
+          })
+          return decos
         },
+        needsRecompute: (node) => !!node.attrs?.moveRevision,
       }),
     ]
   },
@@ -1148,7 +1390,7 @@ export const MoveRevisionExtension = Extension.create({
 
 // ---- deleted paragraph mark (w:pPr/w:rPr/w:del) collapse extension ----
 
-const paraMarkDelPluginKey = new PluginKey<DecorationSet>('paraMarkDel')
+const paraMarkDelPluginKey = new PluginKey('paraMarkDel')
 
 /**
  * A paragraph whose mark is a tracked deletion and whose inline content is all
@@ -1157,30 +1399,73 @@ const paraMarkDelPluginKey = new PluginKey<DecorationSet>('paraMarkDel')
  * (Word joins them into the next one) keep their height — approximate, but the
  * remaining text still occupies a line either way.
  */
+/**
+ * Deletion class of a paragraph: mark deleted with nothing else live →
+ * collapse; mark live but every inline child deleted → Word keeps one empty
+ * line (`doc-para-content-del` gives the paragraph a strut once the deleted
+ * runs are hidden); null when nothing applies.
+ */
+export function paraDeletionClass(node: {
+  attrs?: Record<string, unknown>
+  childCount: number
+  forEach: (f: (child: { marks: readonly { type: { name: string } }[] }) => void) => void
+}): string | null {
+  let visible = false
+  node.forEach((child) => {
+    if (!child.marks.some((m) => m.type.name === 'del')) visible = true
+  })
+  if (node.attrs?.paraMarkDel) {
+    return visible ? 'doc-para-mark-del' : 'doc-para-mark-del doc-para-del-collapse'
+  }
+  return !visible && node.childCount > 0 ? 'doc-para-content-del' : null
+}
+
+/**
+ * No Markup / Simple Markup show the final text: a paragraph whose mark is a
+ * pending deletion runs on into the next one (Word joins them). Returns, per
+ * top-level child, the join role classes to add (display-time only).
+ */
+export function paraJoinClasses(
+  doc: ProseMirrorNode,
+  mode: RevisionDisplayMode,
+): Map<number, string> {
+  const out = new Map<number, string>()
+  if (mode !== 'none' && mode !== 'simple') return out
+  const collapsed = (n: ProseMirrorNode) =>
+    !!paraDeletionClass(n)?.includes('doc-para-del-collapse')
+  for (let i = 0; i + 1 < doc.childCount; i++) {
+    const head = doc.child(i)
+    if (!head.isTextblock || !head.attrs?.paraMarkDel || collapsed(head)) continue
+    // fully deleted paragraphs in between are hidden: the tail is the next live one
+    let j = i + 1
+    while (j < doc.childCount && doc.child(j).isTextblock && collapsed(doc.child(j))) j++
+    if (j >= doc.childCount || !doc.child(j).isTextblock) continue
+    out.set(i, `${out.get(i) ?? ''} doc-para-join-head`.trim())
+    out.set(j, 'doc-para-join-tail')
+  }
+  return out
+}
+
 export const ParaMarkDelExtension = Extension.create({
   name: 'paraMarkDel',
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      blockDecorationPlugin({
         key: paraMarkDelPluginKey,
-        props: {
-          decorations(state) {
-            const decos: Decoration[] = []
-            state.doc.forEach((node, offset) => {
-              if (!node.attrs?.paraMarkDel) return
-              let visible = false
-              node.forEach((child) => {
-                if (!child.marks.some((m) => m.type.name === 'del')) visible = true
-              })
-              decos.push(
-                Decoration.node(offset, offset + node.nodeSize, {
-                  class: visible ? 'doc-para-mark-del' : 'doc-para-mark-del doc-para-del-collapse',
-                }),
-              )
-            })
-            return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
-          },
+        build(doc) {
+          const decos: Decoration[] = []
+          const joins = paraJoinClasses(doc, revisionDisplayState.mode)
+          doc.forEach((node, offset, index) => {
+            if (!node.isTextblock && !node.attrs?.paraMarkDel) return
+            const cls = [paraDeletionClass(node), joins.get(index)].filter(Boolean).join(' ')
+            if (cls) decos.push(Decoration.node(offset, offset + node.nodeSize, { class: cls }))
+          })
+          return decos
         },
+        needsRecompute: (node) =>
+          !!node.attrs?.paraMarkDel ||
+          (node.isTextblock && node.childCount > 0 && paraDeletionClass(node) !== null),
+        signature: () => revisionDisplayState.mode,
       }),
     ]
   },
@@ -1188,62 +1473,63 @@ export const ParaMarkDelExtension = Extension.create({
 
 // ---- pPrChange (tracked paragraph format) rendering extension ----
 
-const pPrChangePluginKey = new PluginKey<DecorationSet>('pPrChange')
+const pPrChangePluginKey = new PluginKey('pPrChange')
 
 export const PPrChangeExtension = Extension.create({
   name: 'pPrChange',
   addProseMirrorPlugins() {
     return [
-      new Plugin({
+      blockDecorationPlugin({
         key: pPrChangePluginKey,
-        props: {
-          decorations(state) {
-            const decos: Decoration[] = []
-            state.doc.forEach((node, offset) => {
-              const raw = node.attrs?.pPrChange as string | null
-              if (!raw) return
-              let author = ''
-              let old: Record<string, unknown> = {}
-              try {
-                const parsed = JSON.parse(raw)
-                author = parsed?.author || ''
-                old = (parsed?.old ?? {}) as Record<string, unknown>
-              } catch {
-                /* ignore */
+        build(doc) {
+          const decos: Decoration[] = []
+          doc.forEach((node, offset) => {
+            const raw = node.attrs?.pPrChange as string | null
+            if (!raw) return
+            let author = ''
+            let old: Record<string, unknown> = {}
+            try {
+              const parsed = JSON.parse(raw)
+              author = parsed?.author || ''
+              old = (parsed?.old ?? {}) as Record<string, unknown>
+            } catch {
+              /* ignore */
+            }
+            // original view: override with the pre-revision paragraph format (mirroring the restore subset of revisions.ts reject)
+            let style = ''
+            if (revisionDisplayState.mode === 'original') {
+              const styles = [
+                `text-align:${(old.align as string) ?? 'start'}`,
+                `margin-left:${old.indentLeft ? Number(old.indentLeft) / 20 : 0}pt`,
+                `margin-right:${old.indentRight ? Number(old.indentRight) / 20 : 0}pt`,
+                `text-indent:${old.indentFirstLine ? Number(old.indentFirstLine) / 20 : 0}pt`,
+                `margin-top:${old.spaceBefore ? Number(old.spaceBefore) / 20 : 0}pt`,
+                `margin-bottom:${old.spaceAfter ? Number(old.spaceAfter) / 20 : 0}pt`,
+                `background:${old.shadingFill ? `#${old.shadingFill}` : 'transparent'}`,
+              ]
+              if (old.lineRule === 'exact' || old.lineRule === 'atLeast') {
+                styles.push(`line-height:${Number(old.lineRawTwips || 240) / 20}pt`)
+              } else if (old.lineSpacing) {
+                styles.push(`line-height:${Number(old.lineSpacing) * 1.2}`)
+              } else {
+                styles.push('line-height:inherit')
               }
-              // original view: override with the pre-revision paragraph format (mirroring the restore subset of revisions.ts reject)
-              let style = ''
-              if (revisionDisplayState.mode === 'original') {
-                const styles = [
-                  `text-align:${(old.align as string) ?? 'start'}`,
-                  `margin-left:${old.indentLeft ? Number(old.indentLeft) / 20 : 0}pt`,
-                  `margin-right:${old.indentRight ? Number(old.indentRight) / 20 : 0}pt`,
-                  `text-indent:${old.indentFirstLine ? Number(old.indentFirstLine) / 20 : 0}pt`,
-                  `margin-top:${old.spaceBefore ? Number(old.spaceBefore) / 20 : 0}pt`,
-                  `margin-bottom:${old.spaceAfter ? Number(old.spaceAfter) / 20 : 0}pt`,
-                  `background:${old.shadingFill ? `#${old.shadingFill}` : 'transparent'}`,
-                ]
-                if (old.lineRule === 'exact' || old.lineRule === 'atLeast') {
-                  styles.push(`line-height:${Number(old.lineRawTwips || 240) / 20}pt`)
-                } else if (old.lineSpacing) {
-                  styles.push(`line-height:${Number(old.lineSpacing) * 1.2}`)
-                } else {
-                  styles.push('line-height:inherit')
-                }
-                style = styles.join(';')
-              }
-              decos.push(
-                Decoration.node(offset, offset + node.nodeSize, {
-                  'data-ppr-change-author': author,
-                  'data-ppr-change-label': t('editorFormatRevision'),
-                  class: 'has-ppr-change',
-                  ...(style ? { style } : {}),
-                }),
-              )
-            })
-            return decos.length > 0 ? DecorationSet.create(state.doc, decos) : DecorationSet.empty
-          },
+              style = styles.join(';')
+            }
+            decos.push(
+              Decoration.node(offset, offset + node.nodeSize, {
+                'data-ppr-change-author': author,
+                'data-ppr-change-label': t('editorFormatRevision'),
+                class: 'has-ppr-change',
+                ...(style ? { style } : {}),
+              }),
+            )
+          })
+          return decos
         },
+        needsRecompute: (node) => !!node.attrs?.pPrChange,
+        // the original view restores the pre-revision format through these decorations
+        signature: () => revisionDisplayState.mode,
       }),
     ]
   },

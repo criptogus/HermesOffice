@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { parseSlide } from '../src/parse'
+import { generateParagraphXml } from '../src/generate'
 import { patchedElementXml, setElementParagraphFormat } from '../src/index'
 import { parseMasterTextStyles } from '../src/placeholder'
 import type { TextElement } from '../src/types'
@@ -285,6 +286,16 @@ describe('paragraph direction rtl', () => {
 })
 
 describe('multi-level indentation indentDelta', () => {
+  it('bounds imported paragraph levels before numbering layout', () => {
+    const { el } = parseOne(
+      '<a:bodyPr/>' +
+        '<a:p><a:pPr lvl="20000000"><a:buAutoNum type="arabicPeriod"/></a:pPr><a:r><a:t>huge</a:t></a:r></a:p>' +
+        '<a:p><a:pPr lvl="-4"/><a:r><a:t>negative</a:t></a:r></a:p>' +
+        '<a:p><a:r><a:t>normal</a:t></a:r></a:p>',
+    )
+    expect(el.text!.paragraphs.map((p) => p.level)).toEqual([8, 0, undefined])
+  })
+
   it('increasing level writes lvl, own bullet hanging indent grows with the level', () => {
     const { slide, el } = parseOne('<a:bodyPr/><a:p><a:r><a:t>x</a:t></a:r></a:p>')
     setElementParagraphFormat(slide, el.id, { bullet: 'char' })
@@ -378,5 +389,55 @@ describe('empty paragraph endParaRPr', () => {
     const p = el.text!.paragraphs[0]!
     expect(p.runs[0]!.text).toBe('Hello')
     expect(p.runs[0]!.fontSize).toBe(20)
+  })
+})
+
+describe('East Asian wrap flags', () => {
+  it('eaLnBrk/latinLnBrk/hangingPunct parse from pPr and are written back by the generator', () => {
+    const { el } = parseOne(
+      '<a:bodyPr/><a:p><a:pPr eaLnBrk="0" latinLnBrk="1" hangingPunct="0"/><a:r><a:t>Hi</a:t></a:r></a:p>',
+    )
+    const p = el.text!.paragraphs[0]!
+    expect(p.eaLnBrk).toBe(false)
+    expect(p.latinLnBrk).toBe(true)
+    expect(p.hangingPunct).toBe(false)
+    const out = generateParagraphXml(p)
+    expect(out).toContain('eaLnBrk="0"')
+    expect(out).toContain('latinLnBrk="1"')
+    expect(out).toContain('hangingPunct="0"')
+    // defaults stay implicit
+    expect(generateParagraphXml({ runs: [{ text: 'a' }] })).not.toMatch(
+      /eaLnBrk|latinLnBrk|hangingPunct/,
+    )
+  })
+
+  it('hangingPunct="0" on the master bodyStyle level reaches a body placeholder paragraph; the rebuild path keeps it inherited', () => {
+    const master =
+      '<?xml version="1.0"?><p:sldMaster xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld>' +
+      '<p:txStyles><p:bodyStyle><a:lvl1pPr hangingPunct="0" eaLnBrk="0"/><a:lvl2pPr hangingPunct="1"/></p:bodyStyle></p:txStyles></p:sldMaster>'
+    const body = (inner: string) =>
+      '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:nvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>' +
+      `<p:spPr/><p:txBody><a:bodyPr/>${inner}</p:txBody></p:sp>`
+    const slide = parseSlide({
+      path: 'ppt/slides/slide1.xml',
+      slideXml: slideWith(
+        body(
+          '<a:p><a:r><a:t>a</a:t></a:r></a:p>' +
+            '<a:p><a:pPr lvl="1"/><a:r><a:t>b</a:t></a:r></a:p>' +
+            '<a:p><a:pPr hangingPunct="1"/><a:r><a:t>c</a:t></a:r></a:p>',
+        ),
+      ),
+      ctx: { masterTextStyles: parseMasterTextStyles(master, undefined, new Map()) },
+    })
+    const [a, b, c] = (slide.elements[0] as TextElement).text!.paragraphs
+    expect(a!.hangingPunct).toBe(false)
+    expect(a!.eaLnBrk).toBe(false)
+    expect(b!.hangingPunct).toBe(true)
+    expect(c!.hangingPunct).toBe(true)
+    // inherited values stay implicit; the explicit override over the master's 0 survives
+    expect(generateParagraphXml(a!)).not.toMatch(/hangingPunct|eaLnBrk/)
+    expect(generateParagraphXml(b!)).not.toMatch(/hangingPunct/)
+    expect(generateParagraphXml(c!)).toContain('hangingPunct="1"')
+    expect(generateParagraphXml(c!)).not.toMatch(/eaLnBrk/)
   })
 })

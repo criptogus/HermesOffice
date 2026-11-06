@@ -9,13 +9,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { join, parse, relative } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  FolderWatcher,
-  collectTreeFiles,
   createFolder,
   describeRoot,
   isHiddenEntry,
@@ -23,6 +20,7 @@ import {
   isSelfOrDescendant,
   listFolder,
   movePathsInto,
+  pathsUnder,
   rebasePath,
   renameFolder,
   uniqueNameIn,
@@ -46,7 +44,7 @@ function touch(rel: string, content = 'x'): string {
 }
 
 beforeEach(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'genoffice-folders-')))
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'hermesoffice-folders-')))
 })
 
 afterEach(() => {
@@ -54,25 +52,6 @@ afterEach(() => {
 })
 
 describe('listFolder', () => {
-  it('keeps the event loop responsive while a directory read is pending', async () => {
-    let release!: (entries: never[]) => void
-    const read = vi.spyOn(fs.promises, 'readdir').mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve
-        }) as ReturnType<typeof fs.promises.readdir>,
-    )
-    try {
-      const pending = listFolder(root, new Set())
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(read).toHaveBeenCalledWith(root, { withFileTypes: true })
-      release([])
-      await expect(pending).resolves.toEqual({ dir: root, folders: [], files: [] })
-    } finally {
-      read.mockRestore()
-    }
-  })
-
   it('lists sub-folders first (natural order) and supported files newest first, skipping junk', async () => {
     mkdirSync(join(root, 'Clients'))
     mkdirSync(join(root, 'archive 10'))
@@ -96,7 +75,7 @@ describe('listFolder', () => {
   it('hides the Markdown assets folder only when it holds the asset manifest', async () => {
     mkdirSync(join(root, 'assets'))
     expect(isHiddenEntry(root, 'assets', true)).toBe(false)
-    touch('assets/.genoffice-assets.json', '{}')
+    touch('assets/.hermesoffice-assets.json', '{}')
     expect(isHiddenEntry(root, 'assets', true)).toBe(true)
     expect((await listFolder(root, new Set())).folders).toEqual([])
   })
@@ -118,6 +97,45 @@ describe('listFolder', () => {
       missing: true,
     })
   })
+
+  /**
+   * The Home tree only lists what the shell can open, and TREE_FILE_EXTENSIONS
+   * is kept to mirror the open-dialog filter. A .txt left out of it is invisible
+   * on Home, so a file the open dialog happily offers cannot be clicked into
+   * from the folder pane — the same drift, one list further along.
+   */
+  it('lists the text app extensions alongside markdown', async () => {
+    touch('notes.md')
+    touch('notes.txt')
+    touch('data.json')
+    touch('photo.png')
+
+    expect((await listFolder(root, new Set())).files.map((f) => f.name).sort()).toEqual([
+      'data.json',
+      'notes.md',
+      'notes.txt',
+    ])
+  })
+
+  /**
+   * The ODF imports come in a document / template pair per app. Half a pair
+   * in TREE_FILE_EXTENSIONS means the open dialog offers a file the folder
+   * pane refuses to show, for one app only.
+   */
+  it('lists both halves of every ODF import pair', async () => {
+    for (const extension of ['odt', 'ott', 'ods', 'ots', 'odp', 'otp']) {
+      touch(`doc.${extension}`)
+    }
+
+    expect((await listFolder(root, new Set())).files.map((f) => f.name).sort()).toEqual([
+      'doc.odp',
+      'doc.ods',
+      'doc.odt',
+      'doc.otp',
+      'doc.ots',
+      'doc.ott',
+    ])
+  })
 })
 
 describe('isInsideRoot', () => {
@@ -131,7 +149,7 @@ describe('isInsideRoot', () => {
   })
 
   it('rejects a symlink inside the root that points outside it', () => {
-    const outside = mkdtempSync(join(tmpdir(), 'genoffice-outside-'))
+    const outside = mkdtempSync(join(tmpdir(), 'hermesoffice-outside-'))
     try {
       symlinkSync(outside, join(root, 'escape'))
       expect(isInsideRoot(root, join(root, 'escape'))).toBe(false)
@@ -161,6 +179,40 @@ describe('createFolder / renameFolder', () => {
   })
 })
 
+describe('pathsUnder', () => {
+  it('keeps only the candidates below the folder, at any depth, once each', () => {
+    const dir = join(root, 'src')
+    const deep = join(dir, 'a', 'b', 'deep.md')
+    const direct = join(dir, 'report.docx')
+    expect(
+      pathsUnder(dir, [
+        deep,
+        direct,
+        direct,
+        dir,
+        join(root, 'src-other', 'x.docx'),
+        join(root, 'report.docx'),
+        join(dir, '..', 'outside.md'),
+      ]),
+    ).toEqual([deep, direct])
+  })
+
+  it('never touches the disk', () => {
+    const dir = join(root, 'never-created')
+    expect(pathsUnder(dir, [join(dir, 'x.docx')])).toEqual([join(dir, 'x.docx')])
+    expect(existsSync(dir)).toBe(false)
+  })
+})
+
+describe('rebasePath', () => {
+  it('leaves a path that did not live under the moved folder alone', () => {
+    const outside = touch('notes.md')
+    const sibling = touch('src2/deep.md')
+    expect(rebasePath(outside, join(root, 'src'), join(root, 'dest'))).toBe(outside)
+    expect(rebasePath(sibling, join(root, 'src'), join(root, 'dest'))).toBe(sibling)
+  })
+})
+
 describe('movePathsInto', () => {
   it('moves files and folders, reporting old → new paths', () => {
     const file = touch('report.docx')
@@ -176,12 +228,7 @@ describe('movePathsInto', () => {
       { from: file, to: join(root, 'dest', 'report.docx') },
       { from: join(root, 'src'), to: join(root, 'dest', 'src') },
     ])
-    expect(collectTreeFiles(join(root, 'dest'))).toEqual(
-      expect.arrayContaining([
-        join(root, 'dest', 'report.docx'),
-        join(root, 'dest', 'src', 'deep.md'),
-      ]),
-    )
+    expect(existsSync(join(root, 'dest', 'src', 'deep.md'))).toBe(true)
     expect(rebasePath(nested, join(root, 'src'), join(root, 'dest', 'src'))).toBe(
       join(root, 'dest', 'src', 'deep.md'),
     )
@@ -293,9 +340,43 @@ describe('helpers', () => {
     expect(uniqueNameIn(root, 'b.md')).toBe('b.md')
   })
 
+  it('uniqueNameIn appends the counter to a dotted folder name whole', () => {
+    // a folder has no extension: 'v1.0' must not become 'v1 (2).0'
+    mkdirSync(join(root, 'v1.0'))
+    expect(uniqueNameIn(root, 'v1.0', true)).toBe('v1.0 (2)')
+    mkdirSync(join(root, 'v1.0 (2)'))
+    expect(uniqueNameIn(root, 'v1.0', true)).toBe('v1.0 (3)')
+    // a file keeps the extension split
+    touch('report.docx')
+    expect(uniqueNameIn(root, 'report.docx')).toBe('report (2).docx')
+  })
+
+  it("'keepBoth' appends the counter to a dotted folder name whole", () => {
+    mkdirSync(join(root, 'src', 'v1.0'), { recursive: true })
+    mkdirSync(join(root, 'dest', 'v1.0'), { recursive: true })
+    const moved = movePathsInto(
+      [join(root, 'src', 'v1.0')],
+      join(root, 'dest'),
+      'keepBoth',
+      errors,
+      {
+        replaceExisting: () => ({ commit: () => {}, rollback: () => {} }),
+      },
+    )
+    expect(moved.moved).toEqual([
+      { from: join(root, 'src', 'v1.0'), to: join(root, 'dest', 'v1.0 (2)') },
+    ])
+  })
+
   it('describeRoot creates a missing root and reports it usable', () => {
     const fresh = join(root, 'HermesOffice')
-    expect(describeRoot(fresh)).toEqual({ path: fresh, name: 'HermesOffice', usable: true })
+    expect(describeRoot(fresh)).toEqual({
+      path: fresh,
+      name: 'HermesOffice',
+      usable: true,
+      readable: true,
+      removable: false,
+    })
   })
 
   it('describeRoot reports a path blocked by a file as unusable', () => {
@@ -304,28 +385,23 @@ describe('helpers', () => {
   })
 })
 
-describe('FolderWatcher', () => {
-  it('reports nested external changes and stops after close', async () => {
-    const nested = join(root, 'nested')
-    mkdirSync(nested)
-    const changed = vi.fn()
-    const watcher = new FolderWatcher(root, changed)
-    try {
-      await vi.waitFor(
-        () => {
-          writeFileSync(join(nested, 'external.docx'), String(Date.now()))
-          expect(changed).toHaveBeenCalledWith(expect.arrayContaining([nested]))
-        },
-        { interval: 400, timeout: 5000 },
-      )
-      watcher.close()
-      expect(watcher.active).toBe(false)
-      changed.mockClear()
-      writeFileSync(join(nested, 'after-close.docx'), 'closed')
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      expect(changed).not.toHaveBeenCalled()
-    } finally {
-      watcher.close()
-    }
+describe('filesystem roots', () => {
+  const fsRoot = parse(tmpdir()).root
+
+  it('treats descendants as inside a root that already ends with a separator', () => {
+    expect(isInsideRoot(fsRoot, fsRoot)).toBe(true)
+    expect(isInsideRoot(fsRoot, tmpdir())).toBe(true)
+
+    expect(pathsUnder(fsRoot, [fsRoot, tmpdir()])).toEqual([tmpdir()])
+
+    expect(isSelfOrDescendant(fsRoot, tmpdir())).toBe(true)
+  })
+
+  it('rebases descendants from a filesystem root without doubling the separator', () => {
+    const destination = join(root, 'rebased')
+
+    expect(rebasePath(tmpdir(), fsRoot, destination)).toBe(
+      join(destination, relative(fsRoot, tmpdir())),
+    )
   })
 })

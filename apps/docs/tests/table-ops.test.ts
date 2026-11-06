@@ -252,6 +252,10 @@ describe('table structure ops', () => {
     expect(parseTableLength('2.5cm')).toBe(1417.5)
     expect(parseTableLength(720)).toBe(720)
     expect(parseTableLength('12em')).toBeUndefined()
+    expect(parseTableLength('999999in')).toBeUndefined()
+    expect(parseTableLength('1e9pt')).toBeUndefined()
+    expect(parseTableLength(Infinity)).toBeUndefined()
+    expect(parseTableLength(1e12)).toBeUndefined()
   })
 
   it('refuses a merge that would leave a row without cells, keeps header cells on append, width null is invalid', () => {

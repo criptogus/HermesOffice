@@ -145,6 +145,43 @@ function sfntCovering(chars: string): Uint8Array {
   return out
 }
 
+/** The format-4 font of sfntCovering('H') with segment 0's idRangeOffset aimed past the buffer. */
+function sfntWithHostileRangeOffset(): Uint8Array {
+  const out = sfntCovering('H')
+  const segCount = 2 // 'H' plus the 0xffff terminator
+  const ends = 40 + 14 // sub + 14, as laid out by sfntCovering
+  const rangeOffsets = ends + segCount * 2 + 2 + segCount * 2 + segCount * 2
+  new DataView(out.buffer).setUint16(rangeOffsets, 0xffff)
+  return out
+}
+
+/** A format-12 cmap declaring more groups than the file actually contains. */
+function sfntWithHostileNumGroups(): Uint8Array {
+  const out = new Uint8Array(12 + 16 + 12 + 16)
+  const dv = new DataView(out.buffer)
+  dv.setUint32(0, 0x00010000)
+  dv.setUint16(4, 1)
+  dv.setUint32(12, 0x636d6170) // 'cmap'
+  dv.setUint32(20, 28)
+  const cmap = 28
+  dv.setUint16(cmap + 2, 1)
+  dv.setUint16(cmap + 4, 3)
+  dv.setUint16(cmap + 6, 1)
+  dv.setUint32(cmap + 8, 12)
+  const sub = cmap + 12
+  dv.setUint16(sub, 12) // format 12
+  dv.setUint32(sub + 4, 16)
+  dv.setUint32(sub + 12, 0xffffffff) // nGroups: the first group already lies past the end
+  return out
+}
+
+/** The format-4 font of sfntCovering('H') declaring far more segments than it holds. */
+function sfntWithHostileSegCount(): Uint8Array {
+  const out = sfntCovering('H')
+  new DataView(out.buffer).setUint16(40 + 6, 0xfffe)
+  return out
+}
+
 const FONT_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/font'
 
 describe('sfntCmapLookup', () => {
@@ -158,6 +195,19 @@ describe('sfntCmapLookup', () => {
 
   it('returns null without a readable cmap', () => {
     expect(sfntCmapLookup(fakeSfnt())).toBeNull()
+  })
+
+  it('treats a cmap offset past the font as uncovered instead of throwing', () => {
+    // The callbacks run long after sfntCmapLookup's try/catch has returned, so a
+    // hostile idRangeOffset/numGroups must read as "not in this subset", not throw.
+    expect(sfntCmapLookup(sfntWithHostileRangeOffset())!('H'.codePointAt(0)!)).toBe(false)
+    const groups = sfntCmapLookup(sfntWithHostileNumGroups())
+    expect(groups === null || groups(0x48) === false).toBe(true)
+  })
+
+  it('skips a format-4 subtable whose segCountX2 overruns the font', () => {
+    const lookup = sfntCmapLookup(sfntWithHostileSegCount())
+    expect(lookup === null || lookup(0x48) === false).toBe(true)
   })
 })
 
@@ -215,6 +265,25 @@ describe('stripEmbeddedFonts', () => {
     expect(ct).not.toContain('fntdata')
     expect(ct).toContain('Extension="xml"')
 
+    expect(archive.has('ppt/fonts/font1.fntdata')).toBe(false)
+    expect(archive.has('ppt/fonts/font3.fntdata')).toBe(false)
+  })
+
+  it('strips a package whose rels and content types use single quotes', async () => {
+    const archive = await archiveWithFonts()
+    for (const path of ['ppt/_rels/presentation.xml.rels', '[Content_Types].xml']) {
+      const xml = archive.readText(path)!.replace(/="([^"]*)"/g, "='$1'")
+      archive.entries.set(path, Buffer.from(xml, 'utf8'))
+    }
+
+    expect(stripEmbeddedFonts(archive)).toBe(true)
+
+    const rels = archive.readText('ppt/_rels/presentation.xml.rels')!
+    expect(rels).not.toContain("/font'")
+    expect(rels).toContain('slides/slide1.xml')
+    const ct = archive.readText('[Content_Types].xml')!
+    expect(ct).not.toContain('fntdata')
+    expect(ct).toContain("Extension='xml'")
     expect(archive.has('ppt/fonts/font1.fntdata')).toBe(false)
     expect(archive.has('ppt/fonts/font3.fntdata')).toBe(false)
   })

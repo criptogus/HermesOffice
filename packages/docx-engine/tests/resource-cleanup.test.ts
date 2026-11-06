@@ -34,6 +34,40 @@ describe('DOCX-owned resource cleanup', () => {
     expect(await documentRels(zip)).not.toContain('media/image1.png')
   })
 
+  it('keeps a part the source already did not reference (a pre-existing orphan)', async () => {
+    // the package carries an image part and its relationship, but nothing in
+    // the body references them: Word keeps what it was handed, so a save that
+    // regenerates some other block must not editorialize the orphan away
+    const parsed = await parseDocx(
+      await buildDocx({
+        bodyXml: '<w:p><w:r><w:t>keep</w:t></w:r></w:p>',
+        withImage: true,
+      }),
+    )
+    const saved = await saveDocx(parsed, [
+      { kind: 'generated', block: { type: 'paragraph', runs: [{ text: 'rewritten' }] } },
+    ])
+    const zip = await JSZip.loadAsync(saved)
+    expect(zip.file('word/media/image1.png')).not.toBeNull()
+    expect(await documentRels(zip)).toContain('media/image1.png')
+  })
+
+  it('keeps an orphaned external hyperlink the source already did not reference', async () => {
+    const parsed = await parseDocx(
+      await buildDocx({
+        bodyXml: '<w:p><w:r><w:t>keep</w:t></w:r></w:p>',
+        extraRels:
+          '<Relationship Id="rId20" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/" TargetMode="External"/>',
+      }),
+    )
+    const saved = await saveDocx(parsed, [
+      { kind: 'generated', block: { type: 'paragraph', runs: [{ text: 'rewritten' }] } },
+    ])
+    const zip = await JSZip.loadAsync(saved)
+    expect(await documentRels(zip)).toContain('rId20')
+    expect(await documentRels(zip)).toContain('https://example.com/')
+  })
+
   it('keeps only the newest media part across repeated image replacements', async () => {
     let bytes = await buildDocx({ bodyXml: IMAGE_PARAGRAPH_XML, withImage: true })
     for (let replacement = 0; replacement < 3; replacement++) {
@@ -195,12 +229,18 @@ describe('DOCX-owned resource cleanup', () => {
         extraRels:
           '<Relationship Id="rId40" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="embeddings/oleObject1.bin"/>' +
           '<Relationship Id="rId41" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/>' +
+          '<Relationship Id="rId43" Type="http://schemas.microsoft.com/office/2007/relationships/diagramDrawing" Target="diagrams/drawing1.xml"/>' +
           '<Relationship Id="rId42" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../customXml/custom-chart.xml"/>',
         extraParts: [
           {
             path: 'word/diagrams/data1.xml',
             xml: '<dgm:dataModel/>',
             contentType: 'application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml',
+          },
+          {
+            path: 'word/diagrams/drawing1.xml',
+            xml: '<dsp:drawing/>',
+            contentType: 'application/vnd.ms-office.drawingml.diagramDrawing+xml',
           },
           {
             path: 'customXml/custom-chart.xml',
@@ -222,9 +262,50 @@ describe('DOCX-owned resource cleanup', () => {
     expect(zip.file('word/media/image1.png')).toBeNull()
     expect(zip.file('word/embeddings/oleObject1.bin')).toBeNull()
     expect(zip.file('word/diagrams/data1.xml')).toBeNull()
+    expect(zip.file('word/diagrams/drawing1.xml')).toBeNull()
     expect(zip.file('customXml/custom-chart.xml')).not.toBeNull()
     const contentTypes = await zip.file('[Content_Types].xml')!.async('string')
     expect(contentTypes).not.toContain('/word/diagrams/data1.xml')
+    expect(contentTypes).not.toContain('/word/diagrams/drawing1.xml')
     expect(contentTypes).toContain('/customXml/custom-chart.xml')
+  })
+
+  it('keeps the SmartArt drawing part that is linked only by relationship type', async () => {
+    const bodyXml =
+      '<w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData>' +
+      '<dgm:relIds r:dm="rId41" r:lo="rId44"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>' +
+      '<w:p><w:r><w:t>dropped</w:t></w:r></w:p>'
+    const parsed = await parseDocx(
+      await buildDocx({
+        bodyXml,
+        extraRels:
+          '<Relationship Id="rId41" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/>' +
+          '<Relationship Id="rId44" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramLayout" Target="diagrams/layout1.xml"/>' +
+          '<Relationship Id="rId43" Type="http://schemas.microsoft.com/office/2007/relationships/diagramDrawing" Target="diagrams/drawing1.xml"/>',
+        extraParts: [
+          {
+            path: 'word/diagrams/data1.xml',
+            xml: '<dgm:dataModel/>',
+            contentType: 'application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml',
+          },
+          {
+            path: 'word/diagrams/layout1.xml',
+            xml: '<dgm:layoutDef/>',
+            contentType:
+              'application/vnd.openxmlformats-officedocument.drawingml.diagramLayout+xml',
+          },
+          {
+            path: 'word/diagrams/drawing1.xml',
+            xml: '<dsp:drawing/>',
+            contentType: 'application/vnd.ms-office.drawingml.diagramDrawing+xml',
+          },
+        ],
+      }),
+    )
+    const zip = await JSZip.loadAsync(await saveDocx(parsed, [{ kind: 'original', docxIndex: 0 }]))
+    expect(zip.file('word/diagrams/drawing1.xml')).not.toBeNull()
+    expect(await documentRels(zip)).toContain('Target="diagrams/drawing1.xml"')
+    const contentTypes = await zip.file('[Content_Types].xml')!.async('string')
+    expect(contentTypes).toContain('/word/diagrams/drawing1.xml')
   })
 })

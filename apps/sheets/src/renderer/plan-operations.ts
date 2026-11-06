@@ -52,6 +52,7 @@ import {
   normalizeLinkTarget,
   protectSheetGuard,
 } from './univer-sync'
+import { SharedFormulaLookup, indexedFormulas, sharedFormulaText } from './shared-formula-index'
 import { CLOSURE_MAX_CELLS, type LazyWorkbookState, type UniverRuntime } from './univer-state'
 import { convertibleType } from './WorkbookVisuals'
 
@@ -169,13 +170,14 @@ export function proposeOperations(
           }
           // Save-time chart patching fails closed on non-convertible plots;
           // reject here so the user never sees Apply succeed and ⌘S fail.
+          // Combos convert by collapsing onto the target family.
           if (
             operation.chartType !== undefined &&
             (!visual.chart || convertibleType(visual.chart) === null)
           ) {
             return {
               ok: false,
-              error: `Chart ${operation.chartPath} cannot be converted to another type (only single-plot column/bar/line/area/pie/doughnut charts can).`,
+              error: `Chart ${operation.chartPath} cannot be converted to another type (single-plot column/bar/line/area/pie/doughnut charts and bar+line combos can).`,
             }
           }
           if (
@@ -369,7 +371,12 @@ export function proposeOperations(
           continue
         }
         if (operation.op === 'protect_sheet') {
-          const guard = protectSheetGuard(state, operation.sheetId, operation.protected)
+          const guard = protectSheetGuard(
+            state,
+            operation.sheetId,
+            operation.protected,
+            operation.password !== undefined,
+          )
           if (guard) return { ok: false, error: guard }
           continue
         }
@@ -1053,12 +1060,8 @@ export function lazyGateFailure(
               'Filter changes need the fully-loaded mode — this workbook is too large and streams partially, so filters cannot be edited.',
           }
     }
-    if (state.filterOrigins.get(sheetId)?.origin === 'table') {
-      return {
-        reason: "This sheet's auto-filter belongs to a table — table filters cannot be edited yet.",
-        messageKey: 'appTableFilterNoEdit',
-      }
-    }
+    // Table filters are no longer gated here: the save routes them into the
+    // table part (applyRoutedFilterState in the gateway).
     return null
   }
   if (
@@ -1304,6 +1307,18 @@ function deleteSpanSpec(
   }
 }
 
+/// A formula whose own cell is in the deleted span goes with it — the save
+/// drops those cells before it rewrites references — so it is no reason to
+/// refuse the deletion, whatever it references.
+function removedWithSpan(
+  spec: ReturnType<typeof deleteSpanSpec>,
+  row: number,
+  column: number,
+): boolean {
+  const index = spec.axis === 'column' ? column : row
+  return index >= spec.shift.deleted.start && index <= spec.shift.deleted.end
+}
+
 function deletedSpanTextError(
   texts: readonly string[],
   spec: ReturnType<typeof deleteSpanSpec>,
@@ -1343,10 +1358,15 @@ export async function structuralDeleteFormulaError(
   for (const sheet of sheets) {
     const sheetId = sheet.getSheetId()
     if (isSheetRemoved(state.editJournal, sheetId)) continue
+    const targetSheet = sheetId === operation.sheetId
+    const removed = (row: number, column: number) =>
+      targetSheet && removedWithSpan(spec, row, column)
     const journalCells = state.editJournal.cells.get(sheetId)
     const texts: string[] = []
     if (journalCells) {
-      for (const entry of journalCells.values()) if (entry.formula) texts.push(entry.formula)
+      for (const entry of journalCells.values()) {
+        if (entry.formula && !removed(entry.row, entry.column)) texts.push(entry.formula)
+      }
     }
     if (fileSheetIds.has(sheetId)) {
       let result
@@ -1359,18 +1379,21 @@ export async function structuralDeleteFormulaError(
         return null
       }
       if (result.truncated || !result.indexingComplete) return null
-      for (const cell of result.cells) {
-        if (!cell.formula) continue
+      for (const cell of indexedFormulas(
+        result.cells,
+        new SharedFormulaLookup(result.sharedGroups),
+      )) {
         // Only a CONTENT overwrite supersedes the file's formula text — a
         // style-only journal entry leaves the formula in force.
         const entry = journalCells?.get(`${cell.row}:${cell.column}`)
         if (entry && (entry.hasValue || entry.formula)) continue
+        if (removed(cell.row, cell.column)) continue
         texts.push(cell.formula)
       }
     }
     // Formulas on other sheets only shift through explicit qualifiers —
     // the same split the save applies.
-    const error = deletedSpanTextError(texts, spec, sheetId !== operation.sheetId)
+    const error = deletedSpanTextError(texts, spec, !targetSheet)
     if (error) return error
   }
   return null
@@ -1417,26 +1440,43 @@ export function structuralDeleteFormulaErrorSync(
   for (const sheet of sheets) {
     const sheetId = sheet.getSheetId()
     if (isSheetRemoved(state.editJournal, sheetId)) continue
+    const targetSheet = sheetId === operation.sheetId
+    const removed = (row: number, column: number) =>
+      targetSheet && removedWithSpan(spec, row, column)
     const texts: string[] = []
     if (state.formulaMode) {
       // the live model already reflects every session edit
       const formulas = sheet.getRange(0, 0, sheet.getMaxRows(), sheet.getMaxColumns()).getFormulas()
-      for (const row of formulas) for (const formula of row) if (formula) texts.push(formula)
+      formulas.forEach((cells, row) =>
+        cells.forEach((formula, column) => {
+          if (formula && !removed(row, column)) texts.push(formula)
+        }),
+      )
     } else {
       const journalCells = state.editJournal.cells.get(sheetId)
       if (journalCells) {
-        for (const entry of journalCells.values()) if (entry.formula) texts.push(entry.formula)
+        for (const entry of journalCells.values()) {
+          if (entry.formula && !removed(entry.row, entry.column)) texts.push(entry.formula)
+        }
       }
       const harvested = state.formulaText.get(sheetId)
       if (harvested) {
         for (const [key, text] of harvested) {
           const entry = journalCells?.get(key)
           if (entry && (entry.hasValue || entry.formula)) continue
+          const [row, column] = key.split(':').map(Number)
+          if (removed(row ?? -1, column ?? -1)) continue
           texts.push(text)
         }
       }
+      state.sharedFormulaGroups.get(sheetId)?.forEachFollower((row, column, group) => {
+        const entry = journalCells?.get(`${row}:${column}`)
+        if (entry && (entry.hasValue || entry.formula)) return
+        if (removed(row, column)) return
+        texts.push(sharedFormulaText(group, row, column))
+      })
     }
-    const error = deletedSpanTextError(texts, spec, sheetId !== operation.sheetId)
+    const error = deletedSpanTextError(texts, spec, !targetSheet)
     if (error) return error
   }
   return null

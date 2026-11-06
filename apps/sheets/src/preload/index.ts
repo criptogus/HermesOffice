@@ -1,5 +1,5 @@
 import type { AiPanelPrefs } from '@hermesoffice/ui'
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 
 import type {
   AiChatResponse,
@@ -19,12 +19,17 @@ import type {
   ScreenCaptureResult,
   ScreenSourcesResult,
   AutoSaveDefault,
+  DocTheme,
   UiTheme,
   WorkbookCellStyle,
   WorkbookConditionalRule,
   WorkbookFile,
+  WorkbookFindCellsRequest,
+  WorkbookFindCellsResult,
   WorkbookFormulaCellsRequest,
   WorkbookFormulaCellsResult,
+  WorkbookSharedFormulaGroup,
+  WorkbookRowOutlineResult,
   WorkbookMediaRequest,
   WorkbookMediaResult,
   WorkbookPagePrintSettings,
@@ -34,13 +39,33 @@ import type {
   WorkbookRangeResult,
   WorkbookRecalcRequest,
   WorkbookRecalcResult,
+  WorkbookRedactionsResult,
+  WorkbookQueriesResult,
   WorkbookRichRun,
   WorkbookSaveRequest,
+  WorkbookSlicerState,
   WorkbookSaveResult,
   WorkbookVisualObject,
   WebSearchResult,
   ImageSearchResponse,
   GenerateImageResult,
+  UserSkillEntry,
+  WorkbookConnection,
+  WorkbookConnectionsRequest,
+  WorkbookConnectionsResult,
+  WorkbookRefreshRequest,
+  WorkbookRefreshResult,
+  ExternalLinkCell,
+  ExternalLinkCellKind,
+  ExternalLinkListStatus,
+  ExternalLinksResult,
+  ExternalLinksUpdateResult,
+  ExternalLinkStatus,
+  ExternalLinkUsageCell,
+  ExternalLinkUsageResult,
+  PickIdPayload,
+  WorkbookPickSelection,
+  WorkbookTabsResult,
 } from '../shared/desktop-api'
 import {
   HEADER_FOOTER_PICTURE_POSITION,
@@ -57,6 +82,7 @@ import { installDropOpenBridge } from '@hermesoffice/electron-utils/drop-open'
 
 const desktopApi: DesktopApi = {
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
+  openSourcePath: (path: string) => ipcRenderer.invoke('home:open-path', path),
   onLanguageChanged(handler) {
     const listener = (
       _event: Electron.IpcRendererEvent,
@@ -70,6 +96,15 @@ const desktopApi: DesktopApi = {
     const listener = (_event: Electron.IpcRendererEvent, theme: UiTheme) => handler(theme)
     ipcRenderer.on('app:theme-changed', listener)
     return () => ipcRenderer.removeListener('app:theme-changed', listener)
+  },
+  getDocumentTheme: async () => {
+    const result: unknown = await ipcRenderer.invoke('app:get-document-theme')
+    return result === 'dark' || result === 'light' ? result : 'follow'
+  },
+  onDocumentThemeChanged(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, theme: DocTheme) => handler(theme)
+    ipcRenderer.on('app:document-theme-changed', listener)
+    return () => ipcRenderer.removeListener('app:document-theme-changed', listener)
   },
   getAutoSaveDefault: () => ipcRenderer.invoke('app:get-auto-save-default'),
   onAutoSaveDefaultChanged(handler) {
@@ -91,7 +126,56 @@ const desktopApi: DesktopApi = {
   },
   async selectWorkbook() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.selectWorkbook)
+    if (result === null) return null
+    if (
+      typeof result === 'object' &&
+      result !== null &&
+      (result as { passwordRequired?: unknown }).passwordRequired === true &&
+      typeof (result as { path?: unknown }).path === 'string'
+    ) {
+      return { passwordRequired: true, path: (result as { path: string }).path }
+    }
+    return parseWorkbookFile(result)
+  },
+  async openEncryptedWorkbook(path, password) {
+    if (
+      typeof path !== 'string' ||
+      path.length === 0 ||
+      typeof password !== 'string' ||
+      password.length === 0
+    ) {
+      throw new Error('Invalid encrypted workbook request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.openEncryptedWorkbook, {
+      path,
+      password,
+    })
     return result === null ? null : parseWorkbookFile(result)
+  },
+  async updateWorkbookPassword(sessionId, newPassword) {
+    if (!isUuid(sessionId) || typeof newPassword !== 'string' || newPassword.length === 0) {
+      throw new Error('Invalid workbook password update request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.updateWorkbookPassword, {
+      sessionId,
+      newPassword,
+    })
+    if (
+      !isRecord(result) ||
+      typeof result.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(result.sha256) ||
+      typeof result.fileBytes !== 'number' ||
+      !Number.isSafeInteger(result.fileBytes) ||
+      result.fileBytes < 0 ||
+      result.passwordProtected !== true
+    ) {
+      throw new Error('Invalid workbook password update response.')
+    }
+    return {
+      sha256: result.sha256,
+      fileBytes: result.fileBytes,
+      passwordProtected: true as const,
+    }
   },
   async selectWorkbooksForMerge() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.selectWorkbooksForMerge)
@@ -107,6 +191,24 @@ const desktopApi: DesktopApi = {
     if (result === null) return null
     if (!Array.isArray(result)) throw new Error('Invalid merge open result.')
     return result.map((file) => parseWorkbookFile(file))
+  },
+  async reopenWorkbook(path) {
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error('Invalid reopen path.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.reopenWorkbook, path)
+    if (result === null) return null
+    // the password of a session that is already gone cannot be replayed; the
+    // recovery gives up cleanly and the user re-opens the file by hand
+    if (isRecord(result) && result.passwordRequired === true) return null
+    return parseWorkbookFile(result)
+  },
+  onSidecarCrashed(callback) {
+    const listener = (): void => {
+      callback()
+    }
+    ipcRenderer.on(IPC_CHANNELS.sidecarCrashed, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.sidecarCrashed, listener)
   },
   async readWorkbookRange(request) {
     const validatedRequest = parseRangeRequest(request)
@@ -124,10 +226,106 @@ const desktopApi: DesktopApi = {
     )
     return parseFormulaCellsResult(result)
   },
+  async findWorkbookCells(request) {
+    const validatedRequest = parseFindCellsRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.findWorkbookCells,
+      validatedRequest,
+    )
+    return parseFindCellsResult(result)
+  },
+  async listWorkbookConnections(request) {
+    assertWorkbookSessionRequest(request)
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.listWorkbookConnections, request)
+    return parseWorkbookConnectionsResult(result)
+  },
+  async refreshWorkbookConnection(request) {
+    assertWorkbookRefreshRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.refreshWorkbookConnection,
+      request,
+    )
+    return parseWorkbookRefreshResult(result)
+  },
+  async readWorkbookRowOutline(request) {
+    const validatedRequest = parseFormulaCellsRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.readWorkbookRowOutline,
+      validatedRequest,
+    )
+    return parseRowOutlineResult(result)
+  },
   async recalcWorkbook(request) {
     const validatedRequest = parseRecalcRequest(request)
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.recalcWorkbook, validatedRequest)
     return parseRecalcResult(result)
+  },
+  async listExternalLinks(request) {
+    const validatedRequest = parseExternalLinksRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.listExternalLinks,
+      validatedRequest,
+    )
+    return parseExternalLinksResult(result)
+  },
+  async updateExternalLinks(request) {
+    const validatedRequest = parseExternalLinksRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.updateExternalLinks,
+      validatedRequest,
+    )
+    return parseExternalLinksUpdateResult(result)
+  },
+  async readExternalLinkUsage(request) {
+    const validatedRequest = parseExternalLinksRequest(request)
+    const result: unknown = await ipcRenderer.invoke(
+      IPC_CHANNELS.readExternalLinkUsage,
+      validatedRequest,
+    )
+    return parseExternalLinkUsageResult(result)
+  },
+  async selectExternalLinkSource() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.selectExternalLinkSource)
+    return typeof result === 'string' && result.length > 0 ? result : null
+  },
+  async listWorkbookTabs() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.listWorkbookTabs)
+    return parseWorkbookTabsResult(result)
+  },
+  async armWorkbookPick(wcId) {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.armWorkbookPick, { wcId })
+    return parsePickIdPayload(result)
+  },
+  async sendWorkbookPickSelection(selection) {
+    await ipcRenderer.invoke(
+      IPC_CHANNELS.sendWorkbookPickSelection,
+      parseWorkbookPickSelection(selection),
+    )
+  },
+  async cancelWorkbookPick(pickId) {
+    await ipcRenderer.invoke(IPC_CHANNELS.cancelWorkbookPick, { pickId })
+  },
+  onWorkbookPickArmed(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+      handler(parsePickIdPayload(payload))
+    ipcRenderer.on(IPC_CHANNELS.workbookPickArmed, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.workbookPickArmed, listener)
+  },
+  onWorkbookPickSelected(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+      handler(parseWorkbookPickSelection(payload))
+    ipcRenderer.on(IPC_CHANNELS.workbookPickSelected, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.workbookPickSelected, listener)
+  },
+  onWorkbookPickCancelled(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+      handler(parsePickIdPayload(payload))
+    ipcRenderer.on(IPC_CHANNELS.workbookPickCancelled, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.workbookPickCancelled, listener)
+  },
+  revealLinkSource(request) {
+    const validatedRequest = parseExternalLinkRevealRequest(request)
+    ipcRenderer.send(IPC_CHANNELS.revealLinkSource, validatedRequest)
   },
   async readWorkbookMedia(request) {
     const validatedRequest = parseMediaRequest(request)
@@ -196,6 +394,43 @@ const desktopApi: DesktopApi = {
       validatedRequest,
     )
     return parsePivotDefinitionResult(result)
+  },
+  async readSlicerState(request) {
+    if (!isRecord(request) || !isUuid(request.sessionId)) {
+      throw new Error('Invalid slicer state request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.readSlicerState, {
+      sessionId: request.sessionId,
+    })
+    if (!Array.isArray(result)) throw new Error('Invalid slicer state response.')
+    return result as WorkbookSlicerState
+  },
+  async readWorkbookRedactions(request) {
+    if (!isRecord(request) || !isUuid(request.sessionId)) {
+      throw new Error('Invalid redaction request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.readWorkbookRedactions, {
+      sessionId: request.sessionId,
+    })
+    return parseWorkbookRedactionsResult(result)
+  },
+  async readWorkbookQueries(request) {
+    if (!isRecord(request) || !isUuid(request.sessionId)) {
+      throw new Error('Invalid queries request.')
+    }
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.readWorkbookQueries, {
+      sessionId: request.sessionId,
+    })
+    // structural check; the main process zod-validates the full shape
+    if (!Array.isArray(result) || result.length > 1_000) {
+      throw new Error('Invalid queries response.')
+    }
+    for (const query of result) {
+      if (!isRecord(query) || typeof query.name !== 'string' || typeof query.kind !== 'string') {
+        throw new Error('Invalid queries response.')
+      }
+    }
+    return result as WorkbookQueriesResult
   },
   async saveWorkbookEdits(request) {
     const validatedRequest = parseSaveRequest(request)
@@ -299,6 +534,14 @@ const desktopApi: DesktopApi = {
       throw new Error('Invalid print response.')
     }
     return result as { ok: true } | { ok: false; error?: string }
+  },
+  async listPrinters() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.listPrinters)
+    if (!Array.isArray(result)) throw new Error('Invalid printer list.')
+    return result.filter(
+      (entry): entry is { name: string; displayName: string } =>
+        isRecord(entry) && typeof entry.name === 'string' && typeof entry.displayName === 'string',
+    )
   },
   async exportCsv(request) {
     if (
@@ -439,6 +682,17 @@ const desktopApi: DesktopApi = {
   replyRecoveryPrompt(restore) {
     ipcRenderer.send(IPC_CHANNELS.recoveryPromptReply, restore === true)
   },
+  async getUserDisplayName() {
+    const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.userDisplayName)
+    return typeof result === 'string' ? result : ''
+  },
+  onUserDisplayNameChanged(handler) {
+    const listener = (_event: Electron.IpcRendererEvent, name: unknown) => {
+      if (typeof name === 'string') handler(name)
+    }
+    ipcRenderer.on('app:author-name-changed', listener)
+    return () => ipcRenderer.removeListener('app:author-name-changed', listener)
+  },
   async getAiSettings() {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiGetSettings)
     if (!isRecord(result)) throw new Error('Invalid AI settings response.')
@@ -446,6 +700,23 @@ const desktopApi: DesktopApi = {
   },
   async setAiSettings(settings) {
     await ipcRenderer.invoke(IPC_CHANNELS.aiSetSettings, settings)
+  },
+  onAiSettingsChanged(handler) {
+    const listener = () => handler()
+    ipcRenderer.on(IPC_CHANNELS.aiSettingsChanged, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.aiSettingsChanged, listener)
+  },
+  async openAiModelSettings() {
+    await ipcRenderer.invoke(IPC_CHANNELS.aiOpenModelSettings)
+  },
+  async openSkillsSettings() {
+    await ipcRenderer.invoke('ai:open-skills-settings')
+  },
+  skillsList() {
+    return ipcRenderer.invoke('ai:skills-list') as Promise<UserSkillEntry[]>
+  },
+  skillText(name: string) {
+    return ipcRenderer.invoke('ai:skill-text', name) as Promise<string>
   },
   async aiChat(request) {
     const result: unknown = await ipcRenderer.invoke(IPC_CHANNELS.aiChat, request)
@@ -682,21 +953,56 @@ function parseAttachmentAddResult(input: unknown): AttachmentAddResult {
   return { accepted, rejected: input.rejected as string[] }
 }
 
+/**
+ * Model file naming: the transport half of `suggestFileName`.
+ *
+ * Inlined rather than imported — a preload entry must stay a single-file bundle,
+ * or the sandbox drops every global it exposed. The one `ai:` channel is
+ * registered app-wide by the shell rather than by this app, the same arrangement
+ * the `project:*` bridge below already depends on.
+ *
+ * `content` crosses this bridge verbatim and the main process cannot see what
+ * this editor withheld, so what the caller hands over is exactly what the model
+ * sees. A caller that passed raw document text would undo its own redactions.
+ *
+ * The global is `aiNamingApi`, not `aiOffice`: `aiOffice` is the shell's home
+ * API, and a partial one in an editor window would shadow it there.
+ */
+const aiNamingApi = {
+  suggestFileName: (input: { content: string }) =>
+    ipcRenderer.invoke('ai:suggest-file-name', input),
+}
+
 contextBridge.exposeInMainWorld('desktopApi', desktopApi)
+contextBridge.exposeInMainWorld('aiNamingApi', aiNamingApi)
+
+// The frame's own spell engine (Chromium Hunspell / the OS dictionary): the
+// same checker docs' squiggles run on, batch-driven over sheet cell texts so
+// nothing leaves the machine for the F7 spelling dialog. webFrame consults
+// it only while the webContents' spellcheck is on — the Review ▸ Proofing
+// preference gates the dialog, and comment-box squiggles share the switch.
+contextBridge.exposeInMainWorld('nativeSpell', {
+  isWordMisspelled: (word: unknown): boolean =>
+    typeof word === 'string' ? webFrame.isWordMisspelled(word) : false,
+  getWordSuggestions: (word: unknown): string[] =>
+    typeof word === 'string' ? webFrame.getWordSuggestions(word) : [],
+})
 
 const projectApi: ProjectApi = {
   resolveChat: (args) => ipcRenderer.invoke('project:resolveChat', args),
   appendChat: (args) => ipcRenderer.invoke('project:appendChat', args),
   loadChat: (args) => ipcRenderer.invoke('project:loadChat', args),
   rebindChat: (args) => ipcRenderer.invoke('project:rebindChat', args),
+  listChats: (args) => ipcRenderer.invoke('project:listChats', args),
+  deleteChat: (args) => ipcRenderer.invoke('project:deleteChat', args),
 }
 contextBridge.exposeInMainWorld('projectApi', projectApi)
 
 // Off by default. e2e drivers launch the BUILT app with HERMESOFFICE_DEBUG_HOOKS=1
-// so the renderer exposes window.__genofficeDebug (see App.tsx) — the dev-only
+// so the renderer exposes window.__hermesofficeDebug (see App.tsx) — the dev-only
 // __univerAPI hook does not exist in production bundles.
 if (process.env.HERMESOFFICE_DEBUG_HOOKS === '1') {
-  contextBridge.exposeInMainWorld('__genofficeDebugHooks', true)
+  contextBridge.exposeInMainWorld('__hermesofficeDebugHooks', true)
 }
 
 // open documents dragged from the OS onto this tab as a new shell tab
@@ -719,6 +1025,7 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
     readOnly,
     needsSaveAs,
     csvPath,
+    emptyCsv,
     restoredFromRecovery,
   } = input
   if (
@@ -737,6 +1044,7 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
     typeof readOnly !== 'boolean' ||
     (needsSaveAs !== undefined && typeof needsSaveAs !== 'boolean') ||
     (csvPath !== undefined && (typeof csvPath !== 'string' || csvPath.length === 0)) ||
+    (emptyCsv !== undefined && typeof emptyCsv !== 'boolean') ||
     (restoredFromRecovery !== undefined && typeof restoredFromRecovery !== 'boolean')
   ) {
     throw new Error('Invalid workbook response.')
@@ -938,6 +1246,15 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
       // The renderer's oversized-sheet write gate needs this; omitting it
       // silently disables the gate (older sidecars don't report it).
       ...(isPositiveInteger(sheet.sourceXmlBytes) ? { sourceXmlBytes: sheet.sourceXmlBytes } : {}),
+      ...(isNonnegativeInteger(sheet.storedCellCount)
+        ? { storedCellCount: sheet.storedCellCount }
+        : {}),
+      ...(isNonnegativeInteger(sheet.valueCellCount)
+        ? { valueCellCount: sheet.valueCellCount }
+        : {}),
+      ...(isNonnegativeInteger(sheet.valueRowCount) && isNonnegativeInteger(sheet.valueColumnCount)
+        ? { valueRowCount: sheet.valueRowCount, valueColumnCount: sheet.valueColumnCount }
+        : {}),
       columnWidths,
       // Degrade instead of rejecting the workbook: 0 / malformed defaults
       // mean "use the built-in size".
@@ -947,6 +1264,7 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
       baseColumnWidth: normalizedDefaultSize(sheet.baseColumnWidth),
       freeze: parseFreeze(sheet.freeze),
       hidden: sheet.hidden,
+      ...(sheet.veryHidden === true ? { veryHidden: true } : {}),
       tabColor: sheet.tabColor,
       showGridLines: sheet.showGridLines,
       showFormulas: sheet.showFormulas === true,
@@ -958,6 +1276,10 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
       sheet.zoomScale <= 400
         ? { zoomScale: sheet.zoomScale }
         : {}),
+      ...(isOutlineLevel(sheet.outlineLevelRow) ? { outlineLevelRow: sheet.outlineLevelRow } : {}),
+      ...(isOutlineLevel(sheet.outlineLevelCol) ? { outlineLevelCol: sheet.outlineLevelCol } : {}),
+      ...(sheet.outlineSummaryBelow === false ? { outlineSummaryBelow: false as const } : {}),
+      ...(sheet.outlineSummaryRight === false ? { outlineSummaryRight: false as const } : {}),
       tables,
       comments,
       pivotRanges: sheet.pivotRanges.map(parseCellArea),
@@ -1028,6 +1350,7 @@ function parseWorkbookFile(input: unknown): WorkbookFile {
     readOnly,
     ...(needsSaveAs === undefined ? {} : { needsSaveAs }),
     ...(csvPath === undefined ? {} : { csvPath }),
+    ...(emptyCsv === undefined ? {} : { emptyCsv }),
     ...(restoredFromRecovery === undefined ? {} : { restoredFromRecovery }),
     ...(themeColors === undefined ? {} : { themeColors: themeColors as string[] }),
     ...(parsedThemeFonts === undefined ? {} : { themeFonts: parsedThemeFonts }),
@@ -1091,6 +1414,77 @@ function parseCellRecord(cell: unknown): WorkbookRangeResult['cells'][number] {
   }
 }
 
+function assertWorkbookSessionRequest(input: unknown): asserts input is WorkbookConnectionsRequest {
+  if (!isRecord(input) || !isUuid(input.sessionId)) {
+    throw new Error('Invalid workbook-connections request.')
+  }
+}
+
+function assertWorkbookRefreshRequest(input: unknown): asserts input is WorkbookRefreshRequest {
+  // The URL never crosses the IPC boundary: main resolves it from the
+  // workbook's connection part, so this is a connection id, not a fetch target.
+  if (
+    !isRecord(input) ||
+    !isUuid(input.sessionId) ||
+    typeof input.connectionId !== 'string' ||
+    input.connectionId.length === 0 ||
+    input.connectionId.length > 200
+  ) {
+    throw new Error('Invalid workbook-refresh request.')
+  }
+}
+
+function parseWorkbookConnection(input: unknown): WorkbookConnection {
+  const isRowCount = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0
+  if (
+    !isRecord(input) ||
+    typeof input.id !== 'string' ||
+    typeof input.name !== 'string' ||
+    input.kind !== 'web' ||
+    typeof input.source !== 'string' ||
+    typeof input.sheetName !== 'string' ||
+    typeof input.range !== 'string' ||
+    !isRowCount(input.headerRows) ||
+    !isRowCount(input.totalsRows) ||
+    typeof input.hasTable !== 'boolean'
+  ) {
+    throw new Error('Invalid workbook-connections response.')
+  }
+  return {
+    id: input.id,
+    name: input.name,
+    kind: input.kind,
+    source: input.source,
+    sheetName: input.sheetName,
+    range: input.range,
+    headerRows: input.headerRows,
+    totalsRows: input.totalsRows,
+    hasTable: input.hasTable,
+  }
+}
+
+function parseWorkbookConnectionsResult(input: unknown): WorkbookConnectionsResult {
+  if (!isRecord(input) || !Array.isArray(input.connections)) {
+    throw new Error('Invalid workbook-connections response.')
+  }
+  return { connections: input.connections.map(parseWorkbookConnection) }
+}
+
+function parseWorkbookRefreshResult(input: unknown): WorkbookRefreshResult {
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((cell) => typeof cell === 'string')
+  if (
+    !isRecord(input) ||
+    !isStringArray(input.headers) ||
+    !Array.isArray(input.rows) ||
+    !input.rows.every(isStringArray)
+  ) {
+    throw new Error('Invalid workbook-refresh response.')
+  }
+  return { headers: input.headers, rows: input.rows }
+}
+
 function parseFormulaCellsRequest(input: unknown): WorkbookFormulaCellsRequest {
   if (
     !isRecord(input) ||
@@ -1103,11 +1497,97 @@ function parseFormulaCellsRequest(input: unknown): WorkbookFormulaCellsRequest {
   return { sessionId: input.sessionId, sheetId: input.sheetId }
 }
 
+function parseSharedFormulaGroup(group: unknown): WorkbookSharedFormulaGroup {
+  if (
+    !isRecord(group) ||
+    !isNonnegativeInteger(group.si) ||
+    !isNonnegativeInteger(group.row) ||
+    !isNonnegativeInteger(group.column) ||
+    typeof group.formula !== 'string' ||
+    (group.range !== undefined &&
+      !(
+        isRecord(group.range) &&
+        isNonnegativeInteger(group.range.startRow) &&
+        isNonnegativeInteger(group.range.endRow) &&
+        isNonnegativeInteger(group.range.startColumn) &&
+        isNonnegativeInteger(group.range.endColumn)
+      )) ||
+    (group.cells !== undefined &&
+      !(
+        Array.isArray(group.cells) &&
+        group.cells.every(
+          (cell) =>
+            Array.isArray(cell) &&
+            cell.length === 2 &&
+            isNonnegativeInteger(cell[0]) &&
+            isNonnegativeInteger(cell[1]),
+        )
+      ))
+  ) {
+    throw new Error('Invalid shared-formula group response.')
+  }
+  const range = group.range as WorkbookSharedFormulaGroup['range']
+  const cells = group.cells as WorkbookSharedFormulaGroup['cells']
+  return {
+    si: group.si,
+    row: group.row,
+    column: group.column,
+    formula: group.formula,
+    ...(range === undefined
+      ? {}
+      : {
+          range: {
+            startRow: range.startRow,
+            endRow: range.endRow,
+            startColumn: range.startColumn,
+            endColumn: range.endColumn,
+          },
+        }),
+    ...(cells === undefined ? {} : { cells: cells.map(([row, column]) => [row, column]) }),
+  }
+}
+
+function isOutlineLevel(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 7
+}
+
+function parseRowOutlineResult(input: unknown): WorkbookRowOutlineResult {
+  if (
+    !isRecord(input) ||
+    !Array.isArray(input.rows) ||
+    input.rows.length > 1_048_576 ||
+    typeof input.indexingComplete !== 'boolean'
+  ) {
+    throw new Error('Invalid row-outline response.')
+  }
+  return {
+    rows: input.rows.map((entry) => {
+      if (
+        !isRecord(entry) ||
+        !isNonnegativeInteger(entry.row) ||
+        !isNonnegativeInteger(entry.level) ||
+        entry.level > 7
+      ) {
+        throw new Error('Invalid row-outline response.')
+      }
+      return {
+        row: entry.row,
+        level: entry.level,
+        ...(entry.collapsed === true ? { collapsed: true } : {}),
+        ...(entry.hidden === true ? { hidden: true } : {}),
+      }
+    }),
+    indexingComplete: input.indexingComplete,
+  }
+}
+
 function parseFormulaCellsResult(input: unknown): WorkbookFormulaCellsResult {
   if (
     !isRecord(input) ||
     !Array.isArray(input.cells) ||
     input.cells.length > 100_000 ||
+    !Array.isArray(input.sharedGroups) ||
+    input.sharedGroups.length > 100_000 ||
     typeof input.indexingComplete !== 'boolean' ||
     typeof input.truncated !== 'boolean'
   ) {
@@ -1115,8 +1595,97 @@ function parseFormulaCellsResult(input: unknown): WorkbookFormulaCellsResult {
   }
   return {
     cells: input.cells.map(parseCellRecord),
+    sharedGroups: input.sharedGroups.map(parseSharedFormulaGroup),
     indexingComplete: input.indexingComplete,
     truncated: input.truncated,
+  }
+}
+
+const FIND_LOOK_IN = new Set(['values', 'formulas', 'formulas_only', 'both'])
+const FIND_CELLS_PAGE_MAX = 100_000
+
+function parseFindCursor(input: unknown): WorkbookFindCellsRequest['resumeAt'] {
+  if (
+    !isRecord(input) ||
+    typeof input.sheetId !== 'string' ||
+    input.sheetId.length === 0 ||
+    !isNonnegativeInteger(input.row) ||
+    !isNonnegativeInteger(input.column)
+  ) {
+    throw new Error('Invalid find-cells cursor.')
+  }
+  return { sheetId: input.sheetId, row: input.row, column: input.column }
+}
+
+function parseFindCellsRequest(input: unknown): WorkbookFindCellsRequest {
+  if (
+    !isRecord(input) ||
+    !isUuid(input.sessionId) ||
+    (input.sheetId !== undefined &&
+      (typeof input.sheetId !== 'string' || input.sheetId.length === 0)) ||
+    typeof input.query !== 'string' ||
+    input.query.length === 0 ||
+    input.query.length > 10_000 ||
+    typeof input.matchCase !== 'boolean' ||
+    typeof input.matchEntireCell !== 'boolean' ||
+    typeof input.lookIn !== 'string' ||
+    !FIND_LOOK_IN.has(input.lookIn) ||
+    typeof input.wildcards !== 'boolean' ||
+    !isNonnegativeInteger(input.limit) ||
+    input.limit < 1 ||
+    input.limit > FIND_CELLS_PAGE_MAX
+  ) {
+    throw new Error('Invalid find-cells request.')
+  }
+  return {
+    sessionId: input.sessionId,
+    ...(input.sheetId === undefined ? {} : { sheetId: input.sheetId }),
+    query: input.query,
+    matchCase: input.matchCase,
+    matchEntireCell: input.matchEntireCell,
+    lookIn: input.lookIn as WorkbookFindCellsRequest['lookIn'],
+    wildcards: input.wildcards,
+    ...(input.resumeAt === undefined ? {} : { resumeAt: parseFindCursor(input.resumeAt) }),
+    limit: input.limit,
+  }
+}
+
+function parseFindCellsResult(input: unknown): WorkbookFindCellsResult {
+  if (
+    !isRecord(input) ||
+    !Array.isArray(input.matches) ||
+    input.matches.length > FIND_CELLS_PAGE_MAX ||
+    typeof input.complete !== 'boolean' ||
+    typeof input.indexingComplete !== 'boolean'
+  ) {
+    throw new Error('Invalid find-cells response.')
+  }
+  const matches = input.matches.map((match): WorkbookFindCellsResult['matches'][number] => {
+    if (
+      !isRecord(match) ||
+      typeof match.sheetId !== 'string' ||
+      !isNonnegativeInteger(match.row) ||
+      !isNonnegativeInteger(match.column) ||
+      !isCellScalar(match.value) ||
+      (match.valueText !== null && typeof match.valueText !== 'string') ||
+      (match.formulaText !== undefined && typeof match.formulaText !== 'string')
+    ) {
+      throw new Error('Invalid find-cells match.')
+    }
+    return {
+      sheetId: match.sheetId,
+      row: match.row,
+      column: match.column,
+      value: match.value,
+      valueText: match.valueText,
+      ...(match.formulaText === undefined ? {} : { formulaText: match.formulaText }),
+    }
+  })
+  return {
+    matches,
+    complete: input.complete,
+    ...(input.nextCursor === undefined ? {} : { nextCursor: parseFindCursor(input.nextCursor) }),
+    indexingComplete: input.indexingComplete,
   }
 }
 
@@ -1209,6 +1778,212 @@ function parseRecalcResult(input: unknown): WorkbookRecalcResult {
     }
   })
   return { cells }
+}
+
+/// The links panel's request: a workbook session, never a filesystem path.
+function parseExternalLinksRequest(input: unknown): { sessionId: string } {
+  if (!isRecord(input) || !isUuid(input.sessionId)) {
+    throw new Error('Invalid external links request.')
+  }
+  return { sessionId: input.sessionId }
+}
+
+/// Locate a link source: the session and the link index the panel row names.
+function parseExternalLinkRevealRequest(input: unknown): { sessionId: string; index: number } {
+  if (!isRecord(input) || !isUuid(input.sessionId) || !isPositiveInteger(input.index)) {
+    throw new Error('Invalid external link reveal request.')
+  }
+  return { sessionId: input.sessionId, index: input.index }
+}
+
+const EXTERNAL_LINK_LIMIT = 10_000
+const EXTERNAL_LINK_CELL_LIMIT = 100_000
+const EXTERNAL_LINK_KINDS: readonly ExternalLinkCellKind[] = ['number', 'text', 'boolean', 'error']
+
+/// One link of the read-only listing: identity fields only — the listing
+/// carries no reachability, because probing the targets on open is what the
+/// read path must avoid (a dead network share can block for seconds).
+function parseExternalLinkListStatus(input: unknown): ExternalLinkListStatus {
+  if (
+    !isRecord(input) ||
+    !isPositiveInteger(input.index) ||
+    typeof input.rawTarget !== 'string' ||
+    (input.source !== null && typeof input.source !== 'string') ||
+    !Array.isArray(input.sheetNames) ||
+    !input.sheetNames.every((name): name is string => typeof name === 'string')
+  ) {
+    throw new Error('Invalid external links response.')
+  }
+  return {
+    index: input.index,
+    rawTarget: input.rawTarget,
+    source: input.source,
+    sheetNames: input.sheetNames,
+  }
+}
+
+/// One link of the update report: the listing's fields plus the reachability
+/// verdict the explicit update paid for.
+function parseExternalLinkStatus(input: unknown): ExternalLinkStatus {
+  if (!isRecord(input) || typeof input.reachable !== 'boolean') {
+    throw new Error('Invalid external links response.')
+  }
+  return { ...parseExternalLinkListStatus(input), reachable: input.reachable }
+}
+
+/// One external-formula cell of the update report. `kind` is absent when the
+/// cell has no usable value; the host then keeps the file's own cache.
+function parseExternalLinkCell(input: unknown): ExternalLinkCell {
+  if (
+    !isRecord(input) ||
+    !isBoundedString(input.sheet, 1_024) ||
+    !isNonnegativeInteger(input.row) ||
+    !isNonnegativeInteger(input.column) ||
+    typeof input.formatted !== 'string' ||
+    typeof input.formula !== 'string' ||
+    (input.number !== undefined &&
+      input.number !== null &&
+      (typeof input.number !== 'number' || !Number.isFinite(input.number))) ||
+    (input.kind != null && !EXTERNAL_LINK_KINDS.includes(input.kind as ExternalLinkCellKind))
+  ) {
+    throw new Error('Invalid external links update response.')
+  }
+  return {
+    sheet: input.sheet,
+    row: input.row,
+    column: input.column,
+    formatted: input.formatted,
+    ...(input.number === undefined ? {} : { number: input.number as number | null }),
+    ...(input.kind == null ? {} : { kind: input.kind as ExternalLinkCellKind }),
+    formula: input.formula,
+  }
+}
+
+function parseExternalLinksResult(input: unknown): ExternalLinksResult {
+  if (!isRecord(input) || !Array.isArray(input.links) || input.links.length > EXTERNAL_LINK_LIMIT) {
+    throw new Error('Invalid external links response.')
+  }
+  return { links: input.links.map(parseExternalLinkListStatus) }
+}
+
+function parseExternalLinksUpdateResult(input: unknown): ExternalLinksUpdateResult {
+  if (
+    !isRecord(input) ||
+    !Array.isArray(input.links) ||
+    input.links.length > EXTERNAL_LINK_LIMIT ||
+    !Array.isArray(input.cells) ||
+    input.cells.length > EXTERNAL_LINK_CELL_LIMIT
+  ) {
+    throw new Error('Invalid external links update response.')
+  }
+  return {
+    links: input.links.map(parseExternalLinkStatus),
+    cells: input.cells.map(parseExternalLinkCell),
+  }
+}
+
+const EXTERNAL_LINK_USAGE_KINDS = ['number', 'text', 'bool', 'error'] as const
+
+/** One formula cell of the usage scan: the frozen value typed by the cached
+ * `<v>` (`missing` when the cell has none to freeze). Rows and columns are
+ * 0-based. */
+function parseExternalLinkUsageCell(input: unknown): ExternalLinkUsageCell {
+  if (
+    !isRecord(input) ||
+    !isBoundedString(input.sheet, 1_024) ||
+    !isNonnegativeInteger(input.row) ||
+    !isNonnegativeInteger(input.column) ||
+    !isRecord(input.value) ||
+    (input.value.kind !== 'missing' &&
+      (!EXTERNAL_LINK_USAGE_KINDS.includes(
+        input.value.kind as (typeof EXTERNAL_LINK_USAGE_KINDS)[number],
+      ) ||
+        typeof input.value.value !==
+          (input.value.kind === 'number'
+            ? 'number'
+            : input.value.kind === 'bool'
+              ? 'boolean'
+              : 'string')))
+  ) {
+    throw new Error('Invalid external links usage response.')
+  }
+  return {
+    sheet: input.sheet,
+    row: input.row,
+    column: input.column,
+    value: input.value as ExternalLinkUsageCell['value'],
+  }
+}
+
+function parseExternalLinkUsageResult(input: unknown): ExternalLinkUsageResult {
+  if (!isRecord(input) || !Array.isArray(input.links) || input.links.length > EXTERNAL_LINK_LIMIT) {
+    throw new Error('Invalid external links usage response.')
+  }
+  return {
+    links: input.links.map((link) => {
+      if (
+        !isRecord(link) ||
+        !isPositiveInteger(link.index) ||
+        !Array.isArray(link.cells) ||
+        link.cells.length > EXTERNAL_LINK_CELL_LIMIT
+      ) {
+        throw new Error('Invalid external links usage response.')
+      }
+      return { index: link.index, cells: link.cells.map(parseExternalLinkUsageCell) }
+    }),
+  }
+}
+
+/// One tab another workbook is open in: what the cross-workbook pick lists.
+function parseWorkbookTabsResult(input: unknown): WorkbookTabsResult {
+  if (!isRecord(input) || !Array.isArray(input.tabs) || input.tabs.length > EXTERNAL_LINK_LIMIT) {
+    throw new Error('Invalid workbook tabs response.')
+  }
+  return {
+    tabs: input.tabs.map((tab) => {
+      if (
+        !isRecord(tab) ||
+        !Number.isInteger(tab.wcId) ||
+        !isBoundedString(tab.name, 1_024) ||
+        !isBoundedString(tab.path, 32_768)
+      ) {
+        throw new Error('Invalid workbook tabs response.')
+      }
+      return { wcId: tab.wcId as number, name: tab.name, path: tab.path }
+    }),
+  }
+}
+
+function parsePickIdPayload(input: unknown): PickIdPayload {
+  if (!isRecord(input) || !isBoundedString(input.pickId, 256)) {
+    throw new Error('Invalid workbook pick payload.')
+  }
+  return { pickId: input.pickId }
+}
+
+function parseWorkbookPickSelection(input: unknown): WorkbookPickSelection {
+  const bound = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+  if (
+    !isRecord(input) ||
+    !isBoundedString(input.pickId, 256) ||
+    !isBoundedString(input.sheetName, 1_024) ||
+    !bound(input.startRow) ||
+    !bound(input.endRow) ||
+    !bound(input.startColumn) ||
+    !bound(input.endColumn) ||
+    (input.rangeType !== undefined && typeof input.rangeType !== 'number')
+  ) {
+    throw new Error('Invalid workbook pick selection.')
+  }
+  return {
+    pickId: input.pickId,
+    sheetName: input.sheetName,
+    startRow: input.startRow,
+    endRow: input.endRow,
+    startColumn: input.startColumn,
+    endColumn: input.endColumn,
+    ...(input.rangeType === undefined ? {} : { rangeType: input.rangeType as number }),
+  }
 }
 
 function parseRangeResult(input: unknown): WorkbookRangeResult {
@@ -1333,7 +2108,7 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
       ...(rule.prompt === undefined ? {} : { prompt: rule.prompt }),
     }
   })
-  let sheetProtection: { protected: boolean; hasPassword: boolean } | null = null
+  let sheetProtection: WorkbookRangeResult['sheetProtection'] = null
   if (input.sheetProtection !== null && input.sheetProtection !== undefined) {
     const protection = input.sheetProtection
     if (
@@ -1343,7 +2118,16 @@ function parseRangeResult(input: unknown): WorkbookRangeResult {
     ) {
       throw new Error('Invalid workbook sheet protection.')
     }
-    sheetProtection = { protected: protection.protected, hasPassword: protection.hasPassword }
+    sheetProtection = {
+      protected: protection.protected,
+      hasPassword: protection.hasPassword,
+      ...(protection.allow === undefined
+        ? {}
+        : { allow: parseSheetProtectionAllow(protection.allow) }),
+      ...(protection.password === undefined
+        ? {}
+        : { password: parseSheetPasswordHash(protection.password) }),
+    }
   }
   const parseBreaks = (value: unknown, label: string): number[] => {
     if (!Array.isArray(value) || value.length > 1_024 || !value.every(isNonnegativeInteger)) {
@@ -1711,6 +2495,15 @@ function isOptionalBarLength(value: unknown): value is number | undefined {
   return value === undefined || (isNonnegativeInteger(value) && value <= 100)
 }
 
+const TABLE_OPTION_KEYS = [
+  'headerRow',
+  'totalsRow',
+  'firstColumn',
+  'lastColumn',
+  'bandedColumns',
+  'filterButton',
+] as const
+
 function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
   // Every rejection names the failing part: this one message ends up in the
   // save-failure toast, and "Invalid workbook save request." alone gave user
@@ -1755,6 +2548,7 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
   cappedArray('visual edits', input.visualEdits, 100)
   cappedArray('visual additions', input.visualAdditions, 100)
   cappedArray('table additions', input.tableAdditions, 50)
+  cappedArray('table edits', input.tableEdits ?? [], 100)
   cappedArray('pivot additions', input.pivotAdditions, 20)
   cappedArray('sheet operations', input.sheetOps, 100)
   cappedArray('sheet order', input.sheetOrder, 1_000)
@@ -1825,6 +2619,40 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
     )
   )
     invalid('protected-range states: malformed entry')
+  if (input.redactionStates !== null) cappedArray('redaction states', input.redactionStates, 1_000)
+  // Slicer state's detailed shape is authoritatively validated by main's zod
+  // schema (like pivot relayouts); the preload guards the envelope only.
+  if (input.slicerState !== null && input.slicerState !== undefined) {
+    if (
+      !isRecord(input.slicerState) ||
+      !Array.isArray(input.slicerState.slicers) ||
+      input.slicerState.slicers.length > 100 ||
+      !Array.isArray(input.slicerState.removals) ||
+      input.slicerState.removals.length > 200
+    )
+      invalid('slicer state')
+  }
+  if (
+    (input.redactionStates ?? []).some(
+      (state) =>
+        !isRecord(state) ||
+        typeof state.sheetName !== 'string' ||
+        state.sheetName.length === 0 ||
+        !Array.isArray(state.marks) ||
+        state.marks.length > 100_000 ||
+        state.marks.some(
+          (mark: unknown) =>
+            !isRecord(mark) ||
+            typeof mark.startRow !== 'number' ||
+            typeof mark.endRow !== 'number' ||
+            typeof mark.startColumn !== 'number' ||
+            typeof mark.endColumn !== 'number' ||
+            typeof mark.label !== 'string' ||
+            mark.label.length === 0,
+        ),
+    )
+  )
+    invalid('redaction states: malformed entry')
   if (
     input.mode !== 'save-as' &&
     input.restoreWriteBack !== true &&
@@ -1836,6 +2664,7 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
     input.visualEdits.length === 0 &&
     input.visualAdditions.length === 0 &&
     input.tableAdditions.length === 0 &&
+    (input.tableEdits?.length ?? 0) === 0 &&
     input.pivotAdditions.length === 0 &&
     (input.sparklineAdditions?.length ?? 0) === 0 &&
     input.sheetOps.length === 0 &&
@@ -1851,7 +2680,9 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
     input.definedNamesState === null &&
     input.themeState === null &&
     input.workbookProtectionState === null &&
-    input.protectedRangeStates.length === 0
+    input.protectedRangeStates.length === 0 &&
+    (input.redactionStates?.length ?? 0) === 0 &&
+    (input.slicerState ?? null) === null
   )
     invalid('no changes to save')
   if (input.sheetOps.length > 0 && input.sheetOrder.length === 0)
@@ -1897,11 +2728,40 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
       (table.style !== undefined &&
         (typeof table.style !== 'string' ||
           !/^TableStyle(?:Light|Medium|Dark)[1-9][0-9]?$/.test(table.style))) ||
-      typeof table.bandedRows !== 'boolean'
+      typeof table.bandedRows !== 'boolean' ||
+      TABLE_OPTION_KEYS.some((key) => table[key] !== undefined && typeof table[key] !== 'boolean')
     ) {
       throw new Error('Invalid workbook table addition.')
     }
     parseCellArea(table.area)
+  }
+  for (const edit of input.tableEdits ?? []) {
+    if (
+      !isRecord(edit) ||
+      typeof edit.sheetId !== 'string' ||
+      edit.sheetId.length === 0 ||
+      typeof edit.tableName !== 'string' ||
+      edit.tableName.length === 0 ||
+      edit.tableName.length > 255 ||
+      (edit.name !== undefined &&
+        (typeof edit.name !== 'string' || edit.name.length === 0 || edit.name.length > 255)) ||
+      (edit.columnNames !== undefined &&
+        (!Array.isArray(edit.columnNames) ||
+          edit.columnNames.length === 0 ||
+          edit.columnNames.length > 1_000 ||
+          edit.columnNames.some((name) => typeof name !== 'string' || name.length > 255))) ||
+      (edit.style !== undefined &&
+        (typeof edit.style !== 'string' ||
+          !/^TableStyle(?:Light|Medium|Dark)[1-9][0-9]?$/.test(edit.style))) ||
+      (edit.remove !== undefined && edit.remove !== true) ||
+      [...TABLE_OPTION_KEYS, 'bandedRows'].some((key) => {
+        const value = (edit as Record<string, unknown>)[key]
+        return value !== undefined && typeof value !== 'boolean'
+      })
+    ) {
+      throw new Error('Invalid workbook table edit.')
+    }
+    if (edit.area !== undefined) parseCellArea(edit.area)
   }
   for (const pivot of input.pivotAdditions) {
     if (
@@ -2056,6 +2916,10 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
       }
     } else if (op.kind === 'set-sheet-hidden') {
       if (typeof op.hidden !== 'boolean') throw new Error('Invalid workbook sheet operation.')
+    } else if (op.kind === 'set-sheet-tab-color') {
+      if (op.color !== null && !(typeof op.color === 'string' && /^#[0-9A-F]{6}$/.test(op.color))) {
+        throw new Error('Invalid workbook sheet operation.')
+      }
     } else if (op.kind !== 'remove-sheet') {
       throw new Error('Invalid workbook sheet operation.')
     }
@@ -2082,7 +2946,31 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
       !isNonnegativeInteger(visualEdit.drawingIndex) ||
       visualEdit.drawingIndex > 10_000 ||
       (visualEdit.remove !== undefined && visualEdit.remove !== true) ||
-      (visualEdit.remove === undefined && !isRecord(visualEdit.anchor))
+      !isShapePaint(visualEdit.fillColor) ||
+      !isShapePaint(visualEdit.lineColor) ||
+      (visualEdit.zIndex !== undefined &&
+        (!isNonnegativeInteger(visualEdit.zIndex) || visualEdit.zIndex > 10_000)) ||
+      (visualEdit.rotation !== undefined &&
+        (typeof visualEdit.rotation !== 'number' || !Number.isFinite(visualEdit.rotation))) ||
+      (visualEdit.flipH !== undefined && typeof visualEdit.flipH !== 'boolean') ||
+      (visualEdit.flipV !== undefined && typeof visualEdit.flipV !== 'boolean') ||
+      !isOptionalString(visualEdit.altText) ||
+      !isOptionalString(visualEdit.hyperlink) ||
+      (visualEdit.editAs !== undefined &&
+        !['twoCell', 'oneCell', 'absolute'].includes(String(visualEdit.editAs))) ||
+      (visualEdit.remove === undefined &&
+        !isRecord(visualEdit.anchor) &&
+        [
+          visualEdit.fillColor,
+          visualEdit.lineColor,
+          visualEdit.zIndex,
+          visualEdit.rotation,
+          visualEdit.flipH,
+          visualEdit.flipV,
+          visualEdit.altText,
+          visualEdit.hyperlink,
+          visualEdit.editAs,
+        ].every((value) => value === undefined))
     ) {
       throw new Error('Invalid workbook visual edit.')
     }
@@ -2112,6 +3000,16 @@ function parseSaveRequest(input: WorkbookSaveRequest): WorkbookSaveRequest {
         end - start >= 100_000 ||
         !isRecord(op.style) ||
         Object.keys(op.style).length === 0
+      ) {
+        throw new Error('Invalid workbook structural operation.')
+      }
+      continue
+    }
+    if ('summaryBelow' in op) {
+      if (
+        op.kind !== 'set-outline-pr' ||
+        typeof op.summaryBelow !== 'boolean' ||
+        typeof op.summaryRight !== 'boolean'
       ) {
         throw new Error('Invalid workbook structural operation.')
       }
@@ -2285,7 +3183,16 @@ function isPdfExportRequest(request: unknown): boolean {
       !isBoundedString(request.footerTemplate, MAX_PDF_TEMPLATE_CHARS)) ||
     (request.firstPage !== undefined && !isPdfPageVariant(request.firstPage)) ||
     (request.evenPages !== undefined && !isPdfPageVariant(request.evenPages)) ||
-    (request.outPath !== undefined && !isBoundedString(request.outPath, 4096))
+    (request.outPath !== undefined && !isBoundedString(request.outPath, 4096)) ||
+    // '' = the system default printer
+    (request.deviceName !== undefined &&
+      (typeof request.deviceName !== 'string' || request.deviceName.length > 255)) ||
+    (request.copies !== undefined &&
+      (typeof request.copies !== 'number' ||
+        !Number.isInteger(request.copies) ||
+        request.copies < 1 ||
+        request.copies > 999)) ||
+    (request.collate !== undefined && typeof request.collate !== 'boolean')
   )
 }
 
@@ -2340,6 +3247,7 @@ function isPageSetupState(input: unknown): boolean {
     'showGridlines',
     'showFormulas',
     'showHeadings',
+    'rightToLeft',
     'fitToPage',
   ]) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') return false
@@ -2456,6 +3364,9 @@ function isStyleEdit(input: unknown): boolean {
         input.numberFormat.length <= 255)) &&
     (input.underlineStyle === undefined ||
       ['single', 'double'].includes(String(input.underlineStyle))) &&
+    (input.vertAlign === undefined ||
+      input.vertAlign === null ||
+      ['superscript', 'subscript'].includes(String(input.vertAlign))) &&
     (input.textRotation === undefined ||
       (typeof input.textRotation === 'number' &&
         Number.isInteger(input.textRotation) &&
@@ -2474,6 +3385,7 @@ function isStyleEdit(input: unknown): boolean {
         'underline',
         'underlineStyle',
         'strikethrough',
+        'vertAlign',
         'fontFamily',
         'fontSize',
         'fontColor',
@@ -2801,6 +3713,52 @@ function parsePivotDefinitionResult(input: unknown): WorkbookPivotDefinition {
   return input as unknown as WorkbookPivotDefinition
 }
 
+/**
+ * Structural check only — the main process zod-validates the full shape, and
+ * the gateway's own parser is what refuses a part it cannot understand. The
+ * three states stay distinct here: an `unreadable` result must not be folded
+ * into an empty state list on the way to the renderer, or a damaged part would
+ * read as "nothing is withheld".
+ */
+function parseWorkbookRedactionsResult(input: unknown): WorkbookRedactionsResult {
+  if (!isRecord(input)) throw new Error('Invalid redaction response.')
+  if (input.status === 'absent') return { status: 'absent' }
+  if (input.status === 'unreadable') {
+    if (typeof input.error !== 'string' || input.error.length === 0) {
+      throw new Error('Invalid redaction response.')
+    }
+    return { status: 'unreadable', error: input.error }
+  }
+  if (input.status !== 'ok' || !Array.isArray(input.states) || input.states.length > 1_000) {
+    throw new Error('Invalid redaction response.')
+  }
+  for (const state of input.states) {
+    if (
+      !isRecord(state) ||
+      typeof state.sheetName !== 'string' ||
+      state.sheetName.length === 0 ||
+      !Array.isArray(state.marks) ||
+      state.marks.length > 100_000
+    ) {
+      throw new Error('Invalid redaction response.')
+    }
+    for (const mark of state.marks) {
+      if (
+        !isRecord(mark) ||
+        typeof mark.startRow !== 'number' ||
+        typeof mark.endRow !== 'number' ||
+        typeof mark.startColumn !== 'number' ||
+        typeof mark.endColumn !== 'number' ||
+        typeof mark.label !== 'string' ||
+        mark.label.length === 0
+      ) {
+        throw new Error('Invalid redaction response.')
+      }
+    }
+  }
+  return input as unknown as WorkbookRedactionsResult
+}
+
 function parseCellStyle(input: unknown): WorkbookCellStyle {
   if (
     !isRecord(input) ||
@@ -2810,6 +3768,11 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     typeof input.strikethrough !== 'boolean' ||
     typeof input.wrapText !== 'boolean' ||
     (input.shrinkToFit !== undefined && typeof input.shrinkToFit !== 'boolean') ||
+    (input.locked !== undefined && typeof input.locked !== 'boolean') ||
+    (input.hidden !== undefined && typeof input.hidden !== 'boolean') ||
+    (input.vertAlign !== undefined &&
+      input.vertAlign !== 'superscript' &&
+      input.vertAlign !== 'subscript') ||
     !isOptionalString(input.fontFamily) ||
     (input.fontSize !== undefined &&
       (typeof input.fontSize !== 'number' ||
@@ -2850,6 +3813,9 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     diagonalUp: input.diagonalUp,
     diagonalDown: input.diagonalDown,
     ...(input.shrinkToFit === undefined ? {} : { shrinkToFit: input.shrinkToFit }),
+    ...(input.locked === undefined ? {} : { locked: input.locked }),
+    ...(input.hidden === undefined ? {} : { hidden: input.hidden }),
+    ...(input.vertAlign === undefined ? {} : { vertAlign: input.vertAlign }),
     ...(input.fontFamily === undefined ? {} : { fontFamily: input.fontFamily }),
     ...(input.fontSize === undefined ? {} : { fontSize: input.fontSize }),
     ...(input.fontColor === undefined ? {} : { fontColor: input.fontColor }),
@@ -2873,6 +3839,65 @@ function parseCellStyle(input: unknown): WorkbookCellStyle {
     ...(borderLeft === undefined ? {} : { borderLeft }),
     ...(borderRight === undefined ? {} : { borderRight }),
     ...(borderDiagonal === undefined ? {} : { borderDiagonal }),
+  }
+}
+
+const SHEET_PROTECTION_ALLOW_KEYS = [
+  'selectLockedCells',
+  'selectUnlockedCells',
+  'formatCells',
+  'formatColumns',
+  'formatRows',
+  'insertColumns',
+  'insertRows',
+  'insertHyperlinks',
+  'deleteColumns',
+  'deleteRows',
+  'sort',
+  'autoFilter',
+  'pivotTables',
+  'objects',
+  'scenarios',
+] as const
+
+function parseSheetProtectionAllow(
+  input: unknown,
+): NonNullable<WorkbookRangeResult['sheetProtection']>['allow'] {
+  if (
+    !isRecord(input) ||
+    SHEET_PROTECTION_ALLOW_KEYS.some((key) => typeof input[key] !== 'boolean')
+  ) {
+    throw new Error('Invalid workbook sheet protection.')
+  }
+  return Object.fromEntries(
+    SHEET_PROTECTION_ALLOW_KEYS.map((key) => [key, input[key] as boolean]),
+  ) as NonNullable<NonNullable<WorkbookRangeResult['sheetProtection']>['allow']>
+}
+
+function parseSheetPasswordHash(
+  input: unknown,
+): NonNullable<WorkbookRangeResult['sheetProtection']>['password'] {
+  if (!isRecord(input)) throw new Error('Invalid workbook sheet protection.')
+  if (typeof input.legacy === 'string' && input.legacy.length > 0 && input.legacy.length <= 8) {
+    return { legacy: input.legacy }
+  }
+  if (
+    typeof input.algorithmName !== 'string' ||
+    input.algorithmName.length === 0 ||
+    input.algorithmName.length > 32 ||
+    typeof input.hashValue !== 'string' ||
+    input.hashValue.length > 1024 ||
+    typeof input.saltValue !== 'string' ||
+    input.saltValue.length > 1024 ||
+    !isNonnegativeInteger(input.spinCount)
+  ) {
+    throw new Error('Invalid workbook sheet protection.')
+  }
+  return {
+    algorithmName: input.algorithmName,
+    hashValue: input.hashValue,
+    saltValue: input.saltValue,
+    spinCount: input.spinCount,
   }
 }
 
@@ -2962,7 +3987,11 @@ function parseVisualObject(input: unknown): WorkbookVisualObject {
       (typeof input.drawingPath !== 'string' ||
         !/^xl\/drawings\/[A-Za-z0-9._/-]+\.xml$/.test(input.drawingPath))) ||
     (input.drawingIndex !== undefined &&
-      (!isNonnegativeInteger(input.drawingIndex) || input.drawingIndex > 10_000))
+      (!isNonnegativeInteger(input.drawingIndex) || input.drawingIndex > 10_000)) ||
+    !isOptionalString(input.altText) ||
+    !isOptionalString(input.hyperlink) ||
+    (input.editAs !== undefined &&
+      !['twoCell', 'oneCell', 'absolute'].includes(String(input.editAs)))
   ) {
     throw new Error('Invalid workbook visual response.')
   }
@@ -3002,6 +4031,11 @@ function parseVisualObject(input: unknown): WorkbookVisualObject {
     ...(input.frameHeight === undefined ? {} : { frameHeight: input.frameHeight }),
     ...(input.drawingPath === undefined ? {} : { drawingPath: input.drawingPath }),
     ...(input.drawingIndex === undefined ? {} : { drawingIndex: input.drawingIndex }),
+    ...(input.altText === undefined ? {} : { altText: input.altText }),
+    ...(input.editAs === undefined
+      ? {}
+      : { editAs: input.editAs as 'twoCell' | 'oneCell' | 'absolute' }),
+    ...(input.hyperlink === undefined ? {} : { hyperlink: input.hyperlink }),
   }
 }
 
@@ -3229,6 +4263,7 @@ function parseChart(input: unknown): NonNullable<WorkbookVisualObject['chart']> 
       (entry.smooth !== undefined && typeof entry.smooth !== 'boolean') ||
       !isOptionalString(entry.marker) ||
       !isOptionalString(entry.plot) ||
+      (entry.secondaryAxis !== undefined && typeof entry.secondaryAxis !== 'boolean') ||
       !isOptionalEnum(entry.dataLabels, CHART_DATA_LABELS)
     ) {
       throw new Error('Invalid workbook chart series.')
@@ -3257,6 +4292,7 @@ function parseChart(input: unknown): NonNullable<WorkbookVisualObject['chart']> 
       ...(entry.smooth === undefined ? {} : { smooth: entry.smooth }),
       ...(entry.marker === undefined ? {} : { marker: entry.marker }),
       ...(entry.plot === undefined ? {} : { plot: entry.plot }),
+      ...(entry.secondaryAxis === undefined ? {} : { secondaryAxis: entry.secondaryAxis }),
       ...(categoryGroups === undefined ? {} : { categoryGroups }),
       ...(entry.dataLabels === undefined ? {} : { dataLabels: entry.dataLabels }),
       ...(pointLabels === undefined ? {} : { pointLabels }),
@@ -3492,6 +4528,11 @@ function isUuid(input: unknown): input is string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input)
   )
 }
+
+const isShapePaint = (value: unknown): boolean =>
+  value === undefined ||
+  value === 'none' ||
+  (typeof value === 'string' && /^#[0-9A-Fa-f]{6}$/.test(value))
 
 function isNonnegativeInteger(input: unknown): input is number {
   return typeof input === 'number' && Number.isInteger(input) && input >= 0

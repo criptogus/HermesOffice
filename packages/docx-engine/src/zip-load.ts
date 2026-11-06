@@ -1,5 +1,25 @@
 import JSZip from 'jszip'
-import { needsOoxmlNormalization, normalizeOoxmlXml } from './ooxml-normalize'
+import {
+  assertDeclaredSizesWithinLimits,
+  assertZipInflatesWithinLimits,
+} from '@hermesoffice/zip-gate'
+import {
+  dedupeStyleRefs,
+  hasDuplicateStyleRefs,
+  needsOoxmlNormalization,
+  normalizeOoxmlXml,
+} from './ooxml-normalize'
+
+// Re-exported for the engine's public API (index.ts) and the CLI's pre-open
+// check: the implementations live in @hermesoffice/zip-gate so the pptx engine
+// and the attachment parsers share one metered-inflation gate (see #759).
+export {
+  assertDeclaredSizesWithinLimits,
+  assertZipInflatesWithinLimits,
+  type DeclaredPart,
+  type ZipLimits,
+} from '@hermesoffice/zip-gate'
+export { DEFAULT_ZIP_LIMITS as DOCX_ZIP_LIMITS } from '@hermesoffice/zip-gate'
 
 const EOCD_SIG = 0x06054b50
 const CENTRAL_SIG = 0x02014b50
@@ -50,45 +70,28 @@ function neutralizeUnicodePathFields(bytes: Uint8Array): Uint8Array {
   return out ?? bytes
 }
 
-/** Shared with the CLI's pre-open check so both layers accept the same files. */
-export const DOCX_ZIP_LIMITS = {
-  maxParts: 10000,
-  maxPartBytes: 512 * 1024 * 1024,
-  maxTotalBytes: 1.5 * 1024 * 1024 * 1024,
-} as const
-const MAX_ZIP_PARTS = DOCX_ZIP_LIMITS.maxParts
-const MAX_PART_UNCOMPRESSED_BYTES = DOCX_ZIP_LIMITS.maxPartBytes
-const MAX_TOTAL_UNCOMPRESSED_BYTES = DOCX_ZIP_LIMITS.maxTotalBytes
-
 /**
- * Reject zip bombs before any part is inflated, using the declared
- * uncompressed sizes from the central directory (JSZip keeps them in
- * the lazy `_data` compressed object).
+ * Cheap fast path: reject zip bombs using the uncompressed sizes the central
+ * directory declares (JSZip keeps them in the lazy `_data` compressed object).
+ *
+ * Advisory only — it costs nothing when the archive tells the truth and nothing
+ * at all when it lies. `assertZipInflatesWithinLimits` is the gate that holds
+ * against a forged declaration.
  */
 export function assertZipWithinLimits(zip: JSZip): void {
   const files = Object.values(zip.files).filter((f) => !f.dir)
-  if (files.length > MAX_ZIP_PARTS) {
-    throw new Error(`docx rejected: ${files.length} parts exceeds the ${MAX_ZIP_PARTS} limit`)
-  }
-  let total = 0
-  for (const file of files) {
-    const size =
-      (file as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0
-    if (size > MAX_PART_UNCOMPRESSED_BYTES) {
-      throw new Error(
-        `docx rejected: part ${file.name} declares ${size} uncompressed bytes ` +
-          `(limit ${MAX_PART_UNCOMPRESSED_BYTES})`,
-      )
-    }
-    if (size > 0) total += size
-  }
-  if (total > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-    throw new Error(
-      `docx rejected: total uncompressed size ${total} exceeds the ` +
-        `${MAX_TOTAL_UNCOMPRESSED_BYTES} limit`,
-    )
-  }
+  assertDeclaredSizesWithinLimits(
+    files.map((file) => ({
+      name: file.name,
+      usize:
+        (file as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0,
+    })),
+  )
 }
+
+/** parts holding paragraphs whose duplicate style refs get collapsed (last wins) */
+const STORY_PART_RE =
+  /^word\/(?:document|header\d*|footer\d*|footnotes|endnotes|comments\w*|glossary\/document)\.xml$/i
 
 // The gate parts carry the strict / non-canonical-prefix markers whenever the
 // package needs normalizing (strict packages are strict in document.xml and
@@ -109,17 +112,25 @@ async function normalizeOoxmlParts(zip: JSZip): Promise<void> {
       break
     }
   }
-  if (!needed) return
   for (const file of Object.values(zip.files)) {
-    if (file.dir || !/\.(xml|rels)$/i.test(file.name)) continue
-    const xml = await file.async('string')
-    if (needsOoxmlNormalization(xml)) zip.file(file.name, normalizeOoxmlXml(xml))
+    if (file.dir) continue
+    const story = STORY_PART_RE.test(file.name)
+    if (!story && (!needed || !/\.(xml|rels)$/i.test(file.name))) continue
+    let xml = await file.async('string')
+    const original = xml
+    if (needed && needsOoxmlNormalization(xml)) xml = normalizeOoxmlXml(xml)
+    if (story && hasDuplicateStyleRefs(xml)) xml = dedupeStyleRefs(xml)
+    if (xml !== original) zip.file(file.name, xml)
   }
 }
 
 /** Load a docx/zip resolving part names the way Word does. */
 export async function loadDocxZip(bytes: Uint8Array): Promise<JSZip> {
-  const zip = await JSZip.loadAsync(neutralizeUnicodePathFields(bytes))
+  const prepared = neutralizeUnicodePathFields(bytes)
+  // Metered inflation first: past this point no part is larger than a limit,
+  // so the inflates normalizeOoxmlParts and every caller perform are bounded.
+  await assertZipInflatesWithinLimits(prepared)
+  const zip = await JSZip.loadAsync(prepared)
   assertZipWithinLimits(zip)
   await normalizeOoxmlParts(zip)
   return zip

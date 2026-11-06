@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // resolve the sibling source packages by path (worktree-safe: a linked
+    // node_modules would otherwise typecheck against another checkout)
+    "paths": {
+      "@hermesoffice/docx-engine": ["../docx-engine/src/index.ts"],
+      "@hermesoffice/pptx-engine": ["../pptx-engine/src/index.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

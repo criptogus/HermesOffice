@@ -40,7 +40,7 @@ test.describe('html editor', () => {
   })
 
   test('opens an .html file from argv, renders it in the preview, edits and saves it back', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'page.html')
     const source =
       '<!doctype html>\n<html>\n<body>\n<h1 class="hero" style="color: rgb(200, 0, 0)">Hello</h1>\n</body>\n</html>\n'
@@ -96,7 +96,7 @@ test.describe('html editor', () => {
   })
 
   test('relative stylesheets and images next to the file load in the preview', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     await writeFile(join(dir, 'site.css'), 'h1 { color: rgb(0, 0, 200); }\n')
     // 1x1 PNG
     const png = Buffer.from(
@@ -160,7 +160,7 @@ test.describe('html editor', () => {
   })
 
   test('saving without edits keeps BOM, CRLF and the missing trailing newline byte-identical', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'legacy.htm')
     const source = '﻿<html>\r\n<body>\r\n<p>café &amp; <b>bold</p>\r\n</body>\r\n</html>'
     await writeFile(htmlPath, source, 'utf8')
@@ -185,7 +185,7 @@ test.describe('html editor', () => {
   })
 
   test('AI panel toggles from the toolbar and accepts an instruction', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'ai.html')
     await writeFile(htmlPath, '<html><body><h1>Topic</h1><p>Body.</p></body></html>\n')
 
@@ -217,7 +217,7 @@ test.describe('html editor', () => {
 
       const composer = editorPage.locator('.copilot textarea')
       // a pasted bitmap becomes an image attachment chip; sending echoes it on the bubble
-      await expect(editorPage.locator('.copilot .ai-attach-btn')).toBeVisible()
+      await expect(editorPage.locator('.copilot .ai-plus-btn')).toBeVisible()
       await composer.evaluate((ta) => {
         const b64 =
           'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP4z8DwHwyBNAMDAB9dB/8dB8xVAAAAAElFTkSuQmCC'
@@ -270,7 +270,7 @@ test.describe('html editor', () => {
   })
 
   test('preview inspector: click selects, double-click edits text, toolbar deletes, Ask AI drafts', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'inspect.html')
     const source =
       '<!doctype html>\n<html>\n<body>\n<section class="hero">\n  <h1 id="title">Hello</h1>\n  <p class="lead">First line.</p>\n  <p class="note">Second line.</p>\n</section>\n</body>\n</html>\n'
@@ -442,7 +442,7 @@ test.describe('html editor', () => {
   })
 
   test('Ctrl+Z inside the preview undoes the last edit; pinch over the frame zooms the stage', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'undo.html')
     await writeFile(
       htmlPath,
@@ -496,7 +496,7 @@ test.describe('html editor', () => {
   })
 
   test('Ctrl+F searches the source pane and Replace All saves the rewritten markup', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'genoffice-html-'))
+    const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-html-'))
     const htmlPath = join(dir, 'find.html')
     const source =
       '<!doctype html>\n<html>\n<body>\n<h1>Alpha</h1>\n<p>alpha and alpha</p>\n</body>\n</html>\n'

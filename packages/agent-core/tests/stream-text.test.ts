@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AgentStreamCallbacks, AgentTransport } from '../src/types'
 import { streamText } from '../src/stream-text'
 
@@ -157,6 +157,67 @@ describe('streamText', () => {
     expect(await promise).toEqual({ status: 'partial', text: 'first', reason: 'stopped' })
     expect(cancelled).toBe(true)
     expect(progress).toEqual(['first'])
+  })
+
+  it('does not start the transport when the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let starts = 0
+    const outcome = await streamText({
+      transport: {
+        stream: () => {
+          starts += 1
+          return { cancel: () => undefined }
+        },
+      },
+      system: 's',
+      user: 'u',
+      signal: controller.signal,
+      maxChars: 1000,
+      extract: passthrough,
+    })
+    expect(starts).toBe(0)
+    expect(outcome).toEqual({ status: 'empty', error: 'stopped' })
+  })
+
+  it('settles the stopped outcome before canceling the transport', async () => {
+    const controller = new AbortController()
+    const promise = streamText({
+      transport: {
+        stream: (_req, cb) => {
+          cb.onDelta('first')
+          return { cancel: () => cb.onDone() }
+        },
+      },
+      system: 's',
+      user: 'u',
+      signal: controller.signal,
+      maxChars: 1000,
+      extract: passthrough,
+    })
+    controller.abort()
+    expect(await promise).toEqual({ status: 'partial', text: 'first', reason: 'stopped' })
+  })
+
+  it('does not register an abort listener after synchronous completion', async () => {
+    const controller = new AbortController()
+    const addEventListener = vi.spyOn(controller.signal, 'addEventListener')
+    const outcome = await streamText({
+      transport: {
+        stream: (_req, cb) => {
+          cb.onStopReason?.('end_turn')
+          cb.onDone()
+          return { cancel: () => undefined }
+        },
+      },
+      system: 's',
+      user: 'u',
+      signal: controller.signal,
+      maxChars: 1000,
+      extract: passthrough,
+    })
+    expect(outcome).toEqual({ status: 'empty', error: 'empty reply' })
+    expect(addEventListener).not.toHaveBeenCalled()
   })
 
   it('the size cap cancels the stream and reports max_tokens', async () => {

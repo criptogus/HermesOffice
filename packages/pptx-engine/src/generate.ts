@@ -10,11 +10,14 @@
  *     (b/i/u/sz + solidFill color).
  *   - Untouched bytes (bodyPr/spPr/geometry/placeholder attributes…) are kept verbatim.
  *
- * If the model's run count doesn't match the original XML's <a:r> count (runs
- * added/removed / paragraph structure changed), fall back to the
- * "rebuild txBody per paragraph" path (still keeping outer bytes like spPr where
- * possible). The Phase 3 editor uses the former (lossless) when only text and
- * formatting change without structural edits; structural changes use the latter.
+ * If the model's run count doesn't match the original XML's <a:r> count, or any
+ * paragraph's run count differs (runs added/removed / paragraph structure
+ * changed), fall back to the "rebuild txBody per paragraph" path (still keeping
+ * outer bytes like spPr where possible). A text edit whose traced paragraph/run
+ * moved (element.textMoved) also rebuilds: the in-place patch would keep the
+ * attributes of the old run now at that position. The Phase 3 editor uses the
+ * former (lossless) when only text and formatting change in place; structural or
+ * reordered edits use the latter.
  */
 import type {
   SlideElement,
@@ -27,6 +30,7 @@ import type {
   PPrDirty,
 } from './types'
 import { escapeXmlText, escapeXmlAttr } from './xml-utils'
+import { hasRedactExtIn, redactExtXml, syncRedactExt } from './redaction-xml'
 
 type BulletModel = NonNullable<Paragraph['bullet']>
 /** buSzPts wins over buSzPct (both never round-trip together). */
@@ -53,15 +57,34 @@ function bulletGlyphXml(b: BulletModel): string {
  */
 export function patchTextElementXml(el: TextElement, originalXml: string): string {
   if (!el.text || !el.text.paragraphs.length) return originalXml
+  // The in-place patch writes each run into the old run at the same position; when a
+  // traced paragraph/run moved, that position holds another run's attributes, so the
+  // model's own paragraphs are rebuilt from their traced runs instead.
+  if (el.textMoved) return rebuildTxBody(el, originalXml)
 
+  const modelParagraphs = el.text.paragraphs
   // Collect all model runs (flattened across paragraphs, incl. "\n" soft-break sentinels),
   // one-to-one with the original XML's <a:r>/<a:br> sequence (parse rewrites <a:br/>
   // as a sentinel run, order preserved)
-  const modelRuns: TextRun[] = el.text.paragraphs.flatMap((p) => p.runs)
+  const modelRuns: TextRun[] = modelParagraphs.flatMap((p) => p.runs)
   const runSpans = findRunSpans(originalXml)
+
+  // The flattened count can line up while the paragraph layout differs (4 one-run
+  // paragraphs vs 2 two-run paragraphs = 4 runs either way); each model run must stay in
+  // its own original paragraph or every run lands in the first <a:p>. Require the
+  // paragraph count and every paragraph's run count to match before patching in place.
+  const paragraphSpans = findParagraphSpans(originalXml)
+  const paragraphsAligned =
+    paragraphSpans.length === modelParagraphs.length &&
+    paragraphSpans.every(
+      (span, index) =>
+        findRunSpans(originalXml.slice(span.start, span.end)).length ===
+        modelParagraphs[index]!.runs.length,
+    )
 
   // Count and kind aligned position by position (sentinel ⇔ <a:br>) → lossless in-place patch of each run, br bytes untouched
   const aligned =
+    paragraphsAligned &&
     runSpans.length === modelRuns.length &&
     runSpans.length > 0 &&
     runSpans.every((s, i) => (s.kind === 'br' || !!s.newlineOnly) === isSoftBreakRun(modelRuns[i]!))
@@ -306,10 +329,16 @@ export function szAttr(pt: number): string {
 export function clampInt(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(Number.isFinite(v) ? v : min)))
 }
-/** ST_Coordinate / ST_PositiveCoordinate ceiling (EMU). */
-const COORD_MAX = 27273042316900
-const emuAttr = (v: number) => String(clampInt(v, -COORD_MAX, COORD_MAX))
-const posEmuAttr = (v: number) => String(clampInt(v, 0, COORD_MAX))
+/** ST_Coordinate / ST_PositiveCoordinate ceiling (EMU). Exported so the read path
+ *  (parse.ts) can bound a group's child-to-parent scale by the same range the write
+ *  path emits coordinates in. */
+export const COORD_MAX = 27273042316900
+// The numeric clamps are exported so the insert builders size their grids from
+// the same bounds their a:off/a:ext attributes are written with.
+export const clampEmu = (v: number): number => clampInt(v, -COORD_MAX, COORD_MAX)
+export const clampPosEmu = (v: number): number => clampInt(v, 0, COORD_MAX)
+const emuAttr = (v: number) => String(clampEmu(v))
+const posEmuAttr = (v: number) => String(clampPosEmu(v))
 const angleAttr = (v: number) => String(clampInt(v, -2147483648, 2147483647))
 const spcPtsXml = (pt: number) => `<a:spcPts val="${clampInt(pt * 100, 0, 158400)}"/>`
 const spcPctXml = (pct: number) => `<a:spcPct val="${clampInt(pct * 1000, 0, 13200000)}"/>`
@@ -409,6 +438,15 @@ function patchRunProps(runXml: string, run: TextRun): string {
       runXml = patchRunFont(runXml, run.fontFamily)
     }
     runXml = patchRunHlink(runXml, run)
+    // "Withheld from the model" is not one of the attributes patched above, so an
+    // existing mark would be left alone here — which is right for an untouched
+    // run. Apply or clear it when the model disagrees, otherwise clearing a mark
+    // in the editor would silently keep withholding the words on disk.
+    if (run.redact) {
+      runXml = syncRedactExt(runXml, 'a:rPr', run.redact)
+    } else if (hasRedactExtIn(runXml)) {
+      runXml = syncRedactExt(runXml, 'a:rPr')
+    }
   } else {
     // No rPr: inject a minimal rPr after <a:r> (no font slots injected when the font is untouched,
     // so inheritance applies)
@@ -799,6 +837,11 @@ export function generateParagraphXml(p: Paragraph): string {
     pPrAttrs.push(`indent="${clampInt(p.indent, -51206400, 51206400)}"`)
   if (p.align && want('align')) pPrAttrs.push(`algn="${alignMap[p.align]}"`)
   if (p.rtl != null) pPrAttrs.push(`rtl="${p.rtl ? 1 : 0}"`)
+  if (p.eaLnBrk != null && want('eaLnBrk')) pPrAttrs.push(`eaLnBrk="${p.eaLnBrk ? 1 : 0}"`)
+  if (p.latinLnBrk != null && want('latinLnBrk'))
+    pPrAttrs.push(`latinLnBrk="${p.latinLnBrk ? 1 : 0}"`)
+  if (p.hangingPunct != null && want('hangingPunct'))
+    pPrAttrs.push(`hangingPunct="${p.hangingPunct ? 1 : 0}"`)
   if (p.level) pPrAttrs.push(`lvl="${p.level}"`)
 
   // CT_TextParagraphProperties child order: lnSpc → spcBef → spcAft → buClr → buSzPct → buFont → bu*
@@ -905,12 +948,18 @@ function generateRunXml(r: TextRun): string {
         : ''
   // Run-level hyperlink: rId written back (allocated by ensureRunLinkRels for links set this session)
   const hlink = hlinkXml(r)
+  // "Withheld from the model" rides in the OOXML extension list, which the schema
+  // requires to be the last child. rebuildTxBody regenerates rPr from the model
+  // alone, so this is the only place the mark can come back on that path.
+  const redact = r.redact ? redactExtXml(r.redact) : ''
   const rprInner = ln + color + highlight + font + hlink
-  const rPr = rprInner
-    ? `<a:rPr${attrs}>${rprInner}</a:rPr>`
-    : attrs
-      ? `<a:rPr${attrs}/>`
-      : '<a:rPr/>'
+  const rPr = redact
+    ? `<a:rPr${attrs}>${rprInner}<a:extLst>${redact}</a:extLst></a:rPr>`
+    : rprInner
+      ? `<a:rPr${attrs}>${rprInner}</a:rPr>`
+      : attrs
+        ? `<a:rPr${attrs}/>`
+        : '<a:rPr/>'
   // Dynamic fields (slide number/date): <a:fld> has the same structure as <a:r>, text is the cached value, refreshed when PowerPoint opens
   if (r.field) {
     return (

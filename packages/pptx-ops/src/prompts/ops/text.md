@@ -58,7 +58,7 @@ Related: `setFont` (restyle without changing the words), `setTableCell` (table c
 
 ### setFont
 
-`{font:{fontFamily?,fontSizePt?,bold?,italic?,underline?,strike?,color?}} — merges onto every run of the element`
+`{font:{fontFamily?,fontSizePt?,fontSizeStep?,bold?,italic?,underline?,strike?,color?}} — merges onto every run of the element`
 
 Applies the given properties to every run of the element (or every cell of a
 table) and leaves everything else untouched. Use it for "make the title blue
@@ -68,6 +68,7 @@ and bold" style requests; use `setText` when the words change.
 | ------------------------------------ | ----------- | ---------------------------------------------- |
 | font.fontFamily                      | string      | Omit to keep the theme font (recommended)      |
 | font.fontSizePt                      | number > 0  | Points                                         |
+| font.fontSizeStep                    | {dir, mode} | Relative per run: 'ladder' rung or 'point' ±1  |
 | font.bold, italic, underline, strike | boolean     | Only the keys you pass change                  |
 | font.color                           | `"#RRGGBB"` | Explicit color; clears theme-color inheritance |
 | group                                | string      | Only for a direct child of a group             |
@@ -131,7 +132,7 @@ Common mistakes
 Adds a typeset equation (PowerPoint's own math format) as a centered paragraph
 at the `position` (`"end"`, default, or `"start"`) of a text or shape element,
 or in a new text box at `box` (EMU, unit suffixes allowed). Older readers and
-the GenOffice preview show the linearized text (`E=mc²`); PowerPoint 2010+
+the HermesOffice preview show the linearized text (`E=mc²`); PowerPoint 2010+
 renders the formula. LaTeX subset: `\frac`, `\sqrt[n]`, `^`, `_`,
 `\sum`/`\int`/`\prod` with limits, `\left(` `\right)`, matrices, Greek
 letters, accents, `\text{}`.

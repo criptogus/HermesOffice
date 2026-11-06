@@ -20,7 +20,7 @@ export type PdfViewState = {
 
 type StoredEntry = PdfViewState & { at: number }
 
-export const VIEW_STATE_KEY = 'genoffice-pdf-view-state'
+export const VIEW_STATE_KEY = 'hermesoffice-pdf-view-state'
 export const MAX_VIEW_ENTRIES = 100
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>

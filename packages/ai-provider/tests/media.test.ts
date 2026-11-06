@@ -38,6 +38,29 @@ function openaiSettings(apiKey = 'sk-test', imageModel = 'gpt-image-2'): AiSetti
 }
 
 describe('media settings', () => {
+  // Ark model list 2026-10-12: Seedream 5.0 is a pro/flash pair, and both
+  // 4.5 and 4.0 are flagged for retirement there. Pinned so a future edit
+  // cannot quietly put a retired ID back or drop a live one.
+  it('offers only Seedream IDs the Ark list still serves', () => {
+    const doubao = AI_MEDIA_PROVIDERS.find((p) => p.id === 'doubao')!
+    expect(doubao.imageModels).toEqual([
+      'doubao-seedream-5-0-pro-260628',
+      'doubao-seedream-5-0-flash-260915',
+      'doubao-seedream-5-0-260128',
+    ])
+    expect(doubao.defaultImageModel).toBe('doubao-seedream-5-0-pro-260628')
+  })
+
+  // the settings UI seeds imageModel from defaultImageModel and offers
+  // imageModels; a default outside its own list is a value the user cannot
+  // pick back
+  it('never defaults a provider to a model its own list does not offer', () => {
+    for (const meta of AI_MEDIA_PROVIDERS) {
+      if (!meta.imageModels.length) continue
+      expect(meta.imageModels).toContain(meta.defaultImageModel)
+    }
+  })
+
   it('defaults every provider to its default models and genspark as the active one', () => {
     const media = defaultAiMediaSettings()
     expect(media.imageProvider).toBe('genspark')
@@ -92,6 +115,17 @@ describe('media settings', () => {
     expect(media.providers.openai.imageModel).toBe('gpt-image-2')
   })
 
+  it('tolerates non-string values in a hand-edited settings file', () => {
+    const media = resolveAiMediaSettings({
+      providers: {
+        openai: { apiKey: 123, baseUrl: null, imageModel: 42, analysisModel: {} },
+      },
+    } as never)
+    expect(media.providers.openai.apiKey).toBe('')
+    expect(media.providers.openai.baseUrl).toBe('')
+    expect(media.providers.openai.imageModel).toBe('gpt-image-2')
+  })
+
   it('activates a BYOK media provider per capability, only when usable and capable', () => {
     expect(activeMediaProvider(openaiSettings(), 'image')).toBe('openai')
     expect(activeMediaProvider(openaiSettings(), 'analysis')).toBe('openai')
@@ -104,11 +138,20 @@ describe('media settings', () => {
     expect(activeMediaProvider(withMedia(custom), 'image')).toBe('custom')
     expect(activeMediaProvider(withMedia(custom), 'analysis')).toBe('genspark')
     expect(activeMediaConfig(withMedia(custom), 'image')?.provider).toBe('custom')
-    // MiniMax has no analysis endpoint: picking it for analysis falls back
+    // MiniMax-M3 supports both image and video analysis
     const mm = defaultAiMediaSettings()
     mm.analysisProvider = 'minimax'
     mm.providers.minimax.apiKey = 'k'
-    expect(activeMediaProvider(withMedia(mm), 'analysis')).toBe('genspark')
+    expect(activeMediaProvider(withMedia(mm), 'analysis')).toBe('minimax')
+    mm.videoAnalysisProvider = 'minimax'
+    expect(activeMediaProvider(withMedia(mm), 'video')).toBe('minimax')
+    // DeepSeek reads images (V4.1 Flash vision) but takes no video
+    const ds = defaultAiMediaSettings()
+    ds.analysisProvider = 'deepseek'
+    ds.providers.deepseek.apiKey = 'sk-ds'
+    expect(activeMediaProvider(withMedia(ds), 'analysis')).toBe('deepseek')
+    ds.videoAnalysisProvider = 'deepseek'
+    expect(activeMediaProvider(withMedia(ds), 'video')).toBe('genspark')
     // OpenAI reads images but not video: as the video provider it falls back
     const oa = openaiSettings()
     oa.media!.videoAnalysisProvider = 'openai'
@@ -503,6 +546,32 @@ describe('analyzeMediaWithProvider', () => {
     expect(body.contents[0].parts[0].inline_data.mime_type).toBe('video/mp4')
     expect(body.contents[0].parts[1].text).toBe('summarize')
   })
+
+  it('posts DeepSeek V4.1 Flash images to the direct API and rejects video', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ choices: [{ message: { content: 'a logo' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const config = { apiKey: 'sk-ds', imageModel: '', analysisModel: 'deepseek-flash' }
+    const text = await analyzeMediaWithProvider('deepseek', config, {
+      media: [{ bytes: PNG, mime: 'image/png' }],
+      requirements: 'what is this',
+    })
+    expect(text).toBe('a logo')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.deepseek.com/v1/chat/completions')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer sk-ds')
+    const body = JSON.parse(init.body as string)
+    expect(body.model).toBe('deepseek-flash')
+    expect(body.messages[0].content[1].image_url.url).toBe(`data:image/png;base64,${PNG_B64}`)
+    await expect(
+      analyzeMediaWithProvider('deepseek', config, {
+        media: [{ bytes: PNG, mime: 'video/mp4', name: 'clip.mp4' }],
+        requirements: 'summarize',
+      }),
+    ).rejects.toThrow(/video and audio analysis needs/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('testMediaProvider', () => {
@@ -526,5 +595,523 @@ describe('testMediaProvider', () => {
     })
     expect(failed.ok).toBe(false)
     expect(failed.error).toMatch(/403/)
+  })
+})
+
+describe('endpoint composition with a query string in the base URL', () => {
+  it('BFL probes with x-key against credits and fails on an unauthenticated response', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ detail: 'Not authenticated' }, 403))
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await testMediaProvider('bfl', {
+      apiKey: 'k',
+      imageModel: '',
+      analysisModel: '',
+    })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/403/)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.bfl.ai/v1/credits')
+    expect((init.headers as Record<string, string>)['x-key']).toBe('k')
+  })
+
+  it('BFL accepts only a 200 from the credits probe', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ credits: 12.5 })),
+    )
+    const ok = await testMediaProvider('bfl', {
+      apiKey: 'good',
+      imageModel: '',
+      analysisModel: '',
+    })
+    expect(ok).toEqual({ ok: true })
+    // a malformed key is rejected with 422, which is not a valid-key answer
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ detail: 'Invalid API key format' }, 422)),
+    )
+    const rejected = await testMediaProvider('bfl', {
+      apiKey: 'bad',
+      imageModel: '',
+      analysisModel: '',
+    })
+    expect(rejected.ok).toBe(false)
+    expect(rejected.error).toMatch(/422/)
+  })
+
+  it('Microsoft probes with api-key so a bad key fails instead of passing as 404', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'unauthorized' }, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await testMediaProvider('microsoft', {
+      apiKey: 'bad',
+      baseUrl: 'https://res.services.ai.azure.com',
+      imageModel: '',
+      analysisModel: '',
+    })
+    expect(res.ok).toBe(false)
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect(headers['api-key']).toBe('bad')
+    expect(headers.authorization).toBeUndefined()
+  })
+
+  /** gateway-style base: a path prefix and a pinned query parameter */
+  const queryBase = 'https://gw.example.com/v1?key=abc'
+
+  it('keeps the query when appending the images path to a custom base', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: PNG_B64 }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'custom',
+      { apiKey: '', baseUrl: queryBase, imageModel: 'flux', analysisModel: '' },
+      { prompt: 'a cat' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/v1/images/generations?key=abc',
+    )
+  })
+
+  it('keeps the query when appending the chat path to a custom base', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await analyzeMediaWithProvider(
+      'custom',
+      { apiKey: '', baseUrl: queryBase, imageModel: '', analysisModel: 'vision-1' },
+      { media: [{ bytes: PNG, mime: 'image/png' }], requirements: 'describe' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/v1/chat/completions?key=abc',
+    )
+  })
+
+  it('appends the path of a trailing-slash base without query (unchanged)', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: PNG_B64 }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'custom',
+      { apiKey: '', baseUrl: 'http://localhost:1234/v1/', imageModel: 'flux', analysisModel: '' },
+      { prompt: 'a cat' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'http://localhost:1234/v1/images/generations',
+    )
+  })
+
+  it('rides the compatible-mode suffix on the path, keeping the query (qwen chat)', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await analyzeMediaWithProvider(
+      'qwen',
+      {
+        apiKey: 'k',
+        baseUrl: 'https://gw.example.com/ds?key=abc',
+        imageModel: '',
+        analysisModel: 'qwen3-vl-plus',
+      },
+      { media: [{ bytes: PNG, mime: 'image/png' }], requirements: 'describe' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/ds/compatible-mode/v1/chat/completions?key=abc',
+    )
+  })
+
+  it('builds the DashScope generation URL on the path, keeping the query (qwen image)', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('multimodal-generation')
+        ? jsonResponse({
+            output: {
+              choices: [{ message: { content: [{ image: 'https://oss.example/q.png' }] } }],
+            },
+          })
+        : new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'qwen',
+      {
+        apiKey: 'k',
+        baseUrl: 'https://gw.example.com/ds?key=abc',
+        imageModel: 'qwen-image-plus',
+        analysisModel: '',
+      },
+      { prompt: 'a fox' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/ds/api/v1/services/aigc/multimodal-generation/generation?key=abc',
+    )
+  })
+
+  it('reduces a pasted compatible-mode URL that carries a query to the DashScope root', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('multimodal-generation')
+        ? jsonResponse({
+            output: {
+              choices: [{ message: { content: [{ image: 'https://oss.example/q.png' }] } }],
+            },
+          })
+        : new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'qwen',
+      {
+        apiKey: 'k',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1?x=1',
+        imageModel: 'qwen-image-plus',
+        analysisModel: '',
+      },
+      { prompt: 'a fox' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation?x=1',
+    )
+  })
+
+  it('keeps the query when composing the Gemini generateContent URL', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        candidates: [
+          { content: { parts: [{ inlineData: { mimeType: 'image/png', data: PNG_B64 } }] } },
+        ],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'gemini',
+      {
+        apiKey: 'AIza',
+        baseUrl: 'https://gw.example.com/v1beta?key=abc',
+        imageModel: 'gemini-3.1-flash-image',
+        analysisModel: '',
+      },
+      { prompt: 'a dog' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=abc',
+    )
+  })
+
+  it('keeps the query when composing the Gemini inline-analysis URL', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ candidates: [{ content: { parts: [{ text: 'a cat' }] } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await analyzeMediaWithProvider(
+      'gemini',
+      {
+        apiKey: 'AIza',
+        baseUrl: 'https://gw.example.com/v1beta?key=abc',
+        imageModel: '',
+        analysisModel: 'gemini-3.8-flash',
+      },
+      { media: [{ bytes: PNG, mime: 'image/png' }], requirements: 'describe' },
+    )
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://gw.example.com/v1beta/models/gemini-3.8-flash:generateContent?key=abc',
+    )
+  })
+
+  it('uploads through the Files API on the path and keeps the query for oversized media', async () => {
+    // one byte over the inline cap forces the Files API route
+    const huge = new Uint8Array(18 * 1024 * 1024 + 1)
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/upload/session')) {
+        return jsonResponse({
+          file: { state: 'ACTIVE', uri: 'https://files.example/1', mimeType: 'video/mp4' },
+        })
+      }
+      if (url.includes('/upload/')) {
+        return new Response('', {
+          status: 200,
+          headers: { 'x-goog-upload-url': 'https://gw.example.com/upload/session?up=1' },
+        })
+      }
+      return jsonResponse({ candidates: [{ content: { parts: [{ text: 'a summary' }] } }] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const text = await analyzeMediaWithProvider(
+      'gemini',
+      {
+        apiKey: 'AIza',
+        baseUrl: 'https://gw.example.com/v1beta?key=abc',
+        imageModel: '',
+        analysisModel: 'gemini-3.8-flash',
+      },
+      { media: [{ bytes: huge, mime: 'video/mp4', name: 'clip.mp4' }], requirements: 'summarize' },
+    )
+    expect(text).toBe('a summary')
+    const urls = fetchMock.mock.calls.map((c) => (c as unknown as [string])[0])
+    expect(urls[0]).toBe('https://gw.example.com/upload/v1beta/files?key=abc')
+    expect(urls[1]).toBe('https://gw.example.com/upload/session?up=1')
+    expect(urls[2]).toBe(
+      'https://gw.example.com/v1beta/models/gemini-3.8-flash:generateContent?key=abc',
+    )
+  })
+})
+
+describe('a failed media request does not buffer the whole error body', () => {
+  /** an error body far larger than any diagnostic needs; counts what the reader pulls */
+  function hugeErrorBody(): { response: Response; pulled: () => number } {
+    const chunk = new TextEncoder().encode('x'.repeat(64 * 1024))
+    const chunks = 64
+    let sent = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= chunks) return controller.close()
+        sent += 1
+        controller.enqueue(chunk)
+      },
+    })
+    return {
+      response: new Response(body, { status: 500 }),
+      pulled: () => sent * chunk.byteLength,
+    }
+  }
+
+  it('reads only the diagnostic prefix of an analysis failure', async () => {
+    const { response, pulled } = hugeErrorBody()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response),
+    )
+    await expect(
+      analyzeMediaWithProvider(
+        'openai',
+        { apiKey: 'sk', imageModel: '', analysisModel: 'gpt-5.6-luna' },
+        { media: [{ bytes: PNG, mime: 'image/png', name: 'logo.png' }], requirements: 'describe' },
+      ),
+    ).rejects.toThrow(/Media analysis failed: 500/)
+    // httpBodyDetail keeps 500 characters; the rest of the 4 MB body is never buffered
+    expect(pulled()).toBeLessThanOrEqual(128 * 1024)
+  })
+
+  it('reads only the diagnostic prefix of a credential-test failure', async () => {
+    const { response, pulled } = hugeErrorBody()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response),
+    )
+    const failed = await testMediaProvider('openai', {
+      apiKey: 'sk',
+      imageModel: '',
+      analysisModel: '',
+    })
+    expect(failed.ok).toBe(false)
+    expect(failed.error).toMatch(/500/)
+    expect(pulled()).toBeLessThanOrEqual(128 * 1024)
+  })
+})
+describe('generateImageWithProvider (stability & bfl)', () => {
+  const cfg = (imageModel: string, baseUrl?: string) => ({
+    apiKey: 'k',
+    imageModel,
+    analysisModel: '',
+    ...(baseUrl ? { baseUrl } : {}),
+  })
+  const pngResponse = () =>
+    new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('Stability: multipart to the model endpoint, image bytes back', async () => {
+    const fetchMock = vi.fn(async () => pngResponse())
+    vi.stubGlobal('fetch', fetchMock)
+    const out = await generateImageWithProvider('stability', cfg('stable-image-ultra'), {
+      prompt: 'a fox',
+      aspectRatio: '16:9',
+    })
+    expect(out.mime).toBe('image/png')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.stability.ai/v2beta/stable-image/generate/ultra')
+    expect((init.headers as Record<string, string>).Accept).toBe('image/*')
+    const form = init.body as FormData
+    expect(form.get('prompt')).toBe('a fox')
+    expect(form.get('output_format')).toBe('png')
+    expect(form.get('aspect_ratio')).toBe('16:9')
+    expect(form.get('model')).toBeNull()
+  })
+
+  it('Stability: an sd3.5 id rides the sd3 endpoint with a model field; unknown ids refuse', async () => {
+    const fetchMock = vi.fn(async () => pngResponse())
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider('stability', cfg('sd3.5-large'), { prompt: 'a fox' })
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.stability.ai/v2beta/stable-image/generate/sd3')
+    expect((init.body as FormData).get('model')).toBe('sd3.5-large')
+    await expect(
+      generateImageWithProvider('stability', cfg('sd-1.x'), { prompt: 'x' }),
+    ).rejects.toThrow(/Unknown Stability/)
+  })
+
+  it('BFL: submit, poll to Ready, download the sample', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith('/v1/flux-2-pro')
+        ? jsonResponse({ id: 'job-1', polling_url: 'https://api.bfl.ai/v1/get_result?id=job-1' })
+        : url.includes('get_result')
+          ? jsonResponse({ status: 'Ready', result: { sample: 'https://cdn.bfl.example/out.png' } })
+          : pngResponse(),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const out = await generateImageWithProvider('bfl', cfg('flux-2-pro'), {
+      prompt: 'a fox',
+      aspectRatio: '9:16',
+    })
+    expect(out.mime).toBe('image/png')
+    const [submitUrl, submitInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(submitUrl).toBe('https://api.bfl.ai/v1/flux-2-pro')
+    expect((submitInit.headers as Record<string, string>)['x-key']).toBe('k')
+    // FLUX.2 Pro takes width/height, not aspect_ratio
+    expect(JSON.parse(submitInit.body as string)).toEqual({
+      prompt: 'a fox',
+      width: 576,
+      height: 1024,
+    })
+    const pollInit = fetchMock.mock.calls[1] as unknown as [string, RequestInit]
+    expect(pollInit[0]).toBe('https://api.bfl.ai/v1/get_result?id=job-1')
+    expect((pollInit[1].headers as Record<string, string>)['x-key']).toBe('k')
+    expect(fetchMock.mock.calls[2]![0]).toBe('https://cdn.bfl.example/out.png')
+  })
+
+  it('BFL: a moderated or errored job surfaces as a failure', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith('/v1/flux-2-pro')
+        ? jsonResponse({ id: 'job-1', polling_url: 'https://api.bfl.ai/v1/get_result?id=job-1' })
+        : jsonResponse({ status: 'Content Moderated' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      generateImageWithProvider(
+        'bfl',
+        { apiKey: 'k', baseUrl: 'https://api.bfl.ai', imageModel: 'flux-2-pro', analysisModel: '' },
+        { prompt: 'a fox' },
+      ),
+    ).rejects.toThrow(/Content Moderated/)
+    await expect(
+      generateImageWithProvider('bfl', cfg('flux-2-pro'), {
+        prompt: 'x',
+        references: [{ bytes: PNG, mime: 'image/png' }],
+      }),
+    ).rejects.toThrow(/cannot edit/)
+  })
+
+  it('BFL: a non-OK poll response fails instead of polling until the timeout', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith('/v1/flux-2-pro')
+        ? jsonResponse({ id: 'job-1', polling_url: 'https://api.bfl.ai/v1/get_result?id=job-1' })
+        : jsonResponse({ detail: 'Not authenticated' }, 401),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      generateImageWithProvider('bfl', cfg('flux-2-pro'), { prompt: 'a fox' }),
+    ).rejects.toThrow(/401/)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+describe('generateImageWithProvider (mai)', () => {
+  const cfg = (imageModel: string) => ({
+    apiKey: 'k',
+    imageModel,
+    analysisModel: '',
+    baseUrl: 'https://res.services.ai.azure.com',
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('generations: JSON to /mai/v1/images/generations with the api-key header and a pixel size', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: PNG_B64 }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const out = await generateImageWithProvider('microsoft', cfg('MAI-Image-2.6'), {
+      prompt: 'a fox',
+      aspectRatio: '16:9',
+    })
+    expect(out.mime).toBe('image/png')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://res.services.ai.azure.com/mai/v1/images/generations')
+    expect((init.headers as Record<string, string>)['api-key']).toBe('k')
+    expect(JSON.parse(init.body as string)).toEqual({
+      model: 'MAI-Image-2.6',
+      prompt: 'a fox',
+      width: 1344,
+      height: 768,
+    })
+  })
+
+  it('edits: references ride /mai/v1/images/edits as repeated image fields; over five refuses', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: PNG_B64 }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider('microsoft', cfg('MAI-Image-2.6'), {
+      prompt: 'combine',
+      references: [
+        { bytes: PNG, mime: 'image/png', name: 'a.png' },
+        { bytes: PNG, mime: 'image/png', name: 'b.png' },
+      ],
+    })
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://res.services.ai.azure.com/mai/v1/images/edits')
+    expect((init.headers as Record<string, string>)['api-key']).toBe('k')
+    const form = init.body as FormData
+    expect(form.get('model')).toBe('MAI-Image-2.6')
+    expect(form.get('prompt')).toBe('combine')
+    expect(form.getAll('image')).toHaveLength(2)
+    await expect(
+      generateImageWithProvider('microsoft', cfg('MAI-Image-2.6'), {
+        prompt: 'x',
+        references: Array.from({ length: 6 }, () => ({ bytes: PNG, mime: 'image/png' })),
+      }),
+    ).rejects.toThrow(/at most 5/)
+  })
+
+  it('an unmapped or auto aspect ratio omits width/height and the service picks its default', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: PNG_B64 }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider('microsoft', cfg('MAI-Image-2.5'), {
+      prompt: 'a fox',
+      aspectRatio: '21:9',
+    })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ model: 'MAI-Image-2.5', prompt: 'a fox' })
+  })
+
+  it('BFL: FLUX 3 Image keeps aspect_ratio, and a Failed job is terminal', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith('/v1/flux-3-image')
+        ? jsonResponse({ id: 'job-2', polling_url: 'https://api.bfl.ai/v1/get_result?id=job-2' })
+        : url.includes('get_result')
+          ? jsonResponse({
+              status: 'Ready',
+              result: { sample: 'https://cdn.bfl.example/flux3.png' },
+            })
+          : new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await generateImageWithProvider(
+      'bfl',
+      { apiKey: 'k', baseUrl: 'https://api.bfl.ai', imageModel: 'flux-3-image', analysisModel: '' },
+      {
+        prompt: 'a fox',
+        aspectRatio: '16:9',
+      },
+    )
+    const [submitUrl, submitInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(submitUrl).toBe('https://api.bfl.ai/v1/flux-3-image')
+    expect(JSON.parse(submitInit.body as string)).toEqual({ prompt: 'a fox', aspect_ratio: '16:9' })
+
+    const failedMock = vi.fn(async (url: string) =>
+      url.includes('get_result')
+        ? jsonResponse({ status: 'Failed' })
+        : jsonResponse({ id: 'job-3', polling_url: 'https://api.bfl.ai/v1/get_result?id=job-3' }),
+    )
+    vi.stubGlobal('fetch', failedMock)
+    await expect(
+      generateImageWithProvider(
+        'bfl',
+        { apiKey: 'k', baseUrl: 'https://api.bfl.ai', imageModel: 'flux-2-pro', analysisModel: '' },
+        { prompt: 'a fox' },
+      ),
+    ).rejects.toThrow(/Failed/)
   })
 })

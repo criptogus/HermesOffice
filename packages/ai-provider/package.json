@@ -8,7 +8,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
-    "./codex-app-server": "./src/codex-app-server.ts"
+    "./codex-app-server": "./src/codex-app-server.ts",
+    "./custom-models": "./src/custom-models.ts",
+    "./trace": "./src/trace.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -20,6 +22,6 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

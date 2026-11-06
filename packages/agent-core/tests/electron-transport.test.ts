@@ -44,6 +44,7 @@ function setup(
     onReasoning: vi.fn(),
     onToolCall: vi.fn(),
     onStopReason: vi.fn(),
+    onUsage: vi.fn(),
     onDone: vi.fn(),
     onError: vi.fn(),
   }
@@ -103,6 +104,17 @@ describe('createIpcTransport', () => {
     emit({ type: 'error' })
     expect(cb.onError).toHaveBeenCalledWith('unknown error')
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores an unknown future chunk type instead of failing the run', () => {
+    const { cb, emit, unsubscribe } = setup()
+    emit({ type: 'progress' } as never)
+    expect(cb.onError).not.toHaveBeenCalled()
+    expect(cb.onDone).not.toHaveBeenCalled()
+    expect(unsubscribe).not.toHaveBeenCalled()
+    // the run survived rather than merely going quiet
+    emit({ type: 'done' })
+    expect(cb.onDone).toHaveBeenCalledTimes(1)
   })
 
   it('cancel forwards the requestId to the bridge', () => {
@@ -212,5 +224,22 @@ describe('createIpcTransport', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(cb.onError).toHaveBeenCalledWith('no handler registered')
     expect(cb.onDone).not.toHaveBeenCalled()
+  })
+})
+
+describe('createIpcTransport usage', () => {
+  it('forwards a usage chunk to onUsage before done', () => {
+    const { cb, emit } = setup()
+    emit({ type: 'usage', usage: { inputTokens: 12, outputTokens: 3 } })
+    emit({ type: 'done' })
+    expect(cb.onUsage).toHaveBeenCalledWith({ inputTokens: 12, outputTokens: 3 })
+    expect(cb.onUsage).toHaveBeenCalledTimes(1)
+    expect(cb.onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a usage chunk with no payload', () => {
+    const { cb, emit } = setup()
+    emit({ type: 'usage' })
+    expect(cb.onUsage).not.toHaveBeenCalled()
   })
 })

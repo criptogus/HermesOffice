@@ -41,8 +41,8 @@ import type { ISelectionWithStyle } from '@univerjs/sheets'
 import { whenSheetEditorFocused } from '@univerjs/sheets-ui'
 import type { UniverRuntime } from './univer-state'
 
-const MOVE_JUMP_COMMAND_ID = 'genoffice.command.move-selection-excel-jump'
-const EXPAND_JUMP_COMMAND_ID = 'genoffice.command.expand-selection-excel-jump'
+const MOVE_JUMP_COMMAND_ID = 'hermesoffice.command.move-selection-excel-jump'
+const EXPAND_JUMP_COMMAND_ID = 'hermesoffice.command.expand-selection-excel-jump'
 
 interface IJumpParams {
   direction: Direction
@@ -51,7 +51,7 @@ interface IJumpParams {
 type MatrixCell = ICellData & { rowSpan?: number; colSpan?: number }
 
 /** Excel's rule: an entry is any value (including ""), rich text, or a formula */
-function excelCellHasValue(cell: MatrixCell | null | undefined): boolean {
+export function excelCellHasValue(cell: MatrixCell | null | undefined): boolean {
   if (cell == null) return false
   if (cell.v !== undefined && cell.v !== null) return true
   if (cell.p !== undefined && cell.p !== null) return true

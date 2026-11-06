@@ -136,6 +136,33 @@ describe('applyStructuralOps columns', () => {
     expect(xml).toContain('<row r="1" spans="1:4"><c r="A1"><v>1</v></c>')
     expect(xml).toContain('<f>SUM(A1:A2)</f>')
   })
+
+  it('infers omitted row and cell addresses before shifting', () => {
+    const xml = applyStructuralOps(
+      '<worksheet><sheetData><row><c r="A1"><v>1</v></c><c><v>2</v></c></row><row><c r="A2"><v>3</v></c><c><v>4</v></c></row></sheetData></worksheet>',
+      [{ kind: 'insert-cols', index: 0, count: 1 }],
+      SHEET,
+    )
+    expect(xml).toContain('<row r="1"><c r="B1"><v>1</v></c><c r="C1"><v>2</v></c></row>')
+    expect(xml).toContain('<row r="2"><c r="B2"><v>3</v></c><c r="C2"><v>4</v></c></row>')
+  })
+
+  it('infers omitted row addresses before deleting and sizing', () => {
+    const removed = applyStructuralOps(
+      '<worksheet><sheetData><row><c r="A1"><v>1</v></c></row><row><c r="A2"><v>2</v></c></row></sheetData></worksheet>',
+      [{ kind: 'remove-rows', index: 0, count: 1 }],
+      SHEET,
+    )
+    expect(removed).toContain('<row r="1"><c r="A1"><v>2</v></c></row>')
+    expect(removed).not.toContain('<v>1</v>')
+
+    const sized = applyStructuralOps(
+      '<worksheet><sheetData><row><c r="A1"><v>1</v></c></row></sheetData></worksheet>',
+      [{ kind: 'set-row-size', start: 0, end: 0, size: 20 }],
+      SHEET,
+    )
+    expect(sized).toContain('<row r="1" ht="20" customHeight="1"><c r="A1"><v>1</v></c></row>')
+  })
 })
 
 describe('merge operations', () => {
@@ -193,6 +220,16 @@ describe('cross-sheet reference rewriting', () => {
     ])
     // Data!A5:A10 and Data!$A$8 shift; the local A5 does not.
     expect(shifted).toContain('<f>SUM(Data!A7:A12)+Data!$A$10+A5</f>')
+  })
+
+  it('matches sheet qualifiers case-insensitively', () => {
+    const cased = otherSheet
+      .replace('Data!A5:A10', 'data!A5:A10')
+      .replace('Data!$A$8', "'dAtA'!$A$8")
+    const shifted = shiftCrossSheetFormulas(cased, SHEET, [
+      { kind: 'insert-rows', index: 2, count: 2 },
+    ])
+    expect(shifted).toContain("<f>SUM(data!A7:A12)+'dAtA'!$A$10+A5</f>")
   })
 
   it('skips self-closing shared formulas and still shifts the formula after them', () => {

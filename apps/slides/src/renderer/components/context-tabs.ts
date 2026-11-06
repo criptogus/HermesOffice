@@ -2,8 +2,14 @@ import type { RenderNode } from '@hermesoffice/pptx-render'
 
 /** 'mixed' = multi-select spanning pictures/groups: only selection-wide commands (outline) apply */
 export type ContextElementType =
-  'table' | 'chart' | 'picture' | 'shape' | 'textShape' | 'mixed' | null
-export type ContextTab = 'tableDesign' | 'chartDesign' | 'pictureFormat' | 'shapeFormat'
+  'table' | 'chart' | 'picture' | 'model3d' | 'shape' | 'textShape' | 'mixed' | null
+export type ContextTab =
+  'tableDesign' | 'chartDesign' | 'pictureFormat' | 'model3dFormat' | 'shapeFormat'
+/** Canvas request to activate a contextual tab (seq distinguishes repeated requests for the same tab) */
+export interface ContextTabRequest {
+  tab: ContextTab
+  seq: number
+}
 
 function nodeHasVisibleText(node: RenderNode): boolean {
   if (node.type === 'text' || node.type === 'shape') {
@@ -15,6 +21,8 @@ function nodeHasVisibleText(node: RenderNode): boolean {
 }
 
 export function contextElementTypeForNode(node: RenderNode): ContextElementType {
+  if (node.type === 'picture' && node.model3d) return 'model3d'
+  if (node.type === 'picture' && node.ole) return 'shape'
   if (node.type === 'table' || node.type === 'chart' || node.type === 'picture') return node.type
   if (node.type === 'shape') return nodeHasVisibleText(node) ? 'textShape' : 'shape'
   if (node.type === 'group') return nodeHasVisibleText(node) ? 'textShape' : 'shape'
@@ -24,6 +32,7 @@ export function contextElementTypeForNode(node: RenderNode): ContextElementType 
 export function contextTabForElement(type: ContextElementType): ContextTab | null {
   if (type === 'table') return 'tableDesign'
   if (type === 'chart') return 'chartDesign'
+  if (type === 'model3d') return 'model3dFormat'
   // Mixed selections use picture-format: its outline command spans the whole
   // selection while picture-only tools (crop/transparency) stay disabled
   if (type === 'picture' || type === 'mixed') return 'pictureFormat'
@@ -39,4 +48,9 @@ export function contextTabForElement(type: ContextElementType): ContextTab | nul
 export function autoContextTabForElement(type: ContextElementType): ContextTab | null {
   const tab = contextTabForElement(type)
   return tab === 'shapeFormat' ? null : tab
+}
+
+/** Tab a double-click on a non-text object jumps to (PowerPoint opens the object's tools) */
+export function contextualTabFor(node: RenderNode): ContextTab | null {
+  return contextTabForElement(contextElementTypeForNode(node))
 }

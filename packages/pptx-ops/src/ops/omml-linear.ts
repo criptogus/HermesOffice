@@ -1,6 +1,6 @@
 /**
  * Plain-text reading of an OMML fragment for the equation run's fallback text
- * (what older readers, the GenOffice preview and `slides read` show):
+ * (what older readers, the HermesOffice preview and `slides read` show):
  * fractions as a/b, scripts as x^2 / x_i, radicals as √(x), n-ary operators
  * with their limits. Structure-only: anything unknown flattens to its text.
  */
@@ -115,7 +115,12 @@ function lin(n: Node): string {
       return `${part('m:e')}_${group(part('m:lim'))}`
     case 'm:limUpp':
       return `${part('m:e')}^${group(part('m:lim'))}`
-    case 'm:bar':
+    case 'm:bar': {
+      const pr = child(n, 'm:barPr')
+      const pos = pr ? attr(child(pr, 'm:pos'), 'm:val') : undefined
+      const mark = pos === 'bot' ? '\u0332' : '\u0304'
+      return `${part('m:e')}${mark}`
+    }
     case 'm:acc': {
       const pr = child(n, 'm:accPr')
       return `${part('m:e')}${(pr && attr(child(pr, 'm:chr'), 'm:val')) ?? '\u0304'}`

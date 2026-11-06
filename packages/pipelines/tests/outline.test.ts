@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseOutline } from '../src/slides/outline'
+import { parseOutline, PLACEHOLDER } from '../src/slides/outline'
 
 const HARBOR = String.fromCharCode(0x6e2f, 0x53e3)
 
@@ -64,6 +64,13 @@ describe('parseOutline', () => {
     )
   })
 
+  it('accepts apparel sizes such as XXL while still catching XX%', () => {
+    expect(PLACEHOLDER.test('Available in XS, S, M, L, XL and XXL.')).toBe(false)
+    expect(PLACEHOLDER.test('XXXL hoodie, size xxl')).toBe(false)
+    expect(PLACEHOLDER.test('Revenue grew XX% year over year')).toBe(true)
+    expect(PLACEHOLDER.test('Serving XX customers')).toBe(true)
+  })
+
   it('warns about thin briefs, CJK image queries, little variety and missing cover/closing', () => {
     const r = parseOutline(
       deck([
@@ -106,5 +113,19 @@ describe('parseOutline', () => {
       ok: false,
       error: expect.stringContaining('too many pages'),
     })
+  })
+
+  it('rejects oversized raw outlines and caps image queries per page', () => {
+    expect(parseOutline('x'.repeat(600_000))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('too large'),
+    })
+    const many = { ...page(), image_queries: Array.from({ length: 30 }, (_, i) => `scene ${i}`) }
+    const r = parseOutline(deck([many]))
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.outline.pages[0]!.image_queries).toHaveLength(8)
+      expect(r.issues.some((i) => i.message.includes('capped at 8'))).toBe(true)
+    }
   })
 })
