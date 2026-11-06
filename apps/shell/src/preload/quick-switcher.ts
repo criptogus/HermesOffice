@@ -1,8 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { QuickSwitcherApi, QuickSwitcherState } from '../shared/quick-switcher-api'
 import { QS_CHANNELS } from '../shared/quick-switcher-api'
-import { HOME_CHANNELS, type RecentPage, type RecentQuery } from '../shared/home-api'
-import { TABS_CHANNELS, type TabSummary } from '../shared/tabs-api'
+import type { RecentPage, RecentQuery } from '../shared/home-api'
+import type { TabSummary } from '../shared/tabs-api'
+
+// Channel names are inlined as literals on purpose: sandboxed preload bundles
+// must stay a single self-contained file — importing HOME_CHANNELS /
+// TABS_CHANNELS here would make Rollup emit a shared chunk that the sandbox
+// require() cannot load, killing the whole preload. Keep in sync with
+// HOME_CHANNELS/TABS_CHANNELS (pinned by tests/quick-switcher-preload.test.ts).
+const HOME_RECENTS = 'home:recents'
+const HOME_STARRED = 'home:starred'
+const HOME_OPEN_PATH = 'home:open-path'
+const HOME_BROWSE = 'home:browse'
+const TABS_LIST = 'tabs:list'
+const TABS_ACTIVATE = 'tabs:activate'
 
 /**
  * Quick-switcher window bridge: window lifecycle goes through QS_CHANNELS,
@@ -25,25 +37,25 @@ const api: QuickSwitcherApi & {
     void ipcRenderer.invoke(QS_CHANNELS.close)
   },
   async recents(query) {
-    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.recents, query)
+    const result: unknown = await ipcRenderer.invoke(HOME_RECENTS, query)
     return result as RecentPage
   },
   async starred(query) {
-    const result: unknown = await ipcRenderer.invoke(HOME_CHANNELS.starred, query)
+    const result: unknown = await ipcRenderer.invoke(HOME_STARRED, query)
     return result as RecentPage
   },
   async listTabs() {
-    const result: unknown = await ipcRenderer.invoke(TABS_CHANNELS.list)
+    const result: unknown = await ipcRenderer.invoke(TABS_LIST)
     return Array.isArray(result) ? (result as TabSummary[]) : []
   },
   async activateTab(id) {
-    await ipcRenderer.invoke(TABS_CHANNELS.activate, id)
+    await ipcRenderer.invoke(TABS_ACTIVATE, id)
   },
   async openPath(path) {
-    await ipcRenderer.invoke(HOME_CHANNELS.openPath, path)
+    await ipcRenderer.invoke(HOME_OPEN_PATH, path)
   },
   async browse() {
-    await ipcRenderer.invoke(HOME_CHANNELS.browse)
+    await ipcRenderer.invoke(HOME_BROWSE)
   },
 }
 
