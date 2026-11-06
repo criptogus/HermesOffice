@@ -322,6 +322,83 @@ describe('binary release updates (no source opt-in)', () => {
   })
 })
 
+describe('nightly main builds (ho-nightly)', () => {
+  const NIGHTLY_SHA = 'd'.repeat(40)
+
+  function mockAllRoutes(opts: { tags?: string; nightly?: string } = {}): string[][] {
+    const spawnArgs: string[][] = []
+    spawn.mockImplementation((cmd: string, args: string[]) => {
+      spawnArgs.push([cmd, ...args])
+      const child = fakeChild()
+      process.nextTick(() => {
+        if (args.some((a) => a.includes('ho-nightly'))) {
+          if (opts.nightly) child.emitData(`${NIGHTLY_SHA}\trefs/tags/ho-nightly\n`)
+        } else if (args.includes('refs/heads/main')) {
+          child.emitData(`${MAIN_SHA}\trefs/heads/main\n`)
+        } else if (args.includes('--tags')) {
+          child.emitData(opts.tags ?? '')
+        }
+        child.emit('close', 0)
+      })
+      return child
+    })
+    return spawnArgs
+  }
+
+  function bootInstalled(): void {
+    existsSync.mockImplementation((path) => String(path).endsWith('build-info.json'))
+    readFileSync.mockReturnValue(JSON.stringify({ commit: BUILT_SHA, version: '0.4.0' }))
+  }
+
+  it('offers the nightly build when no stable tag is newer and the commit differs', async () => {
+    bootInstalled()
+    // stable train exists but is NOT newer than the installed 0.4.0 base
+    mockAllRoutes({ tags: `${TAG_SHA}\trefs/tags/ho-v0.4.0\n`, nightly: '1' })
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(showUpdateWindow).toHaveBeenCalledTimes(1)
+    expect(showUpdateWindow.mock.calls[0][1].version).toBe(`main ${NIGHTLY_SHA.slice(0, 7)}`)
+  })
+
+  it('stays quiet when the installed build IS the nightly commit', async () => {
+    existsSync.mockImplementation((path) => String(path).endsWith('build-info.json'))
+    readFileSync.mockReturnValue(JSON.stringify({ commit: NIGHTLY_SHA, version: '0.4.0' }))
+    mockAllRoutes({ tags: `${TAG_SHA}\trefs/tags/ho-v0.4.0\n`, nightly: '1' })
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(showUpdateWindow).not.toHaveBeenCalled()
+  })
+
+  it('downloads the nightly via stage-binary ho-nightly nightly', async () => {
+    bootInstalled()
+    const spawnArgs = mockAllRoutes({
+      tags: `${TAG_SHA}\trefs/tags/ho-v0.4.0\n`,
+      nightly: '1',
+    })
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+
+    const { initMainUpdater } = await loadMainUpdater()
+    initMainUpdater(() => null)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    const actions = showUpdateWindow.mock.calls[0][2] as { onDownload: () => void }
+    actions.onDownload()
+    await vi.advanceTimersByTimeAsync(100)
+
+    const stageCall = spawnArgs.find((c) => c.includes('stage-binary'))
+    expect(stageCall).toEqual(
+      expect.arrayContaining(['stage-binary', 'ho-nightly', 'nightly']),
+    )
+    expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'downloaded', percent: 100 })
+  })
+})
+
 describe('first download (ensureSource)', () => {
   it('clones a full working tree — no --no-checkout — before spawning the helper', async () => {
     process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE = '1'

@@ -658,4 +658,12 @@ if (ga4MeasurementId && ga4ApiSecret) {
 if (fontCdnUrl) extraMetadata.hermesofficeFontCdn = { baseUrl: fontCdnUrl }
 if (Object.keys(extraMetadata).length) config.extraMetadata = extraMetadata
 
+// HERMESOFFICE_UNSIGNED_MAC=1 — CI/nightly builds without Apple credentials:
+// mac.notarize would fail hunting for APPLE_ID/team-id. The dmg hook
+// (build/notarize-dmg.js) already self-skips without creds, and electron-builder
+// falls back to ad-hoc signing, which the in-app updater re-signs anyway.
+if (process.env.HERMESOFFICE_UNSIGNED_MAC === '1') {
+  config.mac.notarize = false
+}
+
 module.exports = config

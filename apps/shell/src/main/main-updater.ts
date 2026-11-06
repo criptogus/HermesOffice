@@ -27,12 +27,14 @@ import {
  * relaunches. Full-package policy, same as the CDN updater.
  *
  * Apply paths, in preference order:
- *   1. Binary — when the update is a ho-v* release tag and this is macOS
- *      arm64, `stage-binary` downloads the prebuilt zip from the GitHub
- *      release. No toolchain needed; this is what end users get.
+ *   1. Binary — when the update targets a GitHub release (a ho-v* tag or the
+ *      rolling ho-nightly tag) and this is macOS arm64, `stage-binary`
+ *      downloads the prebuilt zip. No toolchain needed; this is what end
+ *      users get. ho-nightly is force-moved by main-build.yml on every push
+ *      to main, so every main build shows up as an update offer.
  *   2. Source rebuild — HERMESOFFICE_ENABLE_SOURCE_UPDATE=1 opt-in (dev
- *      machines): clone + npm ci + dist:mac + swap. Also the only path for
- *      tagless "main moved" offers and non-arm64 platforms.
+ *      machines): clone + npm ci + dist:mac + swap. Fallback for
+ *      non-arm64 platforms and the tagless legacy "main moved" offer.
  *   3. Manual — anything else lands on the 'manual' phase, which points at
  *      the releases page.
  *
@@ -175,6 +177,33 @@ function fetchLatestForkTag(): Promise<{ name: string; label: string; commit: st
   })
 }
 
+/** Commit the rolling `ho-nightly` tag points at — the CI main-build release
+ * (main-build.yml force-moves it on every push to main). Annotated tags come
+ * back as a tag object plus a `^{}` deref line; prefer the deref. */
+function fetchNightlyCommit(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn('git', ['ls-remote', REPO_URL, 'refs/tags/ho-nightly*'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let out = ''
+    child.stdout.on('data', (d: Buffer) => (out += d.toString()))
+    child.on('error', () => resolve(null))
+    child.on('close', (code) => {
+      if (code !== 0) {
+        log('git ls-remote ho-nightly failed with', code)
+        resolve(null)
+        return
+      }
+      let commit: string | null = null
+      for (const line of out.split('\n')) {
+        const m = /^([0-9a-f]{40})\trefs\/tags\/ho-nightly(\^\{\})?$/.exec(line.trim())
+        if (m) commit = m[1] // last match wins: the ^{} deref line sorts after
+      }
+      resolve(commit)
+    })
+  })
+}
+
 function spawnHelper(
   args: string[],
   onProgress: (pct: number, stage: string | null) => void,
@@ -258,43 +287,57 @@ async function checkForUpdate(
     log('could not reach origin/main — network offline?')
     return 'offline'
   }
-  // Release-train: an update is offered only when a NEWER ho-v* tag exists
-  // than the installed build's release base — deterministic, never rolling
-  // main. Without ho-v* tags yet, fall back to the legacy "main moved" check,
-  // which is only installable through the opt-in source rebuild.
+  // Release-train first: a stable ho-v* tag newer than the installed build's
+  // release base wins. Otherwise the rolling ho-nightly tag (rebuilt on every
+  // main push by main-build.yml) offers the latest main build whenever its
+  // commit differs from the installed one. The legacy "main moved" source
+  // offer only survives for opted-in builds with no nightly tag at all.
   const tag = await fetchLatestForkTag()
   const sourceOptIn = process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE === '1'
-  let newVersion: string
-  let targetRef: string
-  let updateKey: string
+  let offer: {
+    newVersion: string
+    targetRef: string
+    updateKey: string
+    release: { name: string; label: string; commit: string } | null
+  } | null = null
   if (tag) {
     const base = releaseBase(builtVer)
-    const newer = base === null || cmpRelease(tag.label, base) > 0
-    if (!newer) {
-      log('up to date (', builtVer, ')')
-      return 'latest'
+    if (base === null || cmpRelease(tag.label, base) > 0) {
+      offer = {
+        newVersion: tag.label,
+        targetRef: tag.name,
+        updateKey: tag.commit,
+        release: { name: tag.name, label: tag.label, commit: tag.commit },
+      }
     }
-    newVersion = tag.label
-    targetRef = tag.name
-    updateKey = tag.commit
-  } else {
-    if (!sourceOptIn) {
-      // main moved but there is no ho-v release to download and the source
-      // rebuild is opt-in — nothing installable to offer
-      log('no ho-v release found and source updates disabled — check done')
-      return 'latest'
-    }
-    if (main === built) {
-      log('up to date (', builtVer, ')')
-      return 'latest'
-    }
-    newVersion = `build ${main.slice(0, 7)}`
-    targetRef = 'main'
-    updateKey = main
   }
+  if (!offer) {
+    const nightly = await fetchNightlyCommit()
+    if (nightly && nightly !== built) {
+      offer = {
+        newVersion: `main ${nightly.slice(0, 7)}`,
+        targetRef: 'ho-nightly',
+        updateKey: nightly,
+        release: { name: 'ho-nightly', label: 'nightly', commit: nightly },
+      }
+    }
+  }
+  if (!offer && !tag && sourceOptIn && main !== built) {
+    offer = {
+      newVersion: `build ${main.slice(0, 7)}`,
+      targetRef: 'main',
+      updateKey: main,
+      release: null,
+    }
+  }
+  if (!offer) {
+    log('up to date (', builtVer, ')')
+    return 'latest'
+  }
+  const { newVersion, targetRef, updateKey } = offer
   if (updateKey === dismissedCommit) return 'latest'
   log('update available:', builtVer, '→', newVersion, `(target ${targetRef})`)
-  pendingRelease = tag
+  pendingRelease = offer.release
   pendingTargetRef = targetRef
 
   // Attention in background: dock badge + bounce + system notification,

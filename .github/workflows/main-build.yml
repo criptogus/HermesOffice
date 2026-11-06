@@ -1,0 +1,84 @@
+name: main-build
+
+# Rolling nightly: every push to main produces an unsigned arm64 macOS build
+# published to the ho-nightly prerelease (tag force-moved each run). The
+# in-app updater (apps/shell/src/main/main-updater.ts) polls that tag via
+# git ls-remote and offers the update; tools/hermesoffice-update.mjs
+# `stage-binary` downloads the zip — no toolchain needed on the user machine.
+#
+# Unsigned by design: HERMESOFFICE_UNSIGNED_MAC=1 skips notarization and
+# electron-builder falls back to ad-hoc signing, which the updater's install
+# step re-signs anyway. Signed ho-v* releases remain the stable channel.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: main-build
+  cancel-in-progress: true
+
+jobs:
+  nightly-mac:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07
+        with:
+          toolchain: stable
+          # native:build:universal lipo-fuses the xlsx-sidecar for both mac
+          # arches even though only arm64 is packaged here
+          targets: x86_64-apple-darwin
+
+      - name: Cache cargo (xlsx-sidecar)
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: apps/sheets/native/xlsx-engine
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned macOS package
+        env:
+          HERMESOFFICE_UNSIGNED_MAC: '1'
+        run: npm run dist:mac
+
+      - name: Publish ho-nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # versioned artifact name (HermesOffice-<v>-arm64-mac.zip); the
+          # unversioned alias may also exist — prefer the versioned one
+          ZIP=$(find apps/shell/release -name 'HermesOffice-[0-9]*-arm64-mac.zip' | head -1)
+          if [ -z "$ZIP" ]; then
+            ZIP=$(find apps/shell/release -name '*-arm64-mac.zip' | head -1)
+          fi
+          test -n "$ZIP"
+          cp "$ZIP" HermesOffice-nightly-arm64-mac.zip
+          SHA=$(git rev-parse HEAD)
+          git tag -f ho-nightly "$SHA"
+          git push -f origin ho-nightly
+          if ! gh release view ho-nightly >/dev/null 2>&1; then
+            gh release create ho-nightly --prerelease \
+              --title "HermesOffice nightly (main)" \
+              --notes "Auto-built from main @ ${SHA:0:7}. Rebuilt on every push to main; the in-app updater offers it automatically."
+          fi
+          gh release upload ho-nightly HermesOffice-nightly-arm64-mac.zip --clobber
