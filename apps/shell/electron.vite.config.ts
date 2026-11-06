@@ -16,6 +16,8 @@ export default defineConfig({
           update: resolve(__dirname, 'src/preload/update.ts'),
           // dedicated preload for the PDF password prompt window
           'pdf-password': resolve(__dirname, 'src/preload/pdf-password.ts'),
+          // quick-switcher window (see src/main/quick-switcher.ts)
+          'quick-switcher': resolve(__dirname, 'src/preload/quick-switcher.ts'),
         },
       },
     },
@@ -30,6 +32,8 @@ export default defineConfig({
           update: resolve(__dirname, 'src/renderer/update.html'),
           // PDF password prompt window (see src/main/pdf-password-dialog.ts)
           'pdf-password': resolve(__dirname, 'src/renderer/pdf-password.html'),
+          // quick-switcher window (see src/main/quick-switcher.ts)
+          'quick-switcher': resolve(__dirname, 'src/renderer/quick-switcher.html'),
         },
       },
     },

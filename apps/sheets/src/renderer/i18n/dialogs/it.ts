@@ -143,6 +143,8 @@ export const it = {
   dlgSlicerInsertTitle: 'Inserisci filtro dati',
   dlgSlicerPickNote:
     'Scegli il campo per il filtro dati; facendo clic sui membri nel filtro dati si filtra la tabella pivot.',
+  dlgSlicerSessionNote:
+    'Nota: il pannello del filtro è disponibile solo per questa sessione; i dati filtrati della tabella pivot vengono salvati con il file.',
   dlgSlicerAria: 'Filtro dati {name}',
   dlgSlicerClear: 'Cancella filtro (seleziona tutto)',
   dlgSlicerRemove: 'Rimuovi filtro dati (ripristina tutti i membri)',

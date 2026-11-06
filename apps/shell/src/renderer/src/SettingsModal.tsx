@@ -1363,6 +1363,17 @@ export function SettingsModal({
                     </button>
                   }
                 />
+                <div className="set-field">
+                  <div className="set-field-text">
+                    <div className="set-field-label">{t('poweredByZeroAgency')}</div>
+                  </div>
+                  <button
+                    className="set-btn"
+                    onClick={() => void window.aiOffice.openZeroAgency?.()}
+                  >
+                    zeroagency.ai
+                  </button>
+                </div>
               </>
             )}
           </div>

@@ -473,3 +473,21 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* product credit under the onboarding card footer */
+.onb-powered {
+  display: block;
+  margin: 14px auto 0;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  letter-spacing: -0.1px;
+  color: var(--onb-text-tertiary);
+  cursor: pointer;
+  transition: color var(--onb-transition);
+}
+
+.onb-powered:hover {
+  color: var(--onb-text-secondary, var(--onb-text-tertiary));
+}

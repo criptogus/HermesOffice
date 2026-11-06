@@ -5,12 +5,17 @@
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
-export function uniquePathIn(dir: string, fileName: string): string {
+/** basename + illegal-char strip; 'Untitled' when nothing usable remains */
+export function sanitizeFileName(fileName: string): string {
   const cleaned = basename(String(fileName ?? ''))
     // eslint-disable-next-line no-control-regex -- control characters are rejected on purpose
     .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '_')
     .trim()
-  const safeName = cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
+}
+
+export function uniquePathIn(dir: string, fileName: string): string {
+  const safeName = sanitizeFileName(fileName)
   const dot = safeName.lastIndexOf('.')
   const base = dot > 0 ? safeName.slice(0, dot) : safeName
   const ext = dot > 0 ? safeName.slice(dot) : ''

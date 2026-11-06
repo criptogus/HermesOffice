@@ -1392,13 +1392,8 @@ export function App(): React.JSX.Element {
     mergeAttachments(await window.desktopApi.pickAttachments())
   }
 
-  async function handleAddAttachmentPaths(paths: readonly string[]): Promise<void> {
-    if (paths.length === 0) return
-    mergeAttachments(await window.desktopApi.addAttachmentPaths([...paths]))
-  }
-
-  async function handleAddPastedImage(data: ArrayBuffer, ext: string): Promise<void> {
-    mergeAttachments(await window.desktopApi.addPastedImage(data, ext))
+  async function handleAddAttachmentBytes(name: string, data: ArrayBuffer): Promise<void> {
+    mergeAttachments(await window.desktopApi.addAttachmentBytes(name, data))
   }
 
   function handleRemoveAttachment(path: string): void {
@@ -4407,8 +4402,7 @@ export function App(): React.JSX.Element {
         attachments={attachments}
         attachNotice={attachNotice}
         onPickAttachments={() => void handlePickAttachments()}
-        onAddAttachmentPaths={(paths) => void handleAddAttachmentPaths(paths)}
-        onAddPastedImage={(data, ext) => void handleAddPastedImage(data, ext)}
+        onAddAttachmentBytes={(name, data) => void handleAddAttachmentBytes(name, data)}
         onRemoveAttachment={handleRemoveAttachment}
         onPromptChange={setPrompt}
         onSend={handleSend}

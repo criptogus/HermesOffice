@@ -1167,29 +1167,25 @@ export function AiPanel({
 
   const pickAttachments = async () => mergeAttachments(await window.desktop.pickAttachments())
 
+  /** Dropped/pasted files are sent as bytes: the renderer cannot prove a path
+   *  came from the OS, so main stores them under temp and grants that path */
+  const addDroppedFile = async (f: File) => {
+    const name = f.name.includes('.')
+      ? f.name
+      : `${f.name || 'pasted'}.${PASTE_MIME_EXT[f.type] ?? 'bin'}`
+    mergeAttachments(await window.desktop.addAttachmentBytes(name, await f.arrayBuffer()))
+  }
+
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktop.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
+    for (const f of Array.from(e.dataTransfer.files)) await addDroppedFile(f)
   }
 
-  /** Files pasted into the input: ones with a local path go through regular attachments; pure bitmaps like screenshots hit a temp file first */
+  /** Files pasted into the input go through the same bytes path as drops */
   const onPasteFiles = async (files: File[]) => {
-    const paths: string[] = []
-    for (const f of files) {
-      const p = window.desktop.getPathForFile(f)
-      if (p) {
-        paths.push(p)
-        continue
-      }
-      const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
-      mergeAttachments(await window.desktop.addPastedImage(await f.arrayBuffer(), ext))
-    }
-    if (paths.length > 0) mergeAttachments(await window.desktop.addAttachmentPaths(paths))
+    for (const f of files) await addDroppedFile(f)
   }
 
   const removeAttachment = (path: string) =>

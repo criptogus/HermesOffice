@@ -212,6 +212,8 @@ export interface HomeApi {
   openGenTeam(): Promise<void>
   /** open the Genspark credit-usage page in the default browser */
   openCreditUsage(): Promise<void>
+  /** open the ZeroAgency site (product credit) in the default browser */
+  openZeroAgency(): Promise<void>
   /** open the public GitHub repository in the default browser */
   openGitHubRepo(): Promise<void>
   /** owner/repo slug of the public repository — label text, no round-trip */
@@ -431,6 +433,7 @@ export const HOME_CHANNELS = {
   pickDefaultSaveDir: 'home:pick-default-save-dir',
   openGenTeam: 'home:open-genteam',
   openCreditUsage: 'home:open-credit-usage',
+  openZeroAgency: 'home:open-zeroagency',
   openGitHubRepo: 'home:open-github-repo',
   githubStars: 'home:github-stars',
   starPromptShouldShow: 'home:star-prompt-should-show',

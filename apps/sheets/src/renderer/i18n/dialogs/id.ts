@@ -142,6 +142,7 @@ export const id = {
   dlgSlicerInsertTitle: 'Sisipkan Pemotong',
   dlgSlicerPickNote:
     'Pilih bidang untuk pemotong; mengklik anggota di dalam pemotong akan memfilter PivotTable.',
+  dlgSlicerSessionNote: 'Catatan: panel pemfilter hanya tersedia untuk sesi ini; data PivotTable yang difilter disimpan bersama file.',
   dlgSlicerAria: 'Pemotong {name}',
   dlgSlicerClear: 'Hapus filter (pilih semua)',
   dlgSlicerRemove: 'Hapus pemotong (pulihkan semua anggota)',

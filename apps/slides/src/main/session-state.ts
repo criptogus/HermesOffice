@@ -337,6 +337,17 @@ export function setSlidesShellWindow(win: BrowserWindow | null): void {
   windowRefs.shellWindow = win
 }
 
+/** Cmd/Ctrl+O opens the shell's quick switcher instead of the open dialog */
+let openQuickSwitcherHook: (() => void) | null = null
+export function setSlidesQuickSwitcherHook(fn: (() => void) | null): void {
+  openQuickSwitcherHook = fn
+}
+export function slidesOpenQuickSwitcher(): boolean {
+  if (!openQuickSwitcherHook) return false
+  openQuickSwitcherHook()
+  return true
+}
+
 /** Shell-registered hook (aggregate/tab mode only): cover the tab strip with a tab's
  *  view during a slideshow without going through HTML fullscreen. Standalone slides
  *  windows have no tab strip and leave this null. */

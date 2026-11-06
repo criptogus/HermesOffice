@@ -141,6 +141,8 @@ export const en = {
   dlgSlicerInsertTitle: 'Insert Slicer',
   dlgSlicerPickNote:
     'Pick the field for the slicer; clicking members in the slicer filters the PivotTable.',
+  dlgSlicerSessionNote:
+    'Note: the slicer panel is session-only; the filtered PivotTable data is saved with the file.',
   dlgSlicerAria: 'Slicer {name}',
   dlgSlicerClear: 'Clear filter (select all)',
   dlgSlicerRemove: 'Remove slicer (restore all members)',

@@ -4324,6 +4324,7 @@ export function App() {
       editor?.off('update', onDocUpdate)
       editor?.off('transaction', onShrinkTr)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- colMode/hasVertical/watermarkDirty feed the layout pass but must not retrigger this effect
   }, [
     doc,
     section,

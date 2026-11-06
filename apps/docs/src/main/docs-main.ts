@@ -61,6 +61,7 @@ import {
   registerRendererScheme,
   rendererUrl,
   uniquePathIn,
+  saveAttachmentBytes,
 } from '@hermesoffice/electron-utils'
 import { configureMetricsCache, familyVerticalMetrics } from '@hermesoffice/font-metrics'
 import { createI18n, getUiLang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
@@ -3881,9 +3882,40 @@ export function registerDocsIpc(): void {
   })
 
   ipcMain.handle('files:add', (event, paths: string[]) => {
-    for (const p of paths) grantAttachmentRead(event.sender.id, p)
+    // Renderer-supplied paths are not proof of an OS drop/paste: collect the
+    // metadata for display, but do NOT grant read access — grants only come
+    // from the picker, pasted-image temp files, and files:add-bytes.
     return collectAttachments(paths)
   })
+
+  // Dragged/pasted files arrive as bytes: webUtils.getPathForFile strings can
+  // be forged by page script, so main stores the bytes under temp itself and
+  // grants that path — the renderer never names a readable path.
+  ipcMain.handle(
+    'files:add-bytes',
+    (event, name: unknown, data: unknown): AttachmentAddResult => {
+      const saved = saveAttachmentBytes(data, name, {
+        allowedExts: ATTACHMENT_EXTS,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      })
+      if (!saved.ok) {
+        const ext =
+          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        return {
+          accepted: [],
+          rejected: [
+            saved.reason === 'too-large'
+              ? tm('errFileTooLarge')
+              : saved.reason === 'bad-ext'
+                ? tm('errUnsupportedExt', { ext })
+                : tm('errUnreadable'),
+          ],
+        }
+      }
+      grantAttachmentRead(event.sender.id, saved.path)
+      return collectAttachments([saved.path])
+    },
+  )
 
   ipcMain.handle(
     'files:read',
@@ -4260,6 +4292,8 @@ interface DocsShellHooks {
   closeActiveTab(): void
   /** Shell router used to open exported PDFs in a new GenOffice tab. */
   openGeneratedPath?(path: string): boolean
+  /** Cmd/Ctrl+O opens the shell's quick switcher instead of the file dialog */
+  openQuickSwitcher?(): void
 }
 let shellHooks: DocsShellHooks | null = null
 export function setDocsShellHooks(hooks: DocsShellHooks | null): void {
@@ -4433,7 +4467,11 @@ export function buildDocsMenu(): void {
             else markDocsNewBlank(createDocsWindow().webContents.id)
           },
         },
-        { label: tm('menuOpen'), accelerator: 'CmdOrCtrl+O', click: () => sendCommand('open') },
+        {
+          label: tm('menuOpen'),
+          accelerator: 'CmdOrCtrl+O',
+          click: () => (shellHooks?.openQuickSwitcher ? shellHooks.openQuickSwitcher() : sendCommand('open')),
+        },
         { label: tm('menuOpenRecent'), submenu: recentSubmenu },
         ...(extraFileMenuItems.length > 0
           ? [{ type: 'separator' as const }, ...extraFileMenuItems]

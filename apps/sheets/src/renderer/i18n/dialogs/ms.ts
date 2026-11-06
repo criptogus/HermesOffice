@@ -141,6 +141,7 @@ export const ms = {
   dlgSlicerInsertTitle: 'Selitkan Penghiris',
   dlgSlicerPickNote:
     'Pilih medan untuk penghiris; klik ahli dalam penghiris untuk menapis Jadual Pangsi.',
+  dlgSlicerSessionNote: 'Nota: panel penghiris hanya tersedia untuk sesi ini; data PivotTable yang ditapis disimpan bersama fail.',
   dlgSlicerAria: 'Penghiris {name}',
   dlgSlicerClear: 'Kosongkan penapis (pilih semua)',
   dlgSlicerRemove: 'Alih keluar penghiris (pulihkan semua ahli)',

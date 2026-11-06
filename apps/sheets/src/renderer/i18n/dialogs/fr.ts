@@ -145,6 +145,8 @@ export const fr = {
   dlgSlicerInsertTitle: 'Insérer un segment',
   dlgSlicerPickNote:
     'Choisissez le champ du segment ; cliquer sur les membres du segment filtre le tableau croisé dynamique.',
+  dlgSlicerSessionNote:
+    "Remarque : le panneau de segmentation n'est disponible que pour cette session ; les données filtrées du tableau croisé sont enregistrées avec le fichier.",
   dlgSlicerAria: 'Segment {name}',
   dlgSlicerClear: 'Effacer le filtre (tout sélectionner)',
   dlgSlicerRemove: 'Supprimer le segment (restaurer tous les membres)',

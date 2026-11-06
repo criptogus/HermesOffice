@@ -132,6 +132,7 @@ export const zh = {
 
   dlgSlicerInsertTitle: '插入切片器',
   dlgSlicerPickNote: '选择要作为切片器的字段，点选切片器里的成员即可筛选透视表。',
+  dlgSlicerSessionNote: '注意：切片器面板仅在当前会话中可用；筛选后的透视表数据会随文件保存。',
   dlgSlicerAria: '切片器 {name}',
   dlgSlicerClear: '清除筛选(全选)',
   dlgSlicerRemove: '删除切片器(恢复全部成员)',

@@ -133,6 +133,7 @@ export const zhTW = {
 
   dlgSlicerInsertTitle: '插入交叉分析篩選器',
   dlgSlicerPickNote: '選擇要作為交叉分析篩選器的欄位，點選篩選器裡的成員即可篩選樞紐分析表。',
+  dlgSlicerSessionNote: '注意：切片器面板僅在目前工作階段中可用；篩選後的樞紐分析表資料會隨檔案儲存。',
   dlgSlicerAria: '交叉分析篩選器 {name}',
   dlgSlicerClear: '清除篩選(全選)',
   dlgSlicerRemove: '刪除交叉分析篩選器(還原全部成員)',

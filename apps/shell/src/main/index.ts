@@ -172,6 +172,7 @@ import {
   sheetsFileRenamed,
   setSheetsCloseTabHook,
   setSheetsExtraFileMenuItems,
+  setSheetsQuickSwitcherHook,
   setSheetsShellWindow,
   setSheetsWorkbookOpenedHook,
   startSheetsCaptureServer,
@@ -187,6 +188,7 @@ import {
   setSlidesCloseTabHook,
   setSlidesExtraFileMenuItems,
   setSlidesOpenedHook,
+  setSlidesQuickSwitcherHook,
   setSlidesShellWindow,
   setSlidesShowBleed,
   slidesFileRenamed,
@@ -208,6 +210,8 @@ import { convertPdfFileToDocxLocalWithPrompt, PdfLoadError } from './pdf2docx-lo
 import { convertPdfFileToPptxLocalWithPrompt } from './pdf2pptx-local'
 import { convertPdfFileToXlsxLocalWithPrompt } from './pdf2xlsx-local'
 import { closePdfPasswordDialog, promptPdfPassword } from './pdf-password-dialog'
+import { openQuickSwitcher } from './quick-switcher'
+import type { QuickSwitcherState } from '../shared/quick-switcher-api'
 import {
   configureMarkdownRuntime,
   exportMarkdownPdfHeadless,
@@ -568,6 +572,7 @@ const GENTEAM_URL = GITHUB_REPO_URL
 // Genspark credit-usage page opened from the account menu's credits row.
 // Kept main-side so the renderer never supplies the URL.
 const CREDIT_USAGE_URL = 'https://www.genspark.ai/credit-usage'
+const ZERO_AGENCY_URL = 'https://zeroagency.ai'
 
 // ---- "star us on GitHub" prompt (see star-prompt.ts for the rules) ----
 
@@ -708,6 +713,11 @@ const tMain = createI18n({
     gwStartNotNow: '暂不',
     gwStartNever: '不再询问',
     gwStartAlways: '以后自动启动',
+    qsPlaceholder: '输入以搜索文件和标签页…',
+    qsEmpty: '没有匹配的文件或标签页',
+    qsBrowse: '浏览文件…',
+    qsSectionTabs: '标签页',
+    qsSectionFiles: '文件',
     gwStartFailed: 'Hermes 网关未能就绪。请在终端运行：hermes gateway start',
   },
   en: {
@@ -806,6 +816,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Not Now',
     gwStartNever: "Don't Ask Again",
     gwStartAlways: 'Always start it automatically',
+    qsPlaceholder: 'Type to search files and tabs…',
+    qsEmpty: 'No matching files or tabs',
+    qsBrowse: 'Browse for a file…',
+    qsSectionTabs: 'Tabs',
+    qsSectionFiles: 'Files',
     gwStartFailed:
       'The Hermes gateway did not become ready. Start it from a terminal with: hermes gateway start',
   },
@@ -905,6 +920,11 @@ const tMain = createI18n({
     gwStartNotNow: '後で',
     gwStartNever: '今後表示しない',
     gwStartAlways: '次回から自動で起動する',
+    qsPlaceholder: 'ファイルやタブを検索…',
+    qsEmpty: '一致するファイルやタブがありません',
+    qsBrowse: 'ファイルを参照…',
+    qsSectionTabs: 'タブ',
+    qsSectionFiles: 'ファイル',
     gwStartFailed:
       'Hermes ゲートウェイが起動しませんでした。ターミナルで実行してください: hermes gateway start',
   },
@@ -1003,6 +1023,11 @@ const tMain = createI18n({
     gwStartNotNow: '나중에',
     gwStartNever: '다시 묻지 않기',
     gwStartAlways: '다음부터 자동으로 시작',
+    qsPlaceholder: '파일 및 탭 검색…',
+    qsEmpty: '일치하는 파일 또는 탭이 없습니다',
+    qsBrowse: '파일 찾아보기…',
+    qsSectionTabs: '탭',
+    qsSectionFiles: '파일',
     gwStartFailed:
       'Hermes 게이트웨이가 준비되지 않았습니다. 터미널에서 실행하세요: hermes gateway start',
   },
@@ -1103,6 +1128,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Plus tard',
     gwStartNever: 'Ne plus demander',
     gwStartAlways: 'Toujours démarrer automatiquement',
+    qsPlaceholder: 'Rechercher fichiers et onglets…',
+    qsEmpty: 'Aucun fichier ni onglet correspondant',
+    qsBrowse: 'Parcourir les fichiers…',
+    qsSectionTabs: 'Onglets',
+    qsSectionFiles: 'Fichiers',
     gwStartFailed:
       'La passerelle Hermes n’a pas démarré. Lancez-la depuis un terminal : hermes gateway start',
   },
@@ -1203,6 +1233,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Jetzt nicht',
     gwStartNever: 'Nicht mehr fragen',
     gwStartAlways: 'Immer automatisch starten',
+    qsPlaceholder: 'Dateien und Tabs suchen…',
+    qsEmpty: 'Keine passenden Dateien oder Tabs',
+    qsBrowse: 'Datei durchsuchen…',
+    qsSectionTabs: 'Tabs',
+    qsSectionFiles: 'Dateien',
     gwStartFailed:
       'Das Hermes-Gateway wurde nicht bereit. Starten Sie es im Terminal mit: hermes gateway start',
   },
@@ -1303,6 +1338,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Ahora no',
     gwStartNever: 'No volver a preguntar',
     gwStartAlways: 'Iniciar siempre automáticamente',
+    qsPlaceholder: 'Buscar archivos y pestañas…',
+    qsEmpty: 'Sin archivos ni pestañas coincidentes',
+    qsBrowse: 'Examinar archivos…',
+    qsSectionTabs: 'Pestañas',
+    qsSectionFiles: 'Archivos',
     gwStartFailed:
       'El gateway de Hermes no quedó listo. Inícialo en la terminal con: hermes gateway start',
   },
@@ -1399,6 +1439,11 @@ const tMain = createI18n({
     gwStartNotNow: 'ไว้ก่อน',
     gwStartNever: 'ไม่ต้องถามอีก',
     gwStartAlways: 'เริ่มอัตโนมัติทุกครั้ง',
+    qsPlaceholder: 'พิมพ์เพื่อค้นหาไฟล์และแท็บ…',
+    qsEmpty: 'ไม่พบไฟล์หรือแท็บที่ตรงกัน',
+    qsBrowse: 'เรียกดูไฟล์…',
+    qsSectionTabs: 'แท็บ',
+    qsSectionFiles: 'ไฟล์',
     gwStartFailed: 'Hermes Gateway ไม่พร้อมใช้งาน กรุณาเริ่มจากเทอร์มินัล: hermes gateway start',
   },
   id: {
@@ -1498,6 +1543,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Nanti saja',
     gwStartNever: 'Jangan tanya lagi',
     gwStartAlways: 'Selalu mulai otomatis',
+    qsPlaceholder: 'Ketik untuk mencari file dan tab…',
+    qsEmpty: 'Tidak ada file atau tab yang cocok',
+    qsBrowse: 'Jelajahi file…',
+    qsSectionTabs: 'Tab',
+    qsSectionFiles: 'File',
     gwStartFailed: 'Gateway Hermes tidak siap. Jalankan dari terminal: hermes gateway start',
   },
   ru: {
@@ -1597,6 +1647,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Не сейчас',
     gwStartNever: 'Больше не спрашивать',
     gwStartAlways: 'Всегда запускать автоматически',
+    qsPlaceholder: 'Введите для поиска файлов и вкладок…',
+    qsEmpty: 'Нет подходящих файлов или вкладок',
+    qsBrowse: 'Обзор файлов…',
+    qsSectionTabs: 'Вкладки',
+    qsSectionFiles: 'Файлы',
     gwStartFailed: 'Шлюз Hermes не запустился. Запустите его в терминале: hermes gateway start',
   },
   ar: {
@@ -1692,6 +1747,11 @@ const tMain = createI18n({
     gwStartNotNow: 'ليس الآن',
     gwStartNever: 'عدم السؤال مجددًا',
     gwStartAlways: 'التشغيل تلقائيًا دائمًا',
+    qsPlaceholder: 'اكتب للبحث في الملفات وعلامات التبويب…',
+    qsEmpty: 'لا توجد ملفات أو علامات تبويب مطابقة',
+    qsBrowse: 'استعراض الملفات…',
+    qsSectionTabs: 'علامات التبويب',
+    qsSectionFiles: 'الملفات',
     gwStartFailed: 'لم تصبح بوابة Hermes جاهزة. شغّلها من الطرفية: hermes gateway start',
   },
   pt: {
@@ -1791,6 +1851,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Agora não',
     gwStartNever: 'Não perguntar mais',
     gwStartAlways: 'Sempre iniciar automaticamente',
+    qsPlaceholder: 'Digite para pesquisar arquivos e abas…',
+    qsEmpty: 'Nenhum arquivo ou aba correspondente',
+    qsBrowse: 'Procurar arquivo…',
+    qsSectionTabs: 'Abas',
+    qsSectionFiles: 'Arquivos',
     gwStartFailed:
       'O gateway do Hermes não ficou pronto. Inicie pelo terminal com: hermes gateway start',
   },
@@ -1891,6 +1956,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Non ora',
     gwStartNever: 'Non chiedere più',
     gwStartAlways: 'Avvia sempre automaticamente',
+    qsPlaceholder: 'Digita per cercare file e schede…',
+    qsEmpty: 'Nessun file o scheda corrispondente',
+    qsBrowse: 'Sfoglia file…',
+    qsSectionTabs: 'Schede',
+    qsSectionFiles: 'File',
     gwStartFailed:
       'Il gateway Hermes non è pronto. Avvialo dal terminale con: hermes gateway start',
   },
@@ -1991,6 +2061,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Nie teraz',
     gwStartNever: 'Nie pytaj ponownie',
     gwStartAlways: 'Zawsze uruchamiaj automatycznie',
+    qsPlaceholder: 'Wpisz, aby szukać plików i kart…',
+    qsEmpty: 'Brak pasujących plików lub kart',
+    qsBrowse: 'Przeglądaj pliki…',
+    qsSectionTabs: 'Karty',
+    qsSectionFiles: 'Pliki',
     gwStartFailed:
       'Brama Hermes nie stała się gotowa. Uruchom ją w terminalu: hermes gateway start',
   },
@@ -2002,6 +2077,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Nyní ne',
     gwStartNever: 'Znovu se neptat',
     gwStartAlways: 'Vždy spouštět automaticky',
+    qsPlaceholder: 'Zadejte hledání souborů a karet…',
+    qsEmpty: 'Žádné odpovídající soubory ani karty',
+    qsBrowse: 'Procházet soubory…',
+    qsSectionTabs: 'Karty',
+    qsSectionFiles: 'Soubory',
     gwStartFailed: 'Brána Hermes není připravena. Spusťte ji v terminálu: hermes gateway start',
     menuFile: 'Soubor',
     menuSectionNew: 'Nový',
@@ -2188,6 +2268,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Niet nu',
     gwStartNever: 'Niet meer vragen',
     gwStartAlways: 'Altijd automatisch starten',
+    qsPlaceholder: 'Typ om bestanden en tabbladen te zoeken…',
+    qsEmpty: 'Geen overeenkomende bestanden of tabbladen',
+    qsBrowse: 'Blader door bestanden…',
+    qsSectionTabs: 'Tabbladen',
+    qsSectionFiles: 'Bestanden',
     gwStartFailed:
       'De Hermes-gateway werd niet gereed. Start hem in de terminal met: hermes gateway start',
   },
@@ -2287,6 +2372,11 @@ const tMain = createI18n({
     gwStartNotNow: 'Bukan sekarang',
     gwStartNever: 'Jangan tanya lagi',
     gwStartAlways: 'Sentiasa mulakan automatik',
+    qsPlaceholder: 'Taip untuk mencari fail dan tab…',
+    qsEmpty: 'Tiada fail atau tab sepadan',
+    qsBrowse: 'Semak imbas fail…',
+    qsSectionTabs: 'Tab',
+    qsSectionFiles: 'Fail',
     gwStartFailed:
       'Gateway Hermes tidak menjadi sedia. Mulakannya dari terminal: hermes gateway start',
   },
@@ -2384,6 +2474,11 @@ const tMain = createI18n({
     gwStartNotNow: 'לא עכשיו',
     gwStartNever: 'אל תשאל שוב',
     gwStartAlways: 'הפעל תמיד אוטומטית',
+    qsPlaceholder: 'הקלד לחיפוש קבצים ולשוניות…',
+    qsEmpty: 'אין קבצים או לשוניות תואמות',
+    qsBrowse: 'עיון בקבצים…',
+    qsSectionTabs: 'לשוניות',
+    qsSectionFiles: 'קבצים',
     gwStartFailed: 'שער Hermes לא הפך לזמין. הפעל אותו מהטרמינל: hermes gateway start',
   },
   hi: {
@@ -2483,6 +2578,11 @@ const tMain = createI18n({
     gwStartNotNow: 'अभी नहीं',
     gwStartNever: 'दोबारा न पूछें',
     gwStartAlways: 'हमेशा स्वतः शुरू करें',
+    qsPlaceholder: 'फ़ाइलें और टैब खोजने के लिए टाइप करें…',
+    qsEmpty: 'कोई मेल खाती फ़ाइल या टैब नहीं',
+    qsBrowse: 'फ़ाइल ब्राउज़ करें…',
+    qsSectionTabs: 'टैब',
+    qsSectionFiles: 'फ़ाइलें',
     gwStartFailed: 'Hermes गेटवे तैयार नहीं हुआ। टर्मिनल से शुरू करें: hermes gateway start',
   },
   'zh-TW': {
@@ -2573,6 +2673,11 @@ const tMain = createI18n({
     gwStartNotNow: '暫不',
     gwStartNever: '不再詢問',
     gwStartAlways: '以後自動啟動',
+    qsPlaceholder: '輸入以搜尋檔案和分頁…',
+    qsEmpty: '沒有符合的檔案或分頁',
+    qsBrowse: '瀏覽檔案…',
+    qsSectionTabs: '分頁',
+    qsSectionFiles: '檔案',
     gwStartFailed: 'Hermes 閘道未能就緒。請在終端機執行：hermes gateway start',
   },
 })
@@ -2816,6 +2921,8 @@ function createShellWindow(): void {
   setDocsShellWindow(win)
   setSheetsShellWindow(win)
   setSlidesShellWindow(win)
+  setSheetsQuickSwitcherHook(() => openSwitcher())
+  setSlidesQuickSwitcherHook(() => openSwitcher())
   setSlidesShowBleed((wc, on) => manager.setContentBleed(wc, on))
   setHtmlPresentHooks({
     setBleed: (wc, on) => manager.setContentBleed(wc, on),
@@ -2842,6 +2949,7 @@ function createShellWindow(): void {
     focusTab: (id) => manager.activateTab(id),
     closeActiveTab: () => manager.closeActiveTab(),
     openGeneratedPath: (path) => openGeneratedDocument(path),
+    openQuickSwitcher: () => openSwitcher(),
   })
   setSheetsCloseTabHook(() => manager.closeActiveTab())
   // ⌘W targets the focused window: in a detached slides editor window it closes
@@ -3929,6 +4037,15 @@ function registerHomeIpc(): void {
     }
   })
 
+  ipcMain.handle(HOME_CHANNELS.openZeroAgency, () => {
+    const target = safeExternalUrl(ZERO_AGENCY_URL)
+    if (target) {
+      shell.openExternal(target).catch(() => {
+        // no browser handler available; nothing actionable for the user here
+      })
+    }
+  })
+
   ipcMain.handle(HOME_CHANNELS.openGitHubRepo, () => {
     const target = safeExternalUrl(GITHUB_REPO_URL)
     if (target) {
@@ -4140,6 +4257,25 @@ function registerTabsIpc(): void {
   })
 }
 
+// ---- quick switcher (Cmd/Ctrl+O fuzzy file/tab opener, issue #25) ----
+
+function quickSwitcherState(): QuickSwitcherState {
+  return {
+    lang: currentLang(),
+    strings: {
+      placeholder: tm('qsPlaceholder'),
+      empty: tm('qsEmpty'),
+      browse: tm('qsBrowse'),
+      sectionTabs: tm('qsSectionTabs'),
+      sectionFiles: tm('qsSectionFiles'),
+    },
+  }
+}
+
+function openSwitcher(): void {
+  openQuickSwitcher(shellWindow ?? BrowserWindow.getFocusedWindow(), quickSwitcherState())
+}
+
 // ---- home menu ----
 
 async function openFileViaDialog(): Promise<void> {
@@ -4177,7 +4313,7 @@ function buildHomeMenu(): void {
         {
           label: tm('menuOpen'),
           accelerator: 'CmdOrCtrl+O',
-          click: () => void openFileViaDialog(),
+          click: () => openSwitcher(),
         },
         { type: 'separator' },
         { role: 'close', label: tm('menuClose') },
@@ -4211,7 +4347,7 @@ function buildPdfMenu(): void {
         {
           label: tm('menuOpen'),
           accelerator: 'CmdOrCtrl+O',
-          click: () => void openFileViaDialog(),
+          click: () => openSwitcher(),
         },
         { type: 'separator' },
         {
@@ -4294,7 +4430,7 @@ function buildMarkdownMenu(): void {
         {
           label: tm('menuOpen'),
           accelerator: 'CmdOrCtrl+O',
-          click: () => void openFileViaDialog(),
+          click: () => openSwitcher(),
         },
         { type: 'separator' },
         {
@@ -4393,7 +4529,7 @@ function buildHtmlMenu(): void {
         {
           label: tm('menuOpen'),
           accelerator: 'CmdOrCtrl+O',
-          click: () => void openFileViaDialog(),
+          click: () => openSwitcher(),
         },
         { type: 'separator' },
         {

@@ -176,8 +176,7 @@ interface ExcelShellProps {
   readonly attachments: readonly AttachmentMeta[]
   readonly attachNotice: string | null
   readonly onPickAttachments: () => void
-  readonly onAddAttachmentPaths: (paths: readonly string[]) => void
-  readonly onAddPastedImage: (data: ArrayBuffer, ext: string) => void
+  readonly onAddAttachmentBytes: (name: string, data: ArrayBuffer) => void
   readonly onRemoveAttachment: (path: string) => void
   readonly onPromptChange: (prompt: string) => void
   /** Send the composer text, or the given instruction when provided (Retry also
@@ -322,8 +321,7 @@ export function ExcelShell({
   attachments,
   attachNotice,
   onPickAttachments,
-  onAddAttachmentPaths,
-  onAddPastedImage,
+  onAddAttachmentBytes,
   onRemoveAttachment,
   onGetSortColumns,
   onGetSheetProtection,
@@ -706,8 +704,7 @@ export function ExcelShell({
           attachments={attachments}
           attachNotice={attachNotice}
           onPickAttachments={onPickAttachments}
-          onAddAttachmentPaths={onAddAttachmentPaths}
-          onAddPastedImage={onAddPastedImage}
+          onAddAttachmentBytes={onAddAttachmentBytes}
           onRemoveAttachment={onRemoveAttachment}
           prompt={prompt}
           preview={preview}

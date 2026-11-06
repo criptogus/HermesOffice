@@ -143,6 +143,7 @@ export const pl = {
   dlgSlicerInsertTitle: 'Wstaw fragmentator',
   dlgSlicerPickNote:
     'Wybierz pole dla fragmentatora; klikanie elementów we fragmentatorze filtruje tabelę przestawną.',
+  dlgSlicerSessionNote: 'Uwaga: okienko fragmentatora jest dostępne tylko w tej sesji; filtrowane dane tabeli przestawnej są zapisywane razem z plikiem.',
   dlgSlicerAria: 'Fragmentator {name}',
   dlgSlicerClear: 'Wyczyść filtr (zaznacz wszystko)',
   dlgSlicerRemove: 'Usuń fragmentator (przywróć wszystkie elementy)',

@@ -53,6 +53,7 @@ import {
   installRendererProtocol,
   registerRendererScheme,
   rendererUrl,
+  saveAttachmentBytes,
   uniquePathIn,
 } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang, type Lang, normalizeLang, setUiLang } from '@hermesoffice/i18n'
@@ -1553,6 +1554,12 @@ let sidecar: XlsxSidecarClient | null = null
 let sheetsShellWindow: BrowserWindow | null = null
 export function setSheetsShellWindow(win: BrowserWindow | null): void {
   sheetsShellWindow = win
+}
+
+/** Cmd/Ctrl+O opens the shell's quick switcher instead of the open dialog */
+let openQuickSwitcherHook: (() => void) | null = null
+export function setSheetsQuickSwitcherHook(fn: (() => void) | null): void {
+  openQuickSwitcherHook = fn
 }
 
 interface SheetsTabSession {
@@ -3199,9 +3206,41 @@ export function registerSheetsIpc(): void {
   ipcMain.handle(IPC_CHANNELS.filesAdd, (event, paths: unknown): AttachmentAddResult => {
     sessionFor(event)
     const list = z.array(z.string().min(1).max(1024)).max(50).parse(paths)
-    for (const p of list) grantAttachmentRead(event.sender.id, p)
+    // Renderer-supplied paths are not proof of an OS drop/paste: collect the
+    // metadata for display, but do NOT grant read access — grants only come
+    // from the picker, pasted-image temp files, and files:add-bytes.
     return collectAttachments(list)
   })
+
+  // Dragged/pasted files arrive as bytes: webUtils.getPathForFile strings can
+  // be forged by page script, so main stores the bytes under temp itself and
+  // grants that path — the renderer never names a readable path.
+  ipcMain.handle(
+    IPC_CHANNELS.filesAddBytes,
+    (event, name: unknown, data: unknown): AttachmentAddResult => {
+      sessionFor(event)
+      const saved = saveAttachmentBytes(data, name, {
+        allowedExts: ATTACHMENT_EXTS,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      })
+      if (!saved.ok) {
+        const ext =
+          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        return {
+          accepted: [],
+          rejected: [
+            saved.reason === 'too-large'
+              ? tm('errFileTooLarge')
+              : saved.reason === 'bad-ext'
+                ? tm('errUnsupportedExt', { ext })
+                : tm('errUnreadable'),
+          ],
+        }
+      }
+      grantAttachmentRead(event.sender.id, saved.path)
+      return collectAttachments([saved.path])
+    },
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.filesRead,
@@ -4086,7 +4125,7 @@ function installApplicationMenu(): void {
           {
             label: tm('menuOpenWorkbook'),
             accelerator: 'CmdOrCtrl+O',
-            click: () => sendMenuAction('open'),
+            click: () => (openQuickSwitcherHook ? openQuickSwitcherHook() : sendMenuAction('open')),
           },
           ...(extraFileMenuItems.length > 0
             ? [{ type: 'separator' as const }, ...extraFileMenuItems]

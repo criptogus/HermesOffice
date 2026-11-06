@@ -140,6 +140,7 @@ export const hi = {
   dlgSlicerInsertTitle: 'स्लाइसर सम्मिलित करें',
   dlgSlicerPickNote:
     'स्लाइसर के लिए फ़ील्ड चुनें; स्लाइसर में सदस्यों पर क्लिक करने से पिवट तालिका फ़िल्टर होती है।',
+  dlgSlicerSessionNote: 'नोट: स्लाइसर पैनल केवल इस सत्र के लिए उपलब्ध है; फ़िल्टर किया गया PivotTable डेटा फ़ाइल के साथ सहेजा जाता है।',
   dlgSlicerAria: 'स्लाइसर {name}',
   dlgSlicerClear: 'फ़िल्टर साफ़ करें (सभी चुनें)',
   dlgSlicerRemove: 'स्लाइसर हटाएं (सभी सदस्य पुनर्स्थापित करें)',

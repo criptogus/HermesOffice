@@ -105,6 +105,7 @@ export const IPC_CHANNELS = {
   filesPick: 'sheets:files-pick',
   filesAdd: 'sheets:files-add',
   filesAddPastedImage: 'sheets:files-add-pasted-image',
+  filesAddBytes: 'sheets:files-add-bytes',
   filesRead: 'sheets:files-read',
   filesReadImage: 'sheets:files-read-image',
 } as const

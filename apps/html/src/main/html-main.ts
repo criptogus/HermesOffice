@@ -37,6 +37,7 @@ import {
   type HeadlessExportTarget,
   installRendererProtocol,
   rendererUrl,
+  saveAttachmentBytes,
 } from '@hermesoffice/electron-utils'
 import { createI18n, getUiLang } from '@hermesoffice/i18n'
 import { generateImageTool } from '@hermesoffice/ai-search'
@@ -1478,9 +1479,40 @@ function registerHtmlIpc(): void {
 
   ipcMain.handle(HTML_CHANNELS.filesAdd, (e, paths: unknown) => {
     const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []
-    for (const p of list) grantAttachmentRead(e.sender, p)
+    // Renderer-supplied paths are not proof of an OS drop/paste: collect the
+    // metadata for display, but do NOT grant read access — grants only come
+    // from the picker, pasted-image temp files, and files-add-bytes.
     return collectAttachments(list)
   })
+
+  // Dragged/pasted files arrive as bytes: webUtils.getPathForFile strings can
+  // be forged by page script, so main stores the bytes under temp itself and
+  // grants that path — the renderer never names a readable path.
+  ipcMain.handle(
+    HTML_CHANNELS.filesAddBytes,
+    (e, name: unknown, data: unknown): AttachmentAddResult => {
+      const saved = saveAttachmentBytes(data, name, {
+        allowedExts: ATTACHMENT_EXTS,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      })
+      if (!saved.ok) {
+        const ext =
+          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        return {
+          accepted: [],
+          rejected: [
+            saved.reason === 'too-large'
+              ? tm('errFileTooLarge')
+              : saved.reason === 'bad-ext'
+                ? tm('errUnsupportedExt', { ext })
+                : tm('errUnreadable'),
+          ],
+        }
+      }
+      grantAttachmentRead(e.sender, saved.path)
+      return collectAttachments([saved.path])
+    },
+  )
 
   ipcMain.handle(
     HTML_CHANNELS.filesAddPastedImage,

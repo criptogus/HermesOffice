@@ -8,7 +8,7 @@
 import { app, dialog, ipcMain, type WebContents } from 'electron'
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { showOpenDialogWithMemory } from '@hermesoffice/electron-utils'
+import { saveAttachmentBytes, showOpenDialogWithMemory } from '@hermesoffice/electron-utils'
 import { parseFileToText } from '@hermesoffice/file-parse'
 import type {
   AttachmentAddResult,
@@ -192,9 +192,40 @@ export function registerAttachmentIpc(): void {
   })
 
   ipcMain.handle('slides:files-add', (e, paths: string[]) => {
-    for (const p of paths) grantAttachmentRead(e.sender, p)
+    // Renderer-supplied paths are not proof of an OS drop/paste: collect the
+    // metadata for display, but do NOT grant read access — grants only come
+    // from the picker, pasted-image temp files, and files-add-bytes.
     return collectAttachments(paths)
   })
+
+  // Dragged/pasted files arrive as bytes: webUtils.getPathForFile strings can
+  // be forged by page script, so main stores the bytes under temp itself and
+  // grants that path — the renderer never names a readable path.
+  ipcMain.handle(
+    'slides:files-add-bytes',
+    (e, name: unknown, data: unknown): AttachmentAddResult => {
+      const saved = saveAttachmentBytes(data, name, {
+        allowedExts: ATTACHMENT_EXTS,
+        maxBytes: ATTACHMENT_MAX_BYTES,
+      })
+      if (!saved.ok) {
+        const ext =
+          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        return {
+          accepted: [],
+          rejected: [
+            saved.reason === 'too-large'
+              ? tm('errFileTooLarge')
+              : saved.reason === 'bad-ext'
+                ? tm('errUnsupportedExt', { ext })
+                : tm('errUnreadable'),
+          ],
+        }
+      }
+      grantAttachmentRead(e.sender, saved.path)
+      return collectAttachments([saved.path])
+    },
+  )
 
   ipcMain.handle(
     'slides:files-read',

@@ -56,6 +56,7 @@ export function SlicerFieldPicker({
       >
         <header>{t('dlgSlicerInsertTitle')}</header>
         <p className="dialog-note">{t('dlgSlicerPickNote')}</p>
+        <p className="dialog-note">{t('dlgSlicerSessionNote')}</p>
         <div className="slicer-picker-fields">
           {fields.map((entry) => (
             <button

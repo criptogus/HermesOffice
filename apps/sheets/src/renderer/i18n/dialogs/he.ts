@@ -136,6 +136,7 @@ export const he = {
 
   dlgSlicerInsertTitle: 'הוספת כלי פריסה',
   dlgSlicerPickNote: 'בחרו את השדה לכלי הפריסה; לחיצה על חברים בכלי הפריסה מסננת את טבלת הציר.',
+  dlgSlicerSessionNote: 'הערה: חלונית הפריסה זמינה רק במושב זה; נתוני PivotTable המסוננים נשמרים עם הקובץ.',
   dlgSlicerAria: 'כלי פריסה {name}',
   dlgSlicerClear: 'ניקוי מסנן (בחירת הכול)',
   dlgSlicerRemove: 'הסרת כלי הפריסה (שחזור כל החברים)',

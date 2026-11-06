@@ -169,6 +169,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke('docs:ai-generate-image', op),
   pickAttachments: () => ipcRenderer.invoke('files:pick'),
   addAttachmentPaths: (paths: string[]) => ipcRenderer.invoke('files:add', paths),
+  addAttachmentBytes: (name: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke('files:add-bytes', name, data),
   addPastedImage: (data: ArrayBuffer, ext: string) =>
     ipcRenderer.invoke('files:add-pasted-image', data, ext),
   copyImageToClipboard: (dataUrl: string, metaJson?: string) =>

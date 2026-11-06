@@ -142,6 +142,8 @@ export const es = {
   dlgSlicerInsertTitle: 'Insertar segmentación de datos',
   dlgSlicerPickNote:
     'Elige el campo para la segmentación; al hacer clic en sus elementos se filtra la tabla dinámica.',
+  dlgSlicerSessionNote:
+    'Nota: el panel de segmentación solo está disponible en esta sesión; los datos filtrados de la tabla dinámica se guardan con el archivo.',
   dlgSlicerAria: 'Segmentación de datos {name}',
   dlgSlicerClear: 'Borrar filtro (seleccionar todo)',
   dlgSlicerRemove: 'Quitar segmentación (restaurar todos los elementos)',
