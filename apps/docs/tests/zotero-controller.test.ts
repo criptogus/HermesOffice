@@ -1,6 +1,6 @@
 import { Editor, Mark, Node } from '@tiptap/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { appAlertDialog, appChoiceDialog } from '@hermesoffice/ui'
+import { appChoiceDialog } from '@hermesoffice/ui'
 import { ZoteroDocumentController } from '../src/renderer/zotero/controller'
 
 vi.mock('@hermesoffice/ui', () => ({
