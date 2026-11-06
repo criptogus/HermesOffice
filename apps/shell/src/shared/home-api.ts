@@ -304,6 +304,8 @@ export interface HomeApi {
   /** chat attachments: the files:* handlers Docs registers in the shell main process */
   pickAttachments(): Promise<AttachmentAddResult | null>
   addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** dropped/pasted files arrive as bytes: main stores them under temp and grants that path */
+  addAttachmentBytes(name: string, data: ArrayBuffer): Promise<AttachmentAddResult>
   addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
   readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
   readAttachmentImage(path: string): Promise<AttachmentImageResult>

@@ -36,6 +36,14 @@ import { useI18n } from './locale'
 import type { AttachmentAddResult } from '../../shared/home-api'
 import { AskAttachments } from './AskAttachments'
 import { artifactFromCall, retryInstruction, settleArtifact, type Artifact } from './ask-artifacts'
+
+/** Clipboard bitmap MIME → attachment extension (mirrors the docs panel's map) */
+const PASTE_MIME_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+}
 import { appendToolNote, toolNoteDetail, toolNoteKind, type ToolNote } from './ask-tool-notes'
 import sendEnterOn from './assets/send-enter-on.png'
 import sendEnterOff from './assets/send-enter-off.png'
@@ -530,19 +538,15 @@ export function KbAskPanel({
     })
   }
 
+  /** Dropped/pasted files are sent as bytes: the renderer cannot prove a path
+   *  came from the OS, so main stores them under temp and grants that path */
   const addDroppedFiles = async (files: File[]): Promise<void> => {
-    const paths: string[] = []
     for (const f of files) {
-      const p = window.aiOffice.pathForFile(f)
-      if (p) {
-        paths.push(p)
-        continue
-      }
-      // a pasted screenshot has no path: the main process saves it to a temp file first
-      const ext = f.type.split('/')[1]?.replace('jpeg', 'jpg') ?? ''
-      mergeAttachments(await window.aiOffice.addPastedImage(await f.arrayBuffer(), ext))
+      const name = f.name.includes('.')
+        ? f.name
+        : `${f.name || 'pasted'}.${PASTE_MIME_EXT[f.type] ?? 'bin'}`
+      mergeAttachments(await window.aiOffice.addAttachmentBytes(name, await f.arrayBuffer()))
     }
-    if (paths.length > 0) mergeAttachments(await window.aiOffice.addAttachmentPaths(paths))
   }
 
   const removeAttachment = (path: string): void =>

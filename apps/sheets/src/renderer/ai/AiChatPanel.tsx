@@ -113,8 +113,7 @@ export function AiChatPanel({
   onToggleSkill,
   attachNotice,
   onPickAttachments,
-  onAddAttachmentPaths,
-  onAddPastedImage,
+  onAddAttachmentBytes,
   onRemoveAttachment,
   onSendQueued,
   prompt,
@@ -149,10 +148,9 @@ export function AiChatPanel({
   readonly onToggleSkill: (name: string) => void
   readonly attachNotice: string | null
   readonly onPickAttachments: () => void
-  readonly onAddAttachmentPaths: (paths: readonly string[]) => void
-  /// Clipboard-pasted bitmaps (screenshots etc. without a local path): bytes +
-  /// extension
-  readonly onAddPastedImage: (data: ArrayBuffer, ext: string) => void
+  /// Dropped/pasted files: bytes + display name; main stages a temp copy
+  /// and grants read on that path
+  readonly onAddAttachmentBytes: (name: string, data: ArrayBuffer) => void
   readonly onRemoveAttachment: (path: string) => void
   readonly prompt: string
   readonly preview: ChangePlan | null
@@ -394,30 +392,24 @@ export function AiChatPanel({
     onPromptChange('')
   }
 
+  /** Dropped/pasted files are sent as bytes: the renderer cannot prove a path
+   *  came from the OS, so main stores them under temp and grants that path */
+  const addDroppedFile = async (f: File): Promise<void> => {
+    const name = f.name.includes('.')
+      ? f.name
+      : `${f.name || 'pasted'}.${PASTE_MIME_EXT[f.type] ?? 'bin'}`
+    onAddAttachmentBytes(name, await f.arrayBuffer())
+  }
+
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.desktopApi.getPathForFile(f))
-      .filter(Boolean)
-    if (paths.length > 0) onAddAttachmentPaths(paths)
+    for (const f of Array.from(e.dataTransfer.files)) void addDroppedFile(f)
   }
 
-  /** Files pasted into the input: ones with a local path go the regular
-   * attachment route; pure bitmaps like screenshots are persisted by the host */
   const onPasteFiles = (files: File[]): void => {
-    const paths: string[] = []
-    for (const f of files) {
-      const p = window.desktopApi.getPathForFile(f)
-      if (p) {
-        paths.push(p)
-        continue
-      }
-      const ext = PASTE_MIME_EXT[f.type] ?? f.name.split('.').pop()?.toLowerCase() ?? 'bin'
-      void f.arrayBuffer().then((buf) => onAddPastedImage(buf, ext))
-    }
-    if (paths.length > 0) onAddAttachmentPaths(paths)
+    for (const f of files) void addDroppedFile(f)
   }
 
   return (

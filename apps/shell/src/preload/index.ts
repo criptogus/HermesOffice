@@ -204,6 +204,9 @@ const homeApi: HomeApi = {
   async addAttachmentPaths(paths) {
     return ipcRenderer.invoke('files:add', paths)
   },
+  async addAttachmentBytes(name, data) {
+    return ipcRenderer.invoke('files:add-bytes', name, data)
+  },
   async addPastedImage(data, ext) {
     return ipcRenderer.invoke('files:add-pasted-image', data, ext)
   },

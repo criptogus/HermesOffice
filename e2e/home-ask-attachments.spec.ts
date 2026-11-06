@@ -145,7 +145,10 @@ test('files dropped on Ask AI reach the model as attachments', async () => {
     const first = JSON.stringify(requests[0])
     expect(first).toContain('Attachment list')
     expect(first).toContain('brief.md')
-    expect(first).toContain(briefPath)
+    // drops arrive as bytes: main stages a temp copy (`<stamp>-<seq>-brief.md`)
+    // and grants that path — the renderer-supplied original path is never trusted
+    expect(first).toContain('-brief.md')
+    expect(first).not.toContain(briefPath)
     expect(first).toContain('image_url')
     const userTurn = requests[0]!.messages.find(
       (m) => m.role === 'user' && Array.isArray(m.content),
