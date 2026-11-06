@@ -19,9 +19,7 @@ import type {
   RecentEntry,
 } from '../../shared/home-api'
 import type { IntegrationsApi } from '../../shared/integrations-api'
-import { useDismissablePopover,
-  appAlertDialog,
-} from '@hermesoffice/ui'
+import { useDismissablePopover, appAlertDialog } from '@hermesoffice/ui'
 import { fileCountKey, visiblePageCount } from './counts'
 import { useI18n } from './locale'
 import type { I18n, StringKey } from './locale'

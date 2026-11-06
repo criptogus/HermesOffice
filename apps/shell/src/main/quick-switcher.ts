@@ -28,10 +28,7 @@ function registerIpc(): void {
 
 /** Open (or refocus) the switcher. `state` carries the UI language + strings
  * resolved by the caller, which owns the main-process i18n table. */
-export function openQuickSwitcher(
-  parent: BrowserWindow | null,
-  state: QuickSwitcherState,
-): void {
+export function openQuickSwitcher(parent: BrowserWindow | null, state: QuickSwitcherState): void {
   currentState = state
   registerIpc()
 

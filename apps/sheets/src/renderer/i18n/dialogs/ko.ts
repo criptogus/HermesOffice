@@ -138,7 +138,8 @@ export const ko = {
   dlgSlicerInsertTitle: '슬라이서 삽입',
   dlgSlicerPickNote:
     '슬라이서로 사용할 필드를 선택하세요. 슬라이서의 구성원을 클릭하면 피벗 테이블이 필터링됩니다.',
-  dlgSlicerSessionNote: '참고: 슬라이서 창은 이 세션에서만 사용할 수 있으며, 필터링된 피벗테이블 데이터는 파일과 함께 저장됩니다.',
+  dlgSlicerSessionNote:
+    '참고: 슬라이서 창은 이 세션에서만 사용할 수 있으며, 필터링된 피벗테이블 데이터는 파일과 함께 저장됩니다.',
   dlgSlicerAria: '슬라이서 {name}',
   dlgSlicerClear: '필터 지우기(모두 선택)',
   dlgSlicerRemove: '슬라이서 제거(모든 구성원 복원)',

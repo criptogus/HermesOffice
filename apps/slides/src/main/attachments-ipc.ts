@@ -209,8 +209,7 @@ export function registerAttachmentIpc(): void {
         maxBytes: ATTACHMENT_MAX_BYTES,
       })
       if (!saved.ok) {
-        const ext =
-          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        const ext = typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
         return {
           accepted: [],
           rejected: [

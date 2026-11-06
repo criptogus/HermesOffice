@@ -457,10 +457,7 @@ function cmdInstall() {
 async function cmdStageBinary(tagName, label) {
   if (!tagName || !label) throw new Error('usage: stage-binary <tag> <label>')
   const repoHtml = REPO.replace(/\.git$/, '')
-  const candidates = [
-    `HermesOffice-${label}-arm64-mac.zip`,
-    'HermesOffice-arm64-mac.zip',
-  ]
+  const candidates = [`HermesOffice-${label}-arm64-mac.zip`, 'HermesOffice-arm64-mac.zip']
 
   mkdirSync(STAGE_DIR, { recursive: true })
   const zipPath = join(tmpdir(), `hermesoffice-update-${label}.zip`)

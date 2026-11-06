@@ -10,8 +10,7 @@ import { join } from 'node:path'
 import { sanitizeFileName } from './safe-file-name'
 
 export type SaveAttachmentBytesResult =
-  | { ok: true; path: string }
-  | { ok: false; reason: 'empty' | 'bad-name' | 'bad-ext' | 'too-large' }
+  { ok: true; path: string } | { ok: false; reason: 'empty' | 'bad-name' | 'bad-ext' | 'too-large' }
 
 export interface SaveAttachmentBytesOptions {
   /// lowercase extensions without dot that may be stored ('' entries ignored)

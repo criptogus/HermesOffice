@@ -380,8 +380,8 @@ export function ReferencesTab({
       const result = await window.desktop.zoteroCommand(command)
       if (!result.ok) {
         console.error('Zotero integration failed', result.error)
-        void appAlertDialog({ message: 
-          t(
+        void appAlertDialog({
+          message: t(
             result.errorCode === 'connection-refused'
               ? 'zoteroConnectionError'
               : 'zoteroOperationError',

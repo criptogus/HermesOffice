@@ -392,9 +392,7 @@ describe('nightly main builds (ho-nightly)', () => {
     await vi.advanceTimersByTimeAsync(100)
 
     const stageCall = spawnArgs.find((c) => c.includes('stage-binary'))
-    expect(stageCall).toEqual(
-      expect.arrayContaining(['stage-binary', 'ho-nightly', 'nightly']),
-    )
+    expect(stageCall).toEqual(expect.arrayContaining(['stage-binary', 'ho-nightly', 'nightly']))
     expect(pushUpdateState).toHaveBeenCalledWith({ phase: 'downloaded', percent: 100 })
   })
 })

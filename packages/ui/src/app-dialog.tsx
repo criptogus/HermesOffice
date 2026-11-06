@@ -67,7 +67,11 @@ function settleCurrent(value: string | boolean | null): void {
 /** Themed replacement for window.confirm — resolves true on confirm, false on cancel/Escape/backdrop. */
 export function appConfirmDialog(options: AppDialogOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    enqueue({ ...options, kind: options.danger ? 'confirm-danger' : 'confirm', resolve: (v) => resolve(v === true) })
+    enqueue({
+      ...options,
+      kind: options.danger ? 'confirm-danger' : 'confirm',
+      resolve: (v) => resolve(v === true),
+    })
   })
 }
 

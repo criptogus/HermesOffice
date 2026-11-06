@@ -130,7 +130,10 @@ function refilter(): void {
         ),
       }))
       .filter((r) => r.score >= 0)
-      .sort((a, b) => b.score - a.score || a.item.group - b.item.group || b.item.mtimeMs - a.item.mtimeMs)
+      .sort(
+        (a, b) =>
+          b.score - a.score || a.item.group - b.item.group || b.item.mtimeMs - a.item.mtimeMs,
+      )
       .map((r) => r.item)
   }
   // stable group ordering when scores tie: tabs, starred, recents

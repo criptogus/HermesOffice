@@ -1849,7 +1849,6 @@ button.check-item:hover {
   box-shadow: var(--sheets-shadow-badge);
 }
 
-
 .ai-panel-header-actions {
   display: flex;
   align-items: center;

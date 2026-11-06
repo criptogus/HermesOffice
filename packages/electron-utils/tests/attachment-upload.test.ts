@@ -42,11 +42,7 @@ describe('saveAttachmentBytes', () => {
 
   it('cannot escape the temp dir via a traversal file name', () => {
     const d = dir()
-    const r = saveAttachmentBytes(
-      new TextEncoder().encode('x').buffer,
-      '../../etc/a.txt',
-      opts(d),
-    )
+    const r = saveAttachmentBytes(new TextEncoder().encode('x').buffer, '../../etc/a.txt', opts(d))
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.path.startsWith(d + '/')).toBe(true)
   })

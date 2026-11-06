@@ -216,7 +216,8 @@ const tDlg = createI18n({
     errImageNoText:
       "Les pièces jointes image ne fournissent pas de texte ; l'image est envoyée avec le message de l'utilisateur, consultez-la directement",
     errNotImage: "type d'image non pris en charge",
-    errAttachmentNotGranted: "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
+    errAttachmentNotGranted:
+      "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
   },
   de: {
     dlgSaveTitle: 'HTML-Dokument speichern',
@@ -242,7 +243,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Bildanlagen liefern keinen Text; das Bild wird mit der Benutzernachricht gesendet und kann direkt betrachtet werden',
     errNotImage: 'kein unterstütztes Bildformat',
-    errAttachmentNotGranted: 'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
+    errAttachmentNotGranted:
+      'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
   },
   es: {
     dlgSaveTitle: 'Guardar documento HTML',
@@ -450,7 +452,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika, wystarczy na niego spojrzeć',
     errNotImage: 'nieobsługiwany typ obrazu',
-    errAttachmentNotGranted: 'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
+    errAttachmentNotGranted:
+      'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
   },
   cs: {
     dlgSaveTitle: 'Uložit dokument HTML',
@@ -502,7 +505,8 @@ const tDlg = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden en kan direct worden bekeken',
     errNotImage: 'geen ondersteund afbeeldingstype',
-    errAttachmentNotGranted: 'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
+    errAttachmentNotGranted:
+      'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
   },
   ms: {
     dlgSaveTitle: 'Simpan dokumen HTML',
@@ -1496,8 +1500,7 @@ function registerHtmlIpc(): void {
         maxBytes: ATTACHMENT_MAX_BYTES,
       })
       if (!saved.ok) {
-        const ext =
-          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        const ext = typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
         return {
           accepted: [],
           rejected: [

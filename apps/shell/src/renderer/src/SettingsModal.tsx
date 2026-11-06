@@ -408,7 +408,11 @@ function AiModelPane({ t }: { t: TFunc }) {
         />
       </div>
       <div className="set-field-desc set-ai-note">
-        {isGensparkProvider ? t('setAiGensparkHint') : isCodex ? t('setAiCodexHint') : t('setAiByokNote')}
+        {isGensparkProvider
+          ? t('setAiGensparkHint')
+          : isCodex
+            ? t('setAiCodexHint')
+            : t('setAiByokNote')}
       </div>
       <div className="set-field">
         <div className="set-field-text">

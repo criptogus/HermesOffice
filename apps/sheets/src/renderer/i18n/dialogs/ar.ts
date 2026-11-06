@@ -140,7 +140,8 @@ export const ar = {
   dlgSlicerInsertTitle: 'إدراج مقسم طريقة عرض',
   dlgSlicerPickNote:
     'اختر الحقل الخاص بمقسم طريقة العرض؛ يؤدي النقر على عناصره إلى تصفية PivotTable.',
-  dlgSlicerSessionNote: 'ملاحظة: لوحة التصفية متاحة في هذه الجلسة فقط؛ يتم حفظ بيانات PivotTable المُصفاة مع الملف.',
+  dlgSlicerSessionNote:
+    'ملاحظة: لوحة التصفية متاحة في هذه الجلسة فقط؛ يتم حفظ بيانات PivotTable المُصفاة مع الملف.',
   dlgSlicerAria: 'مقسم طريقة العرض {name}',
   dlgSlicerClear: 'مسح التصفية (تحديد الكل)',
   dlgSlicerRemove: 'إزالة مقسم طريقة العرض (استعادة كل العناصر)',

@@ -7,11 +7,7 @@ import type { BrowserWindow } from 'electron'
 import type { UpdateUiState } from '../shared/update-api'
 import { safeExternalUrl } from '@hermesoffice/electron-utils'
 import { closeUpdateWindow, pushUpdateState, showUpdateWindow } from './update-window'
-import {
-  initialState,
-  showManualCheckFailed,
-  showManualCheckUpToDate,
-} from './updater'
+import { initialState, showManualCheckFailed, showManualCheckUpToDate } from './updater'
 
 /**
  * GitHub-main updater — the Hermes Office counterpart of the Hermes Desktop
@@ -364,13 +360,10 @@ async function checkForUpdate(
           // Preferred path: the prebuilt arm64 zip on the ho-v* GitHub
           // release — works on any Mac, no dev toolchain required.
           const binaryOk =
-            pendingRelease !== null &&
-            process.platform === 'darwin' &&
-            process.arch === 'arm64'
+            pendingRelease !== null && process.platform === 'darwin' && process.arch === 'arm64'
           if (pendingRelease && binaryOk) {
-            await spawnHelper(
-              ['stage-binary', pendingRelease.name, pendingRelease.label],
-              (pct) => pushUpdateState({ phase: 'downloading', percent: pct }),
+            await spawnHelper(['stage-binary', pendingRelease.name, pendingRelease.label], (pct) =>
+              pushUpdateState({ phase: 'downloading', percent: pct }),
             )
           } else if (process.env.HERMESOFFICE_ENABLE_SOURCE_UPDATE === '1') {
             await ensureSource()
@@ -438,9 +431,7 @@ async function checkForUpdate(
 
 /** Manual checks answer every outcome: update window, "up to date", or
  * "check failed" — never silent. */
-export async function checkMainUpdatesNow(
-  getWindow: () => BrowserWindow | null,
-): Promise<void> {
+export async function checkMainUpdatesNow(getWindow: () => BrowserWindow | null): Promise<void> {
   if (!app.isPackaged) return
   if (process.platform !== 'win32' && process.platform !== 'darwin') return
   dismissedCommit = null

@@ -431,7 +431,8 @@ const tMain = createI18n({
     errImageNoText:
       "Les images jointes n'ont pas de texte ; l'image est envoyée avec le message de l'utilisateur",
     errNotImage: "type d'image non pris en charge",
-    errAttachmentNotGranted: "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
+    errAttachmentNotGranted:
+      "Ce fichier n'est pas autorisé comme pièce jointe et ne peut pas être lu",
     errGskNotLoggedIn:
       'Non connecté à Genspark : cliquez sur « Se connecter à Genspark » ci-dessous, connectez-vous puis réessayez',
     errNoApiKey: 'Aucune clé API configurée pour {provider}',
@@ -496,7 +497,8 @@ const tMain = createI18n({
     errImageNoText:
       'Bildanlagen enthalten keinen Text; das Bild wird zusammen mit der Benutzernachricht gesendet',
     errNotImage: 'kein unterstützter Bildtyp',
-    errAttachmentNotGranted: 'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
+    errAttachmentNotGranted:
+      'Diese Datei wurde nicht als Anhang freigegeben und kann nicht gelesen werden',
     errGskNotLoggedIn:
       'Nicht bei Genspark angemeldet: Klicken Sie unten auf „Bei Genspark anmelden“, melden Sie sich an und versuchen Sie es erneut',
     errNoApiKey: 'Kein API-Schlüssel für {provider} konfiguriert',
@@ -998,7 +1000,8 @@ const tMain = createI18n({
     errImageNoText:
       'Załączniki graficzne nie zawierają tekstu; obraz jest wysyłany razem z wiadomością użytkownika',
     errNotImage: 'nieobsługiwany typ obrazu',
-    errAttachmentNotGranted: 'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
+    errAttachmentNotGranted:
+      'Ten plik nie jest autoryzowany jako załącznik i nie można go odczytać',
     errGskNotLoggedIn:
       'Nie zalogowano do Genspark: kliknij „Zaloguj się do Genspark” poniżej, zaloguj się i spróbuj ponownie',
     errNoApiKey: 'Nie skonfigurowano klucza API dla {provider}',
@@ -1124,7 +1127,8 @@ const tMain = createI18n({
     errImageNoText:
       'Afbeeldingsbijlagen bevatten geen tekst; de afbeelding wordt samen met het gebruikersbericht verzonden',
     errNotImage: 'geen ondersteund afbeeldingstype',
-    errAttachmentNotGranted: 'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
+    errAttachmentNotGranted:
+      'Dit bestand is niet geautoriseerd als bijlage en kan niet worden gelezen',
     errGskNotLoggedIn:
       'Niet aangemeld bij Genspark: klik hieronder op “Aanmelden bij Genspark”, meld u aan en probeer het opnieuw',
     errNoApiKey: 'Geen API-sleutel geconfigureerd voor {provider}',
@@ -3224,8 +3228,7 @@ export function registerSheetsIpc(): void {
         maxBytes: ATTACHMENT_MAX_BYTES,
       })
       if (!saved.ok) {
-        const ext =
-          typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
+        const ext = typeof name === 'string' ? (name.split('.').pop()?.toLowerCase() ?? '') : ''
         return {
           accepted: [],
           rejected: [
