@@ -1188,7 +1188,8 @@ button {
 }
 
 .pdf-night {
-  background: #1e1e1e;
+  --pdf-night-bg: #1e1e1e;
+  background: var(--pdf-night-bg);
 }
 
 .pdf-night .pdf-page {
