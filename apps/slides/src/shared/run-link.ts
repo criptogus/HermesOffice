@@ -24,3 +24,6 @@ export function decodeLinkTarget(s: string | null | undefined): LinkTargetOp | n
   }
   return { kind: 'url', url: s }
 }
+
+/** Schemes a deck link may carry into the package / export: the suite gate plus mailto. */
+export const DECK_LINK_PROTOCOLS: readonly string[] = ['http:', 'https:', 'mailto:']

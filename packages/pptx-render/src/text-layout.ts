@@ -26,6 +26,7 @@ import { graphemes, isWideChar, type FontMetricsProvider, type RunStyle } from '
 import { emuToPx, ptToPx, type Viewport } from './coords'
 import type { MediaResolver } from './fill'
 import { formatAutoNum } from './auto-num'
+import { cacheKeyFor } from './image-dpi'
 
 export { formatAutoNum }
 
@@ -96,7 +97,9 @@ function scaleHexAlpha(hex: string, factor: number): string {
 }
 
 function runStyle(run: TextRun, scale: number, fontScale: number): RunStyle {
-  const sizePt = run.fontSize ?? DEFAULT_SIZE_PT
+  // Super/subscript glyphs draw at 2/3 of the run size whatever the offset is (probe: 18pt
+  // at baseline 13.3 / 30 / -25 / 100 % all measure 12pt in the PDF export)
+  const sizePt = (run.fontSize ?? DEFAULT_SIZE_PT) * (run.baseline ? 2 / 3 : 1)
   // PowerPoint renders autofit text at round(size × fontScale) whole points — glyphs
   // and the 1.2em line pitch both quantize (probe-measured: 20pt at 46/44/42.5% all
   // draw 9pt, 47.5/48% draw 10pt, 28pt×46%=12.88 draws 13pt, 20pt×52%=10.4 draws 10pt).
@@ -109,6 +112,8 @@ function runStyle(run: TextRun, scale: number, fontScale: number): RunStyle {
     fontFamily: run.fontFamily || DEFAULT_FONT,
     ...(run.fontScriptHint != null ? { substScript: run.fontScriptHint } : {}),
     ...(run.text && !hasWideChar(run.text) ? { latinOnly: true } : {}),
+    // travels with the run so every token it splits into keeps the mark
+    ...(run.redact ? { redact: run.redact } : {}),
     fontSizePx: ptToPx(effPt, scale),
     bold: !!run.bold,
     italic: !!run.italic,
@@ -116,15 +121,29 @@ function runStyle(run: TextRun, scale: number, fontScale: number): RunStyle {
   }
 }
 
+// Weight baked into the family name: a heavy family (HG "...UB" gothics, "Futura Black")
+// drawn with a substitute must still read bold; a light family with b=1 renders in
+// PowerPoint as a synthetic-bold light face — about regular weight, never a true bold.
+const HEAVY_FAMILY_RE = /\s(?:black|heavy|(?:extra|ultra)[- ]?bold)$/i
+const HG_HEAVY_RE = /^HG.*(?:UB|EB)$/
+const LIGHT_FAMILY_RE = /\s(?:thin|hairline|(?:extra|ultra|semi)?[- ]?light)$/i
+
 /**
  * PowerPoint never kerns text drawn with a substituted font: an overlapped pair of
  * identical runs (kern default vs kern=0) diverges when the font is installed but
  * coincides pixel-exactly when it's missing (probe-measured). A substituted token
  * measures and draws unkerned, keeping the two sides consistent either way.
  */
-function substituteKerning(tok: Token, metrics: FontMetricsProvider): Token {
-  if (tok.style.kerning === false || !metrics.substituted?.(tok.style)) return tok
-  return { ...tok, style: { ...tok.style, kerning: false } }
+function substituteStyle(tok: Token, metrics: FontMetricsProvider): Token {
+  const st = tok.style
+  let next: RunStyle | undefined
+  if (st.bold && LIGHT_FAMILY_RE.test(st.fontFamily)) next = { ...st, bold: false }
+  if (metrics.substituted?.(st)) {
+    if (st.kerning !== false) next = { ...(next ?? st), kerning: false }
+    if (!st.bold && (HEAVY_FAMILY_RE.test(st.fontFamily) || HG_HEAVY_RE.test(st.fontFamily)))
+      next = { ...(next ?? st), bold: true }
+  }
+  return next ? { ...tok, style: next } : tok
 }
 
 /** Token width = font advance width + letter spacing × char count (matches canvas letterSpacing: appended after each char) */
@@ -310,9 +329,41 @@ function hasWideChar(text: string): boolean {
 const LATIN_WORD_RE = /^[\u0020-\u024f\u1e00-\u1eff\u2000-\u206f\u20a0-\u20cf\u2100-\u214f]+$/
 const HALFWIDTH_KANA_RE = /[\uff61-\uff9f]/
 
+/** PowerPoint small caps: lowercase letters set as capitals at 80% of the run size (probe: Calibri/Arial, 16/40pt). */
+const SMALL_CAP_SCALE = 0.8
+function expandSmallCaps(runs: Paragraph['runs']): Array<{ run: TextRun; srcRun: number }> {
+  const out: Array<{ run: TextRun; srcRun: number }> = []
+  runs.forEach((run, srcRun) => {
+    if (run.cap !== 'small' || run.fontSize == null || !run.text) {
+      out.push({ run, srcRun })
+      return
+    }
+    let seg = ''
+    let segLower: boolean | undefined
+    const flush = () => {
+      if (!seg) return
+      out.push({
+        run: segLower
+          ? { ...run, text: seg, fontSize: run.fontSize! * SMALL_CAP_SCALE }
+          : { ...run, text: seg },
+        srcRun,
+      })
+      seg = ''
+    }
+    for (const ch of run.text) {
+      const lower = ch !== ch.toUpperCase() && [...ch.toUpperCase()].length === 1
+      if (segLower !== undefined && lower !== segLower) flush()
+      segLower = lower
+      seg += ch
+    }
+    flush()
+  })
+  return out
+}
+
 function tokenizeParagraph(p: Paragraph, scale: number, fontScale: number): Token[] {
   const tokens: Token[] = []
-  p.runs.forEach((run, srcRun) => {
+  expandSmallCaps(p.runs).forEach(({ run, srcRun }) => {
     const style = runStyle(run, scale, fontScale)
     // Latin characters of a CJK-bucket run draw with the run's a:latin face (PowerPoint):
     // the script hint stays with the CJK glyphs, Latin substitutes as western
@@ -329,8 +380,9 @@ function tokenizeParagraph(p: Paragraph, scale: number, fontScale: number): Toke
     const color = run.color ?? '#000000'
     const underline = !!run.underline
     const ls = run.letterSpacing ? ptToPx(run.letterSpacing, scale) * fontScale : 0
-    // Super/subscript: baseline% (30 = superscript raised 30% of font size, negative = subscript lowered)
-    const blShift = run.baseline ? style.fontSizePx * (run.baseline / 100) : 0
+    // Super/subscript: baseline% of the run's full size (30 = raised 30%, negative = subscript
+    // lowered); the glyphs themselves draw at 2/3 (runStyle), so scale the shift back up
+    const blShift = run.baseline ? style.fontSizePx * 1.5 * (run.baseline / 100) : 0
     const base = {
       style,
       color,
@@ -426,7 +478,10 @@ function tokenizeParagraph(p: Paragraph, scale: number, fontScale: number): Toke
         // width (fonts like Carlito have no U+00A0 glyph → the missing-glyph
         // fallback would badly over-measure it)
         buf += ' '
-      } else if (isWideChar(cp)) {
+      } else if (isWideChar(cp) && (!isHangul(cp) || p.latinLnBrk)) {
+        // Hangul is wide but wraps by word (probe: PowerPoint moves the whole space-delimited
+        // Korean word down, never a syllable), so it stays in the word buffer — unless the
+        // paragraph allows mid-word breaks (latinLnBrk="1": prod deck broke 불꽃|에)
         flushWord()
         tokens.push({ ...base, text: ch, breakable: true, isSpace: false })
       } else if (BREAK_AFTER_DASH.has(cp) && buf) {
@@ -459,13 +514,13 @@ class AutoNumCounter {
   /** Number of a numbered text paragraph; undefined for anything else (state still advances). */
   next(p: Paragraph, hasText: boolean): number | undefined {
     if (!hasText) return undefined
-    const lvl = p.level ?? 0
+    const lvl = Number.isFinite(p.level) ? Math.max(0, Math.min(8, Math.trunc(p.level!))) : 0
     const b = p.bullet
     const from = b?.type === 'number' ? lvl + 1 : lvl
     for (let l = from; l < this.counts.length; l++) this.counts[l] = 0
     if (b?.type !== 'number') return undefined
     const scheme = b.numType ?? 'arabicPeriod'
-    const start = b.startAt ?? 1
+    const start = Math.max(1, b.startAt ?? 1) || 1
     const running = this.counts[lvl] && this.schemes[lvl] === scheme && start === this.starts[lvl]
     const n = running ? this.counts[lvl]! + 1 : start
     if (!running) this.starts[lvl] = start
@@ -493,15 +548,35 @@ function bulletRunStyle(
 const isBulletKind = (t: string | undefined): boolean =>
   t === 'char' || t === 'number' || t === 'blip'
 
+const imageAspectCache = new Map<string, number>()
+
+export const IMAGE_ASPECT_CACHE_MAX = 256
+
+export function imageAspectCacheSize(): number {
+  return imageAspectCache.size
+}
+
+export function imageAspectCacheKeys(): string[] {
+  return [...imageAspectCache.keys()]
+}
+
+export function clearImageAspectCache(): void {
+  imageAspectCache.clear()
+}
+
 /**
  * Width/height ratio of a picture bullet from the image header (PNG/GIF/JPEG); 1 when the
  * format is not recognized. PowerPoint scales the picture to the text height and keeps its
  * aspect, so the reserved advance depends on it.
  */
-const imageAspectCache = new Map<string, number>()
-function imageAspect(dataUrl: string): number {
-  const cached = imageAspectCache.get(dataUrl)
-  if (cached != null) return cached
+export function imageAspect(dataUrl: string): number {
+  const key = cacheKeyFor(dataUrl)
+  const cached = imageAspectCache.get(key)
+  if (cached != null) {
+    imageAspectCache.delete(key)
+    imageAspectCache.set(key, cached)
+    return cached
+  }
   let ratio = 1
   const comma = dataUrl.indexOf(',')
   if (comma > 0 && /;base64$/i.test(dataUrl.slice(0, comma))) {
@@ -533,7 +608,11 @@ function imageAspect(dataUrl: string): number {
     }
   }
   if (!Number.isFinite(ratio) || ratio <= 0) ratio = 1
-  imageAspectCache.set(dataUrl, ratio)
+  if (imageAspectCache.size >= IMAGE_ASPECT_CACHE_MAX) {
+    const oldest = imageAspectCache.keys().next()
+    if (!oldest.done) imageAspectCache.delete(oldest.value)
+  }
+  imageAspectCache.set(key, ratio)
   return ratio
 }
 
@@ -574,6 +653,27 @@ const KINSOKU_NO_START = new Set(
 const KINSOKU_NO_END = new Set('([{$（［｛＄〈《「『【〔〝｢£¥￡￥')
 const kinsokuNoStart = (t: Token) => KINSOKU_NO_START.has(t.text)
 const kinsokuNoEnd = (t: Token) => KINSOKU_NO_END.has(t.text)
+
+/** Hangul syllables / jamo / compatibility jamo (incl. the ㆍ middle dot): word-wrapped like Latin. */
+function isHangul(cp: number): boolean {
+  return (
+    (cp >= 0xac00 && cp <= 0xd7a3) ||
+    (cp >= 0x1100 && cp <= 0x11ff) ||
+    (cp >= 0x3130 && cp <= 0x318f) ||
+    (cp >= 0xa960 && cp <= 0xa97f) ||
+    (cp >= 0xd7b0 && cp <= 0xd7ff)
+  )
+}
+
+/** Closing marks PowerPoint lets overhang the right margin at a line end in East Asian
+ *  paragraphs (probe on ko-KR Malgun text: `)` hangs by its 3.6pt advance, `）` by 10pt,
+ *  a trailing Hangul syllable not at all; rIns does not change the allowance). */
+const HANGING_PUNCT = new Set('、。，．,.)]}）］｝〉》」』】〕〗〙〛!?！？:;：；')
+function hangingTailWidth(tok: Token, metrics: FontMetricsProvider): number {
+  const last = [...tok.text].pop()
+  if (!last || !HANGING_PUNCT.has(last)) return 0
+  return tokenWidth({ ...tok, text: last, wOverride: undefined }, metrics)
+}
 
 /** Dashes that allow a break after them (U+2011 non-breaking hyphen intentionally absent). */
 const BREAK_AFTER_DASH = new Set([0x2d, 0x2010, 0x2012, 0x2013, 0x2014])
@@ -703,7 +803,7 @@ function layoutParagraph(
 ): LaidLine[] {
   const tokens = applyBidi(tokenizeParagraph(p, scale, fontScale), p.rtl).map(
     (tok, logicalOrder) => ({
-      ...substituteKerning(tok, metrics),
+      ...substituteStyle(tok, metrics),
       logicalOrder,
     }),
   )
@@ -777,6 +877,8 @@ function layoutParagraph(
     lines.push(line)
   }
 
+  // East Asian paragraphs hang trailing punctuation unless <a:pPr hangingPunct="0">
+  const hangingOn = p.hangingPunct !== false && p.runs.some((r) => hasWideChar(r.text))
   let endedWithBreak = false
   for (const tok of tokens) {
     // <a:br/> forced break: breaks regardless of wrap; record the sentinel run index for editor round-trips
@@ -802,25 +904,31 @@ function layoutParagraph(
     // The first line loses firstLineShrinkPx to the overflowing bullet glyph; evaluated
     // lazily because the soft wrap right below can end line 0 for this same token
     const lineAvail = () => (lines.length === 0 ? availWidth - firstLineShrinkPx : availWidth)
-    if (wrap && cur.length && curW + w > lineAvail() && !tok.isSpace) {
+    // A closing mark ending the line may hang past the margin by its own advance
+    const hangW = hangingOn && !tok.isSpace ? hangingTailWidth(tok, metrics) : 0
+    if (wrap && cur.length && curW + w - hangW > lineAvail() && !tok.isSpace) {
       // Kinsoku: pull the predecessor down when the new line would start with a closing
       // mark, push an opening bracket down when it would end the old line.
       const carry: Token[] = []
       while (cur.length > 1) {
         const head = carry[0] ?? tok
         const last = cur[cur.length - 1]!
-        if (last.isSpace || (!kinsokuNoStart(head) && !kinsokuNoEnd(last))) break
+        if (last.isSpace || p.eaLnBrk === false) break
+        if (!kinsokuNoStart(head) && !kinsokuNoEnd(last)) break
         carry.unshift(cur.pop()!)
       }
       pushLine(cur)
       cur = carry
       curW = carry.reduce((s, t) => s + tokenWidth(t, metrics), 0)
     }
-    // Hard-break over-long words (a single token wider than the line)
-    if (wrap && !cur.length && w > lineAvail() && tok.text.length > 1 && !tok.isSpace) {
-      for (const seg of hardBreak(tok, lineAvail(), metrics)) {
-        pushLine([seg])
-      }
+    // Hard-break over-long words (a single token wider than the line, even with its closing
+    // mark hanging); the last piece stays open so following words continue on that line
+    if (wrap && !cur.length && w - hangW > lineAvail() && tok.text.length > 1 && !tok.isSpace) {
+      const segs = hardBreak(tok, lineAvail(), metrics)
+      for (const seg of segs.slice(0, -1)) pushLine([seg])
+      const tail = segs[segs.length - 1]!
+      cur.push(tail)
+      curW += tokenWidth(tail, metrics)
       continue
     }
     cur.push(tok)
@@ -835,15 +943,23 @@ function layoutParagraph(
 
 function hardBreak(tok: Token, availWidth: number, metrics: FontMetricsProvider): Token[] {
   const out: Token[] = []
+  const clusterW = new Map<string, number>()
   let buf = ''
+  let bufW = 0
   // Hard-cut per grapheme cluster: cut points never land inside combining-mark/ZWJ sequences
   for (const ch of graphemes(tok.text)) {
-    const test = buf + ch
-    if (buf && tokenWidth({ ...tok, text: test }, metrics) > availWidth) {
+    let cw = clusterW.get(ch)
+    if (cw === undefined) {
+      cw = tokenWidth({ ...tok, text: ch }, metrics)
+      clusterW.set(ch, cw)
+    }
+    if (buf && bufW + cw > availWidth) {
       out.push({ ...tok, text: buf })
       buf = ch
+      bufW = cw
     } else {
-      buf = test
+      buf += ch
+      bufW += cw
     }
   }
   if (buf) out.push({ ...tok, text: buf })
@@ -872,6 +988,12 @@ function buildLine(
     runs.push({
       text: tok.text,
       x,
+      // "Withheld from the model". The canvas draws the real words, so this rides
+      // along as a flag rather than substituting the text. A run that wraps puts
+      // the mark on both lines and the model reads a split placeholder — which
+      // its own write guard refuses, so the cost of a wrapped span is a refused
+      // edit, never a leak.
+      ...(tok.style.redact ? { redact: tok.style.redact } : {}),
       baselineY: 0, // filled in later from the line's ascent
       // When a missing font is substituted, draw with the substitute name so drawing and measuring use the same font file
       fontFamily: metrics.displayFamily?.(tok.style, tok.text) ?? tok.style.fontFamily,
@@ -1434,7 +1556,7 @@ function layoutTextVertical(
     }
 
     for (const rawTok of tokenizeParagraph(p, scale, fontScale)) {
-      const tok = substituteKerning(rawTok, metrics)
+      const tok = substituteStyle(rawTok, metrics)
       if (tok.isBreak) {
         finishCol(tok.srcRun)
         continue
@@ -1597,7 +1719,9 @@ function layoutAll(
     const bulletOverflowPx = hasBullet ? Math.max(bulletX + bulletW - textX, 0) : 0
     // The first line's x shift: bullet-overflow push, or the first-line indent itself —
     // it consumes (negative: adds) that much of the first line's wrap budget
-    const firstLineDx = hasBullet ? bulletOverflowPx : indentPx
+    // Without a bullet a hanging indent cannot pull the first line left of the inset
+    // (PowerPoint's ruler clamps marL+indent at 0; prod deck: marL 0 / indent -0.44in)
+    const firstLineDx = hasBullet ? bulletOverflowPx : Math.max(indentPx, -marLPx)
     const laid = layoutParagraph(p, avail, wrap, metrics, scale, fontScale, lnSpcRed, firstLineDx, {
       stopsPx: (p.tabStops ?? []).map((t) => emuToPx(t.pos, scale)),
       defaultPx: Math.max(emuToPx(p.defTabSz ?? 914400, scale), 1),
@@ -1615,9 +1739,10 @@ function layoutAll(
       const baseline = y + (ln.leadAbove ?? 0) + ln.ascent
       inkBottom = Math.max(inkBottom, baseline + ln.descent)
       const lineWidth = ln.runs.reduce((acc, r) => acc + r.widthPx, 0)
-      // Without a bullet the first line adds indent (positive or negative); with a bullet
-      // the body starts at marL, pushed right when the glyph overflows the hanging indent
-      const firstShift = !hasBullet && li === 0 ? indentPx : 0
+      // Without a bullet the first line adds indent (positive or negative, clamped at the
+      // inset); with a bullet the body starts at marL, pushed right when the glyph
+      // overflows the hanging indent
+      const firstShift = !hasBullet && li === 0 ? firstLineDx : 0
       const bulletShift = li === 0 ? bulletOverflowPx : 0
       // justify: lines filled by wrapping (not paragraph-final, not hard breaks) spread
       // the remaining width into word gaps (U+0020 only), like PowerPoint — letter

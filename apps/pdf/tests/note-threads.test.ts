@@ -4,6 +4,7 @@ import {
   findThreadRoot,
   flattenThread,
   parsePdfDate,
+  savedNoteKey,
   threadSubtree,
   toSavedNote,
   visibleNoteThreads,
@@ -51,6 +52,15 @@ describe('parsePdfDate', () => {
     expect(parsePdfDate(undefined)).toBeNull()
     expect(parsePdfDate('yesterday')).toBeNull()
     expect(parsePdfDate('D:20261399')).toBeNull()
+  })
+
+  it('rejects a day the month does not have instead of rolling it into the next month', () => {
+    // D:20240231000000 used to normalise to 2024-03-02, dating the note two days late
+    expect(parsePdfDate('D:20240231000000')).toBeNull()
+    expect(parsePdfDate('D:20240431000000')).toBeNull() // April has 30
+    expect(parsePdfDate('D:20230229000000')).toBeNull() // 2023 is not a leap year
+    expect(parsePdfDate('D:20240131Z')).toBe(Date.UTC(2024, 0, 31))
+    expect(parsePdfDate('D:20240229Z')).toBe(Date.UTC(2024, 1, 29))
   })
 })
 
@@ -113,6 +123,30 @@ describe('buildNoteThreads', () => {
     )
     const seen = roots.flatMap((r) => flattenThread(r)).map(({ item }) => item.key)
     expect(new Set(seen).size).toBe(2)
+  })
+
+  it('handles a deeply nested reply chain without overflowing the stack', () => {
+    // Chromium's renderer stack is far smaller than Node's, so a chain that
+    // merely loads would throw a RangeError mid-render and unmount the margin.
+    const DEPTH = 20_000
+    const notes: SavedNoteAnnot[] = []
+    for (let i = 1; i <= DEPTH; i++) {
+      notes.push(
+        saved({
+          objNum: i,
+          contents: `note ${i}`,
+          timeMs: i,
+          inReplyTo: i === 1 ? null : i - 1,
+        }),
+      )
+    }
+
+    const roots = buildNoteThreads(notes, [])
+    const flat = flattenThread(roots[0]!)
+
+    expect(flat).toHaveLength(DEPTH)
+    expect(flat[DEPTH - 1]!.depth).toBe(DEPTH - 1)
+    expect(findThreadRoot(roots, savedNoteKey(DEPTH))).toBe(roots[0])
   })
 
   it('attaches pending replies to saved parents and to pending parents', () => {

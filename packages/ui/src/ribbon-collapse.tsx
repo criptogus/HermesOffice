@@ -1,20 +1,34 @@
 /**
- * Office "Collapse the Ribbon": the tab row stays, the command band hides.
- * While collapsed, pressing a tab peeks the band as an overlay above the
- * document; a press elsewhere (or Escape / window blur / the shell tab strip)
- * hides it again. Double-clicking a tab and Ctrl+F1 (⌥⌘R on macOS) toggle the
- * collapsed state, which persists per app in localStorage.
+ * Word for Mac "Collapse ribbon": the tab row stays, the command band hides.
+ * The selected tab doubles as the collapse control; while collapsed no tab is
+ * selected and pressing any tab expands the band again (it stays expanded —
+ * no peek overlay, no pin). Double-clicking a tab and Ctrl+F1 (⌥⌘R on macOS)
+ * toggle too. The state persists per app in localStorage.
+ *
+ * An optional middle density, "compact" (icon-only commands on a shorter
+ * band), is opt-in per call site: it needs `labels.compact` / `labels.expandFull`
+ * and is otherwise inert, so ribbons that only pass collapse/expand keep the
+ * original two-state behaviour and stay byte-for-byte compatible. ⌥⌘K
+ * (Ctrl+Alt+K) cycles full ↔ compact. See #362.
  *
  * Markup contract: the ribbon root carries `rootRef` + `rootClass`, the band
- * element carries `data-ribbon-body`, and `RibbonCollapseButton` renders as a
- * sibling of the band (ribbon-collapse.css anchors it to the band's corner).
+ * element carries `data-ribbon-body`, tabs render `tabClass` / `tabTip` and
+ * call `onTabPress`. Ribbons without tabs use `RibbonCollapseButton` +
+ * `RibbonExpandButton` instead (ribbon-collapse.css anchors the former to the
+ * band's corner).
  */
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
-import { subscribeChromePressed } from './popover-dismiss'
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac')
 
 export const RIBBON_TOGGLE_SHORTCUT = IS_MAC ? '⌥⌘R' : 'Ctrl+F1'
+export const RIBBON_COMPACT_SHORTCUT = IS_MAC ? '⌥⌘K' : 'Ctrl+Alt+K'
+
+/**
+ * How much of the command band to show. `full` and `compact` both keep the band
+ * visible (and keep the active tab highlighted); `collapsed` hides it entirely.
+ */
+export type RibbonDensity = 'full' | 'compact' | 'collapsed'
 
 export function readRibbonCollapsed(storageKey: string): boolean {
   try {
@@ -32,6 +46,29 @@ export function writeRibbonCollapsed(storageKey: string, collapsed: boolean): vo
   }
 }
 
+/**
+ * Reads the persisted density, honouring the legacy `'1'`/`'0'` values written
+ * by the two-state version so an existing collapsed ribbon stays collapsed.
+ */
+export function readRibbonDensity(storageKey: string): RibbonDensity {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (raw === 'collapsed' || raw === 'compact') return raw
+    if (raw === '1') return 'collapsed'
+    return 'full'
+  } catch {
+    return 'full'
+  }
+}
+
+export function writeRibbonDensity(storageKey: string, density: RibbonDensity): void {
+  try {
+    localStorage.setItem(storageKey, density)
+  } catch {
+    /* private mode / quota: the toggle still works for this session */
+  }
+}
+
 /** Ctrl+F1 (Office on Windows) or ⌥⌘R (Office for Mac); key-repeat while held does not re-toggle. */
 export function isRibbonToggleShortcut(e: KeyboardEvent): boolean {
   if (e.repeat) return false
@@ -39,125 +76,160 @@ export function isRibbonToggleShortcut(e: KeyboardEvent): boolean {
   return IS_MAC && e.metaKey && e.altKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyR'
 }
 
-const POPOVER_OPEN_CLASS = 'genoffice-popover-open'
+/** ⌥⌘K on macOS, Ctrl+Alt+K elsewhere. ⌥⌘R (collapse) and every ⌥⌘<letter> the
+ * editors bind — G/M/A/F/E/D — are already taken, hence K. */
+export function isRibbonCompactShortcut(e: KeyboardEvent): boolean {
+  if (e.repeat || e.shiftKey) return false
+  if (IS_MAC) return e.metaKey && e.altKey && !e.ctrlKey && e.code === 'KeyK'
+  return e.ctrlKey && e.altKey && !e.metaKey && e.code === 'KeyK'
+}
 
-/**
- * Hide the peeked band on a press outside the ribbon. Popovers that portal
- * out of the ribbon DOM (and presses that only dismiss an open popover) are
- * told apart via the html-level open-popover class maintained by
- * popover-dismiss.ts: with a popover open the decision is deferred a tick —
- * a target unmounted with its popover was a press inside it, and a popover
- * still open afterwards means the press landed inside that popover.
- */
-export function installRibbonPeekDismiss(
-  root: () => Element | null,
-  close: () => void,
-): () => void {
-  const onPress = (e: Event) => {
-    const target = e.target as Node | null
-    const el = root()
-    if (!target || !el || el.contains(target)) return
-    if (!document.documentElement.classList.contains(POPOVER_OPEN_CLASS)) {
-      close()
-      return
-    }
-    setTimeout(() => {
-      if (document.documentElement.classList.contains(POPOVER_OPEN_CLASS)) return
-      if (!target.isConnected) return
-      close()
-    }, 0)
-  }
-  const onKey = (e: KeyboardEvent) => {
-    // with a ribbon popover open, Escape belongs to it: hiding the band would leave the
-    // popover mounted (html marker stuck, menu back on the next peek)
-    if (e.key !== 'Escape') return
-    if (document.documentElement.classList.contains(POPOVER_OPEN_CLASS)) return
-    close()
-  }
-  const onBlur = () => close()
-  window.addEventListener('pointerdown', onPress, true)
-  window.addEventListener('keydown', onKey)
-  window.addEventListener('blur', onBlur)
-  const offChrome = subscribeChromePressed(close)
-  return () => {
-    window.removeEventListener('pointerdown', onPress, true)
-    window.removeEventListener('keydown', onKey)
-    window.removeEventListener('blur', onBlur)
-    offChrome?.()
-  }
+export interface RibbonCollapseLabels {
+  readonly collapse: string
+  readonly expand: string
+  /** opt in: the icon-only middle density */
+  readonly compact?: string
+  /** opt in: label for leaving `compact` back to `full` */
+  readonly expandFull?: string
 }
 
 export interface RibbonCollapse {
   readonly collapsed: boolean
-  /** collapsed and showing the band as an overlay */
-  readonly peek: boolean
+  /** current band density; `'full'` when the call site did not opt in */
+  readonly density: RibbonDensity
+  /** true when the call site passed the compact labels */
+  readonly compactEnabled: boolean
   readonly rootRef: RefObject<HTMLDivElement | null>
   /** class list for the ribbon root (append to the app's own classes) */
   readonly rootClass: string
   readonly toggle: () => void
+  /** cycle full ↔ compact (no-op when the call site did not opt in) */
+  readonly toggleCompact: () => void
   /** call from every tab button's click handler */
   readonly onTabPress: (wasActive: boolean) => void
   /** double-click on a tab toggles, like Office; attach to the tab row */
   readonly onTabsDoubleClick: (e: MouseEvent) => void
+  /** `active` whenever the band is visible: a collapsed tab row has no selected tab */
+  readonly tabClass: (isActive: boolean) => string
+  /** hover tip: the selected tab offers Collapse, every tab offers Expand while collapsed */
+  readonly tabTip: (isActive: boolean) => string | undefined
 }
 
-export function useRibbonCollapse(storageKey: string): RibbonCollapse {
-  const [collapsed, setCollapsed] = useState(() => readRibbonCollapsed(storageKey))
-  const [peek, setPeek] = useState(false)
+export function useRibbonCollapse(
+  storageKey: string,
+  labels: RibbonCollapseLabels,
+): RibbonCollapse {
+  const compactEnabled = Boolean(labels.compact && labels.expandFull)
+  const [density, setDensity] = useState<RibbonDensity>(() =>
+    compactEnabled
+      ? readRibbonDensity(storageKey)
+      : readRibbonCollapsed(storageKey)
+        ? 'collapsed'
+        : 'full',
+  )
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const collapsedRef = useRef(collapsed)
-  collapsedRef.current = collapsed
+  const collapsed = density === 'collapsed'
+  const densityRef = useRef(density)
+  densityRef.current = density
+
+  const persist = useCallback(
+    (next: RibbonDensity) => {
+      // the legacy key only ever stored '1'/'0', so keep writing that shape for
+      // the two states and use the name for the middle one
+      if (!compactEnabled) {
+        writeRibbonCollapsed(storageKey, next === 'collapsed')
+        return
+      }
+      writeRibbonDensity(storageKey, next)
+    },
+    [compactEnabled, storageKey],
+  )
 
   const toggle = useCallback(() => {
-    const next = !collapsedRef.current
-    writeRibbonCollapsed(storageKey, next)
-    setCollapsed(next)
-    setPeek(false)
-  }, [storageKey])
+    // the band control hides the band or brings it back at full size; compact is
+    // not a stopping point for it
+    const next: RibbonDensity = densityRef.current === 'collapsed' ? 'full' : 'collapsed'
+    persist(next)
+    setDensity(next)
+  }, [persist])
 
-  const onTabPress = useCallback((wasActive: boolean) => {
-    if (!collapsedRef.current) return
-    // pressing the already-peeked tab hides the band again (Office)
-    setPeek((p) => !(p && wasActive))
-  }, [])
+  const toggleCompact = useCallback(() => {
+    if (!compactEnabled) return
+    // from collapsed this reveals the band compactly, matching what the user
+    // just asked for rather than jumping straight back to full
+    const next: RibbonDensity = densityRef.current === 'compact' ? 'full' : 'compact'
+    persist(next)
+    setDensity(next)
+  }, [compactEnabled, persist])
+
+  // state before each of the last two presses: a double-click arrives after its
+  // two clicks already ran onTabPress, and must end up toggled relative to the
+  // state before the first of them
+  const pressHistory = useRef<RibbonDensity[]>([])
+
+  const onTabPress = useCallback(
+    (wasActive: boolean) => {
+      pressHistory.current = [...pressHistory.current.slice(-1), densityRef.current]
+      if (densityRef.current === 'collapsed' || wasActive) toggle()
+    },
+    [toggle],
+  )
 
   const onTabsDoubleClick = useCallback(
     (e: MouseEvent) => {
       const btn = (e.target as Element | null)?.closest('button')
       if (!btn || btn.classList.contains('qa-btn') || btn.classList.contains('ribbon-tab-file'))
         return
-      toggle()
+      const before = pressHistory.current[0] ?? densityRef.current
+      pressHistory.current = []
+      if (densityRef.current === before) toggle()
     },
     [toggle],
   )
 
   useEffect(() => {
-    if (!collapsed || !peek) return
-    return installRibbonPeekDismiss(
-      () => rootRef.current,
-      () => setPeek(false),
-    )
-  }, [collapsed, peek])
-
-  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!isRibbonToggleShortcut(e)) return
-      e.preventDefault()
-      toggle()
+      if (isRibbonToggleShortcut(e)) {
+        e.preventDefault()
+        toggle()
+        return
+      }
+      if (compactEnabled && isRibbonCompactShortcut(e)) {
+        e.preventDefault()
+        toggleCompact()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toggle])
+  }, [toggle, toggleCompact, compactEnabled])
+
+  const tabClass = (isActive: boolean) => (isActive && !collapsed ? 'active' : '')
+  const tabTip = (isActive: boolean) => {
+    if (collapsed) return `${labels.expand} (${RIBBON_TOGGLE_SHORTCUT})`
+    if (!isActive) return undefined
+    if (!compactEnabled) return `${labels.collapse} (${RIBBON_TOGGLE_SHORTCUT})`
+    // while compact the band toggle would collapse; offer both ways out
+    return density === 'compact'
+      ? `${labels.expandFull} (${RIBBON_COMPACT_SHORTCUT})`
+      : `${labels.collapse} (${RIBBON_TOGGLE_SHORTCUT}) · ${labels.compact} (${RIBBON_COMPACT_SHORTCUT})`
+  }
 
   const rootClass = `ribbon-collapsible${collapsed ? ' ribbon-collapsed' : ''}${
-    collapsed && peek ? ' ribbon-peek' : ''
+    density === 'compact' ? ' ribbon-compact' : ''
   }`
-  return { collapsed, peek, rootRef, rootClass, toggle, onTabPress, onTabsDoubleClick }
-}
-
-export interface RibbonCollapseLabels {
-  readonly collapse: string
-  readonly pin: string
+  return {
+    collapsed,
+    density,
+    compactEnabled,
+    rootRef,
+    rootClass,
+    toggle,
+    toggleCompact,
+    onTabPress,
+    onTabsDoubleClick,
+    tabClass,
+    tabTip,
+  }
 }
 
 function ChevronUp() {
@@ -188,45 +260,25 @@ function ChevronDown() {
   )
 }
 
-function Pin() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-      <path
-        d="M4 1.5h4M5 1.5v3L3.5 6.5v1h5v-1L7 4.5v-3M6 7.5v3"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-/** Corner button of the band: "Collapse the Ribbon" when expanded, "Pin the ribbon" while peeking. */
-export function RibbonCollapseButton({
-  state,
-  labels,
-}: {
-  state: RibbonCollapse
-  labels: RibbonCollapseLabels
-}) {
-  if (state.collapsed && !state.peek) return null
-  const label = `${state.collapsed ? labels.pin : labels.collapse} (${RIBBON_TOGGLE_SHORTCUT})`
+/** Corner button of the band for ribbons without tabs (no selected tab to press): shown only while expanded. */
+export function RibbonCollapseButton({ state, label }: { state: RibbonCollapse; label: string }) {
+  if (state.collapsed) return null
+  const tip = `${label} (${RIBBON_TOGGLE_SHORTCUT})`
   return (
     <button
       type="button"
       className="ribbon-collapse-btn"
-      data-tip={label}
-      aria-label={label}
+      data-tip={tip}
+      aria-label={tip}
       onMouseDown={(e) => e.preventDefault()}
       onClick={state.toggle}
     >
-      {state.collapsed ? <Pin /> : <ChevronUp />}
+      <ChevronUp />
     </button>
   )
 }
 
-/** Tab-row button for ribbons without tabs (nothing to press to peek): shown only while collapsed. */
+/** Tab-row button for ribbons without tabs (nothing to press to expand): shown only while collapsed. */
 export function RibbonExpandButton({ state, label }: { state: RibbonCollapse; label: string }) {
   if (!state.collapsed) return null
   const tip = `${label} (${RIBBON_TOGGLE_SHORTCUT})`

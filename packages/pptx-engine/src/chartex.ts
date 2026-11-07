@@ -20,14 +20,21 @@ const cxParser = new XMLParser({
 })
 
 /** One cx:lvl: ptCount + sparse idx→text points → dense array ('' for gaps). */
+/** Largest level size honored: a hostile ptCount must not allocate the array. */
+const MAX_CHARTEX_POINTS = 10000
+
 function readLvl(lvl: any): string[] {
-  const n = parseInt(lvl?.['@_ptCount'], 10) || 0
+  const parsed = parseInt(lvl?.['@_ptCount'], 10) || 0
+  const n = Math.min(Math.max(0, parsed), MAX_CHARTEX_POINTS)
   const out: string[] = Array.from({ length: n }, () => '')
   const ptsRaw = lvl?.['cx:pt']
   const pts: any[] = Array.isArray(ptsRaw) ? ptsRaw : ptsRaw ? [ptsRaw] : []
   for (const pt of pts) {
     const i = parseInt(pt?.['@_idx'], 10)
-    if (!Number.isNaN(i) && i < n) out[i] = typeof pt === 'object' ? String(pt['#text'] ?? '') : ''
+    // Negative or out-of-range idx would set expando props or grow the
+    // array: only dense in-range entries are honored.
+    if (!Number.isNaN(i) && i >= 0 && i < n)
+      out[i] = typeof pt === 'object' ? String(pt['#text'] ?? '') : ''
   }
   return out
 }

@@ -5,6 +5,7 @@ import {
   blankXlsxBuffer,
   buildWorksheetXml,
   csvToXlsxBuffer,
+  csvToXlsxBufferForOpen,
   sheetCsvToXlsxBuffer,
   decodeCsvBuffer,
   isNumericCell,
@@ -197,7 +198,7 @@ describe('resolveImportDelimiter', () => {
 
 describe('isNumericCell', () => {
   it('accepts plain decimals and scientific notation', () => {
-    for (const value of ['0', '42', '-3.5', '1e3', '0.5']) {
+    for (const value of ['0', '42', '-3.5', '1e3', '0.5', '.5', '1.', '-.5']) {
       expect(isNumericCell(value), value).toBe(true)
     }
   })
@@ -241,6 +242,70 @@ describe('csvToXlsxBuffer', () => {
     await expect(csvToXlsxBuffer('')).rejects.toThrow('no data rows')
     expect(buildWorksheetXml([['<b>&"']])).toContain('&lt;b&gt;&amp;&quot;')
     expect(buildWorksheetXml([['a\rb_x000D_']])).toContain('>a_x000D_b_x005F_x000D_<')
+  })
+
+  it('rejects worksheet names that Excel forbids', async () => {
+    for (const name of ['data[final]', 'bad/name', "'quoted", "trailing'"]) {
+      await expect(csvToXlsxBuffer('A\n1', name), name).rejects.toThrow(/sheet name/i)
+      await expect(blankXlsxBuffer(name), name).rejects.toThrow(/sheet name/i)
+    }
+  })
+})
+
+describe('csvToXlsxBufferForOpen', () => {
+  it('opens a blank-lines-only CSV as an empty workbook and reports the empty source', async () => {
+    const { buffer, empty } = await csvToXlsxBufferForOpen('\r\n'.repeat(5_927))
+    const zip = await JSZip.loadAsync(buffer)
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+
+    expect(empty).toBe(true)
+    expect(sheet).toContain('<sheetData></sheetData>')
+  })
+
+  it('keeps normal CSV rows unchanged', async () => {
+    const { buffer, empty } = await csvToXlsxBufferForOpen('name,amount\r\nalpha,10\r\n')
+    const zip = await JSZip.loadAsync(buffer)
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+
+    expect(empty).toBe(false)
+    expect(sheet).toContain('<t xml:space="preserve">alpha</t>')
+    expect(sheet).toContain('<v>10</v>')
+  })
+
+  it('honors a pinned delimiter so a comma-heavy .tsv keeps its columns', async () => {
+    // A UniProt-style export (issue #1140): few columns, and each annotation
+    // field is itself a comma-separated list, so the sniffer counts more
+    // commas than tabs and shatters every row. The .tsv extension already
+    // declares the delimiter — pin it.
+    const tsv =
+      'Entry\tProtein names\tGene names\r\n' +
+      'P38398\tBreast cancer protein 1, RING finger E3 ubiquitin protein ligase, BRC1, BRCA1, PARSUM1, PPP2R5S\tBRCA1, RNF3, c.1125dupT, 1253del7TTGGTCTAA\r\n' +
+      'Q92766\tSentrin/SUMO-specific protease 6, GCP-2, SUMO-1/sentrin-specific peptidase activity, PIASY, SENP6\tSENP6, SENP7, GCP2, CA1H5\r\n'
+    expect(sniffDelimiter(tsv)).toBe(',')
+    const lastColumn = async (buffer: Buffer): Promise<string> => {
+      const zip = await JSZip.loadAsync(buffer)
+      const sheet = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+      return /<dimension ref="A1:([A-Z]+)/.exec(sheet ?? '')?.[1] ?? ''
+    }
+
+    const pinned = await csvToXlsxBufferForOpen(tsv, 'Sheet1', '\t')
+    const sniffed = await csvToXlsxBufferForOpen(tsv)
+
+    // three tab columns instead of nine comma fragments, each field whole
+    expect(pinned.empty).toBe(false)
+    expect(await lastColumn(pinned.buffer)).toBe('C')
+    expect(await lastColumn(sniffed.buffer)).toBe('I')
+    const sheet = await (
+      await JSZip.loadAsync(pinned.buffer)
+    )
+      .file('xl/worksheets/sheet1.xml')
+      ?.async('text')
+    expect(sheet).toContain(
+      '<t xml:space="preserve">BRCA1, RNF3, c.1125dupT, 1253del7TTGGTCTAA</t>',
+    )
+    expect(sheet).toContain('<t xml:space="preserve">P38398</t>')
+    // a blank .tsv still opens as an empty workbook instead of throwing
+    expect((await csvToXlsxBufferForOpen('\r\n\r\n', 'Sheet1', '\t')).empty).toBe(true)
   })
 })
 

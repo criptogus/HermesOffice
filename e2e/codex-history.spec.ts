@@ -10,11 +10,16 @@ test('Codex selection and a failed opening message survive a complete app restar
   const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-codex-history-'))
   const doc = join(dir, 'codex-history.docx')
   await copyFile(join(__dirname, 'assets/justify-pagegap-fr.docx'), doc)
+  // ai-settings sanitization drops cliPath values that are not existing files,
+  // so a missing path would silently fall back to auto-detection. An existing
+  // executable that exits immediately fails deterministically instead.
+  const fakeCli = join(dir, 'fake-codex')
+  await writeFile(fakeCli, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
   await writeFile(
     join(dir, 'ai-settings.json'),
     JSON.stringify({
       provider: 'codex',
-      providers: { codex: { apiKey: '', model: '', cliPath: join(dir, 'missing-codex') } },
+      providers: { codex: { apiKey: '', model: '', cliPath: fakeCli } },
     }),
   )
   const options = {
@@ -38,9 +43,7 @@ test('Codex selection and a failed opening message survive a complete app restar
     await expect(input).toBeVisible()
     await input.fill('Remember the failed opening marker COD-87-FAILED.')
     await input.press('Enter')
-    await expect(
-      editor.getByText('Configured Codex CLI was not found.', { exact: false }),
-    ).toBeVisible()
+    await expect(editor.getByText('Codex app-server exited', { exact: false })).toBeVisible()
     await expect(editor.locator('.ai-error-signin')).toHaveCount(0)
     // A full second process must restore the failed opening turn from disk.
     await closeAndSaveVideo(launched, 'codex-history-before')

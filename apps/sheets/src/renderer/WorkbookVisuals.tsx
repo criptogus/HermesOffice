@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { BooleanNumber, numfmt } from '@univerjs/core'
-import { isMetafileMime, metafileToDataUrl } from '@hermesoffice/docx-engine/metafile'
 import { Dropdown, shapePreviewPath, useDismissablePopover } from '@hermesoffice/ui'
 
 import type { createUniver } from './create-univer'
@@ -11,6 +10,7 @@ import {
   chartCategoryFormat,
   chartSupportsDataLabels,
   formatCategoryLabel,
+  isComboChartTypes,
   scatterAxisBounds,
   splitSheetRef,
   valueAxisScale,
@@ -41,6 +41,7 @@ import {
   valueAxisLayout,
 } from './chart-text-scale'
 import type { ChartAxisText, ChartTextBox } from './chart-text-scale'
+import { useWorkbookMediaUrl } from './workbook-media'
 
 type UniverRuntime = ReturnType<typeof createUniver>
 type ActiveWorkbook = NonNullable<ReturnType<UniverRuntime['univerAPI']['getActiveWorkbook']>>
@@ -82,7 +83,28 @@ export interface ShapeEditChanges {
   /// whose anchor stores the rotated AABB rather than the true frame.
   readonly frameSize?: { readonly width: number; readonly height: number }
   readonly text?: string
+  /// `#rrggbb` or "none"; rewrites the shape's own spPr paint.
+  readonly fillColor?: string
+  readonly lineColor?: string
   readonly remove?: true
+  readonly rotation?: number
+  readonly flipH?: boolean
+  readonly flipV?: boolean
+  readonly altText?: string
+  readonly editAs?: 'twoCell' | 'oneCell' | 'absolute'
+  /// Empty string removes the link.
+  readonly hyperlink?: string
+}
+
+/// Right-click / Arrange commands that need app state (dialogs, clipboard,
+/// z-order across visuals) bubble to the app through one listener, keyed
+/// by the same `visual:` command vocabulary the ribbon uses.
+let visualCommandListener: ((command: string, visualId: string) => void) | null = null
+
+export function setVisualCommandListener(
+  listener: ((command: string, visualId: string) => void) | null,
+): void {
+  visualCommandListener = listener
 }
 
 export interface ShapeEditing {
@@ -429,6 +451,9 @@ export interface CellImageState {
   readonly id: string
   readonly row: number
   readonly column: number
+  /// Session-embedded bytes (a data URL); file pictures resolve through the
+  /// media IPC by id instead.
+  readonly dataUrl?: string | undefined
 }
 
 /// In-cell rich-value pictures ("place picture in cell"): one pass-through
@@ -449,10 +474,12 @@ export function installCellImages(
     const componentKey = `cell-image-${sessionId}-${sheetId}-${image.id}`
     disposables.push(
       runtime.univerAPI.registerComponent(componentKey, () => (
-        <CellImage sessionId={sessionId} imageId={image.id} />
+        <CellImage sessionId={sessionId} imageId={image.id} dataUrl={image.dataUrl} />
       )),
     )
-    const range = worksheet.getRange(image.row, image.column, 1, 1)
+    const range =
+      worksheet.getCellMergeData(image.row, image.column) ??
+      worksheet.getRange(image.row, image.column, 1, 1)
     const floating = worksheet.addFloatDomToRange(
       range,
       { componentKey, allowTransform: false, eventPassThrough: true },
@@ -469,15 +496,23 @@ export function installCellImages(
 function CellImage({
   sessionId,
   imageId,
+  dataUrl,
 }: {
   readonly sessionId: string
   readonly imageId: string
+  readonly dataUrl?: string | undefined
 }): React.JSX.Element | null {
-  const { url, unavailable } = useWorkbookMediaUrl(sessionId, imageId)
-  if (unavailable || !url) return null
+  // Session embeds carry their bytes inline; only file pictures round-trip
+  // through the media IPC.
+  const { url, unavailable } = useWorkbookMediaUrl(
+    dataUrl === undefined ? sessionId : undefined,
+    imageId,
+  )
+  const source = dataUrl ?? url
+  if (source === null || (dataUrl === undefined && unavailable)) return null
   return (
     <div className="xlsx-cell-image">
-      <img src={url} alt="" />
+      <img src={source} alt="" />
     </div>
   )
 }
@@ -572,7 +607,7 @@ function WorkbookVisual({
     )
   }
   if (visual.kind === 'image') {
-    return <ImageVisual file={file} visual={visual} />
+    return <ImageVisual file={file} visual={visual} frame={frame} />
   }
   if (visual.kind === 'ole') {
     return <OleVisual file={file} visual={visual} />
@@ -659,12 +694,24 @@ export interface VisualSelectionListener {
 /// selected. A module singleton avoids threading callbacks through every
 /// install call site; the app mirrors it for the contextual ribbon tab.
 let selectedVisualId: string | null = null
+/// Shift-click extends the selection; the primary (last clicked) stays in
+/// selectedVisualId, the others ride here for Align / Distribute.
+let extraSelectedIds: string[] = []
 const selectionSubscribers = new Set<() => void>()
 let selectionListener: VisualSelectionListener | null = null
 
-function selectVisual(visual: WorkbookVisualObject | null): void {
+function selectVisual(visual: WorkbookVisualObject | null, extend = false): void {
   const nextId = visual?.id ?? null
-  if (nextId !== selectedVisualId) {
+  const previousExtras = extraSelectedIds
+  if (extend && nextId !== null && selectedVisualId !== null && selectedVisualId !== nextId) {
+    extraSelectedIds = [
+      ...extraSelectedIds.filter((id) => id !== nextId && id !== selectedVisualId),
+      selectedVisualId,
+    ]
+  } else if (!extend || nextId === null) {
+    extraSelectedIds = []
+  }
+  if (nextId !== selectedVisualId || previousExtras !== extraSelectedIds) {
     selectedVisualId = nextId
     for (const notify of selectionSubscribers) notify()
     // Element selection never outlives its chart's selection.
@@ -677,10 +724,26 @@ function selectVisual(visual: WorkbookVisualObject | null): void {
   else selectionListener?.deselect()
 }
 
+/// Every selected visual id, primary last.
+export function selectedVisualIds(): readonly string[] {
+  return selectedVisualId === null ? [] : [...extraSelectedIds, selectedVisualId]
+}
+
+export function subscribeVisualSelection(notify: () => void): () => void {
+  selectionSubscribers.add(notify)
+  return () => selectionSubscribers.delete(notify)
+}
+
 /// Clears the selection; with `onlyId`, only when that visual is selected
 /// (deleting one visual must not deselect another).
 export function clearVisualSelection(onlyId?: string): void {
-  if (onlyId !== undefined && onlyId !== selectedVisualId) return
+  if (onlyId !== undefined && onlyId !== selectedVisualId) {
+    if (extraSelectedIds.includes(onlyId)) {
+      extraSelectedIds = extraSelectedIds.filter((id) => id !== onlyId)
+      for (const notify of selectionSubscribers) notify()
+    }
+    return
+  }
   selectVisual(null)
 }
 
@@ -730,7 +793,7 @@ function useIsSelected(visualId: string): boolean {
       selectionSubscribers.add(notify)
       return () => selectionSubscribers.delete(notify)
     },
-    () => selectedVisualId === visualId,
+    () => selectedVisualId === visualId || extraSelectedIds.includes(visualId),
   )
 }
 
@@ -874,6 +937,7 @@ function EditableShapeVisual({
   } | null>(null)
   const [textEditing, setTextEditing] = useState(false)
   const [chartEditRequest, setChartEditRequest] = useState(0)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const editorRef = useRef<HTMLDivElement | null>(null)
   // Move previews render as a clone on <body>: the Univer float container is
   // overflow-hidden and pinned to the old anchor, so translating the visual
@@ -1086,6 +1150,15 @@ function EditableShapeVisual({
         if (textEditing || event.button !== 0) return
         // Chart editor buttons/inputs keep their own interactions.
         if ((event.target as HTMLElement).closest('button, .chart-editor')) return
+        if (event.shiftKey) {
+          event.preventDefault()
+          event.stopPropagation()
+          selectVisual(visual, true)
+          event.currentTarget.focus({ preventScroll: true })
+          return
+        }
+        // A plain click collapses a multi-selection onto this object.
+        if (selectedVisualIds().length > 1) selectVisual(visual)
         const handleCorner = (event.target as HTMLElement).dataset['corner'] as
           ResizeCorner | undefined
         const mode = handleCorner ? ('resize' as const) : ('move' as const)
@@ -1106,14 +1179,31 @@ function EditableShapeVisual({
         // into view mid-drag — the sheet would shift under the pointer.
         event.currentTarget.focus({ preventScroll: true })
       }}
-      onFocus={() => selectVisual(visual)}
+      onFocus={() => {
+        if (!selectedVisualIds().includes(visual.id)) selectVisual(visual)
+      }}
+      onContextMenu={
+        isChart || textEditing
+          ? undefined
+          : (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (!selectedVisualIds().includes(visual.id)) selectVisual(visual)
+              event.currentTarget.focus({ preventScroll: true })
+              setMenu({ x: event.clientX, y: event.clientY })
+            }
+      }
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
         if (event.key === 'Delete' || event.key === 'Backspace') {
           event.preventDefault()
           event.stopPropagation()
-          onEdit(visual.id, { remove: true })
-          clearVisualSelection(visual.id)
+          if (selectedVisualIds().length > 1 && selectedVisualIds().includes(visual.id)) {
+            visualCommandListener?.('visual:delete', visual.id)
+          } else {
+            onEdit(visual.id, { remove: true })
+            clearVisualSelection(visual.id)
+          }
         } else if (event.key === 'Escape') {
           event.preventDefault()
           event.currentTarget.blur()
@@ -1202,12 +1292,23 @@ function EditableShapeVisual({
           openEditorSignal={chartEditRequest}
         />
       ) : visual.kind === 'image' ? (
-        <ImageVisual file={file} visual={visual} />
+        <ImageVisual file={file} visual={visual} frame={frame} />
       ) : (
         <ShapeVisual
           file={file}
           visual={textEditing ? { ...visual, text: '' } : visual}
           frame={frame}
+        />
+      )}
+      {menu && (
+        <VisualContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={visualMenuItems(visual.id, visual.kind, () => {
+            onEdit(visual.id, { remove: true })
+            clearVisualSelection(visual.id)
+          })}
         />
       )}
       {shouldShowVisualDeleteButton({ selected: isSelected, textEditing }) && (
@@ -1335,14 +1436,13 @@ function ShapeVisual({
   const type = visual.shapeType ?? ''
   const gradient = visual.fillGradient
   const customPath = visual.customPath
-  // "none" is an explicit <a:noFill/> — transparent, not the default tint.
-  // Custom geometry never gets the default tint either: a custGeom without
-  // an explicit fill is stroke-only artwork, not an inserted preset.
+  // "none" (explicit <a:noFill/>, or nothing to fill from at all) is
+  // transparent; inserted shapes always carry an explicit fill.
   const fill = gradient
     ? `url(#${gradientId})`
-    : visual.fillColor === 'none'
+    : visual.fillColor === 'none' || visual.fillColor === undefined
       ? 'transparent'
-      : (visual.fillColor ?? (customPath ? 'transparent' : '#DDEBF7'))
+      : visual.fillColor
   // A rotated shape's anchor stores its rotated bounds (Excel writes the
   // quadrant-swapped snap rect, LibreOffice the AABB) while xfrm ext keeps
   // the true unrotated frame; both center the anchor on the shape center.
@@ -1393,7 +1493,8 @@ function ShapeVisual({
       </div>
     )
   }
-  const stroke = visual.lineColor === 'none' ? 'transparent' : (visual.lineColor ?? '#00000022')
+  const stroke =
+    visual.lineColor === 'none' || visual.lineColor === undefined ? 'transparent' : visual.lineColor
   // Session text edits overwrite `text` but not `paragraphs`; a mismatch
   // means the flat text is the newer truth.
   const paragraphs =
@@ -1581,50 +1682,51 @@ function ShapeVisual({
   )
 }
 
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
-/// Lazily fetches a visual's media bytes as a data URL (metafiles rasterize
-/// to PNG first). Pass an undefined sessionId to skip fetching.
-function useWorkbookMediaUrl(
-  sessionId: string | undefined,
-  visualId: string,
-): { url: string | null; unavailable: boolean } {
-  const [url, setUrl] = useState<string | null>(null)
-  const [unavailable, setUnavailable] = useState(false)
-
-  useEffect(() => {
-    if (sessionId === undefined) return
-    let isCurrent = true
-    void window.desktopApi
-      .readWorkbookMedia({ sessionId, visualId })
-      .then(async (media) => {
-        const next = isMetafileMime(media.mediaType)
-          ? await metafileToDataUrl(base64ToBytes(media.base64), media.mediaType)
-          : `data:${media.mediaType};base64,${media.base64}`
-        if (!isCurrent) return
-        if (next) setUrl(next)
-        else setUnavailable(true)
-      })
-      .catch((reason: unknown) => {
-        // Unsupported or unreadable media degrades to an empty frame; the
-        // grid must never show the failure text.
-        console.warn(`workbook media unavailable (${visualId})`, reason)
-        if (isCurrent) setUnavailable(true)
-      })
-    return () => {
-      isCurrent = false
-    }
-  }, [sessionId, visualId])
-
-  return { url, unavailable }
-}
-
 function ImageVisual({
+  file,
+  visual,
+  frame,
+}: {
+  readonly file: VisualHost
+  readonly visual: WorkbookVisualObject
+  readonly frame?: ShapeFrame | undefined
+}): React.JSX.Element {
+  const picture = <ImagePicture file={file} visual={visual} />
+  const rotation = visual.rotation ?? 0
+  if (!rotation && !visual.flipH && !visual.flipV) return picture
+  // Same box recipe as ShapeVisual: the anchor holds the rotated AABB, the
+  // xfrm ext the true frame, both centered on the picture center.
+  const trueFrame =
+    rotation && frame && visual.frameWidth && visual.frameHeight
+      ? { width: visual.frameWidth / EMU_PER_PIXEL, height: visual.frameHeight / EMU_PER_PIXEL }
+      : undefined
+  const transforms: string[] = []
+  if (rotation) transforms.push(`rotate(${rotation}deg)`)
+  if (visual.flipH || visual.flipV) {
+    transforms.push(`scale(${visual.flipH ? -1 : 1}, ${visual.flipV ? -1 : 1})`)
+  }
+  // cq units keep the inner box proportional to the float container so it
+  // tracks zoom and live resizes (same recipe as ShapeVisual).
+  const size =
+    trueFrame && frame
+      ? {
+          width: `${(trueFrame.width / frame.width) * 100}cqw`,
+          height: `${(trueFrame.height / frame.height) * 100}cqh`,
+        }
+      : { width: '100cqw', height: '100cqh' }
+  return (
+    <div className="xlsx-image-rotated">
+      <div
+        className="xlsx-image-rotated-inner"
+        style={{ ...size, transform: ['translate(-50%, -50%)', ...transforms].join(' ') }}
+      >
+        {picture}
+      </div>
+    </div>
+  )
+}
+
+function ImagePicture({
   file,
   visual,
 }: {
@@ -1652,7 +1754,7 @@ function ImageVisual({
       <span className="xlsx-image-crop">
         <img
           src={source}
-          alt={visual.name ?? t('appWorkbookImageAlt')}
+          alt={visual.altText ?? visual.name ?? t('appWorkbookImageAlt')}
           style={{
             width: `${100 / visibleWidth}%`,
             height: `${100 / visibleHeight}%`,
@@ -1668,7 +1770,7 @@ function ImageVisual({
     <img
       className="xlsx-image"
       src={source}
-      alt={visual.name ?? t('appWorkbookImageAlt')}
+      alt={visual.altText ?? visual.name ?? t('appWorkbookImageAlt')}
       style={opacity}
     />
   )
@@ -1757,10 +1859,13 @@ function withChartEdit(chart: ChartMetadata, edit: ChartEditData | undefined): C
   return applyChartStateEdit(chart, edit) as ChartMetadata
 }
 
-/// A chart converts only when it has exactly one supported plot type.
+/// A chart converts when it is one supported plot type, or a bar+line combo
+/// ('combo' — converting collapses the whole chart onto the target family).
 /// Single-plot column/bar/line/area/pie/doughnut charts convert; everything
-/// else (scatter, combos, 3D) fails closed at save time — reject up front.
+/// else (scatter, radar, richer combos, 3D) fails closed at save time —
+/// reject up front.
 export function convertibleType(chart: ChartMetadata): string | null {
+  if (isComboChartTypes(chart.chartTypes)) return 'combo'
   if (chart.chartTypes.length !== 1) return null
   const only = chart.chartTypes[0]
   if (only === 'lineChart') return 'line'
@@ -2223,7 +2328,7 @@ function ChartVisual({
           )}
       </div>
       {menu && chartEditing && (
-        <ChartContextMenu
+        <VisualContextMenu
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
@@ -2247,7 +2352,9 @@ function ChartVisual({
                   },
                 ]
               : []),
-            ...(onRemove ? [{ label: t('appDeleteChart'), action: onRemove }] : []),
+            ...(onRemove
+              ? ['separator' as const, ...visualMenuItems(visualId, 'chart', onRemove)]
+              : []),
           ]}
         />
       )}
@@ -2255,7 +2362,61 @@ function ChartVisual({
   )
 }
 
-function ChartContextMenu({
+export type VisualMenuItem =
+  | 'separator'
+  | {
+      readonly label: string
+      readonly action?: () => void
+      readonly children?: readonly { readonly label: string; readonly action: () => void }[]
+      readonly disabled?: boolean
+    }
+
+/// Excel for Mac's picture/shape menu, minus entries with no model here
+/// (Assign Macro, Crop, Format Picture…).
+function visualMenuItems(
+  visualId: string,
+  kind: WorkbookVisualObject['kind'],
+  onDelete: () => void,
+): VisualMenuItem[] {
+  const command = (name: string) => () => visualCommandListener?.(name, visualId)
+  const isChart = kind === 'chart'
+  return [
+    ...(isChart
+      ? []
+      : [
+          { label: t('appVisualCut'), action: command('visual:cut') },
+          { label: t('appVisualCopy'), action: command('visual:copy') },
+          { label: t('appVisualPaste'), action: command('visual:paste') },
+          'separator' as const,
+        ]),
+    { label: t('appVisualEditAltText'), action: command('visual:alt-text') },
+    'separator',
+    {
+      label: t('appVisualBringToFront'),
+      children: [
+        { label: t('appVisualBringToFront'), action: command('visual:z:front') },
+        { label: t('appVisualBringForward'), action: command('visual:z:forward') },
+      ],
+    },
+    {
+      label: t('appVisualSendToBack'),
+      children: [
+        { label: t('appVisualSendToBack'), action: command('visual:z:back') },
+        { label: t('appVisualSendBackward'), action: command('visual:z:backward') },
+      ],
+    },
+    'separator',
+    { label: t('appVisualSizeProperties'), action: command('visual:size') },
+    ...(isChart ? [] : [{ label: t('appVisualHyperlink'), action: command('visual:hyperlink') }]),
+    ...(kind === 'image'
+      ? [{ label: t('appVisualEmbedInCell'), action: command('visual:embed-in-cell') }]
+      : []),
+    'separator',
+    { label: t(isChart ? 'appDeleteChart' : 'appVisualDelete'), action: onDelete },
+  ]
+}
+
+function VisualContextMenu({
   x,
   y,
   items,
@@ -2263,23 +2424,15 @@ function ChartContextMenu({
 }: {
   readonly x: number
   readonly y: number
-  readonly items: readonly { label: string; action: () => void }[]
+  readonly items: readonly VisualMenuItem[]
   readonly onClose: () => void
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
+  const [openSubmenu, setOpenSubmenu] = useState<number | null>(null)
   // Outside press / window blur / shell chrome press — the shared dismissal
   // (the click-through backdrop below stays as belt and braces). The menu is
   // portaled to the body, so the inside guard must be its own element.
-  useDismissablePopover(true, onClose, { inside: () => [menuRef.current] })
-  const closeRef = useRef(onClose)
-  closeRef.current = onClose
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeRef.current()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  useDismissablePopover(true, onClose, { inside: () => [menuRef.current], escape: true })
   // Portal to the body: the float-DOM container clips overflowing children.
   return createPortal(
     <div
@@ -2295,18 +2448,60 @@ function ChartContextMenu({
           top: Math.min(y, window.innerHeight - items.length * 32 - 12),
         }}
       >
-        {items.map((item) => (
-          <button
-            key={item.label}
-            onClick={(event) => {
-              event.stopPropagation()
-              item.action()
-              onClose()
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
+        {items.map((item, index) =>
+          item === 'separator' ? (
+            <hr key={index} className="chart-menu-separator" />
+          ) : item.children ? (
+            <div
+              key={item.label}
+              className={`chart-menu-sub${openSubmenu === index ? ' open' : ''}`}
+              onMouseEnter={() => setOpenSubmenu(index)}
+            >
+              <button
+                aria-haspopup="menu"
+                aria-expanded={openSubmenu === index}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setOpenSubmenu(index)
+                }}
+              >
+                {item.label}
+                <span className="chart-menu-caret" aria-hidden="true">
+                  ▸
+                </span>
+              </button>
+              {openSubmenu === index && (
+                <div className="chart-menu chart-menu-child" role="menu">
+                  {item.children.map((child) => (
+                    <button
+                      key={child.label}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        child.action()
+                        onClose()
+                      }}
+                    >
+                      {child.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              key={item.label}
+              disabled={item.disabled}
+              onMouseEnter={() => setOpenSubmenu(null)}
+              onClick={(event) => {
+                event.stopPropagation()
+                item.action?.()
+                onClose()
+              }}
+            >
+              {item.label}
+            </button>
+          ),
+        )}
       </div>
     </div>,
     document.body,
@@ -2582,10 +2777,18 @@ function ChartEditor({
             className="chart-editor-type"
             ariaLabel={t('appTypeLabel')}
             value={chartType}
-            options={CHART_TYPE_OPTIONS.map((option) => ({
-              value: option.value,
-              label: t(option.labelKey),
-            }))}
+            options={[
+              // A combo has no single current type: the placeholder labels
+              // the mixed state and is not pickable (picking a real family
+              // converts the whole chart).
+              ...(convertible === 'combo'
+                ? [{ value: 'combo', label: t('appChartCombo'), disabled: true }]
+                : []),
+              ...CHART_TYPE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.labelKey),
+              })),
+            ]}
             onPick={setChartType}
           />
         </label>
@@ -2804,14 +3007,23 @@ export function BarChart({
   const barMax = isStacked
     ? Math.max(...Array.from({ length: visibleCount }, (_, index) => categoryTotal(index)), 0)
     : Math.max(...seriesList.flatMap((series) => [...series.values]), 0)
+  // Stacked segments clamp negatives to 0 (categoryTotal), so only the plain
+  // branch can plot below the baseline.
+  const barMin = isStacked ? 0 : Math.min(...seriesList.flatMap((series) => [...series.values]))
   // Combo lines without their own value axis share the primary scale.
   const lineValues = lineSeriesList.flatMap((series) => [...series.values])
   const lineOnPrimary = lineSeriesList.length > 0 && secondaryAxis === undefined
   const bounds = isPercent
     ? { min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] }
-    : axisBounds(lineOnPrimary ? Math.max(barMax, ...lineValues) : barMax, valueAxis)
+    : axisBounds(
+        lineOnPrimary ? Math.max(barMax, ...lineValues) : barMax,
+        valueAxis,
+        lineOnPrimary ? Math.min(barMin, ...lineValues) : barMin,
+      )
   const span = bounds.max - bounds.min
   const norm = (value: number): number => Math.max(0, Math.min(1, (value - bounds.min) / span))
+  // Bars grow from the zero line, not the plot floor, once the axis dips below 0.
+  const zero = norm(0)
   // Stacked segments share the category slot; each value scales against the
   // axis maximum (percentStacked normalizes per category first).
   const segment = (seriesIndex: number, index: number): number => {
@@ -2932,18 +3144,20 @@ export function BarChart({
       // fill only helps while the label still sits on its own bar.
       const centered = isStacked || dataLabelPosition === 'center'
       const inside = centered || dataLabelPosition === 'inside-end'
-      const width = (isStacked ? segment(seriesIndex, index) : norm(value)) * plotWidth
-      const start = plotLeft + (isStacked ? stackBase(seriesIndex, index) * plotWidth : 0)
+      const width = (isStacked ? segment(seriesIndex, index) : norm(value) - zero) * plotWidth
+      const start = plotLeft + (isStacked ? stackBase(seriesIndex, index) : zero) * plotWidth
+      const below = width < 0
       const x = centered
         ? start + width / 2
         : dataLabelPosition === 'inside-end'
-          ? start - 4 + width
-          : start + 6 + width
+          ? start + width + (below ? 4 : -4)
+          : start + width + (below ? -6 : 6)
+      const anchor = (dataLabelPosition === 'inside-end') !== below ? 'end' : 'start'
       return (
         <text
           x={x + dx}
           y={y + dy}
-          textAnchor={centered ? 'middle' : dataLabelPosition === 'inside-end' ? 'end' : 'start'}
+          textAnchor={centered ? 'middle' : anchor}
           className="data-label"
           {...(inside && !isStacked && dx === 0 && dy === 0 ? { fill: '#fff' } : {})}
           style={labelTextStyle(dataLabelStyle)}
@@ -3006,15 +3220,15 @@ export function BarChart({
               {seriesList.map((series, seriesIndex) => {
                 const share = isStacked
                   ? segment(seriesIndex, index)
-                  : norm(series.values[index] ?? bounds.min)
-                const x = plotLeft + (isStacked ? cursor * plotWidth : 0)
+                  : norm(series.values[index] ?? 0) - zero
+                const x = plotLeft + (isStacked ? cursor : Math.min(zero, zero + share)) * plotWidth
                 if (isStacked) cursor += share
                 return (
                   <rect
                     key={seriesIndex}
                     x={x}
                     y={groupTop(index) + (isStacked ? 0 : barHeight * seriesSlot(seriesIndex))}
-                    width={share * plotWidth}
+                    width={Math.abs(share) * plotWidth}
                     height={barHeight}
                     fill={seriesColor(series, seriesIndex)}
                     {...barStroke(seriesIndex, index)}
@@ -3108,7 +3322,7 @@ export function BarChart({
   const lineScale =
     lineSeriesList.length > 0
       ? secondaryAxis
-        ? valueAxisScale(Math.max(...lineValues, 0), secondaryAxis)
+        ? valueAxisScale(Math.max(...lineValues, 0), secondaryAxis, Math.min(...lineValues))
         : bounds
       : undefined
   const lineSpan = lineScale ? lineScale.max - lineScale.min || 1 : 1
@@ -3205,9 +3419,9 @@ export function BarChart({
             {seriesList.map((series, seriesIndex) => {
               const share = isStacked
                 ? segment(seriesIndex, index)
-                : norm(series.values[index] ?? bounds.min)
-              const height = share * 240
-              const y = 280 - (isStacked ? (cursor + share) * 240 : height)
+                : norm(series.values[index] ?? 0) - zero
+              const height = Math.abs(share) * 240
+              const y = 280 - (isStacked ? cursor + share : Math.max(zero, zero + share)) * 240
               if (isStacked) cursor += share
               return (
                 <rect
@@ -3229,14 +3443,16 @@ export function BarChart({
                 isStacked || dataLabelPosition === 'center' || dataLabelPosition === 'inside-end'
               const share = isStacked
                 ? segment(seriesIndex, index)
-                : norm(series.values[index] ?? bounds.min)
+                : norm(series.values[index] ?? 0) - zero
+              const below = share < 0
+              const barEnd = 280 - (isStacked ? 0 : zero + share) * 240
               const y = isStacked
                 ? 283 - (stackBase(seriesIndex, index) + share / 2) * 240
                 : dataLabelPosition === 'center'
-                  ? 283 - share * 120
+                  ? barEnd + 3 + share * 120
                   : dataLabelPosition === 'inside-end'
-                    ? 292 - share * 240
-                    : 272 - share * 240
+                    ? barEnd + (below ? -4 : 12)
+                    : barEnd + (below ? 12 : -8)
               const x =
                 groupLeft(index) +
                 (isStacked ? 0 : barWidth * seriesSlot(seriesIndex)) +
@@ -3784,7 +4000,7 @@ function CategoryGroupBand({
   )
 }
 
-function formatAxisValue(value: number, numberFormat: string | undefined): string {
+export function formatAxisValue(value: number, numberFormat: string | undefined): string {
   if (numberFormat && numberFormat !== 'General' && !numberFormat.includes('%')) {
     try {
       const text = numfmt.format(numberFormat, value, { throws: false })
@@ -3794,11 +4010,7 @@ function formatAxisValue(value: number, numberFormat: string | undefined): strin
     }
   }
   if (numberFormat?.includes('%')) return `${Math.round(value * 100)}%`
-  const magnitude = Math.abs(value)
-  // Excel prints full numbers on value axes (no K abbreviation); only guard
-  // the layout against extreme magnitudes.
-  if (magnitude >= 1e9) return `${(value / 1e9).toFixed(1)}B`
-  if (magnitude >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  // Excel prints full numbers on value axes; abbreviating disagreed with the data labels.
   const clean = Number(value.toPrecision(12))
   return clean.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
@@ -3865,11 +4077,15 @@ type ChartValueAxis =
   | undefined
 
 /// Explicit axis bounds/unit win; otherwise an Excel-like auto scale.
+/// `dataMin` is the plotted series minimum: stacked charts clamp their
+/// segments at 0 and pass 0, but without it a below-zero series scales to
+/// 0..1 and every bar draws at full height.
 function axisBounds(
   dataMax: number,
   valueAxis: ChartValueAxis,
+  dataMin = 0,
 ): { min: number; max: number; ticks: number[] } {
-  return valueAxisScale(dataMax, valueAxis)
+  return valueAxisScale(dataMax, valueAxis, dataMin)
 }
 
 export function LineChart({
@@ -3935,6 +4151,8 @@ export function LineChart({
           ? Math.max(...(stackTotals[stackTotals.length - 1] ?? [0]), 0)
           : Math.max(...seriesList.flatMap((series) => [...series.values]), 0),
         isStacked ? undefined : valueAxis,
+        // Stack totals clamp negatives to 0; only the plain branch goes below.
+        isStacked ? 0 : Math.min(...seriesList.flatMap((series) => [...series.values])),
       )
   const span = bounds.max - bounds.min
   const categories = primary.categories.map((value) => formatCategoryLabel(value, categoryFormat))
@@ -4219,6 +4437,8 @@ function AreaChart({
           ? Math.max(...(stackBounds[stackBounds.length - 1] ?? [0]), 0)
           : Math.max(...seriesList.flatMap((series) => [...series.values]), 0),
         isStacked ? undefined : valueAxis,
+        // Stack bounds clamp negatives to 0; only the plain branch goes below.
+        isStacked ? 0 : Math.min(...seriesList.flatMap((series) => [...series.values])),
       )
   const axisSpan = bounds.max - bounds.min
   const stackY = (raw: number, index: number): number =>
@@ -4320,13 +4540,14 @@ function AreaChart({
         }
         const points = linePoints(series.values, bounds.max, bounds.min)
         const lastX = 60 + (Math.max(0, series.values.length - 1) / count) * 500
+        const baseY = 280 - Math.max(0, Math.min(1, -bounds.min / (axisSpan || 1))) * 240
         return (
           <g
             key={seriesIndex}
             onClick={selectSeries ? (event) => selectSeries(event, seriesIndex) : undefined}
           >
             <polygon
-              points={`60,280 ${points} ${lastX},280`}
+              points={`60,${baseY} ${points} ${lastX},${baseY}`}
               fill={seriesColor(series, seriesIndex)}
               opacity="0.35"
             />

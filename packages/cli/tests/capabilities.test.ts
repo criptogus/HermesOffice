@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as aiSearch from '@hermesoffice/ai-search'
 import { run, tempDir } from './helpers'
 
 // hasGskAuth reads process.env, not the command context: isolate the login state per test
@@ -11,6 +12,7 @@ beforeEach(() => {
   process.env.AI_SEARCH_DISABLE_GSK = '1'
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k]
     else process.env[k] = v
@@ -72,19 +74,72 @@ describe('hermesoffice capabilities', () => {
     expect(r.json().summary).toContain('image_generation')
   })
 
-  it('Tavily gives web search but no image search', async () => {
+  it('counts a Serply key as search + image search', async () => {
+    const settings = settingsFile(tempDir(), {
+      search: { provider: 'serply', providers: { serply: { apiKey: 'k' } } },
+    })
+    const r = await run(['capabilities', '--json'], {
+      env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
+    })
+    const d = r.json().detail
+    expect(d.search).toEqual({ available: true, via: 'serply' })
+    expect(d.image_search).toEqual({ available: true, via: 'serply' })
+  })
+
+  it('counts a SearchApi key as search + image search', async () => {
+    const settings = settingsFile(tempDir(), {
+      search: { provider: 'searchapi', providers: { searchapi: { apiKey: 'k' } } },
+    })
+    const r = await run(['capabilities', '--json'], {
+      env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
+    })
+    const d = r.json().detail
+    expect(d.search).toEqual({ available: true, via: 'searchapi' })
+    expect(d.image_search).toEqual({ available: true, via: 'searchapi' })
+  })
+
+  it.each(['tavily', 'parallel'])('%s gives web search but no image search', async (provider) => {
     const dir = tempDir()
     const settings = settingsFile(dir, {
       search: {
-        provider: 'tavily',
-        providers: { serper: { apiKey: '' }, tavily: { apiKey: 't' } },
+        provider,
+        providers: { [provider]: { apiKey: 'test-key' } },
       },
     })
     const r = await run(['capabilities', '--json'], {
       env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
     })
     const d = r.json().detail
-    expect(d.search).toEqual({ available: true, via: 'tavily' })
+    expect(d.search).toEqual({ available: true, via: provider })
     expect(d.image_search.available).toBe(false)
+  })
+
+  it.each(['tavily', 'parallel'])(
+    '%s does not advertise Genspark image search when signed in',
+    async (provider) => {
+      vi.spyOn(aiSearch, 'hasGskAuth').mockReturnValue(true)
+      const settings = settingsFile(tempDir(), {
+        search: { provider, providers: { [provider]: { apiKey: 'test-key' } } },
+      })
+      const r = await run(['capabilities', '--json'], {
+        env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
+      })
+      const d = r.json().detail
+      expect(d.search).toEqual({ available: true, via: provider })
+      expect(d.image_search).toEqual({ available: false, via: null })
+      expect(d.image_generation).toEqual({ available: true, via: 'genspark' })
+      expect(d.media_analysis).toEqual({ available: true, via: 'genspark' })
+    },
+  )
+
+  it('reports selected keyless Parallel as web search without requiring a login', async () => {
+    const settings = settingsFile(tempDir(), {
+      search: { provider: 'parallel', providers: { parallel: { apiKey: '' } } },
+    })
+    const r = await run(['capabilities', '--json'], {
+      env: { ...process.env, HERMESOFFICE_AI_SETTINGS: settings },
+    })
+    expect(r.json().detail.search).toEqual({ available: true, via: 'parallel' })
+    expect(r.json().detail.image_search).toEqual({ available: false, via: null })
   })
 })

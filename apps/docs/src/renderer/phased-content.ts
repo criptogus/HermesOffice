@@ -11,11 +11,13 @@ import type { PmNode } from './editor/convert'
  * tail streams in, like Word's background pagination).
  *
  * While the tail streams the document is incomplete, so:
- * - the editor is read-only (App gates editable on the loading flag),
+ * - the editor stays editable except at the append boundary (the streaming
+ *   tail guard refuses edits in or after the last mounted block),
  * - saves must wait on waitForFullContent() — a mid-stream save would
  *   serialize, and write to disk, a truncated document,
  * - appends bypass undo history and restore the dirty flag, so streaming is
- *   not an edit; history resets once the tail lands.
+ *   not an edit; history resets once the tail lands unless the user edited
+ *   meanwhile (their undo stack must survive).
  */
 export interface PhasedContentHost {
   /** full replace (Tiptap setContent) */
@@ -32,7 +34,7 @@ export interface PhasedContentHost {
 
 /** dispatched on document once a streamed tail has fully landed (layout
  *  measurers skip the tail's chunks and measure the whole document once) */
-export const PHASED_CONTENT_SETTLED_EVENT = 'genoffice:phased-content-settled'
+export const PHASED_CONTENT_SETTLED_EVENT = 'hermesoffice:phased-content-settled'
 
 /** blocks in the first synchronous mount: overfills the first screens at any zoom */
 export const PHASE1_BLOCKS = 64
@@ -64,9 +66,28 @@ export function cancelPhasedContent(): void {
   cancelPending = null
 }
 
-/** double-rAF: the browser paints the previous mount between the two callbacks */
+/**
+ * Double-rAF: the browser paints the previous mount between the two callbacks.
+ * A timer races the frames: a background tab (a hidden shell view keeps
+ * document.hidden false but is handed about one frame a second) would
+ * otherwise stretch a long open into hours, one chunk per second.
+ */
+export const PAINTED_FRAME_FALLBACK_MS = 80
 const nextPaintedFrame = (cb: () => void): void => {
-  requestAnimationFrame(() => requestAnimationFrame(cb))
+  let done = false
+  let raf2 = 0
+  const fire = (): void => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    cancelAnimationFrame(raf1)
+    cancelAnimationFrame(raf2)
+    cb()
+  }
+  const raf1 = requestAnimationFrame(() => {
+    raf2 = requestAnimationFrame(fire)
+  })
+  const timer = setTimeout(fire, PAINTED_FRAME_FALLBACK_MS)
 }
 
 export function setContentPhased(
@@ -90,12 +111,16 @@ export function setContentPhased(
     settle()
   }
   let index = PHASE1_BLOCKS
+  // a refused chunk remounted the whole document: whatever the user typed
+  // before is gone with it, and an undo must not bring the truncated
+  // pre-remount document back
+  let remounted = false
   const finish = () => {
     if (my !== token) return
     // still "pending" through the history reset: it re-creates the plugin
     // views, whose constructors would otherwise measure the whole document
     // once before the settled event asks for the same pass again
-    if (!host.isDestroyed()) host.resetHistory()
+    if (!host.isDestroyed() && (remounted || !host.getDirty())) host.resetHistory()
     cancelPending = null
     host.setLoading(false)
     settle()
@@ -112,6 +137,7 @@ export function setContentPhased(
       host.appendNodes(chunk)
     } catch {
       // a refused chunk falls back to the one-pass mount instead of leaving the file truncated
+      remounted = true
       try {
         host.setContent(pmDoc)
       } catch {

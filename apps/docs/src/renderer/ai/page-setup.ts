@@ -85,12 +85,21 @@ const TWIPS_PER: Record<string, number> = {
 const LENGTH = /^\s*(-?\d+(?:\.\d+)?)\s*(twips?|pt|px|in|cm|mm)\s*$/i
 
 /** "2.54cm" / "1in" / "72pt" / 1440 (twips) → twips; undefined when unparseable */
+/** Largest magnitude accepted (~35in in twips): uncapped AI lengths break layout. */
+const MAX_TWIPS = 50400
+
+function boundTwips(twips: number): number | undefined {
+  if (!Number.isFinite(twips)) return undefined
+  const rounded = Math.round(twips)
+  return Math.abs(rounded) <= MAX_TWIPS ? rounded : undefined
+}
+
 export function parseTwips(value: unknown): number | undefined {
-  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : undefined
+  if (typeof value === 'number') return boundTwips(value)
   if (typeof value !== 'string') return undefined
   const m = LENGTH.exec(value)
   if (!m) return undefined
-  return Math.round(Number(m[1]) * TWIPS_PER[m[2]!.toLowerCase()]!)
+  return boundTwips(Number(m[1]) * TWIPS_PER[m[2]!.toLowerCase()]!)
 }
 
 export function twipsToCm(twips: number): string {

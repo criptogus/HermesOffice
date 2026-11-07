@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
+import { checkResult, type IssueDraft } from '../src/check'
 import { run, tempDir } from './helpers'
 
 async function patchZip(
@@ -14,6 +15,20 @@ async function patchZip(
   }
   writeFileSync(path, await zip.generateAsync({ type: 'nodebuffer' }))
 }
+
+describe('checkResult ids', () => {
+  it('numbers issues per level instead of by global position', () => {
+    const drafts: IssueDraft[] = [
+      { code: 'w1', level: 'warning', path: 'p1', message: 'm1' },
+      { code: 'e1', level: 'error', path: 'p2', message: 'm2' },
+      { code: 'w2', level: 'warning', path: 'p3', message: 'm3' },
+      { code: 'i1', level: 'info', path: 'p4', message: 'm4' },
+    ]
+    const r = checkResult('f.xlsx', drafts, ['c1'])
+    const issues = r.detail!.issues as { id: string }[]
+    expect(issues.map((i) => i.id)).toEqual(['E1', 'W1', 'W2', 'I1'])
+  })
+})
 
 describe('sheet check', () => {
   it('reports nothing on a plain table', async () => {
@@ -34,6 +49,39 @@ describe('sheet check', () => {
     expect(r.json().summary).toContain('no issues found')
   })
 
+  it('reports ### when an earlier format batch added an xf with a child element', async () => {
+    const dir = tempDir()
+    const table = join(dir, 't.json')
+    writeFileSync(
+      table,
+      JSON.stringify([
+        ['a', 'b', 'c'],
+        [1, 2, 14262.5],
+      ]),
+    )
+    const out = join(dir, 'aligned.xlsx')
+    expect((await run(['create', '--type', 'xlsx', '--from', table, '--out', out])).code).toBe(0)
+    // horizontalAlign leaves an <alignment> child on the header xf, so <cellXfs>
+    // mixes self-closing and child-bearing entries before the currency format lands.
+    const formats = join(dir, 'formats.json')
+    writeFileSync(
+      formats,
+      JSON.stringify([
+        { op: 'format_range', range: 'A1:C1', format: { bold: true, horizontalAlign: 'center' } },
+        { op: 'format_range', range: 'C2:C2', format: { numberFormat: '$#,##0.00' } },
+      ]),
+    )
+    expect((await run(['sheet', 'apply', out, '--ops', formats])).code).toBe(0)
+    const widths = join(dir, 'widths.json')
+    writeFileSync(widths, JSON.stringify([{ op: 'set_col_width', column: 'C', widthPx: 40 }]))
+    expect((await run(['sheet', 'apply', out, '--ops', widths])).code).toBe(0)
+    const r = await run(['sheet', 'check', out, '--json'])
+    expect(r.code).toBe(0)
+    const overflow = (r.json().detail.issues as { code: string }[]).find(
+      (i) => i.code === 'number_overflow',
+    )
+    expect(overflow).toBeDefined()
+  })
   it('finds formula errors, missing sheets, broken names, ### columns and placeholders', async () => {
     const dir = tempDir()
     const table = join(dir, 't.json')

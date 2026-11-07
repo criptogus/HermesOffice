@@ -37,9 +37,12 @@ export function checkResult(
 ): CommandResult {
   const sorted = [...drafts].sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level])
   const truncated = sorted.length > MAX_ISSUES
-  const issues: CheckIssue[] = sorted
-    .slice(0, MAX_ISSUES)
-    .map((d, i) => ({ id: `${d.level[0]!.toUpperCase()}${i + 1}`, ...d }))
+  const levelSeq: Record<IssueLevel, number> = { error: 0, warning: 0, info: 0 }
+  const issues: CheckIssue[] = []
+  for (const d of sorted.slice(0, MAX_ISSUES)) {
+    levelSeq[d.level]++
+    issues.push({ id: `${d.level[0]!.toUpperCase()}${levelSeq[d.level]}`, ...d })
+  }
   const counts = { error: 0, warning: 0, info: 0 }
   for (const d of drafts) counts[d.level]++
   const name = basename(file)
@@ -55,8 +58,9 @@ export function checkResult(
 
 /** Trim a formula or text for the context field. */
 export function excerpt(text: string, max = 120): string {
+  const budget = Math.max(1, Math.trunc(max))
   const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+  return flat.length > budget ? `${flat.slice(0, budget - 1)}…` : flat
 }
 
 /**

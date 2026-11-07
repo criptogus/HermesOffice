@@ -112,6 +112,8 @@ export const nl = {
   aiErrUnknown: 'Onbekende fout',
   aiErrStreamTimeout:
     'AI-verzoek verlopen: geen reactie van het netwerk, uitvoering gestopt. Controleer je verbinding en probeer het opnieuw',
+  aiErrRegion:
+    'De aanbieder van dit model bedient uw huidige regio niet — kies een ander model of wissel van netwerk',
   aiErrOverloaded: 'De AI-service is momenteel overbelast — probeer het zo opnieuw',
   aiErrNetwork:
     'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
@@ -136,6 +138,7 @@ export const nl = {
   aiClarifyOther: 'Anders (typ zelf)',
   aiClarifySkip: 'Enquête overslaan',
   aiClarifyNext: 'Volgende',
+  aiClarifyPrev: 'Vorige',
   aiClarifySubmit: 'Genereren',
   aiSumReadAttachment: 'Bijlage gelezen',
   aiSumReadAttachmentName: 'Bijlage {name} gelezen',

@@ -67,7 +67,7 @@ export function ensurePdfium(): Promise<PdfiumModule> {
     // ASCII-asserting stringToAscii; a document path with CJK characters handed
     // to the packaged app by a Windows file association aborts init (same fix
     // as apps/pdf/src/main/text-edit.ts loadPdfium)
-    const wrapped = (await init({ wasmBinary, thisProgram: 'genoffice-pdf' })) as {
+    const wrapped = (await init({ wasmBinary, thisProgram: 'hermesoffice-pdf' })) as {
       pdfium?: unknown
     }
     const m = (wrapped.pdfium ?? wrapped) as PdfiumModule & { _PDFiumExt_Init(): void }

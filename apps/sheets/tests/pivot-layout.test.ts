@@ -5,6 +5,7 @@ import {
   PivotLayoutError,
   pivotOutputArea,
 } from '@hermesoffice/xlsx-gateway/domain/pivot-layout'
+import { readPivotSourceGrid } from '../src/renderer/workbook-ops'
 
 const GRID = [
   ['region', 'product', 'amount'],
@@ -15,6 +16,32 @@ const GRID = [
 ]
 
 describe('buildPivotLayout', () => {
+  it('sums currency-formatted source values while retaining formatted date labels', () => {
+    const grid = readPivotSourceGrid(
+      {
+        getRawValues: () => [
+          ['Date', 'Employee', 'Amount'],
+          [45292, 'Anna', 40],
+          [45293, 'Anna', 35],
+        ],
+        getNumberFormats: () => [
+          ['General', 'General', 'General'],
+          ['m/d/yyyy', 'General', '$#,##0'],
+          ['m/d/yyyy', 'General', '$#,##0'],
+        ],
+        getFormulas: () => [[], [], []],
+      },
+      false,
+      ['Amount'],
+    )
+    expect(grid[1]?.[0]).toBe('1/1/2024')
+    const layout = buildPivotLayout(grid, {
+      rowFields: 'Employee',
+      values: [{ field: 'Amount', agg: 'sum' }],
+    })
+    expect(layout.matrix[1]?.[1]).toBe(75)
+  })
+
   it('bakes a single-level pivot with captions, a grand total and value formats', () => {
     const layout = buildPivotLayout(GRID, {
       rowFields: 'region',

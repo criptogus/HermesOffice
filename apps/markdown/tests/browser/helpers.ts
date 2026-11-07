@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
-const rebaseSource = '<details>\n<img src="assets/old.png">\n</details>\n'
-const source = 'Title\n=====\n\n* item  \n\n\n'
+export const rebaseSource = '<details>\n<img src="assets/old.png">\n</details>\n'
+export const source = 'Title\n=====\n\n* item  \n\n\n'
 
 export async function openSource(
   page: Page,
@@ -20,6 +20,8 @@ export async function openSource(
       window.markdownApi = {
         getLanguage: async () => 'en',
         getTheme: async () => 'light',
+        getMarkdownTheme: async () => 'default',
+        setMarkdownTheme: async () => 'default',
         onLanguageChanged: () => off,
         onThemeChanged: () => off,
         getAutoSaveDefault: async () => ({ on: false, updatedAt: 0 }),
@@ -32,6 +34,8 @@ export async function openSource(
         onAiPanelPrefsChanged: () => off,
         consumePending: async () => '/fixtures/polish.md',
         readFile: async () => text,
+        rememberWikiFragment: async () => {},
+        takeWikiFragment: async () => '',
         consumeHeadlessExport: async () => null,
         headlessExportDone: () => {},
         setDirty: () => {},
@@ -59,6 +63,8 @@ export async function openSource(
         onCloseSaveRequest: () => off,
         sendCloseSaveResult: () => {},
         onFileRenamed: () => off,
+        onFileChangedOnDisk: () => off,
+        ackFileChangedOnDisk: () => {},
         pickImage: async () => null,
         saveImage: async () => null,
         readImage: async () => null,

@@ -110,6 +110,8 @@ export const pl = {
   aiErrUnknown: 'Nieznany błąd',
   aiErrStreamTimeout:
     'Przekroczono limit czasu żądania AI: brak odpowiedzi sieci, przerwano. Sprawdź połączenie i spróbuj ponownie',
+  aiErrRegion:
+    'Dostawca tego modelu nie obsługuje Twojego obecnego regionu — wybierz inny model lub zmień sieć',
   aiErrOverloaded: 'Usługa AI jest obecnie przeciążona — spróbuj ponownie za chwilę',
   aiErrNetwork:
     'Problem z siecią: nie można połączyć się z usługą AI. Sprawdź połączenie i spróbuj ponownie',
@@ -134,6 +136,7 @@ export const pl = {
   aiClarifyOther: 'Inne (wpisz)',
   aiClarifySkip: 'Pomiń ankietę',
   aiClarifyNext: 'Dalej',
+  aiClarifyPrev: 'Wstecz',
   aiClarifySubmit: 'Generuj',
   aiSumReadAttachment: 'Odczyt załącznika',
   aiSumReadAttachmentName: 'Odczyt załącznika {name}',

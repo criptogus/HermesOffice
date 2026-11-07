@@ -8,6 +8,7 @@ import { extractIrDocument } from '../src/pipeline'
 import { extractPage, withPdfDocument } from '../src/extract'
 import type { IrPage } from '../src/ir'
 import { loadPdfium } from './helpers/wasm'
+import { decodePngRgba } from './helpers/png-decode'
 
 // ── raw PDF fixture builder (hand-assembled xref so exotic structures like
 // flipped MediaBoxes and Tr-3 text are expressible) ──
@@ -344,5 +345,66 @@ describe('P27 T5: /Rotate page normalization', () => {
     expect(img.box.y1 - img.box.y0).toBeCloseTo(200, 0)
     // and the bitmap turned with it
     expect(img.pixelHeight).toBeGreaterThan(img.pixelWidth)
+  })
+
+  it('keeps PDFium-rendered shading pixels opaque and oriented for quarter turns', async () => {
+    const shading =
+      '6 0 obj\n<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [150 650 250 700] ' +
+      '/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> ' +
+      '/Extend [false false] >>\nendobj\n'
+    const pdfium = await loadPdfium()
+
+    for (const rotation of [1, 2, 3] as const) {
+      let content = 'BT /F1 12 Tf\n'
+      BODY_LINES.forEach((line, i) => {
+        const matrix =
+          rotation === 1
+            ? `0 1 -1 0 ${100 + i * 20} 100`
+            : rotation === 2
+              ? `-1 0 0 -1 ${400 - i * 20} 700`
+              : `0 -1 1 0 ${100 + i * 20} 700`
+        content += `${matrix} Tm (${line}) Tj\n`
+      })
+      content += 'ET\nq 150 650 100 50 re W n /Sh1 sh Q\n'
+      const pdf = rawPdf([
+        '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+        '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+        '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+          '/CropBox [20 30 592 762] /Rotate ' +
+          `${rotation * 90} /Resources << /Font << /F1 4 0 R >> /Shading << /Sh1 6 0 R >> >> ` +
+          '/Contents 5 0 R >>\nendobj\n',
+        '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+        contentObj(5, content),
+        shading,
+      ])
+      const page = withPdfDocument(pdfium, pdf, (doc: number) => extractPage(pdfium, doc, 0))
+      expect(page.decorImages).toHaveLength(1)
+      const decor = page.decorImages![0]!
+      expect(decor.pixelWidth).toBeCloseTo(rotation === 2 ? 200 : 100, 0)
+      expect(decor.pixelHeight).toBeCloseTo(rotation === 2 ? 100 : 200, 0)
+
+      const { rgba, width, height } = decodePngRgba(decor.data)
+      let nontransparent = 0
+      for (let i = 3; i < rgba.length; i += 4) {
+        if (rgba[i]! > 0) nontransparent++
+      }
+      expect(nontransparent).toBeGreaterThan(0)
+
+      const isBlue = (x: number, y: number): boolean => {
+        const offset = (y * width + x) * 4
+        expect(rgba[offset + 3]).toBeGreaterThan(0)
+        return rgba[offset + 2]! > rgba[offset]!
+      }
+      if (rotation === 1) {
+        expect(isBlue(Math.floor(width / 2), Math.floor(height * 0.1))).toBe(false)
+        expect(isBlue(Math.floor(width / 2), Math.floor(height * 0.9))).toBe(true)
+      } else if (rotation === 2) {
+        expect(isBlue(Math.floor(width * 0.1), Math.floor(height / 2))).toBe(true)
+        expect(isBlue(Math.floor(width * 0.9), Math.floor(height / 2))).toBe(false)
+      } else {
+        expect(isBlue(Math.floor(width / 2), Math.floor(height * 0.1))).toBe(true)
+        expect(isBlue(Math.floor(width / 2), Math.floor(height * 0.9))).toBe(false)
+      }
+    }
   })
 })

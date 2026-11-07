@@ -1278,6 +1278,46 @@ export function IconHighlighterPen(props: IconProps) {
   )
 }
 
+export function IconPencilInk(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6.3 17.7 4.5 19.5l1.8-4.95L15.75 5.1a1.95 1.95 0 0 1 2.85 0l.3.3a1.95 1.95 0 0 1 0 2.85L9.45 17.7H6.3Z" />
+      <path d="M6.3 14.55h3.15v3.15" />
+      <path d="M14.1 6.75 17.25 9.9" />
+      <path d="M4.8 21.3h4.5" strokeDasharray="1.2 1.5" />
+    </Svg>
+  )
+}
+
+export function IconPlus(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 4.5v15M4.5 12h15" />
+    </Svg>
+  )
+}
+
+export function IconTrash(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3l.9-12.2" />
+      <path d="M10 10.5v6M14 10.5v6" />
+    </Svg>
+  )
+}
+
+export function IconPalette(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 19.5a7.5 7.5 0 1 1 7.5-7.5c0 3.67-2.62 3.75-4.12 3.75-1.2 0-1.88.75-1.88 1.88 0 1.05-.68 1.87-1.5 1.87Z" />
+      <circle cx="13.25" cy="7.4" r="1.05" fill="currentColor" stroke="none" />
+      <circle cx="16.6" cy="10.1" r="1.05" fill="currentColor" stroke="none" />
+      <circle cx="9.15" cy="8.25" r="1.05" fill="currentColor" stroke="none" />
+      <circle cx="7.4" cy="12.4" r="1.05" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
 export function IconEraser(props: IconProps) {
   return (
     <Svg {...props}>
@@ -1864,6 +1904,25 @@ const ANIM_EFFECT_BODIES: Record<AnimEffectKind, ReactNode> = {
     <>
       <path d="M4.5 6 C10 3, 14 9, 18.6 15.8" strokeDasharray="3 2.2" />
       <path d="M18.9 10.9 l0.5 5.4 -5.4 -0.6" />
+    </>
+  ),
+  // media
+  mediaPlay: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M10 8.5 L15.5 12 L10 15.5 Z" fill="currentColor" stroke="none" />
+    </>
+  ),
+  mediaPause: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 8.5 V15.5 M14.4 8.5 V15.5" strokeWidth="2.2" />
+    </>
+  ),
+  mediaStop: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <rect x="9" y="9" width="6" height="6" rx="0.8" fill="currentColor" stroke="none" />
     </>
   ),
 }

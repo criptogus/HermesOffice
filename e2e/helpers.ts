@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
 
 export const SHELL_DIR = resolve(__dirname, '../apps/shell')
 export const ARTIFACTS_DIR = resolve(__dirname, 'artifacts')
@@ -48,7 +49,7 @@ export async function launchShell(options: LaunchOptions): Promise<LaunchedApp> 
   if (!options.executablePath && !existsSync(SHELL_MAIN)) {
     throw new Error(`Missing build output at ${SHELL_MAIN} — run \`npm run build:all\` first`)
   }
-  const userDataDir = options.userDataDir ?? (await mkdtemp(join(tmpdir(), 'genoffice-e2e-')))
+  const userDataDir = options.userDataDir ?? (await mkdtemp(join(tmpdir(), 'hermesoffice-e2e-')))
   if (options.onboardingSeen || options.settings) {
     await writeFile(
       join(userDataDir, 'app-settings.json'),
@@ -201,4 +202,18 @@ export async function waitForPageWithUrl(
     if (remaining <= 0) throw new Error(`No window with URL containing "${urlPart}"`)
     await app.waitForEvent('window', { timeout: Math.min(remaining, 1_000) }).catch(() => {})
   }
+}
+
+// Below the ephemeral range: an outbound connection could otherwise take the probed port before the app listens.
+export async function freeMcpPort(): Promise<number> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const port = 20000 + Math.floor(Math.random() * 12000)
+    const free = await new Promise<boolean>((resolve) => {
+      const server = createServer()
+      server.once('error', () => resolve(false))
+      server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)))
+    })
+    if (free) return port
+  }
+  throw new Error('no free port found below the ephemeral range')
 }

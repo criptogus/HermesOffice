@@ -48,11 +48,15 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
-function fromBase64(b64: string): Uint8Array {
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
+function fromBase64(b64: string): Uint8Array | null {
+  try {
+    const bin = atob(b64)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  } catch {
+    return null
+  }
 }
 
 function utf16le(text: string): Uint8Array {
@@ -135,6 +139,7 @@ export async function verifyProtectionPassword(
   }
   const spinCount = resolveSpinCount(rawSpin)
   const salt = fromBase64(protection.salt)
+  if (!salt) return false
   const hash = await iteratedSha512(password, salt, spinCount)
   return toBase64(hash) === protection.hash
 }

@@ -108,8 +108,12 @@ function unescapeXml(text: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&#(?:x([0-9a-fA-F]+)|(\d+));/g, (reference, hex: string | undefined, dec: string) => {
+      const code = hex === undefined ? Number(dec) : parseInt(hex, 16)
+      return code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+        ? String.fromCodePoint(code)
+        : reference
+    })
     .replace(/&amp;/g, '&')
 }
 
@@ -122,12 +126,12 @@ function parseStyles(xml: string): Styles {
   }
   const fontSizes: number[] = []
   const fonts = /<fonts\b[^>]*>([\s\S]*?)<\/fonts>/.exec(xml)?.[1] ?? ''
-  for (const m of fonts.matchAll(/<font\b[^>]*(?:\/>|>([\s\S]*?)<\/font>)/g)) {
+  for (const m of fonts.matchAll(/<font\b[^>]*?(?:\/>|>([\s\S]*?)<\/font>)/g)) {
     fontSizes.push(Number(/<sz\b[^>]*\bval="([\d.]+)"/.exec(m[1] ?? '')?.[1] ?? 11))
   }
   const xfs: Xf[] = []
   const cellXfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(xml)?.[1] ?? ''
-  for (const m of cellXfs.matchAll(/<xf\b([^>]*)(?:\/>|>([\s\S]*?)<\/xf>)/g)) {
+  for (const m of cellXfs.matchAll(/<xf\b([^>]*?)(?:\/>|>([\s\S]*?)<\/xf>)/g)) {
     xfs.push({
       numFmtId: Number(/\bnumFmtId="(\d+)"/.exec(m[1]!)?.[1] ?? 0),
       fontId: Number(/\bfontId="(\d+)"/.exec(m[1]!)?.[1] ?? 0),

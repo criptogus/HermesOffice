@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Page } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
-// the preload exposes window.__genofficeDebug only under this env var; the
+// the preload exposes window.__hermesofficeDebug only under this env var; the
 // spec needs it to read the selection through Univer's Facade
 process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
@@ -22,7 +22,7 @@ async function selectionRect(sheets: Page): Promise<{
   endColumn: number
 }> {
   return sheets.evaluate(() => {
-    const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+    const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
       univerAPI: {
         getActiveWorkbook(): {
           getActiveRange(): {
@@ -45,7 +45,7 @@ async function selectionRect(sheets: Page): Promise<{
 
 test.describe('sheets: arrow collapses a multi-cell selection to the active cell', () => {
   test('after selecting two cells and cutting, ArrowRight lands next to the active cell', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-arrow-collapse-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-arrow-collapse-'))
     const launched = await launchShell({
       onboardingSeen: true,
       videoDir: 'sheets-arrow-collapse',
@@ -83,7 +83,7 @@ test.describe('sheets: arrow collapses a multi-cell selection to the active cell
       // coordinates depend on default row/column sizing)
       await sheets.mouse.click(grid.x + 46 + 43, grid.y + 24 + 12)
       await sheets.evaluate(() => {
-        const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+        const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
           univerAPI: {
             getActiveWorkbook(): {
               getActiveSheet(): {

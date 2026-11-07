@@ -9,11 +9,16 @@ import {
   addElement,
   addMedia,
   addModel3d,
+  addNarration,
   addPicture,
   addSmartArt,
   addTable,
+  clearNarration,
+  MAX_INSERT_TABLE_DIM,
   pasteElements,
   replacePictureBytes,
+  setModel3dView,
+  setShowNarration,
   type NewChartKind,
   type NewChartOptions,
   type NewElementOptions,
@@ -72,7 +77,9 @@ function fillExtFromDataUrl(op: Op, field = 'bytes'): void {
 register({
   name: 'addElement',
   validate(op, ctx) {
-    resolveSlide(ctx, op)
+    // allowPart: the master edit view inserts text boxes and shapes onto
+    // master/layout parts through the same op (their spTree is slide-shaped)
+    resolveSlide(ctx, op, { allowPart: true })
     reqRect(op)
     if (typeof op.kind !== 'string' || !op.kind) {
       throw new GuidedError('op "addElement" needs "kind": "textbox" or a preset geometry name.')
@@ -96,7 +103,7 @@ register({
     }
   },
   apply(op, ctx): OpRecord {
-    const { slide } = resolveSlide(ctx, op)
+    const { slide } = resolveSlide(ctx, op, { allowPart: true })
     const el = addElement(slide, {
       kind: String(op.kind),
       offset: reqRect(op),
@@ -180,8 +187,12 @@ register({
   validate(op, ctx) {
     resolveSlide(ctx, op)
     reqRect(op)
-    if (typeof op.rows !== 'number' || typeof op.cols !== 'number' || op.rows < 1 || op.cols < 1) {
-      throw new GuidedError('op "addTable" needs "rows" and "cols" (>= 1).')
+    const dimOk = (n: unknown): n is number =>
+      Number.isInteger(n) && (n as number) >= 1 && (n as number) <= MAX_INSERT_TABLE_DIM
+    if (!dimOk(op.rows) || !dimOk(op.cols)) {
+      throw new GuidedError(
+        `op "addTable" needs integer "rows" and "cols" (1..${MAX_INSERT_TABLE_DIM}).`,
+      )
     }
     const reqEmuList = (key: 'colWidthsEmu' | 'rowHeightsEmu', count: number, dim: string) => {
       const v = op[key]
@@ -326,6 +337,40 @@ register({
   },
 })
 
+// ── addNarration / clearNarration (Slide Show > Record) ─────────────────
+register({
+  name: 'addNarration',
+  validate(op, ctx) {
+    resolveSlide(ctx, op)
+    reqBytes(op)
+    if (typeof op.ext !== 'string' || !op.ext)
+      throw new GuidedError('op "addNarration" needs "ext".')
+    requireFinite(op.durationMs, 'addNarration', 'durationMs')
+  },
+  apply(op, ctx): OpRecord {
+    const { index } = resolveSlide(ctx, op)
+    const added = addNarration(ctx.opened, index, {
+      bytes: reqBytes(op),
+      ext: String(op.ext),
+      durationMs: Number(op.durationMs),
+    })
+    if (!added) throw new GuidedError('op "addNarration": the narration could not be embedded.')
+    setShowNarration(ctx.opened)
+    return { op, created: [added.elementId] }
+  },
+})
+
+register({
+  name: 'clearNarration',
+  validate(op, ctx) {
+    resolveSlide(ctx, op)
+  },
+  apply(op, ctx): OpRecord {
+    clearNarration(ctx.opened, resolveSlide(ctx, op).index)
+    return { op }
+  },
+})
+
 register({
   name: 'addModel3d',
   validate(op, ctx) {
@@ -345,6 +390,34 @@ register({
     })
     if (!added) throw new GuidedError('op "addModel3d": the model could not be embedded.')
     return { op, created: [added.elementId] }
+  },
+})
+
+register({
+  name: 'setModel3dView',
+  validate(op, ctx) {
+    const { el } = resolveElement(ctx, op)
+    if (el.type !== 'picture' || !el.model3d) {
+      throw new GuidedError(`op "setModel3dView": element "${el.id}" is not a 3D model.`)
+    }
+    for (const axis of ['ax', 'ay', 'az']) requireFinite(op[axis], 'setModel3dView', axis)
+    if (op.poster !== undefined) {
+      reqBytes(op, 'poster')
+      if (typeof op.posterExt !== 'string' || !op.posterExt) {
+        throw new GuidedError('op "setModel3dView" needs "posterExt" with "poster".')
+      }
+    }
+  },
+  apply(op, ctx): OpRecord {
+    const { slide, el } = resolveElement(ctx, op)
+    const ok = setModel3dView(ctx.opened, slide, el.id, {
+      rot: { ax: Number(op.ax), ay: Number(op.ay), az: Number(op.az) },
+      ...(op.poster !== undefined
+        ? { poster: { bytes: reqBytes(op, 'poster'), ext: String(op.posterExt) } }
+        : {}),
+    })
+    if (!ok) throw new GuidedError(`op "setModel3dView": element "${el.id}" could not be turned.`)
+    return { op }
   },
 })
 

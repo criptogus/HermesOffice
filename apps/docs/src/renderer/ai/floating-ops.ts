@@ -12,6 +12,7 @@ import {
 import type { AgentToolDef } from '../../shared/ipc'
 import { blockRangePositions } from './doc-utils'
 import { emuToPx, parseEmu, parsePoints } from './lengths'
+import { MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT } from './ops'
 
 /** App- or CLI-owned watermark state; the header part is rewritten on save. */
 export interface AiWatermarkAccess {
@@ -327,7 +328,10 @@ export const INSERT_TEXT_BOX_TOOL: AgentToolDef = {
         type: ['string', 'null'],
         description: '"#RRGGBB" outline (default black); null = no outline',
       },
-      fontSize: { type: 'number', description: 'text size in points' },
+      fontSize: {
+        type: ['number', 'string'],
+        description: 'text size in points (a bare number, or a length like "12pt")',
+      },
       align: { type: 'string', enum: ['left', 'center', 'right', 'justify'] },
       bold: { type: 'boolean' },
       color: { type: 'string', description: '"#RRGGBB" text color' },
@@ -373,8 +377,8 @@ export function textBoxNode(
   const run: Run = { text: '' }
   if (input.fontSize !== undefined) {
     const pt = parsePoints(input.fontSize)
-    if (pt === undefined || pt <= 0)
-      return { error: 'fontSize must be a positive number of points' }
+    if (pt === undefined || pt < MIN_FONT_SIZE_PT || pt > MAX_FONT_SIZE_PT)
+      return { error: `fontSize must be ${MIN_FONT_SIZE_PT}-${MAX_FONT_SIZE_PT}pt` }
     run.sizeHalfPoints = Math.round(pt * 2)
   }
   if (input.bold === true) run.bold = true

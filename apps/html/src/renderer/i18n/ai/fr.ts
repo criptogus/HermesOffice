@@ -37,6 +37,8 @@ export const fr = {
     'Problème réseau : impossible de joindre le service IA. Vérifiez votre connexion et réessayez',
   aiNewChat: 'Nouvelle conversation',
   aiNoReply: '(aucune réponse)',
+  aiRegionError:
+    'Le fournisseur de ce modèle ne dessert pas votre région actuelle — choisissez un autre modèle ou changez de réseau',
   aiOverloadedError: "Le service d'IA est actuellement surchargé — réessayez dans un instant",
   aiRegenerateTitle: 'Régénérer',
   aiRetry: 'Réessayer',
@@ -49,6 +51,10 @@ export const fr = {
   aiTimeoutError: 'Délai de réponse IA dépassé',
   aiToolWebSearch: 'Recherche Web',
   aiToolWebSearchDone: 'Recherche « {query} » · {count} résultats',
+  aiToolImageSearch: "Recherche d'images",
+  aiToolImageSearchDone: "Recherche d'images « {query} » ({count} images)",
+  aiToolGenImage: 'Générer une image',
+  aiToolGenImageDone: 'Image générée par IA insérée',
   aiTruncatedNote: '(La réponse a été tronquée par la limite de longueur et peut être incomplète.)',
   aiTurnLimit:
     "Limite d'étapes atteinte pour cette exécution — envoyez une autre instruction pour continuer.",
@@ -65,6 +71,7 @@ export const fr = {
   aiClarifyDecideAnswer: '(décidez pour moi)',
   aiClarifyMulti: 'Choix multiple',
   aiClarifyNext: 'Suivant',
+  aiClarifyPrev: 'Précédent',
   aiClarifyOther: 'Autre (à saisir)',
   aiClarifySelected: '{n} sélectionnés',
   aiClarifySkip: 'Ignorer le questionnaire',

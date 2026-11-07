@@ -1,9 +1,16 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { basename, dirname, extname, isAbsolute, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { flagBool, flagString } from '../args'
 import { assertAllowed, resolveInput, resolveOutput, writeOutput } from '../fs'
 import { applyOps, blankDeck, inlineLocalFiles, parseOps, saveDeck } from '../formats/pptx'
-import { buildDeckFromDir, buildDeckFromSpec, stageContext } from '../formats/slide-spec'
+import {
+  auditDeckBytes,
+  buildDeckFromDir,
+  buildDeckFromSpec,
+  deckAuditDetail,
+  stageContext,
+} from '../formats/slide-spec'
+import { outputDirectory, renderToPngs } from '../formats/render'
 import {
   additionPlan,
   blankWorkbook,
@@ -18,6 +25,7 @@ import { blankDocument, closeDocument, fillFromHtml, saveDocument } from '../for
 import { markdownToDocx } from '../formats/markdown'
 import { runWorkbookDsl } from '../formats/xlsx-dsl'
 import { columnLabel } from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import { sheetNameFromStem } from '../formats/csv'
 import { readOpsInput } from '../ops-input'
 import type { CommandContext, CommandDef } from '../registry'
 import type { TxnResult } from '@hermesoffice/pptx-ops'
@@ -71,6 +79,17 @@ export const createCommand: CommandDef = {
     },
     { name: 'out', value: 'path', description: 'output file (required)' },
     { name: 'force', description: 'overwrite an existing output file' },
+    {
+      name: 'render',
+      value: 'dir',
+      description:
+        'pptx: after writing, render one PNG per slide into <dir> (default: <output name>-previews beside the file) and list them in detail.previews; starts a hidden HermesOffice process for a few seconds',
+    },
+    {
+      name: 'audit',
+      description:
+        'pptx: run the geometry audit on the written deck and report it under detail.audit (advisory findings, with setTransform suggestions)',
+    },
   ],
   async run(args, ctx) {
     const type = flagString(args, 'type')?.toLowerCase()
@@ -84,6 +103,14 @@ export const createCommand: CommandDef = {
         `cannot create .${type} yet`,
         { supported: [...TYPES] },
         { reason: 'unsupported', suggestion: 'pick a type from detail.supported' },
+      )
+    }
+    if (type !== 'pptx' && (flagBool(args, 'audit') || args.flags['render'] !== undefined)) {
+      throw new CliError(
+        EXIT.usage,
+        '--render and --audit preview a built deck; they go with --type pptx',
+        undefined,
+        { reason: 'invalid_argument' },
       )
     }
     const output = resolveOutput(flagString(args, 'out'), ctx, {
@@ -122,10 +149,43 @@ export const createCommand: CommandDef = {
         ? await createPptxFromSpec(args, ctx)
         : await createPptx(args, ctx)
     writeOutput(output, result.bytes)
+    const detail: Record<string, unknown> = { ...result.detail }
+    // The deck is already on disk: a preview or audit failure must not turn the
+    // command into an error that hides outputPath.
+    if (flagBool(args, 'audit')) {
+      try {
+        detail.audit = deckAuditDetail(await auditDeckBytes(result.bytes))
+      } catch (err) {
+        ctx.warn({
+          code: 'audit_failed',
+          message: `deck written; audit failed: ${errorMessage(err)}`,
+        })
+      }
+    }
+    const renderFlag = args.flags['render']
+    if (renderFlag !== undefined) {
+      try {
+        const dir =
+          typeof renderFlag === 'string'
+            ? outputDirectory(renderFlag, ctx)
+            : assertAllowed(
+                join(dirname(output), `${basename(output, extname(output))}-previews`),
+                ctx.env,
+                'write',
+              )
+        const files = await renderToPngs(output, ctx, { outDir: dir, scale: 1, log: ctx.log })
+        detail.previews = files.map(({ page, ...f }) => ({ slide: page, ...f }))
+      } catch (err) {
+        ctx.warn({
+          code: 'render_failed',
+          message: `deck written; preview render failed: ${errorMessage(err)}`,
+        })
+      }
+    }
     return {
       summary: `created ${basename(output)} (${result.slides} slides)`,
       outputPath: output,
-      detail: result.detail,
+      detail,
     }
   },
 }
@@ -246,11 +306,19 @@ async function createXlsx(
       renames: dsl.renames,
       gateway: dsl.gateway,
     })
-    r = { ...r, warning: r.warning ?? w.warning }
+    r = {
+      ...r,
+      warning: r.warning ?? w.warning,
+      formulaError: r.formulaError ?? w.formulaError,
+      dependentsWarning: r.dependentsWarning ?? w.dependentsWarning,
+    }
     for (const note of w.notes ?? []) ctx.warn(note)
   }
 
   if (r.warning) ctx.warn({ code: 'formulas_not_cached', message: r.warning })
+  if (r.formulaError) ctx.warn({ code: 'formula_errors', message: r.formulaError })
+  if (r.dependentsWarning)
+    ctx.warn({ code: 'dependents_not_recalculated', message: r.dependentsWarning })
   return {
     sheets: tables.length,
     cells: r.cells,
@@ -275,7 +343,7 @@ function readTables(
   fallbackName: string,
   opts: CsvTableOptions = {},
 ): TableInput[] {
-  const sheetName = fallbackName.slice(0, 31) || 'Sheet1'
+  const sheetName = sheetNameFromStem(fallbackName)
   if (extname(source).toLowerCase() === '.csv') {
     return [csvTable(readFileSync(source), sheetName, opts)]
   }
@@ -342,4 +410,8 @@ async function createDocx(
     undefined,
     { reason: 'unsupported' },
   )
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }

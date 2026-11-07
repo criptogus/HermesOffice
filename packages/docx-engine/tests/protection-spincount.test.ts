@@ -81,6 +81,14 @@ describe('verifyProtectionPassword DoS guard', () => {
     expect(digest).not.toHaveBeenCalled()
   })
 
+  it('fails closed on a malformed Base64 salt without hashing', async () => {
+    const digest = vi.spyOn(globalThis.crypto.subtle, 'digest')
+    await expect(
+      verifyProtectionPassword('pw', { hash: 'eA==', salt: '%', spinCount: 0, algorithmSid: 14 }),
+    ).resolves.toBe(false)
+    expect(digest).not.toHaveBeenCalled()
+  })
+
   it('still verifies a password hashed with a small spinCount', async () => {
     const creds = await hashProtectionPassword('correct', 1000)
     expect(creds.spinCount).toBe(1000)

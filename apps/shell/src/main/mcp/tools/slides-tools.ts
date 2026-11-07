@@ -12,7 +12,7 @@ import type { CliRunner } from '../cli-runner'
  * Slides (pptx) tool surface for the MCP server.
  *
  * Two paths, mirroring the docx tools:
- * - headless `create_pptx`: outline -> ops, handed to the bundled `genoffice`
+ * - headless `create_pptx`: outline -> ops, handed to the bundled `hermesoffice`
  *   CLI (`create --type pptx --ops`), gated behind the "background generation"
  *   setting. No deck-building code lives here;
  * - a visible deck session: the tools drive a real slides tab the user watches.
@@ -28,7 +28,7 @@ export interface SlidesToolDeps {
   background?: boolean
   /** visible-deck control; absent in headless/unit runs, which drops the session tools */
   slides?: SlidesControl
-  /** the bundled genoffice CLI, used by the headless tool */
+  /** the bundled hermesoffice CLI, used by the headless tool */
   cli?: CliRunner
   /**
    * Resolve a caller-supplied document reference (tab id or path) to the

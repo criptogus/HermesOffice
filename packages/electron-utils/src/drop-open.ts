@@ -16,12 +16,13 @@ export const DROP_OPEN_CHANNEL = 'app:open-dropped-files'
 
 /** Extensions routed by apps/shell routeDocumentPath — keep in sync there and
  *  with OPEN_DIALOG_EXTENSIONS / OPEN_LOCAL_EXTENSIONS on the home screen. */
-export const OPENABLE_DOC_RE = /\.(docx|xlsx|xlsm|xls|csv|pptx|pdf|md|markdown|html|htm)$/i
+export const OPENABLE_DOC_RE =
+  /\.(docx|odt|ott|xlsx|xlsm|xls|csv|tsv|ods|ots|pptx|odp|otp|pdf|md|markdown|html|htm)$/i
 
 /** Recognized-but-unsupported formats: kept in the sent payload so the shell
  *  can show its "not supported" dialog instead of dropping them silently.
  *  Mirrors UNSUPPORTED_DOC_RE in apps/shell/src/main/index.ts. */
-export const KNOWN_UNSUPPORTED_DOC_RE = /\.(doc|rtf|odt|ppt|pps|odp|ods|xlsb|pages|key|numbers)$/i
+export const KNOWN_UNSUPPORTED_DOC_RE = /\.(doc|rtf|ppt|pps|xlsb|pages|key|numbers)$/i
 
 /** upper bound on how many files one drop may ask to open */
 const MAX_DROPPED_FILES = 20
@@ -38,16 +39,16 @@ function tryResolvePath(file: File, getPathForFile: PathResolver): string {
   }
 }
 
-/**
- * Resolve an event's dropped files to local paths. Returns null when the drag
- * carries no OS files at all (internal text/element drags), or [] when it does
- * but none resolve (directories, virtual entries) — both mean "not ours".
- */
 /** Early bound for path resolution: downstream caps opens at 20, but resolving
  *  10k dropped files first still costs. Overlong paths are skipped outright. */
 export const MAX_RESOLVED_DROP_PATHS = 100
 export const MAX_DROP_PATH_CHARS = 4096
 
+/**
+ * Resolve an event's dropped files to local paths. Returns null when the drag
+ * carries no OS files at all (internal text/element drags), or [] when it does
+ * but none resolve (directories, virtual entries) — both mean "not ours".
+ */
 export function droppableFilePaths(
   ev: Pick<DragEvent, 'dataTransfer'>,
   getPathForFile: PathResolver,
@@ -99,7 +100,7 @@ export function partitionDropPayload(raw: unknown): {
 
 /** Symbol.for keeps repeated installs idempotent when several bundled copies of
  *  this module end up in one process (mirrors navigation-guard). */
-const INSTALLED = Symbol.for('genoffice.drop-open-installed')
+const INSTALLED = Symbol.for('hermesoffice.drop-open-installed')
 
 /**
  * Preload-side hook: makes `drop` fire for document drags anywhere in the

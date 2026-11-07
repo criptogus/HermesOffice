@@ -32,6 +32,9 @@ function orderedReference(markerType) {
   )
 }
 
+// <ol style="list-style-type: disc"> arrives ordered:true but draws dots.
+const BULLET_MARKER_TYPES = new Set(['disc', 'circle', 'square'])
+
 function bulletNumberingLevels(text) {
   return Array.from({ length: 9 }, (_, level) => ({
     level,
@@ -74,4 +77,4 @@ function buildNumberingConfig() {
   ]
 }
 
-export { buildNumberingConfig, orderedReference }
+export { BULLET_MARKER_TYPES, buildNumberingConfig, orderedReference }

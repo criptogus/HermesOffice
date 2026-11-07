@@ -1,14 +1,19 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::io::{BufReader, Read};
+use std::path::Path;
 
 use base64::Engine;
+use quick_xml::events::Event;
+use quick_xml::{Reader, Writer};
 use roxmltree::{Document, Node};
 use serde::Serialize;
 use zip::ZipArchive;
 
 use crate::SidecarError;
+use crate::types::{ThreadInfo, ThreadReplyInfo};
+use crate::xml_util::copy_entry_bounded;
 
 mod charts;
 mod colors;
@@ -22,6 +27,8 @@ pub(crate) use charts::*;
 pub(crate) use colors::*;
 pub(crate) use drawing::*;
 pub use source_formats::SourceFormats;
+#[cfg(test)]
+pub(crate) use source_formats::{reset_sheet_passes, sheet_passes};
 pub(crate) use styles::*;
 
 const MAX_MEDIA_BYTES: u64 = 20 * 1024 * 1024;
@@ -37,6 +44,9 @@ pub struct CellStyle {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    /// font <vertAlign val>: "superscript" | "subscript"; absent for baseline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vert_align: Option<String>,
     pub wrap_text: bool,
     /// alignment/@shrinkToFit — Excel scales the font down to fit the column
     /// instead of clipping. Omitted when false to keep payloads small.
@@ -84,6 +94,12 @@ pub struct CellStyle {
     pub border_diagonal: Option<BorderEdge>,
     pub diagonal_up: bool,
     pub diagonal_down: bool,
+    /// protection/@locked — Some(false) only when the xf unlocks the cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    /// protection/@hidden — Some(true) only when the xf hides the formula.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
     /// Table-style dxf inner grid edges (<horizontal>/<vertical>) — consumed
     /// by the custom table palette only, never serialized per cell.
     #[serde(skip)]
@@ -114,6 +130,7 @@ impl CellStyle {
             || self.italic != default.italic
             || self.underline != default.underline
             || self.strikethrough != default.strikethrough
+            || self.vert_align != default.vert_align
             || self.font_color != default.font_color
             || self.horizontal_alignment != default.horizontal_alignment
             || self.vertical_alignment != default.vertical_alignment
@@ -121,6 +138,8 @@ impl CellStyle {
             || self.text_rotation != default.text_rotation
             || self.wrap_text != default.wrap_text
             || self.shrink_to_fit != default.shrink_to_fit
+            || self.locked != default.locked
+            || self.hidden != default.hidden
     }
 }
 
@@ -544,6 +563,15 @@ pub struct VisualObject {
     pub drawing_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drawing_index: Option<usize>,
+    /// xdr:cNvPr/@descr — the object's alt text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<String>,
+    /// twoCellAnchor/@editAs (twoCell when absent); None for other anchor kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit_as: Option<String>,
+    /// cNvPr/a:hlinkClick target resolved through the drawing rels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -599,6 +627,7 @@ pub(crate) struct FontStyle {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    vert_align: Option<String>,
     color: Option<String>,
     color_theme: Option<usize>,
     color_tint: Option<f64>,
@@ -776,12 +805,45 @@ fn collect_mc_children<'a, 'input>(
     }
 }
 
+/// `xl/charts/chartN.xml` and its case/separator variants, without matching
+/// `xl/chartsheets/…` or the `xl/charts/styleN.xml` chart-format parts.
+fn is_chart_part(name: &str) -> bool {
+    let lowered = name.to_ascii_lowercase().replace('\\', "/");
+    let Some(rest) = lowered.strip_prefix("xl/") else {
+        return false;
+    };
+    let Some(file) = rest.strip_prefix("charts/chart") else {
+        return false;
+    };
+    let Some(stem) = file.strip_suffix(".xml") else {
+        return false;
+    };
+    !stem.is_empty() && !stem.contains('/')
+}
+
 pub fn read_visual_objects(
     archive: &mut ZipArchive<File>,
     sheets: &[SheetVisualSource],
     colors: &ColorContext,
     formats: &mut SourceFormats,
 ) -> Result<Vec<VisualObject>, SidecarError> {
+    // Warm the source-format cache for every chart reference first: the
+    // per-lookup fallback reopens a sheet part and streams it from byte zero,
+    // so a workbook with many source-linked series would rescan the same large
+    // worksheet dozens of times during the walk below.
+    let chart_paths: Vec<String> = archive
+        .file_names()
+        .filter_map(Result::ok)
+        .filter(|name| is_chart_part(name))
+        .map(Cow::into_owned)
+        .collect();
+    if !chart_paths.is_empty() {
+        let references: Vec<String> = chart_paths
+            .iter()
+            .flat_map(|path| charts::chart_formula_references(archive, path))
+            .collect();
+        formats.prefetch(archive, &references);
+    }
     let mut visuals = Vec::new();
     // Workbook-wide serial for `ole-N` ids: the list position is not usable
     // because an OLE visual may take a fallback shape's slot mid-list.
@@ -892,6 +954,9 @@ pub fn read_visual_objects(
                 // rewrites — so it stays read-only and round-trips untouched.
                 drawing_path: None,
                 drawing_index: None,
+                alt_text: None,
+                edit_as: None,
+                hyperlink: None,
             };
             match slot {
                 Some(at) => visuals[at] = visual,
@@ -971,7 +1036,7 @@ pub(crate) fn read_ole_objects(
     worksheet_path: &str,
     sheet_relationships: &HashMap<String, Relationship>,
 ) -> Result<Vec<OleObjectRecord>, SidecarError> {
-    let xml = read_xml(archive, worksheet_path)?;
+    let xml = read_worksheet_without_cells(archive, worksheet_path)?;
     if !xml.contains("oleObject") {
         return Ok(Vec::new());
     }
@@ -1211,15 +1276,16 @@ pub fn read_media(
     media_path: &str,
 ) -> Result<MediaResult, SidecarError> {
     let mut entry = crate::zip_entry(archive, media_path)?;
-    if entry.size() > MAX_MEDIA_BYTES {
+    let declared = entry.size();
+    if declared > MAX_MEDIA_BYTES {
         return Err(SidecarError::Workbook(
             "Embedded image exceeds the media response limit.".into(),
         ));
     }
     let media_type = media_type_for_path(media_path)
         .ok_or_else(|| SidecarError::Workbook("Unsupported embedded image type.".into()))?;
-    let mut bytes = Vec::with_capacity(entry.size() as usize);
-    entry.read_to_end(&mut bytes)?;
+    let mut bytes = Vec::with_capacity(declared as usize);
+    copy_entry_bounded(&mut entry, declared, MAX_MEDIA_BYTES, &mut bytes)?;
     Ok(MediaResult {
         media_type: media_type.to_owned(),
         base64: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -1386,10 +1452,122 @@ pub fn read_pivot_tables(
     Ok(infos)
 }
 
+/// One comment as the reader found it, before it becomes a `CommentInfo`.
+pub struct ReadComment {
+    pub reference: String,
+    pub author: String,
+    pub text: String,
+    pub thread: Option<ThreadInfo>,
+    /// Where the picture this note's shape is showing lives in the package.
+    pub image_media_path: Option<String>,
+}
+
+/// The picture each note is showing, by cell reference.
+///
+/// Excel draws a note's picture onto the note's own VML shape as a picture
+/// fill — `<v:fill type="frame">` carrying the relationship on `o:relid` —
+/// resolved through the VML part's own rels, the same place
+/// `read_header_footer_pictures` looks. A relationship on an `imagedata`
+/// child is the older spelling; WPS writes an empty `imagedata` on every
+/// note, and with no relationship behind it, it matches nothing. A picture
+/// that is in the package but belongs to no note shape is not a note
+/// picture, and a shape whose relationship no longer resolves is skipped
+/// rather than guessed at.
+fn note_picture_paths(
+    archive: &mut ZipArchive<File>,
+    worksheet_path: &str,
+) -> HashMap<String, String> {
+    let mut pictures = HashMap::new();
+    let Ok(relationships) = read_relationships(archive, worksheet_path) else {
+        return pictures;
+    };
+    let Some(vml) = relationships
+        .values()
+        .find(|relationship| relationship.relationship_type.ends_with("/vmlDrawing"))
+    else {
+        return pictures;
+    };
+    let Ok(vml_path) = resolve_part_target(worksheet_path, &vml.target) else {
+        return pictures;
+    };
+    let Ok(media_relationships) = read_relationships(archive, &vml_path) else {
+        return pictures;
+    };
+    let Some(xml) = read_optional_xml(archive, &vml_path).ok().flatten() else {
+        return pictures;
+    };
+    let Ok(document) = Document::parse(&xml) else {
+        return pictures;
+    };
+    for shape in document
+        .descendants()
+        .filter(|node| node.has_tag_name("shape"))
+    {
+        // Only a note shape names the cell it is anchored to.
+        let Some(client) = direct_child(shape, "ClientData") else {
+            continue;
+        };
+        if client.attribute("ObjectType") != Some("Note") {
+            continue;
+        }
+        let (Some(row), Some(column)) = (
+            direct_child(client, "Row").and_then(|node| node.text()),
+            direct_child(client, "Column").and_then(|node| node.text()),
+        ) else {
+            continue;
+        };
+        let (Ok(row), Ok(column)) = (row.trim().parse::<usize>(), column.trim().parse::<usize>())
+        else {
+            continue;
+        };
+        // The fill only carries a picture when it is a frame fill and names
+        // the relationship; the yellow note fill is a plain color2 element.
+        let painted = direct_child(shape, "fill").filter(|fill| {
+            fill.attributes()
+                .any(|attribute| attribute.name() == "type" && attribute.value() == "frame")
+                && fill
+                    .attributes()
+                    .any(|attribute| attribute.name() == "relid" || attribute.name() == "id")
+        });
+        let carrying = painted.or_else(|| direct_child(shape, "imagedata"));
+        // Excel writes o:relid; some producers use r:id instead.
+        let Some(relationship_id) = carrying.and_then(|node| {
+            node.attributes()
+                .find(|attribute| attribute.name() == "relid" || attribute.name() == "id")
+                .map(|attribute| attribute.value().to_owned())
+        }) else {
+            continue;
+        };
+        let Some(media) = media_relationships.get(relationship_id.as_str()) else {
+            continue;
+        };
+        let Ok(media_path) = resolve_part_target(&vml_path, &media.target) else {
+            continue;
+        };
+        if media_type_for_path(&media_path).is_none() {
+            continue;
+        }
+        pictures.insert(format!("{}{}", column_label(column), row + 1), media_path);
+    }
+    pictures
+}
+
+/// Column 0 as `A`, 26 as `AA`.
+fn column_label(mut index: usize) -> String {
+    let mut label = String::new();
+    loop {
+        label.insert(0, char::from(b'A' + (index % 26) as u8));
+        if index < 26 {
+            return label;
+        }
+        index = index / 26 - 1;
+    }
+}
+
 pub fn read_comments(
     archive: &mut ZipArchive<File>,
     worksheet_path: &str,
-) -> Result<Vec<(String, String, String)>, SidecarError> {
+) -> Result<Vec<ReadComment>, SidecarError> {
     let relationships = read_relationships(archive, worksheet_path)?;
     let Some(comments_relationship) = relationships
         .values()
@@ -1400,6 +1578,16 @@ pub fn read_comments(
     let comments_path = resolve_part_target(worksheet_path, &comments_relationship.target)?;
     let Some(xml) = read_optional_xml(archive, &comments_path)? else {
         return Ok(Vec::new());
+    };
+    let threads = match relationships
+        .values()
+        .find(|relationship| relationship.relationship_type.ends_with("/threadedComment"))
+    {
+        Some(relationship) => {
+            let path = resolve_part_target(worksheet_path, &relationship.target)?;
+            read_threaded_comments(archive, &path)?
+        }
+        None => HashMap::new(),
     };
     let document = parse_document(&xml, &comments_path)?;
     let authors = document
@@ -1412,11 +1600,35 @@ pub fn read_comments(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let pictures = note_picture_paths(archive, worksheet_path);
     Ok(document
         .descendants()
         .filter(|node| node.has_tag_name("comment"))
         .filter_map(|comment| {
             let reference = comment.attribute("ref")?.to_owned();
+            let picture = pictures
+                .get(
+                    reference
+                        .split(':')
+                        .next()
+                        .unwrap_or(&reference)
+                        .replace('$', "")
+                        .as_str(),
+                )
+                .cloned();
+            if let Some(thread) = threads.get(&reference) {
+                let body = std::iter::once(thread.text.as_str())
+                    .chain(thread.replies.iter().map(|reply| reply.text.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                return Some(ReadComment {
+                    reference,
+                    author: thread.author.clone(),
+                    text: body,
+                    thread: Some(thread.clone()),
+                    image_media_path: picture,
+                });
+            }
             let author = comment
                 .attribute("authorId")
                 .and_then(|id| id.parse::<usize>().ok())
@@ -1428,7 +1640,96 @@ pub fn read_comments(
                 .filter(|node| node.has_tag_name("t"))
                 .filter_map(|node| node.text())
                 .collect::<String>();
-            Some((reference, author, text))
+            Some(ReadComment {
+                reference,
+                author,
+                text,
+                thread: None,
+                image_media_path: picture,
+            })
+        })
+        .collect())
+}
+
+/// Modern (threaded) comments per cell. The legacy comments part only
+/// mirrors them with Excel's "[Threaded comment]" boilerplate, so the thread
+/// part is what the viewer shows. Replies (entries with a parentId) attach
+/// to their cell's root in document order.
+fn read_threaded_comments(
+    archive: &mut ZipArchive<File>,
+    path: &str,
+) -> Result<HashMap<String, ThreadInfo>, SidecarError> {
+    let Some(xml) = read_optional_xml(archive, path)? else {
+        return Ok(HashMap::new());
+    };
+    let persons = read_persons(archive)?;
+    let document = parse_document(&xml, path)?;
+    let mut threads: HashMap<String, ThreadInfo> = HashMap::new();
+    for node in document
+        .descendants()
+        .filter(|node| node.has_tag_name("threadedComment"))
+    {
+        let Some(reference) = node.attribute("ref") else {
+            continue;
+        };
+        let text = node
+            .children()
+            .find(|child| child.has_tag_name("text"))
+            .and_then(|child| child.text())
+            .unwrap_or_default()
+            .to_owned();
+        let person_id = node.attribute("personId").unwrap_or_default().to_owned();
+        let author = persons.get(&person_id).cloned().unwrap_or_default();
+        let id = node.attribute("id").unwrap_or_default().to_owned();
+        let d_t = node.attribute("dT").unwrap_or_default().to_owned();
+        let is_reply = node.attribute("parentId").is_some();
+        match threads.get_mut(reference) {
+            Some(thread) if is_reply => thread.replies.push(ThreadReplyInfo {
+                id,
+                person_id,
+                author,
+                d_t,
+                text,
+            }),
+            Some(_) => {}
+            None => {
+                threads.insert(
+                    reference.to_owned(),
+                    ThreadInfo {
+                        id,
+                        person_id,
+                        author,
+                        d_t,
+                        done: node.attribute("done") == Some("1"),
+                        text,
+                        replies: Vec::new(),
+                    },
+                );
+            }
+        }
+    }
+    Ok(threads)
+}
+
+fn read_persons(archive: &mut ZipArchive<File>) -> Result<HashMap<String, String>, SidecarError> {
+    let path = read_relationships(archive, "xl/workbook.xml")?
+        .values()
+        .find(|relationship| relationship.relationship_type.ends_with("/person"))
+        .map(|relationship| resolve_part_target("xl/workbook.xml", &relationship.target))
+        .transpose()?
+        .unwrap_or_else(|| "xl/persons/person.xml".to_owned());
+    let Some(xml) = read_optional_xml(archive, &path)? else {
+        return Ok(HashMap::new());
+    };
+    let document = parse_document(&xml, &path)?;
+    Ok(document
+        .descendants()
+        .filter(|node| node.has_tag_name("person"))
+        .filter_map(|node| {
+            Some((
+                node.attribute("id")?.to_owned(),
+                node.attribute("displayName")?.to_owned(),
+            ))
         })
         .collect())
 }
@@ -1632,37 +1933,38 @@ pub(crate) fn read_relationships(
 }
 
 pub(crate) fn resolve_part_target(source_path: &str, target: &str) -> Result<String, SidecarError> {
-    let candidate = if target.starts_with('/') {
-        PathBuf::from(target.trim_start_matches('/'))
-    } else {
-        Path::new(source_path)
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .join(target)
-    };
-    let mut normalized = PathBuf::new();
-    for component in candidate.components() {
-        match component {
-            Component::Normal(value) => normalized.push(value),
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    return Err(SidecarError::Workbook(
-                        "OOXML relationship escapes the package.".into(),
-                    ));
-                }
+    crate::archive::resolve_relationship_target(source_path, target)
+}
+
+/// The worksheet part with its `<sheetData>` subtree left out. Everything
+/// read_ole_objects looks at (`oleObjects`, `legacyDrawing`) sits outside the
+/// cell data, and the cell data is nearly the whole part: reading it into a
+/// String for every sheet on every open kept a copy of a 293 MB sheet resident
+/// in the sidecar (600 MB) for a check that usually finds nothing.
+fn read_worksheet_without_cells(
+    archive: &mut ZipArchive<File>,
+    path: &str,
+) -> Result<String, SidecarError> {
+    let entry = crate::zip_entry(archive, path)?;
+    let mut reader = Reader::from_reader(BufReader::new(entry));
+    let mut writer = Writer::new(Vec::new());
+    let mut buffer = Vec::new();
+    let mut skipped = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer)? {
+            Event::Eof => break,
+            Event::Start(start) if start.local_name().as_ref() == b"sheetData" => {
+                let end = start.to_end().into_owned();
+                reader.read_to_end_into(end.name(), &mut skipped)?;
+                skipped.clear();
             }
-            Component::CurDir => {}
-            _ => {
-                return Err(SidecarError::Workbook(
-                    "OOXML relationship has an unsafe path.".into(),
-                ));
-            }
+            Event::Empty(empty) if empty.local_name().as_ref() == b"sheetData" => {}
+            event => writer.write_event(event)?,
         }
+        buffer.clear();
     }
-    normalized
-        .to_str()
-        .map(|value| value.replace('\\', "/"))
-        .ok_or_else(|| SidecarError::Workbook("OOXML part path is invalid UTF-8.".into()))
+    String::from_utf8(writer.into_inner())
+        .map_err(|_| SidecarError::Workbook(format!("{path} is not valid UTF-8.")))
 }
 
 fn read_xml(archive: &mut ZipArchive<File>, path: &str) -> Result<String, SidecarError> {
@@ -1884,5 +2186,53 @@ fn locale_short_date_format(locale: &str) -> &'static str {
         "de" | "pl" | "ru" => "d.m.yyyy",
         "nl" => "d-m-yyyy",
         _ => "d/m/yyyy",
+    }
+}
+
+#[cfg(test)]
+mod worksheet_without_cells_tests {
+    use super::read_worksheet_without_cells;
+    use crate::tests::open_fixture;
+    use std::fs::File;
+    use zip::ZipArchive;
+
+    const CELLS: &str = r#"<sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>2</v></c></row><row r="2"><c r="A2"><f>B1*2</f><v>4</v></c></row></sheetData>"#;
+
+    fn trimmed(xml: &str) -> String {
+        let (_dir, path) = open_fixture(&[("xl/worksheets/sheet1.xml", xml)]);
+        let mut archive = ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        read_worksheet_without_cells(&mut archive, "xl/worksheets/sheet1.xml").unwrap()
+    }
+
+    #[test]
+    fn drops_the_cells_and_keeps_the_objects_around_them() {
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><tabColor rgb="FF00FF00"/></sheetPr><cols><col min="1" max="1" width="12"/></cols>{CELLS}<legacyDrawing r:id="rId2"/><oleObjects><oleObject progId="Word.Document" shapeId="1025" r:id="rId3"/></oleObjects></worksheet>"#
+        );
+        let out = trimmed(&xml);
+        assert!(!out.contains("<row"), "{out}");
+        assert!(!out.contains("<c "), "{out}");
+        assert!(!out.contains("sheetData"), "{out}");
+        assert!(out.contains(r#"<tabColor rgb="FF00FF00"/>"#), "{out}");
+        assert!(out.contains(r#"<legacyDrawing r:id="rId2"/>"#), "{out}");
+        assert!(
+            out.contains(r#"<oleObject progId="Word.Document" shapeId="1025" r:id="rId3"/>"#),
+            "{out}"
+        );
+        assert!(roxmltree::Document::parse(&out).is_ok(), "{out}");
+    }
+
+    #[test]
+    fn handles_a_prefixed_and_an_empty_sheet_data_element() {
+        let prefixed = format!(
+            r#"<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"><x:c r="A1"><x:v>1</x:v></x:c></x:row></x:sheetData><x:pageMargins left="0.7"/></x:worksheet>"#
+        );
+        let out = trimmed(&prefixed);
+        assert!(!out.contains("<x:c "), "{out}");
+        assert!(out.contains(r#"<x:pageMargins left="0.7"/>"#), "{out}");
+        let empty = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/><drawing r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></worksheet>"#;
+        let out = trimmed(empty);
+        assert!(out.contains("<drawing"), "{out}");
+        assert!(!out.contains("sheetData"), "{out}");
     }
 }

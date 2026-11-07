@@ -111,7 +111,7 @@ const RENAME_RETRIES = 4
  * failing that, overwritten in place so a finished edit is never dropped.
  */
 export function writeOutput(abs: string, bytes: Uint8Array | string): void {
-  const tmp = join(dirname(abs), `.${basename(abs)}.${randomBytes(6).toString('hex')}.tmp`)
+  const tmp = join(dirname(abs), `${basename(abs)}.${randomBytes(6).toString('hex')}.tmp`)
   const mode = existsSync(abs) ? statSync(abs).mode & 0o7777 : undefined
   try {
     writeFileSync(tmp, bytes, mode === undefined ? {} : { mode })
@@ -156,6 +156,10 @@ export function resolveOutput(
   ctx: PathContext,
   opts: OutputOptions = {},
 ): string {
+  // `--out=` parses to an empty string, not to undefined: falling through to
+  // the fallback would redirect the write onto the input file, so refuse the
+  // empty value the way the fallback's absence is refused
+  if (spec === '') throw new CliError(EXIT.usage, 'missing --out <path>', undefined, MISSING)
   const abs = spec ? (isAbsolute(spec) ? spec : resolve(ctx.cwd, spec)) : opts.fallback
   if (!abs) throw new CliError(EXIT.usage, 'missing --out <path>', undefined, MISSING)
   assertAllowed(abs, ctx.env, 'write')

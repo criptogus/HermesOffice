@@ -23,7 +23,7 @@ describe('bodyPr overrides on generated text boxes', () => {
       bodyPr: { wrap: 'square', anchor: 't', insetsEmu: { l: 0, t: 0, r: 0, b: 0 } },
     })
     expect(el.anchor.originalXml).toContain(
-      '<a:bodyPr wrap="square" rtlCol="0" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"/>',
+      '<a:bodyPr wrap="square" rtlCol="0" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"><a:spAutoFit/></a:bodyPr>',
     )
     const reopened = await openPptx(await savePptx(opened))
     const el2: any = reopened.deck.slides[0]!.elements.at(-1)
@@ -31,10 +31,12 @@ describe('bodyPr overrides on generated text boxes', () => {
     expect(el2.anchor.originalXml).toContain('lIns="0"')
   })
 
-  it('default stays the historical bodyPr', async () => {
+  it('default text box body is wrap="square" + spAutoFit (PowerPoint text box default)', async () => {
     const opened = await openPptx(await createBlankPptx())
     const el = addElement(opened.deck.slides[0]!, { kind: 'textbox', offset: { ...OFF } })
-    expect(el.anchor.originalXml).toContain('<a:bodyPr wrap="square" rtlCol="0"/>')
+    expect(el.anchor.originalXml).toContain(
+      '<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr>',
+    )
   })
 
   it('rtl paragraphs emit a:pPr rtl="1"', async () => {
@@ -86,6 +88,34 @@ describe('buildTableGridXml', () => {
     const rows = xml.match(/<a:tr /g)
     expect(rows?.length).toBe(2)
     expect((xml.match(/<a:tc[\s>]/g) ?? []).length).toBe(6)
+  })
+
+  /**
+   * A span was written with Math.floor, so a hostile gridSpan/rowSpan serialized
+   * as gridSpan="Infinity" — a schema-invalid value PowerPoint refuses. It is now
+   * clamped to the cells remaining right of / below the cell, as buildTableXml does.
+   */
+  it('clamps spans to the cells remaining instead of writing Infinity', async () => {
+    const opened = await openPptx(await createBlankPptx())
+    const xml = buildTableGridXml(
+      opened.deck.slides[0]!,
+      spec({
+        cells: [
+          [
+            { gridSpan: 99, rowSpan: 99 },
+            { hMerge: true },
+            { paragraphs: [{ runs: [{ text: 'C1' }] }] },
+          ],
+          [{ gridSpan: Number.NaN, rowSpan: Number.POSITIVE_INFINITY }, {}, {}],
+        ],
+      }),
+    )
+    // col 0 of 3 columns, row 0 of 2 rows
+    expect(xml.match(/gridSpan="\d+"/g)).toEqual(['gridSpan="3"'])
+    expect(xml.match(/rowSpan="\d+"/g)).toEqual(['rowSpan="2"'])
+    // a non-finite span falls back to 1, which emits no attribute (buildTableXml)
+    expect(xml).not.toContain('Infinity')
+    expect(xml).not.toContain('NaN')
   })
 
   it('insideV scope only rules verticals between columns', async () => {

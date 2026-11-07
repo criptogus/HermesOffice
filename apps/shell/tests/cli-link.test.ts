@@ -8,14 +8,14 @@ vi.mock('electron', () => ({ app: { isPackaged: false, getVersion: () => '0.0.0'
 
 import { isEphemeralInstall, launcherFilePath, writeLauncherFile } from '../src/main/cli-link'
 
-describe('genoffice launcher file', () => {
-  it('lives in the genoffice auth directory, overridable like auth.json', () => {
+describe('hermesoffice launcher file', () => {
+  it('lives in the hermesoffice auth directory, overridable like auth.json', () => {
     expect(launcherFilePath({})).toBe(join(process.env.HOME ?? '', '.hermesoffice', 'launcher'))
     expect(launcherFilePath({ HERMESOFFICE_AUTH_DIR: '/tmp/x' })).toBe(join('/tmp/x', 'launcher'))
   })
 
   it('writes one line, creates the directory, and only rewrites on change', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'genoffice-launcher-'))
+    const dir = mkdtempSync(join(tmpdir(), 'hermesoffice-launcher-'))
     const file = join(dir, 'nested', 'launcher')
     expect(writeLauncherFile(file, '/Applications/HermesOffice.app/Contents/Resources/cli')).toBe(
       true,
@@ -28,8 +28,12 @@ describe('genoffice launcher file', () => {
       false,
     )
     expect(statSync(file).mtimeMs).toBe(before)
-    expect(writeLauncherFile(file, 'C:\\Programs\\HermesOffice\\resources\\genoffice')).toBe(true)
-    expect(readFileSync(file, 'utf-8')).toBe('C:\\Programs\\HermesOffice\\resources\\genoffice\n')
+    expect(writeLauncherFile(file, 'C:\\Programs\\HermesOffice\\resources\\hermesoffice')).toBe(
+      true,
+    )
+    expect(readFileSync(file, 'utf-8')).toBe(
+      'C:\\Programs\\HermesOffice\\resources\\hermesoffice\n',
+    )
   })
 
   it('treats dmg and AppImage mounts as temporary', () => {

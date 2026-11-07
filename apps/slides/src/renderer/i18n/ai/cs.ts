@@ -111,6 +111,8 @@ export const cs = {
   aiErrUnknown: 'Neznámá chyba',
   aiErrStreamTimeout:
     'Požadavek na AI vypršel: ze sítě nepřišla žádná odpověď, běh byl zastaven. Zkontrolujte připojení a zkuste to znovu',
+  aiErrRegion:
+    'Poskytovatel tohoto modelu neposkytuje služby ve vaší aktuální oblasti — vyberte jiný model nebo změňte síť',
   aiErrOverloaded: 'Služba AI je momentálně zaneprázdněná — zkuste to prosím za chvíli znovu',
   aiErrNetwork:
     'Problém se sítí: službu AI se nepodařilo kontaktovat. Zkontrolujte připojení a zkuste to znovu',
@@ -135,6 +137,7 @@ export const cs = {
   aiClarifyOther: 'Jiné (napsat)',
   aiClarifySkip: 'Přeskočit dotazník',
   aiClarifyNext: 'Další',
+  aiClarifyPrev: 'Předchozí',
   aiClarifySubmit: 'Generovat',
   aiSumReadAttachment: 'Přečtena příloha',
   aiSumReadAttachmentName: 'Přečtena příloha {name}',

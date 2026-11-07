@@ -1,22 +1,22 @@
 # Designing a deck from a spec
 
-The same workflow the GenOffice app runs when it generates a presentation, written for an agent that does the thinking itself and lets the engine do the building. In the app every stage is a separate model call; here every stage is a separate file, and the CLI checks each file before the next stage may start. Work top-down; never start by placing elements.
+The same workflow the HermesOffice app runs when it generates a presentation, written for an agent that does the thinking itself and lets the engine do the building. In the app every stage is a separate model call; here every stage is a separate file, and the CLI checks each file before the next stage may start. Work top-down; never start by placing elements.
 
 Files of one deck, in a folder of their own (`deck/`):
 
-| Stage         | File                                                         | Check                                                                                                                      |
-| ------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| 1 style sheet | `deck/style.md`                                              | read it back before every page                                                                                             |
-| 2 outline     | `deck/outline.json`                                          | `genoffice slides check deck/outline.json --json`                                                                          |
-| 3 pages       | `deck/pages/01.json`, `02.json`, … one file per outline page | `genoffice slides check deck/pages/NN.json --json` after writing each (also against the outline entry and the style sheet) |
-| 4 build       | `deck/deck.pptx`                                             | `genoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/deck.pptx --json`                   |
-| 5 QC          | `deck/shots/*.png`                                           | `genoffice slides render`, `genoffice slides audit`, `genoffice slides replace`                                            |
+| Stage         | File                                                         | Check                                                                                                                         |
+| ------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1 style sheet | `deck/style.md`                                              | read it back before every page                                                                                                |
+| 2 outline     | `deck/outline.json`                                          | `hermesoffice slides check deck/outline.json --json`                                                                          |
+| 3 pages       | `deck/pages/01.json`, `02.json`, … one file per outline page | `hermesoffice slides check deck/pages/NN.json --json` after writing each (also against the outline entry and the style sheet) |
+| 4 build       | `deck/deck.pptx`                                             | `hermesoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/deck.pptx --json`                   |
+| 5 QC          | `deck/shots/*.png`                                           | `hermesoffice slides render`, `hermesoffice slides audit`, `hermesoffice slides replace`                                      |
 
 Never put more than one page in a file, and never write a page before its outline entry exists: the build refuses to run until every outline page has its file, and a page written in one focused step with the style sheet and its brief in front of you is what keeps a 20-page deck consistent. Keep the three files together: `slides check`, `create --spec` and `slides replace` look for `outline.json` and `style.md` beside the page files and one folder up, check every page against its outline entry (file `NN.json` is entry `pages[N-1]`) and against the style sheet's colors, and say so in `detail.notes` when either file is missing.
 
 ## 0. Check what the machine can do
 
-Run `genoffice capabilities --json` once. It reads GenOffice's own settings and reports, without a network call, whether web search, image search, image generation and media analysis are configured (a Genspark login with cloud tools on, or a key the user entered in Settings). Only when a feature is configured may the deck use it; when nothing is configured, work from the material you have and use typography, color blocks and shapes instead of photos. Never ask the user to configure a key just for a deck.
+Run `hermesoffice capabilities --json` once. It reads HermesOffice's own settings and reports, without a network call, whether web search, image search, image generation and media analysis are configured (a Genspark login with cloud tools on, or a key the user entered in Settings). Only when a feature is configured may the deck use it; when nothing is configured, work from the material you have and use typography, color blocks and shapes instead of photos. Never ask the user to configure a key just for a deck.
 
 ## 1. Style sheet first (one per deck)
 
@@ -52,17 +52,17 @@ Write `deck/outline.json`:
 }
 ```
 
-Then `genoffice slides check deck/outline.json --json`: errors (unknown layout, a content layout repeated back to back, placeholder copy, missing core hook) exit 1 and must be fixed in the file; warnings are advice. Rules the check enforces and the ones it cannot:
+Then `hermesoffice slides check deck/outline.json --json`: errors (unknown layout, a content layout repeated back to back, placeholder copy, missing core hook) exit 1 and must be fixed in the file; warnings are advice. Rules the check enforces and the ones it cannot:
 
 - A core hook for the whole deck: one sentence with tension, a number or a counter-intuitive contrast.
 - Content pages in one deck must not repeat the same layout variant back to back, and the deck should use at least three different variants.
 - Pick the variant from the content: three parallel points → `three_column_cards`; one key number → `hero_big_number`; comparison → `two_column_comparison` or `two_by_two_grid`; a sequence → `timeline_horizontal`; metrics → `kpi_cards_row`.
-- No placeholders ("XX%", "lorem"): every figure and name comes from the material you have. With web search configured, look up the facts and figures the brief needs before writing pages (`genoffice search "<query>" --json`). Without material and without search, tell the user which figures are illustrative; never present invented numbers as facts.
-- Photos: with image search configured, give each photo slot an English query for a concrete scene ("harbor cranes at dawn", not "logistics") and fetch candidates with `genoffice search --images "<query>" --max 6 --json`; put a result's `imageUrl` straight into the page's image element (the builder downloads it), and keep its `sourceUrl` (the page the picture came from) for the closing page's credits: the `imageUrl` is often a search-provider proxy that says nothing about origin or license. Give the image box roughly the picture's aspect ratio; a portrait shot squeezed into a flat strip is center-cropped to a sliver and reported by `slides check`. With image generation configured, `genoffice image "<prompt>" --aspect 16:9 --out assets/p3.jpg` makes a photo or illustration in the deck's palette. With neither, plan pages that need no photo.
+- No placeholders ("XX%", "lorem"): every figure and name comes from the material you have. With web search configured, look up the facts and figures the brief needs before writing pages (`hermesoffice search "<query>" --json`). Without material and without search, tell the user which figures are illustrative; never present invented numbers as facts.
+- Photos: with image search configured, give each photo slot an English query for a concrete scene ("harbor cranes at dawn", not "logistics") and fetch candidates with `hermesoffice search --images "<query>" --max 6 --json`; put a result's `imageUrl` straight into the page's image element (the builder downloads it), and keep its `sourceUrl` (the page the picture came from) for the closing page's credits: the `imageUrl` is often a search-provider proxy that says nothing about origin or license. Give the image box roughly the picture's aspect ratio; a portrait shot squeezed into a flat strip is center-cropped to a sliver and reported by `slides check`. With image generation configured, `hermesoffice image "<prompt>" --aspect 16:9 --out assets/p3.jpg` makes a photo or illustration in the deck's palette. With neither, plan pages that need no photo.
 
 ## 3. Write each page spec, one file at a time
 
-For page N: re-read `deck/style.md` and the page's outline entry, resolve its `image_queries` to files or URLs, write `deck/pages/NN.json` (two-digit, one page object, see `genoffice guide slides spec`) echoing the entry's `title`, `type` and `layout` at the top of the object, and run `genoffice slides check deck/pages/NN.json --json`. It builds that page alone and returns dropped elements, unreadable images and the geometry audit (out of bounds, text taller than its box, overlaps), then checks the page against outline entry N (`detail.outline.findings`: an echoed field that disagrees or placeholder copy is an error and exits 1; a title missing from the page text or a planned photo without an image element is a warning) and against the style sheet (`detail.style.offPalette`). Fix the file until `audit`, `findings` and `offPalette` are empty, then move to page N+1. Do not batch pages: one page per step, checked, is the whole point.
+For page N: re-read `deck/style.md` and the page's outline entry, resolve its `image_queries` to files or URLs, write `deck/pages/NN.json` (two-digit, one page object, see `hermesoffice guide slides spec`) echoing the entry's `title`, `type` and `layout` at the top of the object, and run `hermesoffice slides check deck/pages/NN.json --json`. It builds that page alone and returns dropped elements, unreadable images and the geometry audit (out of bounds, text taller than its box, overlaps), then checks the page against outline entry N (`detail.outline.findings`: an echoed field that disagrees or placeholder copy is an error and exits 1; a title missing from the page text or a planned photo without an image element is a warning) and against the style sheet (`detail.style.offPalette`). Fix the file until `audit`, `findings` and `offPalette` are empty, then move to page N+1. Do not batch pages: one page per step, checked, is the whole point.
 
 Canvas is 1280 × 720 px, origin top-left, integers only; nothing may cross the edges. Elements paint in array order: background and decor shapes first, then images, text last.
 
@@ -79,7 +79,7 @@ Canvas is 1280 × 720 px, origin top-left, integers only; nothing may cross the 
 
 **Fill the page**: spread content over the whole canvas; no content crammed into the top half above a blank field. Make text and images as large as the layout allows.
 
-**Visuals**: photos only from sources you actually have (local files, search results, generated images). Without photos, work with typography, color blocks and shapes; never fake a photo with a grey box. Icon-like decoration uses the allowed shapes, at most four or five per page, content-related. No emoji. Data visuals are composed from `rect`, `donut` and `line` shapes with sizes proportional to the real values. Solid colors only (alpha allowed).
+**Visuals**: photos only from sources you actually have (local files, search results, generated images), at most three image elements on a page, and only a photo that genuinely fits the page's content: an irrelevant or generic stock photo is worse than none. Without photos, work with typography, color blocks and shapes; never fake a photo with a grey box. Icon-like decoration uses the allowed shapes, at most four or five per page, content-related. No emoji. Data visuals are composed from `rect`, `donut` and `line` shapes with sizes proportional to the real values. Solid colors only (alpha allowed).
 
 ## 4. Anti-patterns (treat as defects)
 
@@ -93,9 +93,9 @@ Canvas is 1280 × 720 px, origin top-left, integers only; nothing may cross the 
 
 ## 5. Build, look, audit, fix
 
-1. `genoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/deck.pptx --json` (`--outline` may be left out when the file sits beside the folder). Page files are taken in name order; the build refuses to run while an outline page has no file or a page file disagrees with its entry. Read `detail.issues`, `detail.imageFailures`, `detail.outline.findings` and `detail.style.offPalette`: each names the page file.
-2. `genoffice slides render deck/deck.pptx --out deck/shots --json` and look at every PNG (needs GenOffice installed). Check overflow, collisions, contrast, crop, hierarchy, whitespace.
-3. `genoffice slides audit deck/deck.pptx --json` for the geometry findings the eye misses. Element ids in the findings are the ones `genoffice slides read` and `genoffice slides apply` use.
-4. Fix a page in its spec file and put it back with `genoffice slides replace deck/deck.pptx --slide <n> --spec deck/pages/NN.json --json` (slide n is page file n+1; the page is checked against outline entry n first); the other slides are untouched. Small nudges can also go through `genoffice slides apply` ops (`setTransform`, `setText`, `setTextStyle`, `setFill` …). At most two fix rounds; then report what remains.
+1. `hermesoffice create --type pptx --spec deck/pages --outline deck/outline.json --out deck/deck.pptx --json` (`--outline` may be left out when the file sits beside the folder). Page files are taken in name order; the build refuses to run while an outline page has no file or a page file disagrees with its entry. Read `detail.issues`, `detail.imageFailures`, `detail.outline.findings` and `detail.style.offPalette`: each names the page file.
+2. `hermesoffice slides render deck/deck.pptx --out deck/shots --json` and look at every PNG (needs HermesOffice installed). Check overflow, collisions, contrast, crop, hierarchy, whitespace.
+3. `hermesoffice slides audit deck/deck.pptx --json` for the geometry findings the eye misses. Element ids in the findings are the ones `hermesoffice slides read` and `hermesoffice slides apply` use.
+4. Fix a page in its spec file and put it back with `hermesoffice slides replace deck/deck.pptx --slide <n> --spec deck/pages/NN.json --json` (slide n is page file n+1; the page is checked against outline entry n first); the other slides are untouched. Small nudges can also go through `hermesoffice slides apply` ops (`setTransform`, `setText`, `setTextStyle`, `setFill` …). At most two fix rounds; then report what remains.
 
 Only fix objective defects and restrained polish: keep the copy, facts, palette and composition. Do not redesign a page that is already clean.

@@ -18,6 +18,7 @@ import {
   VerticalMergeType,
   WidthType,
 } from 'docx'
+import { carryBookmarks, withBookmarks } from './bookmarks'
 import {
   NO_BORDER,
   NO_BORDERS,
@@ -57,8 +58,11 @@ function cellChildren(
 
 function cellChildrenInner(generator, entry, depth) {
   let children
-  if (entry.children) children = generator.render(entry.children, depth + 1)
-  else {
+  if (entry.children) {
+    // A bookmark on the cell/card itself must land on its first paragraph.
+    const carried = entry.bookmarks?.length ? carryBookmarks(entry.children, entry.bookmarks) : null
+    children = generator.render(carried || entry.children, depth + 1)
+  } else {
     const opts = paraOptions(generator.context, entry.style)
     const spacing = {
       ...(opts.spacing || {}),
@@ -73,7 +77,10 @@ function cellChildrenInner(generator, entry, depth) {
           : undefined
     children = [
       new Paragraph({
-        children: makeRuns(generator.context, entry.runs || [], generator.images),
+        children: withBookmarks(
+          makeRuns(generator.context, entry.runs || [], generator.images),
+          entry.bookmarks,
+        ),
         alignment: align,
         bidirectional: entry.rtl || undefined,
         ...opts,
@@ -404,8 +411,9 @@ function renderPageColumns(generator, node, depth) {
 // or framed cards would show visible seams between the flattened pieces.
 function isLightShading(hex) {
   if (!hex) return true
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false
-  return [0, 2, 4].every((i) => parseInt(hex.slice(i, i + 2), 16) >= 0xdd)
+  const v = (hex ?? '').trim()
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return false
+  return [0, 2, 4].every((i) => parseInt(v.slice(i, i + 2), 16) >= 0xdd)
 }
 
 const FLOW_CHILD_TYPES = new Set(['para', 'heading', 'list', 'spacer', 'hr'])
@@ -610,6 +618,10 @@ function renderCard(generator, node, depth) {
   const cardDxa = node.widthPx
     ? Math.min(generator.avail, Math.max(240, context.pxToTwips(node.widthPx)))
     : generator.avail
+  if (node.bookmarks?.length) {
+    const carried = carryBookmarks(node.children, node.bookmarks)
+    if (carried) node = { ...node, children: carried, bookmarks: [] }
+  }
   // depth guard: deeply nested cards degrade to plain flow
   if (depth >= 3) return generator.render(node.children, depth)
   if (cardShouldFlatten(node, depth)) return renderCardFlattened(generator, node, depth)
@@ -757,7 +769,10 @@ function renderColorBar(generator, node) {
             new TableCell({
               children: [
                 new Paragraph({
-                  children: makeRuns(context, node.runs, generator.images),
+                  children: withBookmarks(
+                    makeRuns(context, node.runs, generator.images),
+                    node.bookmarks,
+                  ),
                   alignment: align,
                   bidirectional: style.rtl || undefined,
                   // header bars must not dangle at a page bottom while their

@@ -37,13 +37,18 @@ export function Breadcrumb({ text, map, sid, state, onSelect }: Props): ReactEle
     current,
   ]
   return (
-    <div className="crumbs" role="navigation" aria-label={t('elementToolbar')}>
+    <nav className="crumbs" aria-label={t('elementPath')}>
       {chain.map((e, i) => (
-        <span key={e.sid} className="crumb-wrap">
-          {i > 0 && <span className="crumb-sep">›</span>}
+        <span key={`${e.sid}:${i}`} className="crumb-wrap">
+          {i > 0 && (
+            <span className="crumb-sep" aria-hidden>
+              ›
+            </span>
+          )}
           <button
             type="button"
             className={`crumb${e.sid === sid ? ' current' : ''}`}
+            aria-current={e.sid === sid ? true : undefined}
             onClick={() => onSelect(e.sid)}
             title={e.path}
           >
@@ -59,6 +64,6 @@ export function Breadcrumb({ text, map, sid, state, onSelect }: Props): ReactEle
           {t(state === 'dynamic' ? 'nodeDynamicShort' : 'nodeDirtyShort')}
         </span>
       )}
-    </div>
+    </nav>
   )
 }

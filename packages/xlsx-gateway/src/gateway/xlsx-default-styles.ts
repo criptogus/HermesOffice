@@ -5,7 +5,7 @@
 /// which fails the whole import with `specified file not found in archive`. A
 /// blank workbook plus a formula write therefore produced a file the app could
 /// read and the CLI could not: every cell-level result was unreachable from
-/// `genoffice sheet read` and from any headless recalc.
+/// `hermesoffice sheet read` and from any headless recalc.
 ///
 /// The shape mirrors what `StylesheetEditor` expects to exist so a later style
 /// edit extends this table instead of replacing it.

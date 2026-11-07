@@ -16,6 +16,25 @@ export interface Rect {
   y1: number
 }
 
+/**
+ * Loop reductions instead of spreads: Math.min(...xs) passes every element as
+ * a function argument, so a page-sized array (~125k lines in CAD/map exports)
+ * threw RangeError before a single line rendered (V8 argument limit, measured).
+ * For finite values the semantics match Math.min/Math.max exactly, including
+ * the empty case (minOf → Infinity, maxOf → -Infinity).
+ */
+export function minOf(values: readonly number[]): number {
+  let m = Infinity
+  for (const v of values) if (v < m) m = v
+  return m
+}
+
+export function maxOf(values: readonly number[]): number {
+  let m = -Infinity
+  for (const v of values) if (v > m) m = v
+  return m
+}
+
 /** |a - b| <= tol */
 export const approxEq = (a: number, b: number, tol: number): boolean => Math.abs(a - b) <= tol
 
@@ -43,6 +62,23 @@ export function rectUnion(a: Rect, b: Rect): Rect {
 export function rectUnionAll(rects: readonly Rect[]): Rect {
   if (rects.length === 0) return { x0: 0, y0: 0, x1: 0, y1: 0 }
   return rects.reduce(rectUnion)
+}
+
+/** bounding box of a point list, accumulated in a loop: a single path can carry
+ *  100k+ points (maps, CAD, chart exports) and Math.min(...points) would spread
+ *  them as arguments, throwing past the engine's argument-count limit */
+export function bboxOfPoints(points: readonly { x: number; y: number }[]): Rect {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const p of points) {
+    if (p.x < x0) x0 = p.x
+    if (p.x > x1) x1 = p.x
+    if (p.y < y0) y0 = p.y
+    if (p.y > y1) y1 = p.y
+  }
+  return { x0, y0, x1, y1 }
 }
 
 export function intersectArea(a: Rect, b: Rect): number {

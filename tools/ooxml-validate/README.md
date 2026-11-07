@@ -30,12 +30,17 @@ the PresentationML closure is kept: `pml`, `dml-main`, `dml-chart`,
 `dml-chartDrawing`, `dml-diagram`, `dml-lockedCanvas`, `dml-picture`,
 `shared-commonSimpleTypes`, `shared-relationshipReference`.
 
-Local amendment (marked `GenOffice amendment` in the file):
+Local amendment (marked `HermesOffice amendment` in the file):
 
 - `dml-main.xsd` `CT_TextBulletSizePercent/@val` is bound to `ST_TextBulletSize`
   (the union that includes the 25000..400000 decimal form). The published
   schema binds it to the percent-string form only, which rejects every
   `a:buSzPct` PowerPoint writes.
+
+`schemas/am3d.xsd` is the 3D model schema (`http://schemas.microsoft.com/office/drawing/2017/model3d`)
+from [MS-ODRAWXML] 5.29, with the amendments listed at its top. A model lives in an
+`mc:Choice`, which MCE preprocessing drops, so every `am3d:model3d` of a slide is
+validated against it separately.
 
 Calibration: 41 PowerPoint-authored decks (built-in themes and layouts)
 validate clean; edited copies of them add no violation over their originals.

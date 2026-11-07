@@ -23,6 +23,7 @@ export type ErrorReason =
   | 'unsupported'
   | 'unknown_op'
   | 'op_rejected'
+  | 'unresolved_placeholder'
   | 'target_not_found'
   | 'out_of_range'
   | 'sheet_not_found'
@@ -34,6 +35,7 @@ export type ErrorReason =
   | 'outside_allowed_roots'
   | 'conversion_failed'
   | 'app_unavailable'
+  | 'app_crashed'
   | 'invalid_usage'
 
 export interface ErrorHints {

@@ -17,26 +17,30 @@
     "./markdown.css": "./src/markdown.css",
     "./ai-panel-prefs.css": "./src/ai-panel-prefs.css",
     "./ai-scope-quote.css": "./src/ai-scope-quote.css",
+    "./ai-queue-strip.css": "./src/ai-queue-strip.css",
+    "./ai-usage.css": "./src/ai-usage.css",
     "./image-dialogs.css": "./src/image-dialogs.css",
     "./image-viewer.css": "./src/image-viewer.css",
     "./fonts/*": "./src/fonts/*",
-    "./app-dialog.css": "./src/app-dialog.css"
+    "./ai-model-picker.css": "./src/ai-model-picker.css",
+    "./ai-skills.css": "./src/ai-skills.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "peerDependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@hermesoffice/i18n": "*",
-    "@hermesoffice/pptx-render": "*"
+    "@hermesoffice/pptx-render": "*",
+    "@hermesoffice/agent-core": "*",
+    "@hermesoffice/ai-provider": "*"
   }
 }

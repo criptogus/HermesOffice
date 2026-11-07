@@ -1,5 +1,6 @@
 import type {
   AiChatResponse,
+  AiCustomProtocol,
   AiMediaProviderConfig,
   AiMediaProviderId,
   AiMediaProviderMeta,
@@ -7,12 +8,46 @@ import type {
   AiSearchProviderId,
   AiSearchProviderMeta,
   AiSettings,
+  AiStreamChunk,
+  AiStreamRequest,
   CodexModelCatalog,
 } from '@hermesoffice/ai-provider'
-import type { UpdateChannel } from './update-api'
+import type { UpdateChannel, UpdateUiState } from './update-api'
+import type {
+  AttachmentInfo,
+  CliContext,
+  CliRunRequest,
+  CliRunResult,
+  KbFileInfo,
+  KbReadPage,
+  KbSearchHit,
+} from '@hermesoffice/agent-core'
 import type { AiPanelPrefs } from '@hermesoffice/ui/ai-panel-prefs'
 
+export interface AttachmentAddResult {
+  accepted: AttachmentInfo[]
+  /** per-file rejection messages, already localized by the main process */
+  rejected: string[]
+}
+
+export interface AttachmentReadResult {
+  ok: boolean
+  error?: string
+  totalChars?: number
+  text?: string
+  offset?: number
+}
+
+export interface AttachmentImageResult {
+  ok: boolean
+  /** raw base64 (no data: URL prefix) */
+  base64?: string
+  mime?: string
+  error?: string
+}
+
 /** UI language; kept self-contained here (mirrors Lang in @hermesoffice/i18n) */
+
 export type UiLanguage =
   | 'zh'
   | 'en'
@@ -34,11 +69,30 @@ export type UiLanguage =
   | 'he'
   | 'hi'
   | 'zh-TW'
+  | 'vi'
+  | 'tr'
 
 /** UI theme preference */
 export type UiTheme = 'light' | 'dark' | 'system'
 
+/**
+ * Document page theme preference (hermesoffice#1811): what the editors' canvas/paper does
+ * relative to the UI theme. 'follow' reproduces the previous single-theme
+ * behavior; 'light'/'dark' pin the paper regardless of the UI theme.
+ */
+export type DocTheme = 'follow' | 'light' | 'dark'
+
 /** shell-wide AutoSave default for every editor; updatedAt is 0 until first set */
+/** mirrors AUTHOR_NAME_MAX in @hermesoffice/electron-utils (the renderer cannot import it) */
+export const AUTHOR_NAME_MAX = 120
+
+export interface AuthorNameSetting {
+  /** stored override; '' means "use fallback" */
+  value: string
+  /** the OS account name */
+  fallback: string
+}
+
 export interface AutoSaveDefault {
   on: boolean
   updatedAt: number
@@ -73,6 +127,9 @@ export interface RecentEntry {
   sizeBytes: number
   /** whether the user starred this file */
   starred: boolean
+  /** the starred group this file belongs to (absent when ungrouped); only
+      populated by the starred() query — the other list queries omit it */
+  group?: string
   /** the path failed to stat (disconnected drive, moved, deleted) — kept
       listed like Word's recents instead of silently dropped (r158) */
   missing?: boolean
@@ -86,6 +143,8 @@ export interface RecentQuery {
   limit?: number
   /** restrict to one extension ('docx' | 'xlsx' | 'pptx'); omit for all */
   ext?: string
+  /** starred() only: restrict to one starred group; omit for all */
+  group?: string
 }
 
 export interface RecentPage {
@@ -96,16 +155,171 @@ export interface RecentPage {
   totalAll: number
 }
 
+/** local file search over names, folders and extracted text */
+export interface FileSearchQuery {
+  q: string
+  /** sidebar filter key ('docx' | 'xlsx' | ...); omit for all */
+  ext?: string
+  offset?: number
+  limit?: number
+}
+
+export interface FileSearchSnippetPart {
+  text: string
+  hit: boolean
+}
+
+export interface FileSearchHit extends RecentEntry {
+  /** excerpt around the first content match; null when only the name or folder matched */
+  snippet: FileSearchSnippetPart[] | null
+  /** folded query fragments the file matched; highlight them in the name and folder */
+  needles: string[]
+}
+
+/**
+ * The decision-model routes the app can call. Several vendors publish more
+ * than one size or generation behind the same URL, and the difference is only
+ * the `model` in the body — but they are listed separately rather than folded
+ * into one option with a model picker, because picking the wrong one costs
+ * real money per call and a dropdown that names them is the safer surface.
+ */
+export type DecisionEndpoint =
+  | 'openrouter'
+  | 'direct'
+  | 'perplexity'
+  | 'perplexity-v12'
+  | 'perplexity-flash'
+  | 'liquid'
+  | 'liquid-ultra'
+  | 'openai'
+  | 'cloudflare'
+  | 'cloudflare-flash'
+  | 'kev'
+  | 'rizzo'
+  | 'custom'
+
+export function isCloudflareEndpoint(endpoint: DecisionEndpoint): boolean {
+  return endpoint === 'cloudflare' || endpoint === 'cloudflare-flash'
+}
+
+/** home search options persisted in app-settings.json under `fileSearch` */
+export interface FileSearchSettings {
+  /** send the top local hits to a decision model for reranking; default off */
+  rerank: boolean
+  endpoint: DecisionEndpoint
+  /** one API key per endpoint; local endpoints (kev/rizzo/custom) may stay empty */
+  keys: Record<DecisionEndpoint, string>
+  /** `custom` endpoint only: base URL of a /v1/systemone-compatible server */
+  customBaseUrl: string
+  /** `custom` endpoint only: model id the server expects */
+  customModel: string
+  /** `cloudflare`/`cloudflare-flash` only: Workers AI account id */
+  cloudflareAccountId: string
+  /** `cloudflare`/`cloudflare-flash` only: Workers AI model path, e.g. @cf/cloudflare/clef */
+  cloudflareModel: string
+}
+
+export interface FileSearchRerank {
+  /** paths in the decision model's order, most relevant first; paths not judged keep their local order after these */
+  order: string[]
+  /** calibrated 0–2 relevance per judged path */
+  scores: Record<string, number>
+}
+
+export interface FileSearchPage {
+  hits: FileSearchHit[]
+  total: number
+  index: {
+    indexed: number
+    pending: number
+    scanning: boolean
+  }
+}
+
+/**
+ * Default-app ownership of the Office document types. `others` lists the apps
+ * (display names) currently holding at least one type; `manualOnly` means the
+ * platform (Windows) only lets us open the system page.
+ */
+export interface DefaultAppStatus {
+  state: 'unsupported' | 'unknown' | 'default' | 'other'
+  others: string[]
+  manualOnly: boolean
+}
+
+export interface UserSkillEntry {
+  name: string
+  description: string
+  relevant: boolean
+}
+
 export interface HomeApi {
   /** unified recents across document types, newest first (paged) */
   recents(query?: RecentQuery): Promise<RecentPage>
+  /** search indexed files by name, folder and content */
+  searchFiles(query: FileSearchQuery): Promise<FileSearchPage>
+  /** decision-model order for the hits currently shown (≤ 20 paths); null when reranking is off or unavailable */
+  rerankSearch(query: { q: string; paths: string[] }): Promise<FileSearchRerank | null>
+  getFileSearchSettings(): Promise<FileSearchSettings>
+  setFileSearchSettings(patch: Partial<FileSearchSettings>): Promise<FileSearchSettings>
+  /** one two-document judgement against the (possibly unsaved) settings */
+  testFileSearchRerank(settings: FileSearchSettings): Promise<{ ok: boolean; error?: string }>
   /** starred files (independent of the recent list), newest first (paged) */
   starred(query?: RecentQuery): Promise<RecentPage>
+  /** starred group names that currently have at least one file, in creation order */
+  starredGroups(): Promise<string[]>
+  /** put each starred path into `group` (null = remove from its group) */
+  setStarredGroup(paths: string[], group: string | null): Promise<void>
   /** stat a specific set of paths (project view); unstat-able files come back flagged `missing` */
   statPaths(paths: string[]): Promise<RecentEntry[]>
   /** star / unstar a file */
   toggleStar(path: string): Promise<void>
+  // ---- knowledge-base ask panel: the reader's starred corpus, askable ----
+  /** the starred corpus as the AI's knowledge base */
+  kbList(): Promise<KbFileInfo[]>
+  /** the skills the user installed into HermesOffice */
+  skillsList(): Promise<UserSkillEntry[]>
+  /** one installed skill's body, by name */
+  skillText(name: string): Promise<string>
+  /** open Settings › Integrations (the skills list) */
+  openSkillsSettings(): Promise<void>
+  /** full-text search over the corpus */
+  kbSearch(query: { q: string; limit?: number }): Promise<KbSearchHit[]>
+  /** one page of a corpus file's parsed text (path must be in kbList) */
+  kbRead(path: string, offset: number): Promise<KbReadPage>
+  /** write the AI's markdown as a new .md / .docx in the save folder; resolves to its path */
+  kbCreateDocument(request: {
+    title: string
+    format: 'md' | 'docx'
+    content: string
+  }): Promise<{ path: string }>
+  /** the work and output directories the Ask AI CLI tools use for one conversation */
+  kbCliContext(sessionId: string): Promise<CliContext>
+  /** run the bundled hermesoffice CLI for one conversation (confined; see main/home-cli.ts);
+   *  `sources` are the attached files whose folders the CLI may read */
+  kbRunCli(
+    sessionId: string,
+    request: CliRunRequest & { sources?: string[] },
+  ): Promise<CliRunResult>
+  /** chat attachments: the files:* handlers Docs registers in the shell main process */
+  pickAttachments(): Promise<AttachmentAddResult | null>
+  addAttachmentPaths(paths: string[]): Promise<AttachmentAddResult>
+  /** dropped/pasted files arrive as bytes: main stores them under temp and grants that path */
+  addAttachmentBytes(name: string, data: ArrayBuffer): Promise<AttachmentAddResult>
+  addPastedImage(data: ArrayBuffer, ext: string): Promise<AttachmentAddResult>
+  readAttachment(path: string, offset: number, maxChars: number): Promise<AttachmentReadResult>
+  readAttachmentImage(path: string): Promise<AttachmentImageResult>
+  /** the user's AI provider settings (shared with every app's panel) */
+  aiGetSettings(): Promise<AiSettings>
+  /** one streamed model turn over the shared ai:stream handler */
+  aiStream(request: AiStreamRequest): Promise<void>
+  aiStreamCancel(requestId: string): Promise<void>
+  /** subscribe to stream chunks; returns unsubscribe */
+  onAiStream(handler: (chunk: AiStreamChunk) => void): () => void
+  /** Genspark login state (the default provider's auth source) */
+  aiGskStatus(): Promise<{ loggedIn: boolean; email?: string }>
   /** open an existing file, routing to the right module by extension */
+  openHelp(): Promise<void>
   openPath(path: string): Promise<void>
   /** file picker accepting every supported extension, then routes */
   browse(): Promise<void>
@@ -123,6 +337,8 @@ export interface HomeApi {
   newPdf(opts?: NewFileOpts): Promise<void>
   /** drop entries from the recent list (does not touch the files) */
   removeRecent(paths: string[]): Promise<void>
+  /** unstar files in bulk (Starred view selection bar); the recents list and the files are untouched */
+  unstarPaths(paths: string[]): Promise<void>
   /** reveal the file in Finder / Explorer */
   revealPath(path: string): Promise<void>
   /** rename the file on disk (same directory) and update the recent list */
@@ -133,8 +349,16 @@ export interface HomeApi {
   deleteFiles(paths: string[]): Promise<void>
   /** open the OS trash, where deleted files can be restored */
   openTrash(): Promise<void>
-  /** the folder tree root (= default save folder); `usable` false when it cannot be created/written */
-  folderRoot(): Promise<FolderRoot>
+  /** the tree roots: the default save folder first, then the folders the user added */
+  folderRoots(): Promise<FolderRoot[]>
+  /** directory picker; the chosen folder joins the tree in place (nothing is copied or moved) */
+  addFolderRoot(): Promise<FolderRoot | null>
+  /** OS paths dropped on the Folders panel: folders join the tree, documents open */
+  dropFolderRoots(paths: string[]): Promise<FolderRoot[]>
+  /** take an added folder off the list; the disk is untouched */
+  removeFolderRoot(path: string): Promise<void>
+  /** absolute path of a File from an OS drag (Electron webUtils) */
+  pathForFile(file: File): string
   /** one level of the tree: sub-folders + supported files directly inside `dir` */
   listFolder(dir: string): Promise<FolderListing>
   /** create `parent/name`; resolves to the new path */
@@ -155,18 +379,31 @@ export interface HomeApi {
   getUpdateChannel(): Promise<UpdateChannel>
   /** switch + persist the update channel; triggers an immediate update check */
   setUpdateChannel(channel: UpdateChannel): Promise<void>
+  /** whether the launch and periodic background update checks run (default on) */
+  getAutoUpdateCheck(): Promise<boolean>
+  setAutoUpdateCheck(on: boolean): Promise<void>
+  /** background checks download quietly and install on quit instead of showing the card (default off) */
+  getSilentInstallUpdate(): Promise<boolean>
+  setSilentInstallUpdate(on: boolean): Promise<void>
   /** Genspark account status (gsk login state; to be upgraded to a signup/account system later) */
   accountStatus(): Promise<AccountStatus>
   /** start Genspark login (opens the browser; accountStatus flips to logged-in on completion); returns whether the launch succeeded */
   accountLogin(): Promise<boolean>
   /** progress events for the login started via accountLogin; returns an unsubscribe */
   onAccountLogin(handler: (ev: AccountLoginEvent) => void): () => void
+  /** a tab asked for the settings modal (composer model chip → AI Model section) */
+  onOpenSettings(handler: (target: { section: string }) => void): () => void
   /** re-open the pending login auth URL in the default browser (rescue when auto-open failed) */
   openLoginUrl(): Promise<void>
   /** log out (clears the saved API key; the login state is shared globally with the gsk CLI) */
   accountLogout(): Promise<void>
   /** app version (from package.json / electron app.getVersion) */
   getAppVersion(): Promise<string>
+  /** live updater state (null until an update was first seen); Settings → About */
+  getUpdateState(): Promise<UpdateUiState | null>
+  /** re-open the (minimized) update dialog; a not-yet-started download also starts */
+  openUpdateDialog(): Promise<boolean>
+  onUpdateStateChanged(handler: (state: UpdateUiState) => void): () => void
   /** whether the first-run onboarding has been completed or skipped (persisted in userData/app-settings.json) */
   onboardingSeen(): Promise<boolean>
   /** mark onboarding done; analytics remains enabled unless separately opted out */
@@ -175,10 +412,20 @@ export interface HomeApi {
   getTheme(): Promise<UiTheme>
   /** switch + persist the UI theme; broadcasts 'app:theme-changed' to all web contents */
   setTheme(theme: UiTheme): Promise<void>
+  /** current document page theme preference (hermesoffice#1811, persisted in userData/app-settings.json) */
+  getDocumentTheme(): Promise<DocTheme>
+  /** switch + persist the document page theme; broadcasts 'app:document-theme-changed' to all web contents */
+  setDocumentTheme(theme: DocTheme): Promise<void>
   /** AutoSave default applied by every editor window (persisted in userData/app-settings.json) */
   getAutoSaveDefault(): Promise<AutoSaveDefault>
   /** persist the AutoSave default; broadcasts 'app:auto-save-default-changed' to all web contents */
   setAutoSaveDefault(on: boolean): Promise<void>
+  /** whether long-idle background tabs release their renderer once many are open (default on) */
+  getTabSleepEnabled(): Promise<boolean>
+  setTabSleepEnabled(on: boolean): Promise<void>
+  /** whether the documents open at the last close reopen at launch (default off) */
+  getRestoreLastSession(): Promise<boolean>
+  setRestoreLastSession(on: boolean): Promise<void>
   /** current local MCP server state (running/enabled/port/url) */
   getMcpStatus(): Promise<McpStatus>
   /** enable/disable the MCP server and/or change its port/background/logging; applies and persists, returns the new state */
@@ -198,6 +445,12 @@ export interface HomeApi {
   getAnalyticsEnabled(): Promise<boolean>
   /** persist an explicit analytics opt-in or opt-out */
   setAnalyticsEnabled(enabled: boolean): Promise<boolean>
+  /** name on comments and tracked changes; `value` is the stored override ('' = use `fallback`, the OS account) */
+  getAuthorName(): Promise<AuthorNameSetting>
+  getLegacyImportPrompt(): Promise<boolean>
+  setLegacyImportPrompt(prompt: boolean): Promise<boolean>
+  /** persist; broadcasts 'app:author-name-changed' (the effective name) to all web contents */
+  setAuthorName(value: string): Promise<AuthorNameSetting>
   /** AI panel text size + chat-input spellcheck (persisted in userData/app-settings.json) */
   getAiPanelPrefs(): Promise<AiPanelPrefs>
   /** merge + persist; broadcasts 'app:ai-panel-prefs-changed' to all web contents */
@@ -206,8 +459,14 @@ export interface HomeApi {
   getDefaultSaveDir(): Promise<string>
   /** directory picker to change the default save folder; resolves to the new folder, or null when canceled or the pick was unusable */
   pickDefaultSaveDir(): Promise<string | null>
+  /** who opens .docx/.xlsx/.pptx today (Settings → General "default app" row) */
+  getDefaultAppStatus(): Promise<DefaultAppStatus>
+  /** claim the Office types (mac/linux) or open the system Default Apps page (win); resolves to the refreshed status */
+  setDefaultApp(): Promise<DefaultAppStatus>
   /** theme switched anywhere (broadcast from the main process) */
   onThemeChanged(handler: (theme: UiTheme) => void): () => void
+  /** document page theme switched anywhere (broadcast from the main process) */
+  onDocumentThemeChanged(handler: (theme: DocTheme) => void): () => void
   /** open the GenTeam community page in the default browser */
   openGenTeam(): Promise<void>
   /** open the Genspark credit-usage page in the default browser */
@@ -233,12 +492,20 @@ export interface HomeApi {
   openCloudProject(projectUrl: string): Promise<void>
   /** AI settings (userData/ai-settings.json, shared by every editor); the genspark key never appears here */
   getAiSettings(): Promise<AiSettings>
-  /** persist AI settings; open editors pick the change up on their next settings read */
+  /** persist AI settings; every renderer gets ai:settings-changed and re-reads */
   setAiSettings(settings: AiSettings): Promise<void>
+  /** ai-settings.json was rewritten by any renderer (composer model chip, another window) */
+  onAiSettingsChanged(handler: () => void): () => void
   /** provider catalog with each fixed endpoint's default base URL (empty for genspark/custom) */
   getAiProviders(): AiCatalogEntry[]
   /** live Codex model catalog discovered through the current or overridden app-server */
   getCodexModels(cliPath?: string): Promise<CodexModelCatalog>
+  /** live model list advertised by a user-hosted endpoint, probed on the route its declared protocol speaks; empty when it cannot answer */
+  getCustomModels(
+    baseUrl: string,
+    apiKey?: string,
+    api?: AiCustomProtocol,
+  ): Promise<CodexModelCatalog>
   /** one-shot round trip against the given (possibly unsaved) settings — the settings-UI connection test */
   testAiSettings(settings: AiSettings): Promise<AiChatResponse>
   /** image generation / media analysis provider catalog */
@@ -326,7 +593,7 @@ export interface NewFileOpts {
   dir?: string
 }
 
-// ── Folder tree (home "Folders" panel over the default save folder) ──────
+// ── Folder tree (home "Folders" panel: the default save folder plus any folder the user added) ──
 
 export interface FolderRoot {
   path: string
@@ -334,6 +601,10 @@ export interface FolderRoot {
   name: string
   /** false when the folder does not exist and cannot be created, or is read-only */
   usable: boolean
+  /** the folder exists and can be listed (a read-only or unplugged root is still shown) */
+  readable: boolean
+  /** an added folder: can be taken off the list; the default save folder cannot */
+  removable: boolean
 }
 
 export interface FolderEntry {
@@ -379,10 +650,19 @@ export interface MoveResult {
 }
 
 export const HOME_CHANNELS = {
+  openHelp: 'home:open-help',
   recents: 'home:recents',
+  searchFiles: 'home:search-files',
+  rerankSearch: 'home:rerank-search',
+  getFileSearchSettings: 'home:get-file-search-settings',
+  setFileSearchSettings: 'home:set-file-search-settings',
+  testFileSearchRerank: 'home:test-file-search-rerank',
   starred: 'home:starred',
   statPaths: 'home:stat-paths',
   toggleStar: 'home:toggle-star',
+  unstarPaths: 'home:unstar-paths',
+  starredGroups: 'home:starred-groups',
+  setStarredGroup: 'home:set-starred-group',
   openPath: 'home:open-path',
   browse: 'home:browse',
   newDoc: 'home:new-doc',
@@ -397,7 +677,10 @@ export const HOME_CHANNELS = {
   duplicateFile: 'home:duplicate-file',
   deleteFiles: 'home:delete-files',
   openTrash: 'home:open-trash',
-  folderRoot: 'home:folder-root',
+  folderRoots: 'home:folder-roots',
+  addFolderRoot: 'home:folder-root-add',
+  dropFolderRoots: 'home:folder-root-drop',
+  removeFolderRoot: 'home:folder-root-remove',
   listFolder: 'home:folder-list',
   createFolder: 'home:folder-create',
   renameFolder: 'home:folder-rename',
@@ -408,9 +691,14 @@ export const HOME_CHANNELS = {
   setLanguage: 'home:set-language',
   getUpdateChannel: 'home:get-update-channel',
   setUpdateChannel: 'home:set-update-channel',
+  getAutoUpdateCheck: 'home:get-auto-update-check',
+  setAutoUpdateCheck: 'home:set-auto-update-check',
+  getSilentInstallUpdate: 'home:get-silent-install-update',
+  setSilentInstallUpdate: 'home:set-silent-install-update',
   accountStatus: 'home:account-status',
   accountLogin: 'home:account-login',
   accountLoginEvent: 'home:account-login-event',
+  openSettings: 'home:open-settings',
   accountLoginOpenUrl: 'home:account-login-open-url',
   accountLogout: 'home:account-logout',
   getAppVersion: 'home:get-app-version',
@@ -418,8 +706,14 @@ export const HOME_CHANNELS = {
   setOnboardingSeen: 'home:set-onboarding-seen',
   getTheme: 'home:get-theme',
   setTheme: 'home:set-theme',
+  getDocumentTheme: 'home:get-document-theme',
+  setDocumentTheme: 'home:set-document-theme',
   getAutoSaveDefault: 'home:get-auto-save-default',
   setAutoSaveDefault: 'home:set-auto-save-default',
+  getTabSleepEnabled: 'home:get-tab-sleep-enabled',
+  setTabSleepEnabled: 'home:set-tab-sleep-enabled',
+  getRestoreLastSession: 'home:get-restore-last-session',
+  setRestoreLastSession: 'home:set-restore-last-session',
   getMcpStatus: 'home:get-mcp-status',
   setMcpSettings: 'home:set-mcp-settings',
   getMcpLogs: 'home:get-mcp-logs',
@@ -427,9 +721,15 @@ export const HOME_CHANNELS = {
   openMcpLogFile: 'home:open-mcp-log-file',
   getAnalyticsEnabled: 'home:get-analytics-enabled',
   setAnalyticsEnabled: 'home:set-analytics-enabled',
+  getAuthorName: 'home:get-author-name',
+  getLegacyImportPrompt: 'home:get-legacy-import-prompt',
+  setLegacyImportPrompt: 'home:set-legacy-import-prompt',
+  setAuthorName: 'home:set-author-name',
   getAiPanelPrefs: 'home:get-ai-panel-prefs',
   setAiPanelPrefs: 'home:set-ai-panel-prefs',
   getDefaultSaveDir: 'home:get-default-save-dir',
+  getDefaultAppStatus: 'home:get-default-app-status',
+  setDefaultApp: 'home:set-default-app',
   pickDefaultSaveDir: 'home:pick-default-save-dir',
   openGenTeam: 'home:open-genteam',
   openCreditUsage: 'home:open-credit-usage',

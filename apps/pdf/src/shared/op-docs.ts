@@ -19,7 +19,7 @@ export interface OpDoc {
 export const OP_DOCS: Record<string, OpDoc> = {
   // ── annotate ──────────────────────────────────────────────────────────
   addMarkup: {
-    sig: '{markup:{pageIndex,type:"highlight"|"underline"|"strikeout",color:[r,g,b],quads:[[x1,yT,x2,yT,x1,yB,x2,yB],…]}} — quads payload; use markup_text instead',
+    sig: '{markup:{pageIndex,type:"highlight"|"underline"|"squiggly"|"strikeout",color:[r,g,b],quads:[[x1,yT,x2,yT,x1,yB,x2,yB],…]}} — quads payload; use markup_text instead',
     group: 'annotate',
     aiCallable: false,
   },
@@ -40,7 +40,7 @@ export const OP_DOCS: Record<string, OpDoc> = {
     aiCallable: false,
   },
   addDrawing: {
-    sig: '{drawing:{kind:"ink"|"rect"|"ellipse"|"line"|"arrow"|"image"|"note",pageIndex,…},formWidgetId?} — geometry payload; use add_note for comments',
+    sig: '{drawing:{kind:"ink"|"rect"|"ellipse"|"line"|"arrow"|"polygon"|"caret"|"image"|"note",pageIndex,…},formWidgetId?} — geometry payload; use add_note for comments',
     group: 'annotate',
     aiCallable: false,
   },
@@ -68,7 +68,7 @@ export const OP_DOCS: Record<string, OpDoc> = {
 
   // ── text ──────────────────────────────────────────────────────────────
   putTextEdit: {
-    sig: '{input:TextEditInput,id?,cover?,moveBy?} — engine record; use edit_text / edit_block instead',
+    sig: '{input:TextEditInput,id?,cover?,moveBy?,paper?} — engine record; use edit_text / edit_block instead',
     group: 'text',
     aiCallable: false,
   },
@@ -133,8 +133,34 @@ export const OP_DOCS: Record<string, OpDoc> = {
       '{value:{name,value?,checked?}} — field name from list_form_fields; checkboxes take checked, everything else value (radio/choice: an option exportValue)',
     group: 'form',
   },
+  addFormField: {
+    sig: '{field:{name,kind:"text"|"checkbox"|"radio"|"choice"|"signature",pageIndex,rect:[x1,y1,x2,y2],required?,multiLine?,maxLen?,fontSize?,textAlignment?,value?,checked?,exportValue?,options?,dateFormat?}} — author a new fillable AcroForm field (Form Design); it becomes a real widget on save',
+    aiSig:
+      '{field:{name,kind:"text"|"checkbox"|"radio"|"choice"|"signature",page,x,y,width,height,required?,multiLine?,maxLen?,value?,checked?,exportValue?,options?,dateFormat?}} — author a new fillable field (Form Design); 1-based page number, x/y = TOP-LEFT in points from the page top-left as displayed (like insert_text), width/height in points; name must be unique (check list_form_fields) except radio buttons, which share one name per group and each need an exportValue; choice needs options:[…] (value = preselected option); dateFormat like "yyyy-mm-dd" makes a text field a date field',
+    group: 'form',
+  },
+  patchFormField: {
+    sig: '{id,input:{name?,rect?,required?,multiLine?,maxLen?,fontSize?,textAlignment?,value?,checked?}} — change a pending authored field',
+    group: 'form',
+    aiCallable: false,
+  },
+  removeFormField: {
+    sig: '{id} — drop a pending authored field',
+    group: 'form',
+    aiCallable: false,
+  },
+  editFormWidget: {
+    sig: '{widgetId,fieldName,input:{rect?,required?,remove?}} — move, re-flag or remove a widget already saved in the file (Form Design)',
+    group: 'form',
+    aiCallable: false,
+  },
 
   // ── page ──────────────────────────────────────────────────────────────
+  insertBlankPage: {
+    sig: '{after:pageIndex|null,pageIndex,width,height} — add a blank page after `after` (null = first); pageIndex must be the next page index; use insert_blank_page',
+    group: 'page',
+    aiCallable: false,
+  },
   rotatePages: {
     sig: '{pages:[pageIndex,…],dir:90|-90|180} — clockwise degrees added to the page rotation',
     aiSig:

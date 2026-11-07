@@ -4,7 +4,11 @@
  * pageMargins / printOptions / headerFooter plus the workbook-level
  * _xlnm.Print_Area / _xlnm.Print_Titles defined names).
  */
-import { columnLabel, parseRange } from '@hermesoffice/xlsx-gateway/domain/cell-address'
+import {
+  columnIndex,
+  columnLabel,
+  parseRange,
+} from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import type { WorkbookPagePrintSettings } from '../shared/desktop-api'
 import type { HeaderFooterParts, PageSetupJournalState, StructuralJournalOp } from './edit-journal'
 import { fileRangeToScreenRange, fileToScreen } from './view-transform'
@@ -50,6 +54,9 @@ export interface EffectivePageSetup {
   readonly printAreas: readonly string[]
   /// Rows repeated at the top of every page ("1:2"), or null.
   readonly printTitles: string | null
+  /// Columns repeated at the left of every page ("A:B"), or null; file-only
+  /// (the session edits title rows).
+  readonly printTitleColumns: string | null
   /// The odd-page (default) header/footer.
   readonly header: HeaderFooterParts | null
   readonly footer: HeaderFooterParts | null
@@ -73,6 +80,28 @@ const MARGIN_PRESETS: Record<'normal' | 'wide' | 'narrow', PrintMargins> = {
 
 /// The export wire caps margins at 3in per side.
 const MAX_MARGIN_INCHES = 3
+
+/// File-space title columns → screen space (column axis only).
+function mapTitleColumnsToScreen(
+  titles: string | null,
+  ops: readonly StructuralJournalOp[],
+): string | null {
+  if (titles === null || ops.length === 0) return titles
+  const match = /^([A-Z]{1,3}):([A-Z]{1,3})$/.exec(titles)
+  if (!match) return null
+  const columns: number[] = []
+  const first = columnIndex(match[1] ?? 'A')
+  const last = columnIndex(match[2] ?? 'A')
+  for (let column = first; column <= last; column += 1) {
+    const screen = fileToScreen(ops, 'column', column)
+    if (screen !== null) columns.push(screen)
+  }
+  if (columns.length === 0) return null
+  const start = Math.min(...columns)
+  const end = Math.max(...columns)
+  if (end - start > 20) return null
+  return `${columnLabel(start)}:${columnLabel(end)}`
+}
 
 export interface FilePrintNames {
   readonly printArea?: string | undefined
@@ -201,6 +230,10 @@ export function resolveEffectivePageSetup(
     printHeadings: journal.printHeadings ?? file?.printHeadings ?? false,
     printAreas: printArea,
     printTitles,
+    printTitleColumns: mapTitleColumnsToScreen(
+      printTitleColumnsFromFormula(names?.printTitles),
+      ops,
+    ),
     header,
     footer,
     firstPage,
@@ -236,20 +269,22 @@ function plainReference(part: string): string {
     .trim()
 }
 
-/// `'S 1'!$A$1:$K$84,'S 1'!$M$1:$N$9` → ['A1:K84', 'M1:N9']. Anything the
-/// print layout cannot crop to (full-column spans, 3-D refs, #REF!) yields
-/// [] so the export falls back to the used range instead of dropping content.
+/// `'S 1'!$A$1:$K$84,'S 1'!$M$1:$N$9` → ['A1:K84', 'M1:N9']. Stale `#REF!`
+/// parts are skipped (Excel prints the rest); a part the print layout cannot
+/// crop to (full-column spans, 3-D refs) yields [] so the export falls back
+/// to the used range instead of dropping the columns Excel would print.
 export function printAreasFromFormula(formula: string | undefined): string[] {
   if (formula === undefined || formula === '') return []
   const areas: string[] = []
   for (const part of splitAreas(formula)) {
+    if (/#REF!/i.test(part)) continue
     const reference = plainReference(part).toUpperCase()
     if (/^[A-Z]{1,3}[0-9]{1,7}$/.test(reference)) {
       areas.push(`${reference}:${reference}`)
       continue
     }
     if (/^[A-Z]{1,3}[0-9]{1,7}:[A-Z]{1,3}[0-9]{1,7}$/.test(reference)) {
-      areas.push(reference)
+      areas.push(normaliseArea(reference))
       continue
     }
     return []
@@ -271,10 +306,51 @@ export function printTitleRowsFromFormula(formula: string | undefined): string |
   return null
 }
 
+/// `'S'!$A:$B,'S'!$1:$2` → 'A:B'; row parts are skipped, spans beyond the
+/// 21-column cap are dropped.
+export function printTitleColumnsFromFormula(formula: string | undefined): string | null {
+  if (formula === undefined || formula === '') return null
+  for (const part of splitAreas(formula)) {
+    const match = /^([A-Za-z]{1,3}):([A-Za-z]{1,3})$/.exec(plainReference(part))
+    if (!match) continue
+    const start = columnIndex((match[1] ?? 'A').toUpperCase())
+    const end = columnIndex((match[2] ?? 'A').toUpperCase())
+    if (start <= end && end - start <= 20) return `${columnLabel(start)}:${columnLabel(end)}`
+  }
+  return null
+}
+
+/// Print-title rows repeat atop every page: the layout caps the span at 21 rows.
+export const MAX_PRINT_TITLE_ROWS = 21
+
+/**
+ * Clamp a 1-based title-row span to the layout cap, anchoring at the start
+ * so a tall selection still repeats its top rows instead of being dropped
+ * downstream as an over-cap span.
+ */
+export function clampTitleRows(start: number, end: number): string {
+  const safeStart = Number.isFinite(start) ? Math.max(1, Math.floor(start)) : 1
+  const safeEnd = Number.isFinite(end) ? Math.floor(end) : safeStart
+  return `${safeStart}:${Math.min(Math.max(safeEnd, safeStart), safeStart + MAX_PRINT_TITLE_ROWS - 1)}`
+}
+
+/// `$B$4:$A$1` → A1:B4; the print layout reads corners positionally.
+function normaliseArea(reference: string): string {
+  const bounds = parseRange(reference)
+  return (
+    `${columnLabel(bounds.startColumn)}${bounds.startRow + 1}:` +
+    `${columnLabel(bounds.endColumn)}${bounds.endRow + 1}`
+  )
+}
+
+/// Formatting toggles and codes the layout cannot render; any other &X is literal text.
+const STRIPPED_CODES = new Set(['B', 'I', 'U', 'S', 'E', 'X', 'Y', 'Z', 'O', 'H'])
+
 /// Excel's encoded header/footer → left/center/right parts. Field codes the
 /// layout resolves (&P &N &D &T &F &A &G picture, && literal) stay verbatim;
-/// formatting codes (font/size/color/bold/…) and unsupported codes (&Z
-/// path) are stripped. Text before the first section marker is centered.
+/// formatting codes (font/size/color/bold/…) and unsupported codes (&Z path)
+/// are stripped, while an unrecognised &X is kept as the literal text Excel
+/// prints. Text before the first section marker is centered.
 export function decodeHeaderFooter(encoded: string): HeaderFooterParts | null {
   const sections = { L: '', C: '', R: '' }
   let current: 'L' | 'C' | 'R' = 'C'
@@ -326,7 +402,14 @@ export function decodeHeaderFooter(encoded: string): HeaderFooterParts | null {
       code === 'G'
     ) {
       sections[current] += `&${code}`
+      index += 2
+      continue
     }
+    if (STRIPPED_CODES.has(code)) {
+      index += 2
+      continue
+    }
+    sections[current] += `&${code}`
     index += 2
   }
   if (sections.L === '' && sections.C === '' && sections.R === '') return null

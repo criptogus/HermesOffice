@@ -188,6 +188,7 @@ export function FindPanel({ target, strings, onClose, focusRequest }: FindPanelP
           ref={inputRef}
           className="find-input"
           placeholder={strings.findPlaceholder}
+          aria-label={strings.findPlaceholder}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value)
@@ -225,7 +226,7 @@ export function FindPanel({ target, strings, onClose, focusRequest }: FindPanelP
         >
           W
         </button>
-        <span className="find-count">
+        <span className="find-count" aria-live="polite">
           {query ? (count === 0 ? strings.noResults : `${index + 1}/${count}`) : ''}
         </span>
         <button
@@ -264,6 +265,7 @@ export function FindPanel({ target, strings, onClose, focusRequest }: FindPanelP
             ref={replaceInputRef}
             className="find-input"
             placeholder={strings.replacePlaceholder}
+            aria-label={strings.replacePlaceholder}
             value={replacement}
             onChange={(e) => setReplacement(e.target.value)}
             onKeyDown={(e) => {

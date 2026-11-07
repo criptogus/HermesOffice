@@ -8,7 +8,7 @@ import {
   parseGskGeneratedImage,
   parseGskPastProjects,
   extractGskText,
-  parseToolCliNdjson,
+  summarizeGskFailure,
 } from '../src/gsk'
 
 describe('parseGskOutput', () => {
@@ -37,13 +37,83 @@ describe('parseGskOutput', () => {
     expect(parseGskOutput(out)).toEqual({ a: 1, b: [1, 2] })
   })
 
-  it('prefers the last JSON block when the CLI echoes an earlier payload', () => {
-    const out = '{"status":"stale"}\n[INFO] retrying\n{"status":"ok"}'
-    expect(parseGskOutput(out)).toEqual({ status: 'ok' })
+  it('returns the root of a pretty-printed array followed by logs', () => {
+    const out = '{\n  "items": [\n    { "id": 1 },\n    { "id": 2 }\n  ]\n}\n[INFO] done'
+    expect(parseGskOutput(out)).toEqual({ items: [{ id: 1 }, { id: 2 }] })
   })
 
   it('throws when no JSON present', () => {
     expect(() => parseGskOutput('[INFO] nothing here')).toThrow()
+  })
+
+  it('recovers past a log line that only looks like an array opener', () => {
+    expect(parseGskOutput('[INFO] progress {50%}\n{"status":"ok"}')).toEqual({ status: 'ok' })
+  })
+
+  it('takes the outer block, not the first inner one, of a large pretty payload', () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => `    { "id": ${i}, "t": "row ${i}" },`)
+    const out = [
+      '[INFO] Calling /tools...',
+      '[INFO] cache hit',
+      '{',
+      '  "status": "ok",',
+      '  "data": [',
+      ...rows.slice(0, -1),
+      rows.at(-1)!.replace(/,$/, ''),
+      '  ]',
+      '}',
+      '[INFO] done in 900ms',
+    ].join('\n')
+    const parsed = parseGskOutput(out) as { status: string; data: unknown[] }
+    expect(parsed.status).toBe('ok')
+    expect(parsed.data).toHaveLength(2000)
+    expect(parsed.data[0]).toEqual({ id: 0, t: 'row 0' })
+  })
+
+  it('locates a large payload in linear time', () => {
+    const rows = Array.from({ length: 20_000 }, (_, i) => `  { "id": ${i} },`)
+    const out = [
+      '[INFO] starting',
+      '{',
+      '  "data": [',
+      ...rows.slice(0, -1),
+      rows.at(-1)!.replace(/,$/, ''),
+      '  ]',
+      '}',
+      '[INFO] done',
+    ].join('\n')
+    const started = performance.now()
+    const parsed = parseGskOutput(out) as { data: unknown[] }
+    const elapsed = performance.now() - started
+    expect(parsed.data).toHaveLength(20_000)
+    // the previous nested slice-and-reparse scan needed minutes at this size
+    expect(elapsed).toBeLessThan(5_000)
+  })
+
+  it('gives up on a hostile response in bounded time', () => {
+    // Every line opens a block that never closes, so each candidate re-scans the
+    // rest of the output: N lines of length L cost N x L. gsk output is
+    // model-controlled and capped only by MAX_BUFFER, so the recovery scan has
+    // to be bounded rather than quadratic.
+    const out = Array.from(
+      { length: 16_000 },
+      (_, i) => `{"step":${i},"msg":"still rendering`,
+    ).join('\n')
+    const started = performance.now()
+    expect(() => parseGskOutput(out)).toThrow(/No JSON found/)
+    const elapsed = performance.now() - started
+    // the unbounded scan needed ~25s at this size
+    expect(elapsed).toBeLessThan(1_000)
+  })
+
+  it('still finds a payload buried behind unclosed log lines', () => {
+    const out = [
+      '{"msg":"still rendering',
+      '{"msg":"still rendering',
+      '{"status":"ok","data":{"n":7}}',
+      '[INFO] done',
+    ].join('\n')
+    expect(parseGskOutput(out)).toEqual({ status: 'ok', data: { n: 7 } })
   })
 })
 
@@ -122,6 +192,16 @@ describe('parseGskWebSearch', () => {
     expect(parseGskWebSearch({ status: 'ok' }, 5).results).toEqual([])
   })
 
+  it('preserves full urls instead of clipping them to the snippet cap', () => {
+    const long = `https://a.com/${'x'.repeat(3000)}`
+    const raw = { data: { organic_results: [{ title: 'A', link: long, snippet: 's' }] } }
+    const r = parseGskWebSearch(raw, 5)
+    expect(r.results[0]!.url).toBe(long)
+    const huge = `https://a.com/${'x'.repeat(20_000)}`
+    const r2 = parseGskWebSearch({ data: { organic_results: [{ link: huge }] } }, 5)
+    expect(r2.results[0]!.url).toHaveLength(8_192)
+  })
+
   it('clamps maxResults and truncates long fields', () => {
     const big = 'x'.repeat(5000)
     const raw = {
@@ -172,6 +252,18 @@ describe('parseGskImageSearch', () => {
     }
     const images = parseGskImageSearch(raw, 8)
     expect(images.map((i) => i.title)).toEqual(['ok'])
+  })
+
+  it('clamps maxResults like the web parser', () => {
+    const entries = Array.from({ length: 25 }, (_, i) => ({
+      image_url: `https://ok.com/${i}.jpg`,
+      title: `t${i}`,
+    }))
+    const raw = { data: entries }
+    expect(parseGskImageSearch(raw, NaN)).toHaveLength(6)
+    expect(parseGskImageSearch(raw, 1e9)).toHaveLength(20)
+    expect(parseGskImageSearch(raw, 0)).toHaveLength(1)
+    expect(parseGskImageSearch(raw, -3)).toHaveLength(1)
   })
 
   it('keeps benign images whose path or query merely mentions a stock host', () => {
@@ -308,26 +400,70 @@ describe('extractGskText', () => {
   })
 })
 
-describe('parseToolCliNdjson', () => {
-  it('skips heartbeat lines and returns the final status line', () => {
-    const text =
-      '{"version":1,"debug":true,"message":"Still processing... (5.0s)","heartbeat":1}\n' +
-      '{"version":1,"debug":true,"message":"Still processing... (10.0s)","heartbeat":2}\n' +
-      '{"version":1,"status":"ok","message":"success","data":{"pptx_url":"https://x/y","model":"claude-opus-4-7"}}'
-    const r = parseToolCliNdjson(text)
-    expect(r.status).toBe('ok')
-    expect((r.data as { model: string }).model).toBe('claude-opus-4-7')
-  })
+describe('summarizeGskFailure', () => {
+  // trimmed version of the gateway page Genspark serves for refused calls
+  const HTML_403 = `<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <title>Genspark</title>
+  </head>
+  <body>
+    <div class="tt">Service unavailable. Please check your internet connection.</div>
+    <form id="codeForm">
+      <input type="text" id="codeInput" maxlength="8" />
+      <button type="submit" class="submit-button">Submit</button>
+    </form>
+  </body>
+  <script>function setCookie(event) { location.reload() }</script>
+</html>`
 
-  it('returns error result lines as-is', () => {
-    const r = parseToolCliNdjson(
-      '{"version":1,"status":"error","message":"deck_context must be an object","data":null}',
+  it('distills an HTML error page to its status and visible text', () => {
+    const s = summarizeGskFailure(`HTTP 403: ${HTML_403}`)
+    expect(s).toBe(
+      'HTTP 403 (HTML error page): Service unavailable. Please check your internet connection.',
     )
-    expect(r.status).toBe('error')
-    expect(r.message).toMatch(/deck_context/)
+    expect(s).not.toContain('<')
   })
 
-  it('throws when no result line exists', () => {
-    expect(() => parseToolCliNdjson('{"heartbeat":1}\nnot json')).toThrow(/No result line/)
+  it('labels an HTML page that carries no status', () => {
+    expect(summarizeGskFailure(HTML_403)).toBe(
+      'an HTML error page: Service unavailable. Please check your internet connection.',
+    )
+  })
+
+  it('keeps a short plain message as it is', () => {
+    expect(summarizeGskFailure('HTTP 500: internal error')).toBe('HTTP 500: internal error')
+    expect(summarizeGskFailure('deck_context must be an object')).toBe(
+      'deck_context must be an object',
+    )
+  })
+
+  it('keeps the [ERROR] lines, drops [INFO] chatter and crash noise', () => {
+    const s = summarizeGskFailure(
+      '[INFO] Uploading a.png...\n[INFO] Calling /file/upload_url...\n[ERROR] Failed to get upload URL: HTTP 403: Forbidden\nAssertion failed: !(handle->flags)',
+    )
+    expect(s).toBe('[ERROR] Failed to get upload URL: HTTP 403: Forbidden')
+  })
+
+  it('collapses multi-line plain text to one line', () => {
+    expect(summarizeGskFailure('first line\nsecond line')).toBe('first line second line')
+  })
+
+  it('clips a long plain message', () => {
+    const s = summarizeGskFailure('x'.repeat(400))
+    expect(s.length).toBe(301)
+    expect(s.endsWith('…')).toBe(true)
+  })
+
+  it('falls back on empty input and stringifies non-strings', () => {
+    expect(summarizeGskFailure(undefined)).toBe('unknown error')
+    expect(summarizeGskFailure(null, '')).toBe('')
+    expect(summarizeGskFailure(404)).toBe('404')
+  })
+
+  it('never returns an empty string when the page has no readable text', () => {
+    expect(summarizeGskFailure('HTTP 502: <html><body><script>x()</script></body></html>')).toBe(
+      'HTTP 502 (HTML error page)',
+    )
   })
 })

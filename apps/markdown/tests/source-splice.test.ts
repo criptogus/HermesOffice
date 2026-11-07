@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import { buildSourceMap, spliceMarkdown } from '../src/renderer/markdown/sourceSplice'
@@ -182,12 +182,81 @@ describe('source splice', () => {
     expect(out).toBe('# A\n\n- one\n- two\n\ntail\n')
   })
 
+  it('keeps a reference-style image and its definition verbatim', () => {
+    for (const source of [
+      'Para.\n\n![Alt text][id]\n\n[id]: https://x/a.jpg  "The Dojocat"\n',
+      'Para.\n\n![Alt text][id]\n\n[id]: https://x/a.jpg\n',
+      'Para.\n\n![Alt text][id] tail\n\n[id]: https://x/a.jpg\n',
+    ]) {
+      const editor = createEditor()
+      expect(save(editor, source)).toBe(source)
+      const map = load(editor, source)!
+      editor.commands.insertContentAt(endOfBlock(editor, 0), ' EDITED')
+      const out = spliceMarkdown(editor, editor.state.doc, map)
+      expect(out).toBe(source.replace('Para.', 'Para. EDITED'))
+    }
+  })
+
+  it('uses Marked-normalized tags for reference definitions', () => {
+    const editor = createEditor()
+    const source = '[A  B]: https://example.com\n\nSee [a b][A  B].\n'
+    editor.commands.setContent(source, { contentType: 'markdown' })
+    const parse = vi.spyOn(editor.markdown!, 'parse')
+
+    const map = buildSourceMap(editor, editor.state.doc, source)
+
+    expect(map).not.toBeNull()
+    expect(parse.mock.calls.some(([input]) => input.includes('[A  B]: https://example.com'))).toBe(
+      true,
+    )
+  })
+
+  it('parses reference blocks with only their definitions', () => {
+    const editor = createEditor()
+    const count = 200
+    const references = Array.from({ length: count }, (_, i) => `[link ${i}][ref${i}]`)
+    const definitions = Array.from(
+      { length: count },
+      (_, i) => `[ref${i}]: https://example.com/${i}`,
+    )
+    const source = [...references, ...definitions].join('\n\n')
+    editor.commands.setContent(source, { contentType: 'markdown' })
+    const parse = vi.spyOn(editor.markdown!, 'parse')
+
+    const map = buildSourceMap(editor, editor.state.doc, source)
+
+    expect(map).not.toBeNull()
+    const parsedChars = parse.mock.calls.reduce((total, [input]) => total + input.length, 0)
+    expect(parsedChars).toBeLessThan(source.length * 3)
+    expect(
+      parse.mock.calls.some(
+        ([input]) => input.includes('[ref0]') && input.includes(`[ref${count - 1}]`),
+      ),
+    ).toBe(false)
+  })
+
+  it('falls back when definition parsing exceeds linear work', () => {
+    const editor = createEditor()
+    const definitions = Array.from({ length: 2_000 }, (_, i) => `[a]: https://example.com/${i}`)
+    const source = [...Array.from({ length: 20 }, () => 'a'), ...definitions].join('\n\n')
+    editor.commands.setContent(source, { contentType: 'markdown' })
+
+    expect(buildSourceMap(editor, editor.state.doc, source)).toBeNull()
+  })
+
   it('declines a CRLF source rather than guessing', () => {
     const editor = createEditor()
     expect(load(editor, '# A\r\n\r\nb\r\n')).toBeNull()
   })
 
-  it('round-trips every markdown file in the repository', () => {
+  // A repo-wide sweep: its cost tracks the number of tracked .md files, and it
+  // parses every one of them on a single shared editor. The suite-wide 20 s
+  // budget is not a statement about this test — it is the same wall-clock that
+  // the whole file has to share, and under parallel load this one ran past it
+  // while finishing in ~7 s on its own. Budget for growth rather than trimming
+  // the assertion to keep the files it exists to check; the in-app manual added
+  // 294 topic bodies, which is what pushed it over on this branch.
+  it('round-trips every markdown file in the repository', { timeout: 120_000 }, () => {
     const root = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
     const files = execSync('git ls-files -- "*.md"', { cwd: root, encoding: 'utf8' })
       .split('\n')

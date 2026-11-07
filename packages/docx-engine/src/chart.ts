@@ -1,4 +1,5 @@
 import JSZip from 'jszip'
+import { chartWorkbookParts, colLetter } from '@hermesoffice/pptx-engine/chart-workbook'
 import type { ChartAxis, ChartDisplay, ChartSeries, NewChart, ThemeColors } from './types'
 import {
   attrsOf,
@@ -11,6 +12,8 @@ import {
   xmlParser,
   type XNode,
 } from './xml-utils'
+
+export { CHART_WORKBOOK_REL_TYPE, colLetter } from '@hermesoffice/pptx-engine/chart-workbook'
 
 const CHART_KINDS: Record<string, ChartDisplay['kind']> = {
   'c:barChart': 'bar',
@@ -29,6 +32,13 @@ const CHART_KINDS: Record<string, ChartDisplay['kind']> = {
 
 /** Word's chart-area border when c:chartSpace carries no c:spPr, as rendered by Word */
 const DEFAULT_FRAME_LINE = '868686'
+/** Largest point index honored (a full Excel column): a hostile idx/ptCount must not grow the array. */
+const MAX_CHART_CACHE_POINTS = 1_048_576
+/**
+ * Largest series count honored: each one reads its own caches, so a part with
+ * thousands of c:ser multiplied the point budget out to billions of slots.
+ */
+const MAX_CHART_SERIES = 256
 
 /**
  * Read the display model of a chart part (word/charts/chartN.xml). Only the
@@ -110,14 +120,21 @@ export function parseChartPartXml(
 
   let categories: string[] = []
   const series: ChartSeries[] = []
-  for (const ser of findChildren(plot, 'c:ser')) {
+  const sers = findChildren(plot, 'c:ser')
+  // split the point budget over the series, so the total stays bounded
+  const maxPoints = Math.max(
+    1,
+    Math.floor(MAX_CHART_CACHE_POINTS / Math.min(sers.length, MAX_CHART_SERIES)),
+  )
+  for (const ser of sers) {
+    if (series.length >= MAX_CHART_SERIES) break
     // scatter/bubble series carry x/y pairs instead of category/value caches
     const val = findChild(ser, 'c:val') ?? findChild(ser, 'c:yVal')
-    const values = val ? cacheNumbers(val) : []
+    const values = val ? cacheNumbers(val, maxPoints) : []
     if (values.length === 0) continue
     const cat = findChild(ser, 'c:cat') ?? findChild(ser, 'c:xVal')
     if (cat && categories.length === 0) {
-      categories = cachePoints(cat).map((v) => v ?? '')
+      categories = cachePoints(cat, maxPoints).map((v) => v ?? '')
       // date-formatted numeric caches hold Excel serials; display them as dates
       const fmt = catFormatCode(cat)
       if (fmt && /[yd]/i.test(fmt)) {
@@ -134,7 +151,7 @@ export function parseChartPartXml(
     const entry: ChartSeries = { ...(name !== undefined ? { name } : {}), values }
     const color = solidFillHex(findChild(ser, 'c:spPr'), theme)
     if (color) entry.color = color
-    const pointColors = dataPointColors(ser, theme)
+    const pointColors = dataPointColors(ser, theme, maxPoints)
     if (pointColors) entry.pointColors = pointColors
     if (kind === 'pie' && series.length === 0) {
       const expl = parseInt(attrsOf(findChild(ser, 'c:explosion') ?? {})['val'] ?? '', 10)
@@ -142,10 +159,10 @@ export function parseChartPartXml(
     }
     if (kind === 'scatter' || kind === 'bubble') {
       const xVal = findChild(ser, 'c:xVal')
-      const xValues = xVal ? cacheNumbers(xVal) : []
+      const xValues = xVal ? cacheNumbers(xVal, maxPoints) : []
       if (xValues.some((v) => v !== null)) entry.xValues = xValues
       const sizeVal = findChild(ser, 'c:bubbleSize')
-      const sizes = sizeVal ? cacheNumbers(sizeVal) : []
+      const sizes = sizeVal ? cacheNumbers(sizeVal, maxPoints) : []
       if (sizes.some((v) => v !== null)) entry.sizes = sizes
       if (scatterLines && !seriesLineHidden(ser)) entry.line = true
     }
@@ -338,8 +355,8 @@ function legendPosOf(chart: XNode): ChartDisplay['legendPos'] {
 }
 
 /** numeric cache of a c:val / c:yVal / c:xVal / c:bubbleSize container */
-function cacheNumbers(container: XNode): (number | null)[] {
-  return cachePoints(container).map((v) => {
+function cacheNumbers(container: XNode, maxPoints = MAX_CHART_CACHE_POINTS): (number | null)[] {
+  return cachePoints(container, maxPoints).map((v) => {
     if (v === null || v.trim() === '') return null
     const n = Number(v)
     return Number.isFinite(n) ? n : null
@@ -353,12 +370,16 @@ function seriesLineHidden(ser: XNode): boolean {
 }
 
 /** c:dPt explicit fills, sparse by point index (pie slices, highlighted bars) */
-function dataPointColors(ser: XNode, theme?: ThemeColors | null): (string | null)[] | null {
+function dataPointColors(
+  ser: XNode,
+  theme?: ThemeColors | null,
+  maxPoints = MAX_CHART_CACHE_POINTS,
+): (string | null)[] | null {
   const out: (string | null)[] = []
   let any = false
   for (const dPt of findChildren(ser, 'c:dPt')) {
     const idx = parseInt(attrsOf(findChild(dPt, 'c:idx') ?? {})['val'] ?? '', 10)
-    if (!Number.isFinite(idx) || idx < 0) continue
+    if (!Number.isFinite(idx) || idx < 0 || idx >= maxPoints) continue
     const color = solidFillHex(findChild(dPt, 'c:spPr'), theme)
     if (!color) continue
     out[idx] = color
@@ -403,8 +424,9 @@ function solidFillHex(spPr: XNode | undefined, theme?: ThemeColors | null): stri
       const slot = SCHEME_SLOTS[attrsOf(clr)['val'] ?? '']
       base = slot ? theme?.[slot] : undefined
     }
-    if (!base || !/^[0-9A-Fa-f]{6}$/.test(base)) continue
-    return applyColorMods(base.toUpperCase(), clr)
+    const baseTrimmed = (base ?? '').trim()
+    if (!baseTrimmed || !/^[0-9A-Fa-f]{6}$/.test(baseTrimmed)) continue
+    return applyColorMods(baseTrimmed.toUpperCase(), clr)
   }
   return undefined
 }
@@ -586,7 +608,7 @@ function parseChartexPartXml(parsed: XNode[], partPath: string): ChartDisplay | 
       const out: (string | null)[] = []
       for (const pt of findChildren(lvl, 'cx:pt')) {
         const idx = parseInt(attrsOf(pt)['idx'] ?? '', 10)
-        if (Number.isFinite(idx) && idx >= 0) out[idx] = textOf(pt)
+        if (Number.isFinite(idx) && idx >= 0 && idx < MAX_CHART_CACHE_POINTS) out[idx] = textOf(pt)
       }
       return out
     }
@@ -658,16 +680,21 @@ function catFormatCode(container: XNode): string | undefined {
   return code ? textOf(code) : undefined
 }
 
-/** Excel date serial → "m/d/yyyy" display (Word/LO render category dates, not serials) */
+/**
+ * Excel date serial → "m/d/yyyy" display (Word/LO render category dates, not serials).
+ * Excel's epoch counts a 29-Feb-1900 that never existed, so serials below 61 need a
+ * later day zero; serial 60 is that phantom day and has no date to show.
+ */
 function serialDateText(v: string | null): string | null {
   const n = Number(v)
   if (!Number.isFinite(n) || n <= 0 || n > 80000) return null
-  const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000)
+  const base = n < 61 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30)
+  const d = new Date(base + Math.round(n) * 86400000)
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`
 }
 
 /** cached point texts of a c:cat / c:val / c:tx container, in idx order */
-function cachePoints(container: XNode): (string | null)[] {
+function cachePoints(container: XNode, maxPoints = MAX_CHART_CACHE_POINTS): (string | null)[] {
   const ref = findChild(container, 'c:strRef') ?? findChild(container, 'c:numRef')
   const cache = ref
     ? (findChild(ref, 'c:strCache') ?? findChild(ref, 'c:numCache'))
@@ -677,10 +704,11 @@ function cachePoints(container: XNode): (string | null)[] {
   const points: (string | null)[] = []
   for (const pt of findChildren(cache, 'c:pt')) {
     const idx = parseInt(attrsOf(pt)['idx'] ?? '', 10)
-    if (!Number.isFinite(idx) || idx < 0) continue
+    if (!Number.isFinite(idx) || idx < 0 || idx >= maxPoints) continue
     points[idx] = textOf(findChild(pt, 'c:v') ?? {})
   }
-  const length = Number.isFinite(count) ? Math.max(count, points.length) : points.length
+  const requestedLength = Number.isFinite(count) ? Math.max(count, points.length) : points.length
+  const length = Math.min(Math.max(requestedLength, 0), maxPoints)
   const out: (string | null)[] = []
   for (let i = 0; i < length; i++) out.push(points[i] ?? null)
   return out
@@ -708,23 +736,6 @@ function chartTitle(chart: XNode): string | undefined {
   const delVal = del ? attrsOf(del)['val'] : undefined
   const deleted = del !== undefined && (delVal === undefined || delVal === '1' || delVal === 'true')
   return deleted ? undefined : 'Chart Title'
-}
-
-const _XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-export const CHART_WORKBOOK_REL_TYPE =
-  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/package'
-
-// Series data columns start at B (column A holds the categories):
-// 0 → B … 24 → Z, 25 → AA, 26 → AB, … (plain charCode arithmetic breaks past Z).
-export const colLetter = (i: number): string => {
-  let n = i + 2 // 1-based column number: A = 1, B = 2
-  let label = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    label = String.fromCharCode(65 + rem) + label
-    n = Math.floor((n - 1) / 26)
-  }
-  return label
 }
 
 function strCacheXml(values: string[], f: string): string {
@@ -984,110 +995,15 @@ function innerTextRanges(
 
 // ---- embedded xlsx workbook ----
 
-const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-
-/** Excel column letter: A, B, C... */
-const xlsxColLetter = (i: number) => String.fromCharCode(65 + i)
-
-/**
- * Build a minimal but valid xlsx file containing one Sheet1 with the chart
- * data (header row + data rows). Returns base64-encoded bytes.
- *
- * Layout:
- *   A1        | B1 (ser 0 name) | C1 (ser 1 name) ...
- *   A2 (cat0) | B2 (val 0,0)    | C2 (val 1,0)   ...
- *   A3 (cat1) | B3 (val 0,1)    | C3 (val 1,1)   ...
- */
+/** The chart's embedded workbook (pptx-engine's chart-workbook.ts), base64-encoded. */
 export async function buildChartWorkbookXlsxBase64(
   categories: string[],
   series: Array<{ name: string; values: (number | null)[] }>,
 ): Promise<string> {
-  const rows = categories.length
-  const serCount = series.length
-
-  // shared strings: all text cells collected in order
-  const strings: string[] = []
-  const si = (s: string): number => {
-    const idx = strings.indexOf(s)
-    if (idx !== -1) return idx
-    strings.push(s)
-    return strings.length - 1
-  }
-
-  // Build sheetData rows
-  const headerCells: string[] = []
-  // A1: empty label cell
-  headerCells.push(`<c r="A1" t="s"><v>${si('')}</v></c>`)
-  for (let j = 0; j < serCount; j++) {
-    headerCells.push(`<c r="${xlsxColLetter(j + 1)}1" t="s"><v>${si(series[j].name)}</v></c>`)
-  }
-  const dataRows: string[] = []
-  for (let i = 0; i < rows; i++) {
-    const rowNum = i + 2
-    const cells: string[] = []
-    cells.push(`<c r="A${rowNum}" t="s"><v>${si(categories[i])}</v></c>`)
-    for (let j = 0; j < serCount; j++) {
-      const val = series[j].values[i]
-      if (val !== null && val !== undefined) {
-        cells.push(`<c r="${xlsxColLetter(j + 1)}${rowNum}"><v>${val}</v></c>`)
-      }
-    }
-    dataRows.push(`<row r="${rowNum}">${cells.join('')}</row>`)
-  }
-
-  const sheetXml =
-    XML_DECL +
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-    '<sheetData>' +
-    `<row r="1">${headerCells.join('')}</row>` +
-    dataRows.join('') +
-    '</sheetData>' +
-    '</worksheet>'
-
-  const sharedStringsXml =
-    XML_DECL +
-    `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">` +
-    strings.map((s) => `<si><t>${escapeXmlText(s)}</t></si>`).join('') +
-    '</sst>'
-
-  const workbookXml =
-    XML_DECL +
-    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
-    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-    '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>' +
-    '</workbook>'
-
-  const workbookRels =
-    XML_DECL +
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
-    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>' +
-    '</Relationships>'
-
-  const topRels =
-    XML_DECL +
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
-    '</Relationships>'
-
-  const contentTypes =
-    XML_DECL +
-    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-    '<Default Extension="xml" ContentType="application/xml"/>' +
-    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
-    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
-    '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>' +
-    '</Types>'
-
   const zip = new JSZip()
-  zip.file('[Content_Types].xml', contentTypes)
-  zip.file('_rels/.rels', topRels)
-  zip.file('xl/workbook.xml', workbookXml)
-  zip.file('xl/_rels/workbook.xml.rels', workbookRels)
-  zip.file('xl/worksheets/sheet1.xml', sheetXml)
-  zip.file('xl/sharedStrings.xml', sharedStringsXml)
-
+  for (const [path, xml] of Object.entries(chartWorkbookParts({ categories, series }))) {
+    zip.file(path, xml)
+  }
   return zipToBase64(zip)
 }
 
@@ -1128,7 +1044,7 @@ export async function patchChartWorkbookXlsxBase64(
       `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${escapeXmlText(text)}</t></is></c>`
     const headerCells = [inlineStr('A1', '')]
     for (let j = 0; j < series.length; j++) {
-      headerCells.push(inlineStr(`${xlsxColLetter(j + 1)}1`, series[j].name))
+      headerCells.push(inlineStr(`${colLetter(j)}1`, series[j].name))
     }
     const dataRows: string[] = []
     for (let i = 0; i < categories.length; i++) {
@@ -1137,7 +1053,7 @@ export async function patchChartWorkbookXlsxBase64(
       for (let j = 0; j < series.length; j++) {
         const val = series[j].values[i]
         if (val !== null && val !== undefined) {
-          cells.push(`<c r="${xlsxColLetter(j + 1)}${rowNum}"><v>${val}</v></c>`)
+          cells.push(`<c r="${colLetter(j)}${rowNum}"><v>${val}</v></c>`)
         }
       }
       dataRows.push(`<row r="${rowNum}">${cells.join('')}</row>`)
@@ -1150,7 +1066,7 @@ export async function patchChartWorkbookXlsxBase64(
       /<sheetData\/>|<sheetData[^>]*>[\s\S]*?<\/sheetData>/,
       newSheetData,
     )
-    const lastRef = `${xlsxColLetter(series.length)}${categories.length + 1}`
+    const lastRef = `${series.length > 0 ? colLetter(series.length - 1) : 'A'}${categories.length + 1}`
     updatedSheet = updatedSheet.replace(/<dimension[^>]*\/>/, `<dimension ref="A1:${lastRef}"/>`)
 
     zip.file('xl/worksheets/sheet1.xml', updatedSheet)

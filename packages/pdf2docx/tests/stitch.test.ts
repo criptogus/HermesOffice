@@ -95,6 +95,19 @@ describe('stitchCrossPageParagraphs (P32)', () => {
     expect(cur.blocks).toHaveLength(1)
   })
 
+  it('handles a line with more spans than the engine argument limit', () => {
+    const tail = fullTail()
+    const base = tail.lines[2]!.spans[0]!
+    tail.lines[2] = {
+      ...tail.lines[2]!,
+      spans: Array.from({ length: 130_000 }, () => ({ ...base })),
+    }
+    const prev = mkPage(0, [tail])
+    const cur = mkPage(1, [mkBlock([mkLine(50, 400, 760, 'cont')])])
+    expect(() => stitchCrossPageParagraphs([prev, cur])).not.toThrow()
+    expect(cur.flowsFromPrev).toBe(true)
+  })
+
   it('keeps the break when the tail line is short (finished paragraph)', () => {
     const prev = mkPage(0, [
       mkBlock([mkLine(50, 550, 760), mkLine(50, 550, 100), mkLine(50, 200, 80)]),

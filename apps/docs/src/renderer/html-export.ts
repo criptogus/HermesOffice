@@ -20,6 +20,7 @@ const SKIP_CLASSES = new Set([
   'doc-protected-sectbreak',
   'doc-move-handle',
   'box-resize-handle',
+  'box-rotate-handle',
 ])
 
 const UNWRAP_CLASSES = new Set([
@@ -166,6 +167,13 @@ function hasClass(el: Element, set: Set<string> | string[]): boolean {
   return false
 }
 
+/** fromCodePoint throws on values > 0x10FFFF and lone surrogates: fall back to U+FFFD. */
+function codePointOrReplacement(code: number): string {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return '�'
+  if (code >= 0xd800 && code <= 0xdfff) return '�'
+  return String.fromCodePoint(code)
+}
+
 export function resolveContent(content: string, el: Element): string {
   if (!content || content === 'none' || content === 'normal') return ''
   let out = ''
@@ -175,7 +183,10 @@ export function resolveContent(content: string, el: Element): string {
   while ((m = re.exec(content))) {
     if (m[1] !== undefined || m[2] !== undefined) {
       out += (m[1] ?? m[2]).replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_, hex: string) =>
-        String.fromCodePoint(parseInt(hex, 16)),
+        // CSS escapes allow 6 hex digits but Unicode stops at 0x10FFFF:
+        // out-of-range values (and lone surrogates) would throw RangeError
+        // and abort the whole export, so emit the replacement character.
+        codePointOrReplacement(parseInt(hex, 16)),
       )
     } else if (m[3]) {
       out += el.getAttribute(m[3]) ?? ''
@@ -262,6 +273,16 @@ function styleDecls(cs: CSSStyleDeclaration, o: StyleOpts): string[] {
   }
   if (cs.verticalAlign && cs.verticalAlign !== 'baseline')
     out.push(`vertical-align:${cs.verticalAlign}`)
+  // paragraphs carry a display-only --doc-lead-shift offset; only raised or
+  // lowered runs (w:position, inline-block when character-scaled) export theirs
+  if (
+    display.startsWith('inline') &&
+    cs.position === 'relative' &&
+    cs.top &&
+    cs.top !== 'auto' &&
+    !isZero(cs.top)
+  )
+    out.push(`position:relative;top:${cs.top}`)
   const sized =
     o.tag === 'img' ||
     o.tag === 'svg' ||

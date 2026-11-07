@@ -57,6 +57,7 @@ export const de = {
   aiSumInsertFootnote: 'Fußnote eingefügt',
   aiSumInsertEndnote: 'Endnote eingefügt',
   aiSumDeleteNote: 'Notiz gelöscht',
+  aiSumEditNote: 'Notiz bearbeitet',
   aiSumReadNotes: 'Fuß-/Endnoten gelesen',
   aiSumAddComment: 'Kommentar hinzugefügt',
   aiSumDeleteComment: 'Kommentar gelöscht',
@@ -101,6 +102,11 @@ export const de = {
     'Änderungsnachverfolgung ein: KI-Inhaltsänderungen werden als Überarbeitungen markiert (Einfügungen unterstrichen, Löschungen durchgestrichen); unter „Überprüfen“ annehmen oder ablehnen',
   aiTrackOffTitle:
     'Änderungsnachverfolgung aus: KI-Änderungen werden sofort übernommen (Zurücksetzen über Versionsschnappschüsse weiterhin möglich)',
+  aiRevisionBarTitle: 'Änderungen',
+  aiRevisionCount: '{count} ausstehende Änderungen',
+  aiRevisionRejectAll: 'Alle ablehnen',
+  aiRevisionAcceptAll: 'Alle annehmen',
+  aiRevisionPara: 'Absatz {n}',
   aiTurnLimit:
     '(Limit für Toolaufrufe in dieser Anfrage erreicht; die obige Antwort basiert auf den bisher abgeschlossenen Schritten und ist möglicherweise unvollständig.)',
   aiStopped: '(Gestoppt)',
@@ -114,6 +120,8 @@ export const de = {
   aiUnknownError: 'Unbekannter Fehler',
   aiTimeoutError:
     'Zeitüberschreitung der KI-Anfrage: keine Antwort vom Netzwerk, der Vorgang wurde abgebrochen. Prüfe deine Verbindung und versuche es erneut',
+  aiRegionError:
+    'Der Anbieter dieses Modells bedient Ihre aktuelle Region nicht — wählen Sie ein anderes Modell oder wechseln Sie das Netzwerk',
   aiOverloadedError: 'Der KI-Dienst ist derzeit überlastet — bitte gleich erneut versuchen',
   aiNetworkError:
     'Netzwerkproblem: Der KI-Dienst ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut',
@@ -123,6 +131,9 @@ export const de = {
   aiSumImageAttachment: 'Bildanlage {name}',
   aiSumRead: '{name} lesen',
   aiSumReadAttachmentName: 'Anlage {name} lesen',
+  aiSumSkillsList: 'Installierte Skills aufgelistet',
+  aiSumSkillRead: 'Skill {name} gelesen',
+  aiSumRunCli: '{args} ausgeführt',
   aiSumWebSearch: 'Websuche',
   aiSumWebSearchDone: '„{query}“ gesucht ({count} Ergebnisse)',
   aiSumImageSearch: 'Bildersuche',
@@ -170,6 +181,8 @@ export const de = {
   aiCmdNone: 'Keine passenden Blöcke gefunden; das Dokument wurde nicht geändert.',
   aiCmdNoneSkipped:
     'Keine bearbeitbaren Blöcke; das Dokument wurde nicht geändert ({count} geschützte Blöcke übersprungen — Tabellen/Bilder können nicht per Formatbefehl geändert werden).',
+  aiCmdNoneUnchanged:
+    '{count} passende Blöcke blieben unverändert; das Dokument wurde nicht geändert.',
   aiCmdTextStyle: 'Textformat in {count} Block/Blöcken aktualisiert',
   aiCmdMatchedStyle: 'Stil auf {count} Treffer in {blocks} Block/Blöcken angewendet',
   aiCmdParaStyle: 'Absatzformat in {count} Block/Blöcken aktualisiert',
@@ -184,4 +197,22 @@ export const de = {
   aiCmdImages: '{count} Bild(er) aktualisiert',
   aiCmdToc: 'Inhaltsverzeichnis eingefügt ({count} Einträge)',
   aiCmdSkipped: ' ({count} geschützte Blöcke übersprungen)',
+  aiStarterMindMap: 'Mindmap zu diesem Dokument erstellen',
+  aiMindMapBtn: 'KI-Mindmap',
+  aiMindMapPrompt:
+    'Erstelle eine Mindmap zu diesem Dokument und ordne die Hauptthemen und Schlüsselkonzepte nach seiner Abschnittsstruktur',
+  aiSumMindMap: 'Mindmap erstellen',
+  aiMindMapTitle: 'Mindmap',
+  aiMindMapNodes: '{count} Knoten',
+  aiMindMapAskPrompt: 'Erzähl mir über „{label}“ in diesem Dokument',
+  aiMindMapJump: 'Zur zitierten Stelle springen',
+  aiMindMapExport: 'PNG exportieren',
+  aiMindMapExportSvg: 'SVG exportieren',
+  aiMindMapInsert: 'In Dokument einfügen',
+  aiMindMapReset: 'Ansicht zurücksetzen',
+  aiMindMapExpand: 'Zweig ausklappen',
+  aiMindMapCollapse: 'Zweig einklappen',
+  aiMindMapToggleLayout: 'Layout wechseln',
+  aiMindMapLayoutTopDown: 'Auf das Layout von oben nach unten umstellen',
+  aiMindMapLayoutLeftRight: 'Auf das Layout von links nach rechts umstellen',
 } satisfies Record<keyof typeof zh, string>

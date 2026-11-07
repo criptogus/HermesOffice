@@ -56,6 +56,7 @@ export const id = {
   aiSumInsertFootnote: 'Catatan kaki disisipkan',
   aiSumInsertEndnote: 'Catatan akhir disisipkan',
   aiSumDeleteNote: 'Catatan dihapus',
+  aiSumEditNote: 'Catatan diedit',
   aiSumReadNotes: 'Membaca catatan',
   aiSumAddComment: 'Menambahkan komentar',
   aiSumDeleteComment: 'Menghapus komentar',
@@ -99,6 +100,11 @@ export const id = {
     'Lacak perubahan aktif: perubahan konten AI ditandai sebagai revisi (sisipan digarisbawahi, penghapusan dicoret); terima atau tolak di Tinjau',
   aiTrackOffTitle:
     'Lacak perubahan nonaktif: perubahan AI langsung diterapkan (masih dapat dikembalikan melalui snapshot versi)',
+  aiRevisionBarTitle: 'Revisi',
+  aiRevisionCount: '{count} perubahan tertunda',
+  aiRevisionRejectAll: 'Tolak semua',
+  aiRevisionAcceptAll: 'Terima semua',
+  aiRevisionPara: 'Paragraf {n}',
   aiTurnLimit:
     '(Batas putaran pemanggilan alat untuk permintaan ini tercapai; jawaban di atas berdasarkan langkah yang telah selesai dan mungkin tidak lengkap.)',
   aiStopped: '(Dihentikan)',
@@ -110,6 +116,8 @@ export const id = {
   aiUnknownError: 'Kesalahan tidak dikenal',
   aiTimeoutError:
     'Permintaan AI habis waktu: jaringan tidak merespons sehingga proses dihentikan. Periksa koneksi Anda lalu coba lagi',
+  aiRegionError:
+    'Penyedia model ini tidak melayani wilayah Anda saat ini — pilih model lain atau ganti jaringan',
   aiOverloadedError: 'Layanan AI sedang sibuk — silakan coba lagi sebentar lagi',
   aiNetworkError:
     'Masalah jaringan: tidak dapat terhubung ke layanan AI. Periksa koneksi Anda lalu coba lagi',
@@ -119,6 +127,9 @@ export const id = {
   aiSumImageAttachment: 'Lampiran gambar {name}',
   aiSumRead: 'Baca {name}',
   aiSumReadAttachmentName: 'Baca lampiran {name}',
+  aiSumSkillsList: 'Menampilkan skill terpasang',
+  aiSumSkillRead: 'Membaca skill {name}',
+  aiSumRunCli: 'Menjalankan {args}',
   aiSumWebSearch: 'Pencarian web',
   aiSumWebSearchDone: 'Mencari "{query}" ({count} hasil)',
   aiSumImageSearch: 'Pencarian gambar',
@@ -165,6 +176,7 @@ export const id = {
   aiCmdNone: 'Tidak ada blok yang cocok; dokumen tidak diubah.',
   aiCmdNoneSkipped:
     'Tidak ada blok yang dapat diedit; dokumen tidak diubah ({count} blok terlindungi dilewati — tabel/gambar tidak dapat diubah dengan perintah gaya).',
+  aiCmdNoneUnchanged: '{count} blok yang cocok dibiarkan tanpa perubahan; dokumen tidak diubah.',
   aiCmdTextStyle: 'Gaya teks diperbarui pada {count} blok',
   aiCmdMatchedStyle: 'Gaya diterapkan pada {count} kecocokan di {blocks} blok',
   aiCmdParaStyle: 'Format paragraf diperbarui pada {count} blok',
@@ -179,4 +191,22 @@ export const id = {
   aiCmdImages: '{count} gambar diperbarui',
   aiCmdToc: 'Daftar isi disisipkan ({count} entri)',
   aiCmdSkipped: ' ({count} blok terlindungi dilewati)',
+  aiStarterMindMap: 'Buat peta pikiran dari dokumen ini',
+  aiMindMapBtn: 'Peta Pikiran AI',
+  aiMindMapPrompt:
+    'Buat peta pikiran dari dokumen ini, susun topik utama dan konsep kunci menurut struktur bagiannya',
+  aiSumMindMap: 'Buat peta pikiran',
+  aiMindMapTitle: 'Peta pikiran',
+  aiMindMapNodes: '{count} node',
+  aiMindMapAskPrompt: 'Jelaskan tentang "{label}" dalam dokumen ini',
+  aiMindMapJump: 'Lompat ke bagian yang dikutip',
+  aiMindMapExport: 'Ekspor PNG',
+  aiMindMapExportSvg: 'Ekspor SVG',
+  aiMindMapInsert: 'Sisipkan ke dokumen',
+  aiMindMapReset: 'Setel ulang tampilan',
+  aiMindMapExpand: 'Bentangkan cabang',
+  aiMindMapCollapse: 'Lipat cabang',
+  aiMindMapToggleLayout: 'Ganti tata letak',
+  aiMindMapLayoutTopDown: 'Beralih ke tata letak atas ke bawah',
+  aiMindMapLayoutLeftRight: 'Beralih ke tata letak kiri ke kanan',
 } satisfies Record<keyof typeof zh, string>

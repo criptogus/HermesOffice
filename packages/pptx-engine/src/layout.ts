@@ -10,7 +10,7 @@
 import { nextSlideId } from './slide-ids'
 import type { PackageArchive } from './zip'
 import { resolveTarget, relsPathFor } from './zip'
-import { escapeXmlAttr } from './xml-utils'
+import { escapeXmlAttr, hasContentTypeOverride, maxRelationshipIdNumber } from './xml-utils'
 import type { SlideDeck } from './types'
 
 // ── Layout placeholder summary ─────────────────────────────────────────────
@@ -68,8 +68,10 @@ function parseLayoutType(xml: string): string {
 /** Parse all placeholder geometry from the layout XML (only non-functional placeholders with an xfrm) */
 export function parseLayoutPlaceholders(xml: string): LayoutPlaceholder[] {
   const results: LayoutPlaceholder[] = []
-  for (const spMatch of xml.matchAll(/<p:sp>([\s\S]*?)<\/p:sp>/g)) {
-    const sp = spMatch[1]!
+  for (const spMatch of xml.matchAll(
+    /<p:sp>([\s\S]*?)<\/p:sp>|<p:graphicFrame>([\s\S]*?)<\/p:graphicFrame>|<p:pic>([\s\S]*?)<\/p:pic>/g,
+  )) {
+    const sp = spMatch[1] ?? spMatch[2] ?? spMatch[3]!
     const phMatch = /<p:ph\b([^>]*)\/?>/.exec(sp)
     if (!phMatch) continue
     const phAttr = phMatch[1]!
@@ -79,16 +81,19 @@ export function parseLayoutPlaceholders(xml: string): LayoutPlaceholder[] {
     const idx = idxM?.[1] ?? ''
     if (FUNCTION_TYPES.has(type)) continue
     // Try to parse the xfrm (may come from the layout or the master)
-    const xfrmM = /<a:xfrm\b[^>]*>([\s\S]*?)<\/a:xfrm>/.exec(sp)
+    const xfrmM =
+      /<a:xfrm\b[^>]*>([\s\S]*?)<\/a:xfrm>/.exec(sp) ??
+      /<p:xfrm\b[^>]*>([\s\S]*?)<\/p:xfrm>/.exec(sp)
     if (!xfrmM) continue
     const xfrmContent = xfrmM[1]!
-    const offM = /<a:off\s[^>]*x="([^"]*)"[^>]*y="([^"]*)"/.exec(xfrmContent)
-    const extM = /<a:ext\s[^>]*cx="([^"]*)"[^>]*cy="([^"]*)"/.exec(xfrmContent)
-    if (!offM || !extM) continue
-    const x = parseInt(offM[1]!, 10)
-    const y = parseInt(offM[2]!, 10)
-    const cx = parseInt(extM[1]!, 10)
-    const cy = parseInt(extM[2]!, 10)
+    const offM = /<a:off\b([^>]*)\/?/.exec(xfrmContent)
+    const extM = /<a:ext\b([^>]*)\/?/.exec(xfrmContent)
+    const off = offM?.[1] ?? ''
+    const ext = extM?.[1] ?? ''
+    const x = parseInt(/\bx="([^"]*)"/.exec(off)?.[1] ?? '', 10)
+    const y = parseInt(/\by="([^"]*)"/.exec(off)?.[1] ?? '', 10)
+    const cx = parseInt(/\bcx="([^"]*)"/.exec(ext)?.[1] ?? '', 10)
+    const cy = parseInt(/\bcy="([^"]*)"/.exec(ext)?.[1] ?? '', 10)
     if (isNaN(x) || isNaN(y) || isNaN(cx) || isNaN(cy)) continue
     results.push({ type, idx, x, y, cx, cy, hint: PH_HINT_MAP[type] ?? 'Click to add text' })
   }
@@ -233,7 +238,7 @@ export function prepareInsertSlideWithLayout(
   // [Content_Types].xml
   const ctPath = '[Content_Types].xml'
   const ct = archive.readText(ctPath)
-  if (ct && !ct.includes(`PartName="/${newPath}"`)) {
+  if (ct && !hasContentTypeOverride(ct, newPath)) {
     archive.entries.set(
       ctPath,
       Buffer.from(
@@ -253,8 +258,7 @@ export function prepareInsertSlideWithLayout(
   const pres = archive.readText(presPath)
   if (!presRels || !pres) return null
 
-  let maxRid = 0
-  for (const m of presRels.matchAll(/Id="rId(\d+)"/g)) maxRid = Math.max(maxRid, Number(m[1]))
+  const maxRid = maxRelationshipIdNumber(presRels)
   const newRid = `rId${maxRid + 1}`
   const relEntry = `<Relationship Id="${newRid}" Type="${SLIDE_REL_TYPE}" Target="${newPath.slice('ppt/'.length)}"/>`
   archive.entries.set(

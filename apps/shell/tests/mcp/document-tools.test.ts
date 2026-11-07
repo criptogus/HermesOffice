@@ -18,7 +18,7 @@ import { fakeCli } from './fake-cli'
 /**
  * The docx tool surface over a real MCP session. Files are written to a temp dir
  * that stands in for the app default save folder. The headless tools delegate to
- * the bundled genoffice CLI (a fake here), so these assert the argv/stdin the
+ * the bundled hermesoffice CLI (a fake here), so these assert the argv/stdin the
  * tools build — document fidelity is the CLI's own test surface.
  */
 
@@ -42,7 +42,7 @@ async function freePort(): Promise<number> {
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'genoffice-mcp-'))
+  dir = await mkdtemp(join(tmpdir(), 'hermesoffice-mcp-'))
   opened = []
   cli = fakeCli()
   const port = await freePort()
@@ -83,9 +83,11 @@ describe('M3 docx tools', () => {
     const { tools } = await client!.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       'create_docx',
+      'fill_template',
       'get_app_info',
-      'open_in_genoffice',
+      'open_in_hermesoffice',
       'read_docx',
+      'read_docx_properties',
     ])
   })
 
@@ -195,10 +197,10 @@ describe('M3 docx tools', () => {
     expect(wrongExt.isError).toBe(true)
   })
 
-  it('open_in_genoffice calls the injected opener', async () => {
+  it('open_in_hermesoffice calls the injected opener', async () => {
     await writeFile(join(dir, 'open.docx'), 'placeholder')
     const result = await client!.callTool({
-      name: 'open_in_genoffice',
+      name: 'open_in_hermesoffice',
       arguments: { path: join(dir, 'open.docx') },
     })
     expect(result.isError).toBeFalsy()
@@ -229,8 +231,10 @@ describe('background generation gating', () => {
       createSessionHost(),
     ).map((t) => t.name)
     expect(names).not.toContain('create_docx')
+    expect(names).not.toContain('fill_template')
     expect(names).toContain('read_docx')
-    expect(names).toContain('open_in_genoffice')
+    expect(names).toContain('read_docx_properties')
+    expect(names).toContain('open_in_hermesoffice')
     expect(names).toContain('get_app_info')
   })
 
@@ -240,6 +244,8 @@ describe('background generation gating', () => {
       createDocumentTools({ ...base, ...extra }, createSessionHost()).map((t) => t.name)
     expect(withHost()).toContain('create_docx')
     expect(withHost({ background: true })).toContain('create_docx')
+    expect(withHost()).toContain('fill_template')
+    expect(withHost({ background: true })).toContain('fill_template')
   })
 })
 
@@ -281,7 +287,7 @@ describe('M6 visible-editing tools (docs control wired)', () => {
   let fake: ReturnType<typeof fakeDocsControl>
 
   beforeEach(async () => {
-    dir2 = await mkdtemp(join(tmpdir(), 'genoffice-mcp-visible-'))
+    dir2 = await mkdtemp(join(tmpdir(), 'hermesoffice-mcp-visible-'))
     fake = fakeDocsControl()
     const port = await (async () => {
       const { createServer } = await import('node:http')
@@ -338,11 +344,14 @@ describe('M6 visible-editing tools (docs control wired)', () => {
       'apply_ops',
       'create_docx',
       'create_session',
+      'fill_template',
       'get_app_info',
       'insert_content',
-      'open_in_genoffice',
+      'insert_picture',
+      'open_in_hermesoffice',
       'read_document',
       'read_docx',
+      'read_docx_properties',
       'replace_blocks',
       'save_session',
     ])
@@ -397,6 +406,38 @@ describe('M6 visible-editing tools (docs control wired)', () => {
     })
   })
 
+  it('routes insert_picture with its payload', async () => {
+    await client2!.callTool({ name: 'create_session', arguments: { family: 'docx' } })
+    const result = await client2!.callTool({
+      name: 'insert_picture',
+      arguments: {
+        url: 'https://example.com/pic.png',
+        afterBlockIndex: 0,
+        width: 240,
+        float: { anchor: 'page', x: 24, y: 96, wrap: 'square' },
+        altText: 'chart',
+      },
+    })
+    expect(result.isError).toBeFalsy()
+    expect(fake.calls.at(-1)).toEqual({
+      wcId: 42,
+      command: 'insert_picture',
+      payload: {
+        url: 'https://example.com/pic.png',
+        afterBlockIndex: 0,
+        width: 240,
+        float: { anchor: 'page', x: 24, y: 96, wrap: 'square' },
+        altText: 'chart',
+      },
+    })
+  })
+
+  it('insert_picture requires a url', async () => {
+    await client2!.callTool({ name: 'create_session', arguments: { family: 'docx' } })
+    const result = await client2!.callTool({ name: 'insert_picture', arguments: {} })
+    expect(result.isError).toBe(true)
+  })
+
   it('save_session forwards path + overwrite and ends the session', async () => {
     await client2!.callTool({ name: 'create_session', arguments: { family: 'docx' } })
     const target = join(dir2, 'out.docx')
@@ -433,5 +474,148 @@ describe('M6 visible-editing tools (docs control wired)', () => {
     // only the docx driver is registered here, so the schema enum excludes xlsx
     const bad = await client2!.callTool({ name: 'create_session', arguments: { family: 'xlsx' } })
     expect(bad.isError).toBe(true)
+  })
+})
+describe('headless fill_template / read_docx_properties', () => {
+  it('fill_template stages the data object and maps the merge report back', async () => {
+    cli.setMergeDetail({
+      format: 'docx',
+      filled: 3,
+      used_keys: ['name', 'date'],
+      unresolved_placeholders: [],
+      unused_keys: ['extra'],
+    })
+    const template = join(dir, 'letter.docx')
+    await writeFile(template, 'template bytes')
+    const result = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template, data: { name: 'Ada', date: '2026-11-02', extra: 1 } },
+    })
+    expect(result.isError).toBeFalsy()
+    const payload = JSON.parse(text(result.content)) as {
+      path: string
+      filled: number
+      unused_keys: string[]
+    }
+    expect(payload.path).toMatch(/letter(-\d+)?\.docx$/)
+    expect(payload.filled).toBe(3)
+    expect(payload.unused_keys).toEqual(['extra'])
+
+    const args = cli.last()
+    expect(args.slice(0, 2)).toEqual(['merge', template])
+    expect(args[2]).toBe('--data')
+    expect(JSON.parse(cli.lastData() ?? '{}')).toEqual({
+      name: 'Ada',
+      date: '2026-11-02',
+      extra: 1,
+    })
+  })
+
+  it('fill_template passes --force/--strict through to the CLI', async () => {
+    cli.setMergeDetail({ filled: 0, unresolved_placeholders: [] })
+    const template = join(dir, 't.docx')
+    await writeFile(template, 'x')
+    const out = join(dir, 'filled.docx')
+    await client!.callTool({
+      name: 'fill_template',
+      arguments: { template, data: { a: 1 }, path: out, overwrite: true, strict: true },
+    })
+    expect(cli.last()).toEqual([
+      'merge',
+      template,
+      '--data',
+      expect.any(String),
+      '--out',
+      out,
+      '--force',
+      '--strict',
+    ])
+  })
+
+  it('fill_template validates the template path and shape', async () => {
+    const relative = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template: 'rel.docx', data: {} },
+    })
+    expect(relative.isError).toBe(true)
+    expect(text(relative.content)).toMatch(/absolute/)
+
+    const wrongExt = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template: join(dir, 'x.txt'), data: {} },
+    })
+    expect(wrongExt.isError).toBe(true)
+    expect(text(wrongExt.content)).toMatch(/docx, .pptx or .xlsx/)
+
+    const missing = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template: join(dir, 'nope.docx'), data: {} },
+    })
+    expect(missing.isError).toBe(true)
+    expect(text(missing.content)).toMatch(/file not found/)
+
+    const badData = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template: join(dir, 'x.docx'), data: [1, 2] },
+    })
+    expect(badData.isError).toBe(true)
+    expect(text(badData.content)).toMatch(/expected record, received array/)
+  })
+
+  it("fill_template surfaces the CLI's unresolved-placeholder error", async () => {
+    cli.failNext('merge: 2 unresolved placeholders in letter.docx, nothing written')
+    const template = join(dir, 'letter.docx')
+    await writeFile(template, 'x')
+    const failed = await client!.callTool({
+      name: 'fill_template',
+      arguments: { template, data: { a: 1 }, strict: true },
+    })
+    expect(failed.isError).toBe(true)
+    expect(text(failed.content)).toContain('unresolved placeholders')
+  })
+
+  it('read_docx_properties returns the CLI-reported properties', async () => {
+    cli.setDocProperties({
+      core: { title: 'Report', author: 'Ada' },
+      app: { application: 'HermesOffice' },
+      custom: { Department: 'Ops' },
+    })
+    const path = join(dir, 'report.docx')
+    await writeFile(path, 'docx bytes')
+    const result = await client!.callTool({
+      name: 'read_docx_properties',
+      arguments: { path },
+    })
+    expect(result.isError).toBeFalsy()
+    const payload = JSON.parse(text(result.content)) as {
+      path: string
+      properties: { core: { title: string }; custom: Record<string, unknown> }
+    }
+    expect(payload.path).toBe(path)
+    expect(payload.properties.core.title).toBe('Report')
+    expect(payload.properties.custom).toEqual({ Department: 'Ops' })
+    expect(cli.last()).toEqual(['docs', 'read', path, '--properties'])
+  })
+
+  it('read_docx_properties validates the path like read_docx', async () => {
+    const relative = await client!.callTool({
+      name: 'read_docx_properties',
+      arguments: { path: 'rel.docx' },
+    })
+    expect(relative.isError).toBe(true)
+    expect(text(relative.content)).toMatch(/path must be absolute/)
+
+    const wrongExt = await client!.callTool({
+      name: 'read_docx_properties',
+      arguments: { path: join(dir, 'x.txt') },
+    })
+    expect(wrongExt.isError).toBe(true)
+
+    const missing = await client!.callTool({
+      name: 'read_docx_properties',
+      arguments: { path: join(dir, 'nope.docx') },
+    })
+    expect(missing.isError).toBe(true)
+    expect(text(missing.content)).toMatch(/file not found/)
   })
 })

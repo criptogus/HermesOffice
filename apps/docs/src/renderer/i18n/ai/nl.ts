@@ -57,6 +57,7 @@ export const nl = {
   aiSumInsertFootnote: 'Voetnoot ingevoegd',
   aiSumInsertEndnote: 'Eindnoot ingevoegd',
   aiSumDeleteNote: 'Noot verwijderd',
+  aiSumEditNote: 'Noot bewerkt',
   aiSumReadNotes: 'Noten gelezen',
   aiSumAddComment: 'Opmerking toegevoegd',
   aiSumDeleteComment: 'Opmerking verwijderd',
@@ -100,6 +101,11 @@ export const nl = {
     'Wijzigingen bijhouden aan: AI-inhoudsbewerkingen worden gemarkeerd als revisies (invoegingen onderstreept, verwijderingen doorgehaald); accepteer of weiger ze in Controleren',
   aiTrackOffTitle:
     'Wijzigingen bijhouden uit: AI-bewerkingen worden direct toegepast (terugdraaien kan nog steeds via versiesnapshots)',
+  aiRevisionBarTitle: 'Revisies',
+  aiRevisionCount: '{count} openstaande wijzigingen',
+  aiRevisionRejectAll: 'Alles weigeren',
+  aiRevisionAcceptAll: 'Alles accepteren',
+  aiRevisionPara: 'Alinea {n}',
   aiTurnLimit:
     '(Limiet voor toolaanroepen voor dit verzoek bereikt; het antwoord hierboven is gebaseerd op de tot nu toe voltooide stappen en is mogelijk onvolledig.)',
   aiStopped: '(Gestopt)',
@@ -112,6 +118,8 @@ export const nl = {
   aiUnknownError: 'Onbekende fout',
   aiTimeoutError:
     'AI-verzoek verlopen: geen reactie van het netwerk, uitvoering gestopt. Controleer je verbinding en probeer het opnieuw',
+  aiRegionError:
+    'De aanbieder van dit model bedient uw huidige regio niet — kies een ander model of wissel van netwerk',
   aiOverloadedError: 'De AI-service is momenteel overbelast — probeer het zo opnieuw',
   aiNetworkError:
     'Netwerkprobleem: kan de AI-service niet bereiken. Controleer je verbinding en probeer het opnieuw',
@@ -121,6 +129,9 @@ export const nl = {
   aiSumImageAttachment: 'Afbeeldingsbijlage {name}',
   aiSumRead: '{name} lezen',
   aiSumReadAttachmentName: 'Bijlage {name} lezen',
+  aiSumSkillsList: 'Geïnstalleerde skills opgelijst',
+  aiSumSkillRead: 'Skill {name} gelezen',
+  aiSumRunCli: '{args} uitgevoerd',
   aiSumWebSearch: 'Zoeken op internet',
   aiSumWebSearchDone: 'Gezocht naar "{query}" ({count} resultaten)',
   aiSumImageSearch: 'Afbeeldingen zoeken',
@@ -168,6 +179,8 @@ export const nl = {
   aiCmdNone: 'Geen overeenkomende blokken; het document is niet gewijzigd.',
   aiCmdNoneSkipped:
     'Geen bewerkbare blokken; het document is niet gewijzigd ({count} beveiligde blokken overgeslagen — tabellen/afbeeldingen kunnen niet met stijlopdrachten worden gewijzigd).',
+  aiCmdNoneUnchanged:
+    '{count} overeenkomende blok(ken) bleven ongewijzigd; het document is niet gewijzigd.',
   aiCmdTextStyle: 'Tekststijl bijgewerkt in {count} blok(ken)',
   aiCmdMatchedStyle: 'Stijl toegepast op {count} overeenkomst(en) in {blocks} blok(ken)',
   aiCmdParaStyle: 'Alineaopmaak bijgewerkt in {count} blok(ken)',
@@ -182,4 +195,22 @@ export const nl = {
   aiCmdImages: '{count} afbeelding(en) bijgewerkt',
   aiCmdToc: 'Inhoudsopgave ingevoegd ({count} vermeldingen)',
   aiCmdSkipped: ' ({count} beveiligde blok(ken) overgeslagen)',
+  aiStarterMindMap: 'Maak een mindmap van dit document',
+  aiMindMapBtn: 'AI-mindmap',
+  aiMindMapPrompt:
+    'Maak een mindmap van dit document en orden de hoofdonderwerpen en kernconcepten naar de sectiestructuur',
+  aiSumMindMap: 'Mindmap maken',
+  aiMindMapTitle: 'Mindmap',
+  aiMindMapNodes: '{count} knooppunten',
+  aiMindMapAskPrompt: 'Vertel me over "{label}" in dit document',
+  aiMindMapJump: 'Ga naar het geciteerde fragment',
+  aiMindMapExport: 'PNG exporteren',
+  aiMindMapExportSvg: 'SVG exporteren',
+  aiMindMapInsert: 'In document invoegen',
+  aiMindMapReset: 'Weergave opnieuw instellen',
+  aiMindMapExpand: 'Tak uitklappen',
+  aiMindMapCollapse: 'Tak inklappen',
+  aiMindMapToggleLayout: 'Lay-out wisselen',
+  aiMindMapLayoutTopDown: 'Overschakelen naar de lay-out van boven naar beneden',
+  aiMindMapLayoutLeftRight: 'Overschakelen naar de lay-out van links naar rechts',
 } satisfies Record<keyof typeof zh, string>

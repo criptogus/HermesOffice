@@ -110,6 +110,8 @@ export const ms = {
   aiErrUnknown: 'Ralat tidak diketahui',
   aiErrStreamTimeout:
     'Permintaan AI tamat masa: rangkaian tidak memberi respons, proses dihentikan. Semak sambungan anda dan cuba lagi',
+  aiErrRegion:
+    'Penyedia model ini tidak memberi perkhidmatan di rantau semasa anda — pilih model lain atau tukar rangkaian',
   aiErrOverloaded: 'Perkhidmatan AI sedang sibuk — sila cuba lagi sebentar lagi',
   aiErrNetwork:
     'Masalah rangkaian: tidak dapat menghubungi perkhidmatan AI. Semak sambungan anda dan cuba lagi',
@@ -134,6 +136,7 @@ export const ms = {
   aiClarifyOther: 'Lain-lain (taip sendiri)',
   aiClarifySkip: 'Langkau tinjauan',
   aiClarifyNext: 'Seterusnya',
+  aiClarifyPrev: 'Sebelumnya',
   aiClarifySubmit: 'Jana',
   aiSumReadAttachment: 'Baca lampiran',
   aiSumReadAttachmentName: 'Baca lampiran {name}',

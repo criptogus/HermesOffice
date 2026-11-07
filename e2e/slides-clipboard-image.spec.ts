@@ -10,7 +10,7 @@ import type { SlidesApi } from '../apps/slides/src/shared/ipc'
 test('Slides copy provides an OS image while internal paste stays editable and stale captures are rejected', async ({
   browserName: _browserName,
 }, info) => {
-  const dir = await mkdtemp(join(tmpdir(), 'genoffice-clipboard-'))
+  const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-clipboard-'))
   const fixture = join(dir, 'fixture')
   await cp(resolve('e2e/assets/font-manager-rubik'), fixture, { recursive: true })
   const xmlPath = join(fixture, 'ppt/slides/slide1.xml')
@@ -49,7 +49,7 @@ test('Slides copy provides an OS image while internal paste stays editable and s
     expect([...png.data].some((n, i) => i % 4 === 3 && n === 0)).toBe(true)
     await info.attach('clipboard-selection.png', { body: bytes, contentType: 'image/png' })
 
-    // A plain Chromium editor has no GenOffice code or clipboard cache.
+    // A plain Chromium editor has no HermesOffice code or clipboard cache.
     const externalPagePromise = app.waitForEvent('window')
     const externalId = await app.evaluate(async ({ BrowserWindow }) => {
       const win = new BrowserWindow({ show: false })

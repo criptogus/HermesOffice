@@ -58,6 +58,17 @@ describe('resolveImageSrc', () => {
   it('returns the authored value when relative with no base dir', () => {
     expect(resolveImageSrc('assets/p.png', null)).toBe('assets/p.png')
   })
+
+  it('does not double-encode an already percent-encoded path', () => {
+    expect(resolveImageSrc('%E5%9B%BE_files/image1.jpg', '/n')).toBe(
+      'md-asset:///n/%E5%9B%BE_files/image1.jpg',
+    )
+    expect(resolveImageSrc('/tmp/%E5%9B%BE.png', null)).toBe('md-asset:///tmp/%E5%9B%BE.png')
+  })
+
+  it('keeps a bare percent sign that is not an escape', () => {
+    expect(resolveImageSrc('100%.png', '/n')).toBe('md-asset:///n/100%25.png')
+  })
 })
 
 describe('slash block commands inside a list (lift-first behavior)', () => {
@@ -196,6 +207,12 @@ describe('unresolveImageSrc', () => {
   it('decodes encoded segments', () => {
     const url = resolveImageSrc('assets/图 1.png', '/n')
     expect(unresolveImageSrc(url, '/n')).toBe('assets/图 1.png')
+  })
+
+  it('falls back to the raw path when the URL has a stray percent sign', () => {
+    // decodeURIComponent throws on a lone `%`; parseHTML feeds every md-asset
+    // src through unresolveImageSrc, so the throw would break paste/load.
+    expect(unresolveImageSrc('md-asset:///tmp/100%.png', '/docs')).toBe('/tmp/100%.png')
   })
 
   it('keeps an absolute path when it lives outside the base dir', () => {

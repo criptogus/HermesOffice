@@ -19,6 +19,8 @@ import { ms } from './ai/ms'
 import { he } from './ai/he'
 import { hi } from './ai/hi'
 import { zhTW } from './ai/zh-TW'
+import { vi } from './ai/vi'
+import { tr } from './ai/tr'
 
 /** User-visible strings for the AI panel and tool feedback (LLM prompts are not here) */
 export const aiStrings = defineStrings({
@@ -42,4 +44,6 @@ export const aiStrings = defineStrings({
   he,
   hi,
   'zh-TW': zhTW,
+  vi,
+  tr,
 })

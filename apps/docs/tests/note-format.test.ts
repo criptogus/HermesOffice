@@ -74,4 +74,13 @@ describe('note numbering', () => {
     }
     expect(noteMarkText('endnote', 1)).toBe('i')
   })
+
+  it('caps repeat expansion for hostile note numbers', () => {
+    expect(formatNoteNumber('lowerLetter', 1)).toBe('a')
+    expect(formatNoteNumber('lowerLetter', 27)).toBe('aa')
+    expect(formatNoteNumber('lowerLetter', 1e9)).toBe('1000000000')
+    expect(formatNoteNumber('chicago', 5)).toBe('**')
+    expect(formatNoteNumber('chicago', 1e9)).toBe('1000000000')
+    expect(formatNoteNumber('lowerLetter', 1e9).length).toBeLessThan(100)
+  })
 })

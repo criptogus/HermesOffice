@@ -25,7 +25,7 @@ describe('collectMatches', () => {
 })
 
 describe('cmFindTarget', () => {
-  function setup(text: string) {
+  function setup(text: string, onBeforeReplace?: (view: EditorView) => void) {
     const changed = new Set<() => void>()
     const onChange = vi.fn()
     const view = new EditorView({
@@ -39,10 +39,14 @@ describe('cmFindTarget', () => {
         }
       },
     })
-    const target = cmFindTarget(view, (l) => {
-      changed.add(l)
-      return () => changed.delete(l)
-    })
+    const target = cmFindTarget(
+      view,
+      (l) => {
+        changed.add(l)
+        return () => changed.delete(l)
+      },
+      onBeforeReplace ? () => onBeforeReplace(view) : undefined,
+    )
     return { view, target, onChange }
   }
 
@@ -64,6 +68,19 @@ describe('cmFindTarget', () => {
     target.replaceAll('x')
     expect(view.state.doc.toString()).toBe('<h1>Bye</h1>\n<p>x x</p>')
     expect(target.search('hello', opts, 0)).toBe(0)
+    view.destroy()
+  })
+
+  it('flushes pending drafts immediately before replacements', () => {
+    const order: string[] = []
+    const { view, target } = setup('<p>before</p>', (editor) => {
+      order.push(editor.state.doc.toString())
+      editor.dispatch({ changes: { from: 0, insert: 'x' } })
+    })
+    target.search('before', opts, 0)
+    target.replaceAll('after')
+    expect(order).toEqual(['<p>before</p>'])
+    expect(view.state.doc.toString()).toBe('x<p>after</p>')
     view.destroy()
   })
 

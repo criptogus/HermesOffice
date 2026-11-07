@@ -8,12 +8,18 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import { AiPanel, HermesMark } from './ai/AiPanel'
 import { AiAskPopover, type AskAnchorRect } from './AiAskPopover'
-import { loadSavedAnnots } from './annotation-catalog'
 import {
+  createSavedAnnotCountsLoader,
+  loadSavedAnnots,
+  type SavedAnnotCounts,
+} from './annotation-catalog'
+import {
+  AUTO_OCR_PAGE_CAP,
   OcrTextLayer,
-  buildOcrPageData,
-  isScannedEntry,
   renderPageForOcr,
+  runAutoOcr,
+  type AutoOcrResult,
+  type AutoOcrStop,
   type OcrPageData,
 } from './ocr-layer'
 import type { CropRect, FileOpCanceled, FileOpResult, PdfAppDeps, RotateDelta } from './ai/tools'
@@ -38,6 +44,59 @@ import { flattenThread, pendingNoteKey, threadSubtree, visibleNoteThreads } from
 import type { NoteInput, NoteThreadItem, SavedNoteAnnot } from './note-threads'
 import { FormLayer } from './FormLayer'
 import {
+  FormDesignLayer,
+  FormFieldProps,
+  NUDGE_PTS,
+  clampRectToPage,
+  designWidgetId,
+  widgetDesignId,
+} from './FormDesignLayer'
+import type { DesignField, FormDesignTool } from './FormDesignLayer'
+import { collectDetectInput, detectFormFields } from './form-detect'
+import { checkboxWidgetAt, markRectForBox, printedBoxAt } from './form-mark-target'
+
+type Arrange =
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'bottom'
+  | 'centerH'
+  | 'centerV'
+  | 'distributeH'
+  | 'distributeV'
+  | 'sameWidth'
+  | 'sameHeight'
+  | 'sameSize'
+
+const PASTE_OFFSET_PTS = 12
+/// Printer option that is not a device name (Electron: '' = OS default printer)
+const PRINT_SYSTEM_DIALOG = '\u0000system-dialog'
+// macOS's print sheet already carries copies/duplex, so it stays the default there
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+const PRINT_DUPLEX_MODES: PrintDuplex[] = ['simplex', 'longEdge', 'shortEdge']
+/** Auto-detect stops here so a long scanned form cannot flood the document with fields */
+const DETECT_FIELD_CAP = 300
+
+/** Field names still taken once pending widget removals are applied (a fully removed field frees its name) */
+function liveFieldNames(
+  catalog: FormCatalog | null,
+  edits: Map<string, FormWidgetEditInput>,
+): string[] {
+  if (!catalog) return []
+  const alive = new Set<string>()
+  for (const w of catalog.widgets) if (!edits.get(w.id)?.remove) alive.add(w.fieldName)
+  const names = [
+    ...[...catalog.fields.keys()].filter((name) => alive.has(name)),
+    ...catalog.otherFieldNames,
+  ]
+  // Every ancestor of a dotted name is a field group: generators and validation treat it as taken
+  const groups = names.flatMap((name) => {
+    const parts = name.split('.')
+    return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('.'))
+  })
+  return [...names, ...groups]
+}
+import {
   buildFormCatalog,
   documentFormFeatures,
   hasXfaMarker,
@@ -54,7 +113,7 @@ import { CropDialog, CutoutDialog, cropImagePng } from './ImageDialogs'
 import { cropRect, flipPixels, multiplyAlpha } from './image-bake'
 import type { CropFractions, ImageBakeOp } from './image-bake'
 import { removeBackground, type PixelImage } from './cutout'
-import { navAction } from './keyNav'
+import { navAction, shouldHandleDocumentUndo } from './keyNav'
 import { rowOfVisIdx, spreadRows, stepPage } from './spread'
 import {
   captureViewState,
@@ -66,11 +125,37 @@ import {
 import type { PdfViewState, ZoomAnchor } from './view-state'
 import { LinkLayer } from './LinkLayer'
 import { OutlinePanel } from './OutlinePanel'
+import { CommentsPanel, type CommentEntry } from './CommentsPanel'
+import { ComparePanel } from './ComparePanel'
+import { compareDocuments, type CompareResult, type PageText } from './compare-text'
+import { AttachmentsPanel, type AttachmentRow } from './AttachmentsPanel'
 import type { OutlineNode } from './OutlinePanel'
-import { buildHeadingOutline, remapOutlinePages } from './heading-outline'
-import { printPdf } from './print'
+import {
+  buildHeadingOutline,
+  destTop,
+  remapOutlinePages,
+  remapOutlineTree,
+} from './heading-outline'
+import { filterPageParity, maySpoolOriginal, printPdf, type PageParity } from './print'
+import { readFileBytes } from './file-bytes'
+import type {
+  PdfEncryptionInput,
+  PdfPermissions,
+  PrintDuplex,
+  PrinterInfo,
+  PrinterOption,
+} from '../shared/ipc'
+import { mayChangeProtection } from './protection-gate'
 import { PasswordDialog } from './PasswordDialog'
 import { PropertiesDialog } from './PropertiesDialog'
+import { LinkDialog, type LinkDraft } from './LinkDialog'
+import { CertSignDialog } from './CertSignDialog'
+import { ProtectionDialog } from './ProtectionDialog'
+import { BatesDialog } from './BatesDialog'
+import { buildBatesInserts, type BatesConfig } from './bates'
+import { MeasureScaleDialog } from './MeasureScaleDialog'
+import { formatLength, type MeasureScale } from './measure'
+import { SignaturesDialog, overallSignatureStatus } from './SignaturesDialog'
 import { SignatureDialog, fileToCanvas } from './SignatureDialog'
 import type { SignatureData } from './SignatureDialog'
 import { signatureDrawingForField } from './signature-field'
@@ -82,7 +167,7 @@ import {
 import { StampDialog } from './StampDialog'
 import { buildStamps } from './stamps'
 import type { HeaderFooterConfig, WatermarkConfig } from './stamps'
-import { buildSearchIndex, searchInIndex } from './search'
+import { createSearchIndexCache, searchInIndex } from './search'
 import type { SearchIndex, SearchMatch } from './search'
 import { mapDocFont, type DocFontStyle } from './doc-font'
 import { groupPageBlocks, reflowOverflows, type TextBlock } from './text-block'
@@ -109,10 +194,11 @@ import type { CharStyle } from './color-runs'
 import { platformShortcuts } from '@hermesoffice/i18n'
 import {
   Dropdown,
-  RibbonCollapseButton,
-  appConfirmDialog,
+  aiPanelInitiallyOpen,
+  rememberAiPanelOpen,
   useDismissablePopover,
   useRibbonCollapse,
+  useAiSidebarEnabled,
 } from '@hermesoffice/ui'
 import { useI18n } from './i18n/locale'
 import { useAutosave } from './useAutosave'
@@ -121,20 +207,24 @@ import type {
   DrawingInput,
   FormValueInput,
   ImageEditFailure,
+  FormFieldInput,
+  FormFieldKind,
+  FormWidgetEditInput,
   ImageEditInput,
   ImageLayer,
   MarkupType,
   MetadataInput,
   NoteEditInput,
+  OutlineEntryInput,
   PageImageRef,
   PdfConvertFormat,
+  PdfSignatureInfo,
   StaticFormFillRecord,
   StampInput,
   TextEditFailure,
   TextEditInput,
   TextInsertFailure,
   TextInsertInput,
-  PdfOcrLine,
 } from '../shared/ipc'
 import {
   ZOOM_STEPS,
@@ -154,6 +244,8 @@ import {
 } from './view-config'
 import type { PageSize, FitMode } from './view-config'
 import { useVisibleSet, PdfPage, MarkupOverlay } from './PdfPage'
+import { probePageGeometry } from './page-probe'
+import { loadPdfForView } from './open-document'
 import { PdfThumb, ThumbPendingOverlay } from './PdfThumb'
 import type { ThumbMenu } from './PdfThumb'
 import { SignDropOverlay, signPlaceK, imagePlaceK, staticFormFillPlaceK } from './SignDropOverlay'
@@ -183,8 +275,13 @@ import {
   textEditPreviewParts,
   textEditPreviewContent,
   seedDraftColors,
+  paperCss,
+  textEraseKey,
+  textEraseProbe,
 } from './text-edit-preview'
+import { samplePaperColor } from './paper-sample'
 import type { LocalTextEdit, LocalTextInsert, TextDraft } from './text-edit-preview'
+import { buildOcrBakeInserts } from './ocr-bake'
 import { planEditOps, reduceBucket } from './edit-ops'
 import type { Bucket, Op, OpContext, PlanResult } from './edit-ops'
 import { rectsNear } from './edit-state'
@@ -192,6 +289,8 @@ import type {
   StampConfig,
   SavedMarkupAnnot,
   LocalAnnotDelete,
+  LocalBlankPage,
+  LocalFormField,
   LocalNoteEdit,
   EditSnapshot,
   SavedSnapshot,
@@ -201,6 +300,7 @@ import {
   IconThumbs,
   IconHighlight,
   IconUnderline,
+  IconSquiggly,
   IconStrike,
   IconEditText,
   IconInk,
@@ -208,17 +308,35 @@ import {
   IconEllipse,
   IconArrow,
   IconNote,
+  IconCaret,
+  IconPolygon,
   IconSign,
+  IconCertSign,
+  IconSignatures,
+  IconProtect,
+  IconBates,
+  IconMeasure,
   IconPreviousField,
   IconNextField,
   IconCompleteForm,
+  IconFormAiFill,
   IconFormText,
+  IconFieldText,
+  IconFieldCheckbox,
+  IconFieldSignature,
+  IconFieldKeep,
+  IconFieldArrange,
+  IconFieldDetect,
+  IconFieldDate,
+  IconFieldRadio,
+  IconFieldChoice,
+  IconFieldPreview,
   IconFormCheck,
   IconFormCross,
-  IconExportImg,
   IconConvertPdf,
   IconInsertImage,
   IconEditImage,
+  IconLink,
   IconNight,
   IconSpread,
   IconSinglePage,
@@ -242,6 +360,7 @@ import {
   IconFitWidth,
   IconFitPage,
   IconOutline,
+  IconComments,
   IconDrawColor,
   RbCaret,
   IconSearch,
@@ -268,9 +387,12 @@ GlobalWorkerOptions.workerSrc = workerUrl
 
 const DRAW_TOOLS = [
   { tool: 'ink' as const, icon: IconInk, key: 'drawInk' as const },
+  { tool: 'measure' as const, icon: IconMeasure, key: 'drawMeasure' as const },
   { tool: 'rect' as const, icon: IconRect, key: 'drawRect' as const },
   { tool: 'ellipse' as const, icon: IconEllipse, key: 'drawEllipse' as const },
   { tool: 'arrow' as const, icon: IconArrow, key: 'drawArrow' as const },
+  { tool: 'polygon' as const, icon: IconPolygon, key: 'drawPolygon' as const },
+  { tool: 'caret' as const, icon: IconCaret, key: 'drawCaret' as const },
   { tool: 'note' as const, icon: IconNote, key: 'drawNote' as const },
 ]
 
@@ -282,24 +404,65 @@ const RIBBON_TABS = [
   { id: 'page', labelKey: 'ribbonTabPage' },
   { id: 'view', labelKey: 'ribbonTabView' },
 ] as const
-type RibbonTab = (typeof RIBBON_TABS)[number]['id'] | 'fillForm'
+type RibbonTab = (typeof RIBBON_TABS)[number]['id'] | 'fillForm' | 'formDesign'
 
 export default function App() {
   const { lang, t } = useI18n()
-  const collapse = useRibbonCollapse('genoffice-pdf-ribbon-collapsed')
+  const collapse = useRibbonCollapse('hermesoffice-pdf-ribbon-collapsed', {
+    collapse: t('ribbonCollapse'),
+    expand: t('ribbonExpand'),
+    // ⌥⌘K / Ctrl+Alt+K: the icon-only middle density (docs parity, see #362)
+    compact: t('ribbonCompact'),
+    expandFull: t('ribbonExpand'),
+  })
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [filePath, setFilePath] = useState('')
   const [status, setStatus] = useState<'loading' | 'error' | 'empty' | 'password' | 'ready'>(
     'loading',
   )
   const [sizes, setSizes] = useState<PageSize[]>([])
+  /** 1-based pages whose probe failed: they render as error tiles instead of canvases */
+  const [failedPages, setFailedPages] = useState<Set<number>>(new Set())
+  /** the message of a failed open, shown with the placeholder's loadError line */
+  const [openError, setOpenError] = useState<string | null>(null)
+  // Blank pages added this session live past the document's pages as virtual original
+  // indices (see BlankPageInput); allSizes is the page table every index lookup uses
+  const [blankPages, setBlankPages] = useState<LocalBlankPage[]>([])
+  const blankPagesRef = useRef(blankPages)
+  blankPagesRef.current = blankPages
+  const commitBlankPages = (next: LocalBlankPage[]) => {
+    blankPagesRef.current = next
+    setBlankPages(next)
+  }
+  const allSizes = useMemo(() => {
+    if (blankPages.length === 0) return sizes
+    const table = [...sizes]
+    for (const b of blankPages)
+      table[b.input.pageIndex] = { width: b.input.width, height: b.input.height }
+    return table
+  }, [sizes, blankPages])
+  const isBlankPage = (origIdx: number) => origIdx >= sizes.length
+  // Ref-based views for code that runs before React re-renders (AI tool turns): a blank
+  // page committed a moment ago is already addressable
+  const blankSizeNow = (origIdx: number): PageSize | undefined => {
+    const b = blankPagesRef.current.find((x) => x.input.pageIndex === origIdx)
+    return b ? { width: b.input.width, height: b.input.height } : undefined
+  }
+  const pageCountNow = () => sizes.length + blankPagesRef.current.length
   const [pageOrigins, setPageOrigins] = useState<[number, number][]>([])
   const [pageUserUnits, setPageUserUnits] = useState<number[]>([])
   const [baseRots, setBaseRots] = useState<number[]>([])
   const [scale, setScale] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageInput, setPageInput] = useState('1')
-  const [sidebar, setSidebar] = useState<'thumbs' | 'outline' | null>('thumbs')
+  const [sidebar, setSidebar] = useState<
+    'thumbs' | 'outline' | 'comments' | 'compare' | 'attachments' | null
+  >('thumbs')
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null)
+  const [compareName, setCompareName] = useState<string | null>(null)
+  const [compareBusy, setCompareBusy] = useState(false)
+  const [compareSwapped, setCompareSwapped] = useState(false)
+  const compareSidesRef = useRef<{ mine: PageText[]; theirs: PageText[] } | null>(null)
   const [sidebarW, setSidebarW] = useState(loadSidebarW)
   /** raster width for thumbnails — only updated when a drag ends (re-rastering every frame would jank) */
   const [thumbRasterW, setThumbRasterW] = useState(() => loadSidebarW() - SIDEBAR_CHROME)
@@ -341,10 +504,14 @@ export default function App() {
   }
   // Persisted so a closed AI panel stays closed on next launch (docs/slides parity)
   const [aiCollapsed, setAiCollapsed] = useState(
-    () => localStorage.getItem('genoffice-pdf-show-ai') === '0',
+    () => !aiPanelInitiallyOpen('hermesoffice-pdf-show-ai'),
   )
+  /** the panel setter in the "true = visible" sense the sidebar hook expects */
+  const setAiOpen = useCallback((open: boolean) => setAiCollapsed(!open), [])
+  // the sidebar switch is a soft hide; it closes the panel when it turns off
+  const aiSidebarEnabled = useAiSidebarEnabled(setAiOpen)
   useEffect(() => {
-    localStorage.setItem('genoffice-pdf-show-ai', aiCollapsed ? '0' : '1')
+    rememberAiPanelOpen('hermesoffice-pdf-show-ai', !aiCollapsed)
   }, [aiCollapsed])
   /** One-shot prompt pushed by the ribbon AI buttons; the panel auto-runs it (docs preset pattern) */
   const [aiPreset, setAiPreset] = useState<{ text: string; nonce: number } | null>(null)
@@ -353,6 +520,20 @@ export default function App() {
   const [nightMode, setNightMode] = useState(false)
   const [outline, setOutline] = useState<OutlineNode[] | null>(null)
   const [outlineGenerated, setOutlineGenerated] = useState(false)
+  /** Edited bookmark tree (user add/rename/delete over the file's own outline).
+   * Only embedded outlines are editable — a generated heading tree is derived.
+   * Entries carry explicit page targets (resolved at edit time through
+   * doc.getPageIndex); a named destination we cannot resolve marks the whole
+   * edit unresolvable and the panel offers no save path for it (fail closed:
+   * the file's own /Outlines stay untouched). */
+  const [pendingOutline, setPendingOutline] = useState<{
+    tree: OutlineEntryInput[] | null
+    unresolvable: boolean
+    /** the tree differs from the file's outline: what Save writes, and what makes the document dirty */
+    edited: boolean
+    /** the pane shows the add / rename / delete affordances */
+    editing: boolean
+  } | null>(null)
   const outlineDocRef = useRef<PDFDocumentProxy | null>(null)
   const [markups, setMarkups] = useState<LocalMarkup[]>([])
   const markupsRef = useRef(markups)
@@ -372,10 +553,11 @@ export default function App() {
   const [savedNotes, setSavedNotes] = useState<Map<number, SavedNoteAnnot[]>>(new Map())
   /** Active comment thread: its margin card is expanded and linked to its pin */
   const [activeNote, setActiveNote] = useState<{ origIdx: number; rootKey: string } | null>(null)
-  /** OS account name; the default author of new note comments */
+  /** Settings → General user name; the default author of new note comments */
   const [noteAuthor, setNoteAuthor] = useState('')
   useEffect(() => {
     window.pdfApi.getUsername().then(setNoteAuthor, () => {})
+    return window.pdfApi.onUsernameChanged(setNoteAuthor)
   }, [])
   const [highlightColor, setHighlightColor] = useState<[number, number, number]>(
     MARKUP_COLORS.highlight,
@@ -387,8 +569,35 @@ export default function App() {
   const drawingsRef = useRef(drawings)
   drawingsRef.current = drawings
   const [drawTool, setDrawTool] = useState<DrawTool | null>(null)
+  /** real-world scale for the measure tool; lives in the session only */
+  const measureScaleRef = useRef<MeasureScale | null>(null)
+  const [measureScaleDlg, setMeasureScaleDlg] = useState(false)
+  /** the drawn line waiting for its real length while the scale dialog is open */
+  const pendingMeasureRef = useRef<
+    (Extract<DrawingInput, { kind: 'measure' }> & { pageIndex: number }) | null
+  >(null)
+  /** the drawn line's PDF length, shown as the calibration ruler */
+  const [measureDrawnPts, setMeasureDrawnPts] = useState(0)
+  /** set when the user re-clicks the armed measure tool: the next drawn line
+      re-calibrates instead of measuring */
+  const measureRecalibrateRef = useRef(false)
+  /** one-shot: the deliberate second click disarms the tool while keeping the
+      re-calibration request; the drawTool effect below must not read that
+      transition as a stale flag to clear */
+  const keepMeasureRecalibrateRef = useRef(false)
+  // Any way of leaving the measure tool other than the deliberate second
+  // click — another tool, Esc, entering another edit mode — drops a pending
+  // re-calibration request, so the dialog cannot re-open unexpectedly later.
+  useEffect(() => {
+    if (keepMeasureRecalibrateRef.current) {
+      keepMeasureRecalibrateRef.current = false
+      return
+    }
+    if (drawTool !== 'measure') measureRecalibrateRef.current = false
+  }, [drawTool])
   const [redactions, setRedactions] = useState<LocalRedaction[]>([])
   const redactionApplyConfirmedRef = useRef(false)
+  const redactionRequestInFlightRef = useRef(false)
   const [redactionCopyInFlight, setRedactionCopyInFlight] = useState(false)
   const [textEdits, setTextEdits] = useState<LocalTextEdit[]>([])
   const [textInserts, setTextInserts] = useState<LocalTextInsert[]>([])
@@ -720,19 +929,83 @@ export default function App() {
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
   const [signDlg, setSignDlg] = useState(false)
+  /** Certificate (digital) signatures found in the file on disk, verified by the main process */
+  const [digitalSignatures, setDigitalSignatures] = useState<PdfSignatureInfo[]>([])
+  const [certSignDlg, setCertSignDlg] = useState(false)
+  const [batesDlg, setBatesDlg] = useState(false)
+  const [signaturesDlg, setSignaturesDlg] = useState(false)
   /** Confirmed signature awaiting placement; when non-null the page enters click-to-place mode */
   const [pendingSign, setPendingSign] = useState<SignatureData | null>(null)
   /** A /Sig widget selected from the form layer; confirmed signatures fit this rect directly. */
   const [signatureTarget, setSignatureTarget] = useState<FormWidget | null>(null)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState<'png' | 'jpg' | null>(null)
   const [formCatalog, setFormCatalog] = useState<FormCatalog | null>(null)
   const [formHasXfa, setFormHasXfa] = useState(false)
   const [documentEncrypted, setDocumentEncrypted] = useState(false)
+  /** false until a password-protected document has been opened for editing by the
+      session's own decryptor (pdf.js accepting the password is not the same claim) */
+  const [sessionUnlocked, setSessionUnlocked] = useState(false)
+  /** protection the next save writes; null while the document saves plain */
+  const [encryption, setEncryption] = useState<PdfEncryptionInput | null>(null)
+  /** password of the file on disk (null: it is plain) — a protection change makes it
+      differ from `encryption.userPassword` until the save lands */
+  const diskPasswordRef = useRef<string | null>(null)
+  /** the password the in-flight save is writing: it reaches diskPasswordRef
+      only once that save lands — the file on disk still carries the old one */
+  const pendingDiskPasswordRef = useRef<string | null | undefined>(undefined)
+  const [protectionDlg, setProtectionDlg] = useState(false)
+  /** the protection configuration differs from the file on disk (set, changed or
+      lifted since the last load); cleared by the post-save reload */
+  const [protectionDirty, setProtectionDirty] = useState(false)
+  /** what the file on disk allows this session: the /P limits bind a user
+      password (or the empty one of an owner-only file); the owner's ignore them */
+  const [diskLock, setDiskLock] = useState<{ unlockedAsOwner: boolean; modifying: boolean } | null>(
+    null,
+  )
+  /** embedded files as pdf.js reports them (filename → byte length) */
+  const [savedAttachments, setSavedAttachments] = useState<Map<string, number> | null>(null)
+  const [pendingAttachmentAdds, setPendingAttachmentAdds] = useState<
+    { name: string; bytesBase64: string }[]
+  >([])
+  const [pendingAttachmentRemoves, setPendingAttachmentRemoves] = useState<string[]>([])
+  const savedAttachmentBytesRef = useRef<Map<string, string>>(new Map())
   const [activeFormWidgetId, setActiveFormWidgetId] = useState<string | null>(null)
   const formControlRefs = useRef<Map<string, HTMLElement>>(new Map())
   const [formEdits, setFormEdits] = useState<Map<string, FormValueInput>>(new Map())
   const formEditsRef = useRef(formEdits)
   formEditsRef.current = formEdits
+  const [formFields, setFormFields] = useState<LocalFormField[]>([])
+  // Written only through commitFormFields: re-syncing the ref from render state would let a
+  // high-priority render (a click) that skipped a queued post-save update reset it to the
+  // pre-save list, and the next placement would resurrect the saved fields as pending
+  const formFieldsRef = useRef(formFields)
+  const commitFormFields = (next: LocalFormField[]) => {
+    formFieldsRef.current = next
+    setFormFields(next)
+  }
+  const [formWidgetEdits, setFormWidgetEdits] = useState<Map<string, FormWidgetEditInput>>(
+    new Map(),
+  )
+  const formWidgetEditsRef = useRef(formWidgetEdits)
+  formWidgetEditsRef.current = formWidgetEdits
+  const [formDesignTool, setFormDesignTool] = useState<FormDesignTool | null>(null)
+  const [formDesignKeepTool, setFormDesignKeepTool] = useState(false)
+  const [formDesignPreview, setFormDesignPreview] = useState(false)
+  const [selectedFormFieldIds, setSelectedFormFieldIds] = useState<string[]>([])
+  const setSelectedFormFieldId = (id: string | null) => setSelectedFormFieldIds(id ? [id] : [])
+  const [formMenu, setFormMenu] = useState<{
+    x: number
+    y: number
+    fieldId: string | null
+    pageIndex: number
+  } | null>(null)
+  const formMenuRef = useRef<HTMLDivElement | null>(null)
+  const [arrangeOpen, setArrangeOpen] = useState(false)
+  const [detectingFields, setDetectingFields] = useState(false)
+  const arrangeWrapRef = useRef<HTMLDivElement | null>(null)
+  const formClipboardRef = useRef<FormFieldInput[]>([])
+  /** The field just placed: its card takes focus and offers Cancel */
+  const [freshFormFieldId, setFreshFormFieldId] = useState<string | null>(null)
   const [rotations, setRotations] = useState<Map<number, number>>(new Map())
   /** Latest rotations for same-turn AI geometry (an apply_ops rotation then an image bake) */
   const rotationsRef = useRef(rotations)
@@ -755,30 +1028,41 @@ export default function App() {
   } | null>(null)
   /** Ask-AI popover opened from the markup bar; the anchor rect is captured at open */
   const [askPop, setAskPop] = useState<{ rect: AskAnchorRect; excerpt: string } | null>(null)
-  /** Whole-document saved-annotation counts per original page for the AI context
-      (scanned once per doc; kept per-page so deleted pages can be excluded) */
-  const [aiAnnotCounts, setAiAnnotCounts] = useState<{
-    threads: number[]
-    markups: number[]
+  /** Whole-document saved-annotation counts per original page for the AI context.
+      The scan starts on first AI use, not when the document opens. */
+  const [aiAnnotCounts, setAiAnnotCounts] = useState<SavedAnnotCounts | null>(null)
+  const aiAnnotCountsLoaderRef = useRef<{
+    doc: PDFDocumentProxy
+    controller: AbortController
+    load: () => Promise<SavedAnnotCounts>
   } | null>(null)
   useEffect(() => {
     setAiAnnotCounts(null)
-    if (!doc) return
-    let stale = false
-    void (async () => {
-      const threads: number[] = []
-      const markupCounts: number[] = []
-      for (let i = 0; i < doc.numPages && !stale; i++) {
-        const a = await loadSavedAnnots(doc, i)
-        threads.push(a.notes.filter((n) => n.inReplyTo === null).length)
-        markupCounts.push(a.markups.length)
-      }
-      if (!stale) setAiAnnotCounts({ threads, markups: markupCounts })
-    })()
+    aiAnnotCountsLoaderRef.current?.controller.abort()
+    aiAnnotCountsLoaderRef.current = null
     return () => {
-      stale = true
+      aiAnnotCountsLoaderRef.current?.controller.abort()
+      aiAnnotCountsLoaderRef.current = null
     }
   }, [doc])
+  const startAiAnnotCountScan = useCallback(() => {
+    if (!doc || aiAnnotCountsLoaderRef.current?.doc === doc) return
+    const controller = new AbortController()
+    const entry = {
+      doc,
+      controller,
+      load: createSavedAnnotCountsLoader(doc, loadSavedAnnots, controller.signal),
+    }
+    aiAnnotCountsLoaderRef.current = entry
+    void entry.load().then((counts) => {
+      if (aiAnnotCountsLoaderRef.current === entry) setAiAnnotCounts(counts)
+    })
+  }, [doc])
+  // the first AI turn should already know whether the file carries review
+  // feedback, so an open panel starts the scan before the user sends anything
+  useEffect(() => {
+    if (!aiCollapsed) startAiAnnotCountScan()
+  }, [aiCollapsed, startAiAnnotCountScan])
   const [selected, setSelected] = useState<AnnotSelection | null>(null)
   /** Transparency presets fold-out inside the image selection popup */
   const [opacityMenu, setOpacityMenu] = useState(false)
@@ -796,6 +1080,8 @@ export default function App() {
   const savedOnceRef = useRef(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchMatchCase, setSearchMatchCase] = useState(false)
+  const [searchWholeWord, setSearchWholeWord] = useState(false)
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
   const [searchCur, setSearchCur] = useState(0)
   const [printing, setPrinting] = useState(false)
@@ -823,6 +1109,20 @@ export default function App() {
   const [printMode, setPrintMode] = useState<'all' | 'current' | 'custom'>('all')
   const [printInput, setPrintInput] = useState('')
   const [printInvalid, setPrintInvalid] = useState(false)
+  const [printParity, setPrintParity] = useState<PageParity>('all')
+  const [printers, setPrinters] = useState<PrinterInfo[]>([])
+  const [printDevice, setPrintDevice] = useState(IS_MAC ? PRINT_SYSTEM_DIALOG : '')
+  const [printCopies, setPrintCopies] = useState(1)
+  const [printCollate, setPrintCollate] = useState(true)
+  const [printDuplex, setPrintDuplex] = useState<PrintDuplex>('simplex')
+  // the chosen printer's driver option groups (quality, color, media type) and
+  // what the user picked from them; empty for the system dialog and on
+  // platforms where the CUPS route does not run
+  const [driverOptions, setDriverOptions] = useState<PrinterOption[]>([])
+  // bumped on every printer switch: a slow printerOptions() answer from an
+  // earlier queue must not overwrite the current queue's groups
+  const driverOptionsRequest = useRef(0)
+  const [driverChoices, setDriverChoices] = useState<Record<string, string>>({})
   /** Page-crop dialog: rendered page bitmap + which page it shows */
   const [pageCropDlg, setPageCropDlg] = useState<{ png: string; origIdx: number } | null>(null)
   const [cropAllPages, setCropAllPages] = useState(false)
@@ -841,17 +1141,29 @@ export default function App() {
   docFontsRef.current = docFonts
   /** OCR results for scanned pages, keyed by original page index (reset per doc) */
   const [ocrPages, setOcrPages] = useState<Map<number, OcrPageData>>(new Map())
-  const searchIndexRef = useRef<{ doc: PDFDocumentProxy; promise: Promise<SearchIndex> } | null>(
-    null,
-  )
+  /** One text extraction per loaded document, shared by search, paragraph boxes,
+      the AI tools and the auto-OCR pass */
+  const [searchIndexCache] = useState(createSearchIndexCache)
+  /** In-flight auto-OCR pass, so its toast can stop it */
+  const ocrAbortRef = useRef<AbortController | null>(null)
+  /** Auto-OCR progress: `stop: null` while the pass runs (the toast offers Stop),
+      then the reason it ended, for the cap and a user cancel alike. `pending` is
+      the queue a capped pass can be continued over. */
+  const [ocrRun, setOcrRun] = useState<{
+    done: number
+    total: number
+    stop: Extract<AutoOcrStop, 'cap' | 'cancelled'> | null
+    /** The pages the pass left, which its Continue button hands to the next pass */
+    pending?: number[] | null
+  } | null>(null)
   const warnedXfaPathRef = useRef('')
   const searchJumpRef = useRef<{ matches: SearchMatch[]; cur: number } | null>(null)
 
   /** Visible pages (with unsaved reorder, deleted pages hidden): position → original page index */
   const visList = useMemo(() => {
-    const base = order ?? sizes.map((_, i) => i)
+    const base = order ?? allSizes.map((_, i) => i)
     return base.filter((i) => !deleted.has(i))
-  }, [sizes, deleted, order])
+  }, [allSizes, deleted, order])
   const pageCount = visList.length
   // AI tool calls within one turn run before React re-renders, so the order and
   // deletions they read and write go through these refs instead of the closed-over state
@@ -860,7 +1172,7 @@ export default function App() {
   const deletedRef = useRef(deleted)
   deletedRef.current = deleted
   const visListOf = (ord: number[] | null) =>
-    (ord ?? sizes.map((_, i) => i)).filter((i) => !deletedRef.current.has(i))
+    (ord ?? allSizes.map((_, i) => i)).filter((i) => !deletedRef.current.has(i))
 
   const rows = useMemo(() => spreadRows(visList, spread), [visList, spread])
 
@@ -877,7 +1189,7 @@ export default function App() {
   /** Page geometry: unrotated size + total display rotation; the single entry point for overlay coord conversion */
   const pageGeom = useCallback(
     (origIdx: number): PageGeom => {
-      const s = sizes[origIdx]!
+      const s = allSizes[origIdx] ?? blankSizeNow(origIdx)!
       const [x0, y0] = pageOrigins[origIdx] ?? [0, 0]
       return {
         pw: s.width,
@@ -888,11 +1200,25 @@ export default function App() {
         userUnit: pageUserUnits[origIdx] ?? 1,
       }
     },
-    [sizes, baseRots, pageOrigins, pageUserUnits, rotDelta],
+    [allSizes, baseRots, pageOrigins, pageUserUnits, rotDelta],
   )
   /** Latest geometry for async pipelines that must not rebind on rotation (OCR) */
   const pageGeomRef = useRef(pageGeom)
   pageGeomRef.current = pageGeom
+  /** the auto-OCR's words as white text inserts: baked into every save while the
+      recognition data is in the session (the post-save reload finds a text layer,
+      so the pass never re-runs and the bake never doubles) */
+  const ocrBakeInserts = useMemo(() => {
+    const out: LocalTextInsert[] = []
+    for (const [origIdx, data] of ocrPages) {
+      const geom = pageGeomRef.current(origIdx)
+      if (!geom) continue
+      for (const input of buildOcrBakeInserts(origIdx, data.words, geom)) {
+        out.push({ id: `ocr-bake-${origIdx}-${out.length}`, input })
+      }
+    }
+    return out
+  }, [ocrPages])
   /** Current original page index, readable without rebinding the OCR pass on scroll */
   const currentOrigIdxRef = useRef(0)
   currentOrigIdxRef.current = visList[currentPage - 1] ?? 0
@@ -907,12 +1233,13 @@ export default function App() {
     scrollRef,
     rows.length,
     '800px 0px',
+    status === 'ready',
   )
   const { visible: visibleThumbs, setItemRef: setThumbRef } = useVisibleSet(
     thumbsRef,
     pageCount,
     '400px 0px',
-    sidebar === 'thumbs',
+    status === 'ready' && sidebar === 'thumbs',
   )
 
   // Keep the current page's thumbnail in view as the main viewport drives currentPage
@@ -962,55 +1289,150 @@ export default function App() {
       saved?: SavedSnapshot,
       waitForPageNos: number[] = [],
     ) => {
-      const data = await window.pdfApi.readFile(path)
-      const bytes = new Uint8Array(data)
+      const bytes = await readFileBytes(window.pdfApi, path)
       setFormHasXfa(hasXfaMarker(bytes))
       if (!saved) {
         setFormCatalog(null)
+        setSavedAttachments(null)
+        setPendingAttachmentAdds([])
+        setPendingAttachmentRemoves([])
         setSavedStaticFormFills([])
         setActiveFormWidgetId(null)
         formControlRefs.current.clear()
+        commitFormFields([])
+        commitBlankPages([])
+        setFormWidgetEdits(new Map())
+        setFormDesignTool(null)
+        setFormDesignPreview(false)
+        setSelectedFormFieldId(null)
+        setFreshFormFieldId(null)
       }
-      const loaded = await getDocument({
-        data: bytes,
-        password: passwordRef.current,
-        ...DOC_OPTS,
-      }).promise
-      const metadata = await loaded.getMetadata()
-      const documentInfo = metadata.info as {
-        EncryptFilterName?: string | null
-        IsXFAPresent?: boolean
-        Title?: string
-        Author?: string
-        Subject?: string
-        Keywords?: string
+      const task = loadPdfForView(bytes, passwordRef.current)
+      let loaded: PDFDocumentProxy
+      try {
+        loaded = await task.promise
+      } catch (err) {
+        // a failed open (wrong password, corrupt file) leaves the rejected task
+        // holding the file bytes and its worker: retire it before surfacing
+        void task.destroy()
+        throw err
       }
-      setDocInfo({
-        title: documentInfo.Title ?? '',
-        author: documentInfo.Author ?? '',
-        subject: documentInfo.Subject ?? '',
-        keywords: documentInfo.Keywords ?? '',
-      })
-      const formFeatures = documentFormFeatures(documentInfo, bytes)
-      setFormHasXfa(formFeatures.hasXfa)
-      setDocumentEncrypted(formFeatures.encrypted)
       const all: PageSize[] = []
       const rots: number[] = []
       const origins: [number, number][] = []
       const userUnits: number[] = []
-      for (let i = 1; i <= loaded.numPages; i++) {
-        const page = await loaded.getPage(i)
-        // Unrotated size; display size is derived by geom from the total rotation
-        const vp = page.getViewport({ scale: 1, rotation: 0 })
-        all.push({ width: vp.width, height: vp.height })
-        rots.push(page.rotate ?? 0)
-        origins.push([page.view[0]!, page.view[1]!])
-        userUnits.push(page.userUnit ?? 1)
+      try {
+        const metadata = await loaded.getMetadata()
+        const documentInfo = metadata.info as {
+          EncryptFilterName?: string | null
+          IsXFAPresent?: boolean
+          Title?: string
+          Author?: string
+          Subject?: string
+          Keywords?: string
+        }
+        setDocInfo({
+          title: documentInfo.Title ?? '',
+          author: documentInfo.Author ?? '',
+          subject: documentInfo.Subject ?? '',
+          keywords: documentInfo.Keywords ?? '',
+        })
+        const formFeatures = documentFormFeatures(documentInfo, bytes)
+        setFormHasXfa(formFeatures.hasXfa)
+        setDocumentEncrypted(formFeatures.encrypted)
+        if (formFeatures.encrypted) {
+          // pdf.js already accepted this password for rendering; the session's own
+          // handler must accept it too before the document counts as editable
+          const password = passwordRef.current ?? ''
+          const outcome = await window.pdfApi.decryptPdf(bytes, password)
+          if (outcome.ok) {
+            setEncryption({
+              userPassword: password,
+              ownerPassword: password,
+              permissions: outcome.permissions,
+            })
+            setSessionUnlocked(true)
+            setDiskLock({
+              unlockedAsOwner: outcome.unlockedAs === 'owner',
+              modifying: outcome.permissions.modifying,
+            })
+          } else {
+            setEncryption(null)
+            setSessionUnlocked(false)
+            setDiskLock(null)
+          }
+          diskPasswordRef.current = password
+        } else {
+          setEncryption(null)
+          setSessionUnlocked(false)
+          setDiskLock(null)
+          diskPasswordRef.current = null
+        }
+        setProtectionDirty(false)
+        const probe = await probePageGeometry(loaded)
+        for (const geo of probe.pages) {
+          all.push({ width: geo.width, height: geo.height })
+          rots.push(geo.rotate)
+          origins.push(geo.origin)
+          userUnits.push(geo.userUnit)
+        }
+        // A page that cannot be probed no longer destroys the document: the
+        // tile renders as an error placeholder and the rest of the book opens
+        // (hermesoffice#2366 — one broken page deep in a large file used to blank
+        // the whole viewer with the reason only in the console)
+        if (probe.failures.length > 0) {
+          setFailedPages(new Set(probe.failures.map((f) => f.page)))
+          showNotice(
+            t('pdfPagesFailed', {
+              count: probe.failures.length,
+              detail: probe.failures
+                .slice(0, 3)
+                .map((f) => `#${f.page} ${f.message}`)
+                .join(', '),
+            }),
+          )
+        } else setFailedPages(new Set())
+      } catch (err) {
+        // getMetadata/page probing failed after the document resolved but before
+        // setDoc adopted it: destroy the half-open document (pdfjs-dist 6.x
+        // removed PDFDocumentProxy.destroy(); go through the loading task) and
+        // keep the previous document on screen, then surface the error
+        void loaded.loadingTask.destroy()
+        throw err
       }
+      void loaded
+        .getAttachments()
+        .then(async (all) => {
+          const map = new Map<string, number>()
+          const bytes = new Map<string, string>()
+          for (const [name, file] of all ?? new Map()) {
+            // v6 ships metadata here and the bytes over getAttachmentContent(id)
+            const content = file.content ?? (await loaded.getAttachmentContent(name))
+            map.set(name, content?.byteLength ?? 0)
+            // String.fromCharCode spread chokes on huge files; chunks keep the stack flat
+            if (content) {
+              let text = ''
+              for (let i = 0; i < content.length; i += 0x8000) {
+                text += String.fromCharCode(...content.subarray(i, i + 0x8000))
+              }
+              bytes.set(name, window.btoa(text))
+            }
+          }
+          savedAttachmentBytesRef.current = bytes
+          setSavedAttachments(map)
+        })
+        .catch(() => setSavedAttachments(new Map()))
+      setPendingAttachmentAdds([])
+      setPendingAttachmentRemoves([])
       try {
         setFormCatalog(await buildFormCatalog(loaded))
       } catch {
-        setFormCatalog({ widgets: [], fields: new Map(), byPage: new Map() })
+        setFormCatalog({
+          widgets: [],
+          fields: new Map(),
+          byPage: new Map(),
+          otherFieldNames: new Set(),
+        })
       }
       try {
         setSavedStaticFormFills(await window.pdfApi.listStaticFormFills(path))
@@ -1059,6 +1481,7 @@ export default function App() {
         setTextDraft(null)
         setStampCfg(null)
         setFormEdits(new Map())
+        setFormWidgetEdits(new Map())
         setSignatureTarget(null)
         rotationsRef.current = new Map()
         setRotations(rotationsRef.current)
@@ -1069,7 +1492,17 @@ export default function App() {
         // Post-save reload: subtract exactly what the save wrote. Edits made while the
         // write was in flight stay pending, with page indices remapped through the
         // saved deletions/reorder (a page missing from pageMap is gone from the file).
-        const remap = saved.pageMap
+        const remap = new Map(saved.pageMap)
+        // Blank pages added while the write was in flight keep their edits: their virtual
+        // indices move past the reloaded document's pages and remap like any other page
+        const inFlightBlanks = blankPagesRef.current
+          .filter((b) => !saved.blankPageIds.has(b.id))
+          .sort((a, b) => a.input.pageIndex - b.input.pageIndex)
+          .map((b, k) => {
+            const pageIndex = loaded.numPages + k
+            remap.set(b.input.pageIndex, pageIndex)
+            return { ...b, input: { ...b.input, pageIndex } }
+          })
         setOutline((prev) => (prev ? remapOutlinePages(prev, remap) : prev))
         // Redaction marks are deliberately omitted from ordinary saves. Keep them
         // through the reload, remapping their original page indices if this save
@@ -1146,6 +1579,15 @@ export default function App() {
             ]
           }),
         )
+        commitBlankPages(inFlightBlanks)
+        commitFormFields(
+          formFieldsRef.current.flatMap((f) => {
+            if (saved.formFieldIds.has(f.id)) return []
+            const ni = remap.get(f.input.pageIndex)
+            if (ni === undefined) return []
+            return [ni === f.input.pageIndex ? f : { ...f, input: { ...f.input, pageIndex: ni } }]
+          }),
+        )
         updateImageEdits((prev) =>
           prev.flatMap((ie) => {
             if (saved.imageEditIds.has(ie.id)) return []
@@ -1173,11 +1615,31 @@ export default function App() {
         // it is in the file now, a new object means the user changed it during the save
         setStampCfg((prev) => (prev === saved.stampCfg ? null : prev))
         setMetadata((prev) => (prev === saved.metadata ? null : prev))
+        // The tree this save wrote is in the file now: an open editing session keeps it
+        // as its clean base, a committed one is done. The save may have deleted or
+        // reordered pages, so the tree's page indices are the ones from before it —
+        // re-point them at the pages the file has now.
+        setPendingOutline((prev) =>
+          prev && saved.outline !== null && prev.tree === saved.outline
+            ? prev.editing
+              ? { ...prev, edited: false, tree: remapOutlineTree(prev.tree ?? [], remap) }
+              : null
+            : prev,
+        )
         setFormEdits((prev) => {
           const next = new Map<string, FormValueInput>()
           for (const [k, v] of prev) if (saved.formEdits.get(k) !== v) next.set(k, v)
           return next
         })
+        setFormWidgetEdits((prev) => {
+          const next = new Map<string, FormWidgetEditInput>()
+          for (const [k, v] of prev) if (saved.formWidgetEdits.get(k) !== v) next.set(k, v)
+          return next
+        })
+        // Pending fields written by this save are gone from the design list; a selection pointing at
+        // them would keep Delete/Arrange armed with nothing to act on
+        setSelectedFormFieldIds((prev) => prev.filter((id) => !saved.formFieldIds.has(id)))
+        setFreshFormFieldId((prev) => (prev && saved.formFieldIds.has(prev) ? null : prev))
         const nextRotations = new Map<number, number>()
         for (const [oldIdx, delta] of rotationsRef.current) {
           const residual = (((delta - (saved.rotations.get(oldIdx) ?? 0)) % 360) + 360) % 360
@@ -1204,7 +1666,7 @@ export default function App() {
           return mapped.every((n, i) => n === i) ? null : mapped
         })
       }
-      setFileSize(data.byteLength)
+      setFileSize(bytes.byteLength)
       setSelected(null)
       setDeleteToast(false)
       setUndoStack([])
@@ -1215,6 +1677,7 @@ export default function App() {
       if (!saved) {
         setOutline(null)
         setOutlineGenerated(false)
+        setPendingOutline(null)
       }
       void loaded
         .getOutline()
@@ -1242,6 +1705,7 @@ export default function App() {
     async (path: string) => {
       try {
         setFilePath(path)
+        setOpenError(null)
         // A newly opened file starts outside the autosave gate
         savedOnceRef.current = false
         await loadDoc(path, null)
@@ -1258,6 +1722,20 @@ export default function App() {
         setStatus('ready')
       } catch (err) {
         if ((err as Error | null)?.name === 'PasswordException') {
+          // a certificate-encrypted document has no password to type: pdf.js
+          // reports it like a password failure, and the answer has to name the
+          // real reason instead of looping the prompt
+          try {
+            const raw = await readFileBytes(window.pdfApi, path)
+            const probe = await window.pdfApi.decryptPdf(raw, '')
+            if (!probe.ok && probe.reason === 'certificate-encryption') {
+              showNotice(t('pwCertEncrypted'))
+              setStatus('error')
+              return
+            }
+          } catch {
+            /* classification is best-effort: the prompt still works without it */
+          }
           // like docs: a failed attempt clears the field alongside the error
           setPwWrong(passwordRef.current !== undefined)
           setPwInput('')
@@ -1265,6 +1743,7 @@ export default function App() {
           return
         }
         console.error('[pdf] open failed:', err)
+        setOpenError(err instanceof Error ? err.message : String(err))
         setStatus('error')
       }
     },
@@ -1282,18 +1761,29 @@ export default function App() {
     })()
   }, [openPath])
 
-  /** pdf-lib cannot write encrypted files, including owner-protected files that open without a password. */
-  const readOnly = status === 'ready' && (passwordRef.current !== undefined || documentEncrypted)
+  /** Editable once the session can both read and write the document: password-opened
+      files count after our own decryptor accepted them (the save pipeline re-reads the
+      protected bytes from disk, which pdf-lib alone cannot). A session holding only
+      the user password — or the empty one of an owner-only file — is additionally
+      bound by the /P the file carries: modifying denied means read-only. */
+  const readOnly =
+    status === 'ready' &&
+    documentEncrypted &&
+    (!sessionUnlocked || (diskLock !== null && !diskLock.unlockedAsOwner && !diskLock.modifying))
+  /** Only the owner password may change or lift protection: a user-password
+      session, even one allowed to modify the content, must not be able to strip
+      the owner's password. A plain document has no protection to lose. */
+  const protectionEditable = mayChangeProtection(readOnly, diskLock)
 
   useEffect(() => {
     if (
       activeFormWidgetId &&
-      formCatalog &&
-      !formCatalog.widgets.some((widget) => widget.id === activeFormWidgetId)
+      ((formCatalog && !formCatalog.widgets.some((widget) => widget.id === activeFormWidgetId)) ||
+        formWidgetEdits.get(activeFormWidgetId)?.remove)
     ) {
       setActiveFormWidgetId(null)
     }
-  }, [activeFormWidgetId, formCatalog])
+  }, [activeFormWidgetId, formCatalog, formWidgetEdits])
 
   const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s))
 
@@ -1510,7 +2000,7 @@ export default function App() {
 
   // hermesoffice CLI (`open --page`, `selection`): the shell evaluates this hook
   useEffect(() => {
-    ;(window as unknown as Record<string, unknown>).__genofficeControl = (req: ControlRequest) =>
+    ;(window as unknown as Record<string, unknown>).__hermesofficeControl = (req: ControlRequest) =>
       handlePdfControl(req, {
         loaded: doc !== null,
         pageCount,
@@ -1532,7 +2022,80 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToPage reads the same render's rows
   }, [visList])
 
-  const formWidgets = visibleFormWidgets(formCatalog, visList)
+  /** The file's widgets with pending Form Design edits applied: moved, re-flagged, removed */
+  const liveFormCatalog = useMemo((): FormCatalog | null => {
+    if (!formCatalog || formWidgetEdits.size === 0) return formCatalog
+    const widgets = formCatalog.widgets.flatMap((w) => {
+      const e = formWidgetEdits.get(w.id)
+      if (!e) return [w]
+      if (e.remove) return []
+      return [{ ...w, rect: e.rect ?? w.rect, required: e.required ?? w.required }]
+    })
+    const byPage = new Map<number, FormWidget[]>()
+    for (const w of widgets) byPage.set(w.pageIndex, [...(byPage.get(w.pageIndex) ?? []), w])
+    return { ...formCatalog, widgets, byPage }
+  }, [formCatalog, formWidgetEdits])
+  const designFieldsByPage = useMemo(() => {
+    const out = new Map<number, DesignField[]>()
+    const push = (f: DesignField) => out.set(f.pageIndex, [...(out.get(f.pageIndex) ?? []), f])
+    for (const w of liveFormCatalog?.widgets ?? []) {
+      push({
+        id: widgetDesignId(w.id),
+        kind: w.kind,
+        name: w.fieldName,
+        pageIndex: w.pageIndex,
+        rect: w.rect,
+        required: w.required,
+        existing: true,
+      })
+    }
+    for (const f of formFields) {
+      push({
+        id: f.id,
+        kind: f.input.kind,
+        name: f.input.name,
+        pageIndex: f.input.pageIndex,
+        rect: f.input.rect,
+        required: !!f.input.required,
+        existing: false,
+        pending: f,
+      })
+    }
+    return out
+  }, [liveFormCatalog, formFields])
+  const selectedDesignFields = useMemo(() => {
+    const all = [...designFieldsByPage.values()].flat()
+    return selectedFormFieldIds.flatMap((id) => all.filter((f) => f.id === id))
+  }, [designFieldsByPage, selectedFormFieldIds])
+  const selectedDesignField = selectedDesignFields.length === 1 ? selectedDesignFields[0]! : null
+  // A pending field with its property card open is still being authored: saves leave it out
+  // until Done, or a save landing mid-edit writes the stale version and the post-save reload
+  // drops the edits made meanwhile
+  const heldFormFieldId =
+    selectedDesignField && !selectedDesignField.existing && !formDesignPreview
+      ? selectedDesignField.id
+      : null
+  const savableFormFields = heldFormFieldId
+    ? formFields.filter((f) => f.id !== heldFormFieldId)
+    : formFields
+  const selectedFormFieldIdSet = useMemo(
+    () => new Set(selectedFormFieldIds),
+    [selectedFormFieldIds],
+  )
+  const arrangeItems: [Arrange, string, number][] = [
+    ['left', t('formDesignAlignLeft'), 2],
+    ['centerH', t('formDesignAlignCenterH'), 2],
+    ['right', t('formDesignAlignRight'), 2],
+    ['top', t('formDesignAlignTop'), 2],
+    ['centerV', t('formDesignAlignCenterV'), 2],
+    ['bottom', t('formDesignAlignBottom'), 2],
+    ['distributeH', t('formDesignDistributeH'), 3],
+    ['distributeV', t('formDesignDistributeV'), 3],
+    ['sameWidth', t('formDesignSameWidth'), 2],
+    ['sameHeight', t('formDesignSameHeight'), 2],
+    ['sameSize', t('formDesignSameSize'), 2],
+  ]
+  const formWidgets = visibleFormWidgets(liveFormCatalog, visList)
   const signedFormWidgetIds = useMemo(
     () =>
       new Set(
@@ -1631,7 +2194,7 @@ export default function App() {
     return [...records.values()]
   }, [imageEdits, savedStaticFormFills])
 
-  const ordinaryDirty =
+  const dirtyBesidesFormFields =
     markups.length > 0 ||
     annotDeletes.length > 0 ||
     noteEdits.length > 0 ||
@@ -1641,10 +2204,23 @@ export default function App() {
     imageEdits.length > 0 ||
     stampCfg !== null ||
     formEdits.size > 0 ||
+    blankPages.length > 0 ||
+    formWidgetEdits.size > 0 ||
     rotations.size > 0 ||
     deleted.size > 0 ||
     order !== null ||
-    metadata !== null
+    metadata !== null ||
+    protectionDirty ||
+    (pendingOutline?.edited ?? false) ||
+    pendingAttachmentAdds.length > 0 ||
+    pendingAttachmentRemoves.length > 0
+  // The pending OCR bake deliberately stays out of dirty: a scan the user only
+  // opened to read must not show the modified marker, prompt on close or feed
+  // the save-in-flight plumbing. The bake still rides the save request
+  // (anythingToSave keeps it), so an explicit ⌘S writes it — a user action —
+  // and everything the reader does afterwards sees a text layer.
+  const ordinaryDirty = dirtyBesidesFormFields || formFields.length > 0
+  const savableDirty = dirtyBesidesFormFields || savableFormFields.length > 0
   const dirty = redactions.length > 0 || ordinaryDirty
 
   // Mirror dirty state to the main process (close-tab/close-window guard)
@@ -1687,6 +2263,9 @@ export default function App() {
     imageEdits: imageEditsRef.current,
     stampCfg: stampRef.current,
     formEdits: formEditsRef.current,
+    formFields: formFieldsRef.current,
+    blankPages: blankPagesRef.current,
+    formWidgetEdits: formWidgetEditsRef.current,
     rotations: rotationsRef.current,
     deleted: deletedRef.current,
     order: orderRef.current,
@@ -1705,7 +2284,7 @@ export default function App() {
 
   const editOpContext = (): OpContext => ({
     readOnly,
-    pageCount: sizes.length,
+    pageCount: pageCountNow(),
     deleted: deletedRef.current,
     claimedImages: new Set(
       imageEditsRef.current.flatMap((e) =>
@@ -1714,6 +2293,16 @@ export default function App() {
           : [`${e.input.pageIndex}:${imageRectKey(e.input.oldRect)}`],
       ),
     ),
+    fieldNames: new Set([
+      ...liveFieldNames(formCatalog, formWidgetEditsRef.current),
+      ...formFieldsRef.current.map((f) => f.input.name),
+    ]),
+    radioGroups: new Set([
+      ...[...(formCatalog?.fields.values() ?? [])]
+        .filter((f) => f.kind === 'radio')
+        .map((f) => f.name),
+      ...formFieldsRef.current.filter((f) => f.input.kind === 'radio').map((f) => f.input.name),
+    ]),
   })
 
   /**
@@ -1772,6 +2361,12 @@ export default function App() {
       formEditsRef.current = reduce('formEdits', formEditsRef.current)
       setFormEdits(formEditsRef.current)
     }
+    if (touched.has('formFields')) commitFormFields(reduce('formFields', formFieldsRef.current))
+    if (touched.has('blankPages')) commitBlankPages(reduce('blankPages', blankPagesRef.current))
+    if (touched.has('formWidgetEdits')) {
+      formWidgetEditsRef.current = reduce('formWidgetEdits', formWidgetEditsRef.current)
+      setFormWidgetEdits(formWidgetEditsRef.current)
+    }
     if (touched.has('rotations')) {
       rotationsRef.current = reduce('rotations', rotationsRef.current)
       setRotations(rotationsRef.current)
@@ -1812,6 +2407,7 @@ export default function App() {
           moveBy: e.moveBy,
           baseInk: e.baseInk,
           baseFont: e.baseFont,
+          paper: e.paper,
         })),
     ]
   }
@@ -1821,13 +2417,15 @@ export default function App() {
     applyEditOps([
       {
         op: 'setPageOrder',
-        order: [...vis, ...sizes.map((_, i) => i).filter((i) => !vis.includes(i))],
+        order: [...vis, ...allSizes.map((_, i) => i).filter((i) => !vis.includes(i))],
       },
     ])
 
   const applySnapshot = (s: EditSnapshot) => {
     markupsRef.current = s.markups
     formEditsRef.current = s.formEdits
+    formWidgetEditsRef.current = s.formWidgetEdits
+    setFormWidgetEdits(s.formWidgetEdits)
     annotDeletesRef.current = s.annotDeletes
     noteEditsRef.current = s.noteEdits
     drawingsRef.current = s.drawings
@@ -1841,6 +2439,12 @@ export default function App() {
     setDrawings(s.drawings)
     applyTextEdits(() => s.textEdits)
     commitTextInserts(s.textInserts)
+    commitFormFields(s.formFields)
+    commitBlankPages(s.blankPages)
+    setSelectedFormFieldIds((cur) =>
+      cur.filter((id) => designWidgetId(id) || s.formFields.some((f) => f.id === id)),
+    )
+    setFreshFormFieldId((cur) => (cur && s.formFields.some((f) => f.id === cur) ? cur : null))
     updateImageEdits(() => s.imageEdits)
     setTextDraft(null)
     // The comment being rewritten may not exist in the restored snapshot; confirming a
@@ -1884,53 +2488,90 @@ export default function App() {
       AI tools address them like born-digital text. */
   const getSearchIndex = useCallback((): Promise<SearchIndex> | null => {
     if (!doc) return null
-    if (searchIndexRef.current?.doc !== doc) {
-      searchIndexRef.current = { doc, promise: buildSearchIndex(doc) }
-    }
-    const base = searchIndexRef.current.promise
+    const base = searchIndexCache.get(doc)
     if (ocrPages.size === 0) return base
     return base.then((idx) => idx.map((entry, i) => ocrPages.get(i)?.entry ?? entry))
-  }, [doc, ocrPages])
+  }, [doc, ocrPages, searchIndexCache])
 
   // Auto-OCR for scanned pages (issue #119): once the base index shows pages with
   // no extractable text, recognize them sequentially in the background, starting
   // at the current page. Boxes are stored in PDF space, so later zooms/rotations
-  // reproject.
+  // reproject. The pass runs renderer-side, one page at a time, so the user's
+  // Stop only has to abort this signal.
+
+  /** Start a pass over the document's scanned pages. `pending` continues a
+      capped pass over the pages it left; `null` starts at the current page.
+      `doneBefore` is what the passes already recognized, so a continued
+      pass keeps reporting the count for the whole document and not just for
+      itself. A cap is a pause and not a cancel, so a continuation reuses the
+      finished pass's signal while that signal is still live, which is also what
+      keeps the toast's Stop working on the resumed pass. A signal torn down in
+      between (the document or its page count changed) is already aborted and
+      would cancel the pass on its first check, so a fresh one replaces it. */
+  const startOcrPass = useCallback(
+    (pending: number[] | null, doneBefore = 0) => {
+      if (!doc) return
+      const live = ocrAbortRef.current
+      const controller = live && !live.signal.aborted ? live : new AbortController()
+      ocrAbortRef.current = controller
+      setOcrRun((prev) => ({
+        done: doneBefore,
+        total: prev?.total ?? 0,
+        stop: null,
+        pending: null,
+      }))
+      void (async () => {
+        let result: AutoOcrResult | null = null
+        try {
+          result = await runAutoOcr({
+            doc,
+            cache: searchIndexCache,
+            fromPage: () => currentOrigIdxRef.current,
+            ...(pending === null ? {} : { pending }),
+            signal: controller.signal,
+            geom: (origIdx) => pageGeomRef.current(origIdx),
+            render: renderPageForOcr,
+            ocrPage: (png) => window.pdfApi.ocrPage(png),
+            onPage: (origIdx, data) => setOcrPages((prev) => new Map(prev).set(origIdx, data)),
+            onProgress: (done, total) =>
+              setOcrRun({ done: doneBefore + done, total, stop: null, pending: null }),
+          })
+        } catch {
+          // the document is gone or unreadable: nothing left to recognize
+        }
+        if (ocrAbortRef.current !== controller) return // a newer pass took over
+        // A finished pass and a platform without an OCR engine are not worth a
+        // toast; a cap or a user cancel is, and it says how far the pass got
+        setOcrRun(
+          result && (result.stop === 'cap' || result.stop === 'cancelled')
+            ? {
+                done: doneBefore + result.done,
+                total: result.total,
+                stop: result.stop,
+                pending: result.pending,
+              }
+            : null,
+        )
+      })()
+    },
+    [doc, searchIndexCache],
+  )
+
+  /** The pages the toast's Continue resumes over: only a capped pass has any,
+      and a scan that ran out has nothing left to resume. */
+  const ocrPending = ocrRun?.stop === 'cap' ? (ocrRun.pending ?? null) : null
+
   useEffect(() => {
     setOcrPages(new Map())
+    setOcrRun(null)
     if (!doc || sizes.length !== doc.numPages) return
-    let stale = false
-    void (async () => {
-      const index = await buildSearchIndex(doc).catch(() => null)
-      if (!index || stale) return
-      const scanned = index
-        .map((entry, i) => (isScannedEntry(entry) ? i : -1))
-        .filter((i) => i >= 0)
-      const from = scanned.findIndex((i) => i >= currentOrigIdxRef.current)
-      const ordered = from > 0 ? [...scanned.slice(from), ...scanned.slice(0, from)] : scanned
-      for (const origIdx of ordered) {
-        if (stale) return
-        // one geometry snapshot for render and box conversion: a rotation between
-        // the two awaits must not remap boxes through different axes
-        const geom = pageGeomRef.current(origIdx)
-        const png = await renderPageForOcr(doc, origIdx, geom)
-        if (stale || !png) continue
-        let lines: PdfOcrLine[] | null
-        try {
-          lines = await window.pdfApi.ocrPage(png)
-        } catch {
-          continue // this page failed; the rest may still recognize
-        }
-        if (lines === null) return // no engine on this platform: stop trying
-        if (stale) return
-        const data = buildOcrPageData(lines, geom)
-        if (data) setOcrPages((prev) => new Map(prev).set(origIdx, data))
-      }
-    })()
+    startOcrPass(null)
     return () => {
-      stale = true
+      // tears down the pass this effect started, so its teardown still cancels
+      ocrAbortRef.current?.abort()
+      ocrAbortRef.current = null
     }
-  }, [doc, sizes.length])
+  }, [doc, sizes.length, searchIndexCache, startOcrPass])
 
   /** Paragraph boxes are keyed to the loaded doc; drop them on save-reload */
   useEffect(() => {
@@ -1940,6 +2581,7 @@ export default function App() {
     // The line affordance is just as stale after a reload (it hangs at the last
     // pre-save pointer position until the next mousemove)
     clearLineHover()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc])
 
   /** Cluster paragraph boxes for pages scrolled into view while edit-text mode is on.
@@ -1973,7 +2615,6 @@ export default function App() {
     return () => {
       stale = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveDocFont is recreated per render; including it would loop the effect
   }, [editTextMode, readOnly, doc, visibleRows, rows, pageBlocks, getSearchIndex])
 
   /** Saved markup/note annotations are keyed to the loaded doc; drop them on save-reload */
@@ -2023,7 +2664,12 @@ export default function App() {
     const timer = setTimeout(() => {
       void getSearchIndex()?.then((idx) => {
         if (cancelled) return
-        setSearchMatches(searchInIndex(idx, searchQuery.trim()))
+        setSearchMatches(
+          searchInIndex(idx, searchQuery.trim(), {
+            matchCase: searchMatchCase,
+            wholeWord: searchWholeWord,
+          }),
+        )
         setSearchCur(0)
       })
     }, 200)
@@ -2031,7 +2677,7 @@ export default function App() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [searchOpen, searchQuery, getSearchIndex])
+  }, [searchOpen, searchQuery, searchMatchCase, searchWholeWord, getSearchIndex])
 
   /** Pages with unsaved deletion are excluded from match navigation */
   const activeMatches = useMemo(
@@ -2233,7 +2879,7 @@ export default function App() {
   const activeMarkupTypes = useMemo(() => {
     const active = new Set<MarkupType>()
     if (!selPopup) return active
-    for (const type of ['highlight', 'underline', 'strikeout'] as const) {
+    for (const type of ['highlight', 'underline', 'squiggly', 'strikeout'] as const) {
       if ([...selPopup.quads].every(([origIdx, quads]) => markupMatching(origIdx, type, quads)))
         active.add(type)
     }
@@ -2443,7 +3089,7 @@ export default function App() {
   const resolveDocFont = async (origIdx: number, fontId: string): Promise<DocFontStyle | null> => {
     const cached = docFontsRef.current.get(fontId)
     if (cached) return cached
-    if (!doc) return null
+    if (!doc || isBlankPage(origIdx)) return null
     try {
       const page = await doc.getPage(origIdx + 1)
       const f = page.commonObjs.get(fontId) as { name?: string } | null
@@ -2460,6 +3106,13 @@ export default function App() {
   /** Seed the draft with the document's own face: the font id covering the most
       characters inside the draft rect names it. Async like the ink probe; rect
       identity pins the draft. */
+  /** Page color behind a run, read off its rendered canvas (see LocalTextEdit.paper) */
+  const samplePaper = (origIdx: number, rect: readonly [number, number, number, number]) =>
+    samplePaperColor(
+      document.querySelector(`.pdf-page[data-page="${origIdx}"]`),
+      pdfRectToCss(pageGeom(origIdx), rect, scale),
+    ) ?? undefined
+
   const seedDraftFont = (origIdx: number, rect: [number, number, number, number]) => {
     const index = getSearchIndex()
     if (!index) return
@@ -2540,6 +3193,7 @@ export default function App() {
       cover: te.cover,
       seedInk: te.baseInk,
       seedFont: te.baseFont,
+      paper: te.paper,
       block: blk,
       moveBy: te.moveBy,
     }
@@ -2583,6 +3237,7 @@ export default function App() {
       oldText,
       fontSize: block.fontSize,
       value: fold?.value ?? oldText,
+      paper: samplePaper(origIdx, rect),
       charStyles: fold?.charStyles,
       editId: fold?.editId,
       foldedIds: fold && fold.foldedIds.length > 0 ? fold.foldedIds : undefined,
@@ -2797,7 +3452,14 @@ export default function App() {
     setSelected(null)
     draftSelectedRef.current = false
     draftPreselectRef.current = preselect ?? null
-    setTextDraft({ origIdx, rect, oldText, fontSize, value: oldText })
+    setTextDraft({
+      origIdx,
+      rect,
+      oldText,
+      fontSize,
+      value: oldText,
+      paper: samplePaper(origIdx, rect),
+    })
     seedDraftFont(origIdx, rect)
     // The span rect is a font-metric layout box; the run's glyph ink can poke out of it.
     // Fetch the engine's real ink bounds so the editor/preview cover hides the old run fully.
@@ -3073,10 +3735,21 @@ export default function App() {
                 cover: d.cover ?? e.cover,
                 baseInk: d.seedInk ?? e.baseInk,
                 baseFont: d.seedFont ?? e.baseFont,
+                paper: d.paper ?? e.paper,
               }
             : e,
         )
-      : [...edits, { id: newId(), input, cover: d.cover, baseInk: d.seedInk, baseFont: d.seedFont }]
+      : [
+          ...edits,
+          {
+            id: newId(),
+            input,
+            cover: d.cover,
+            baseInk: d.seedInk,
+            baseFont: d.seedFont,
+            paper: d.paper,
+          },
+        ]
   }
 
   /** Background dry-run of a just-committed edit against the file. A span that doesn't
@@ -3234,6 +3907,494 @@ export default function App() {
     return plan.te
   }
 
+  // ── Form Design: author new AcroForm fields (pending until saved) ──
+
+  const lastRadioGroupRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (ribbonTab !== 'formDesign') {
+      setFormDesignTool(null)
+      setFormDesignPreview(false)
+      setSelectedFormFieldId(null)
+      setFreshFormFieldId(null)
+      lastRadioGroupRef.current = null
+    }
+  }, [ribbonTab])
+
+  const startFormDesignTool = (kind: FormDesignTool) => {
+    if (formDesignTool === kind) {
+      setFormDesignTool(null)
+      return
+    }
+    setEditTextMode(false)
+    setTextDraft(null)
+    setPendingTextInsert(null)
+    setDrawTool(null)
+    setPendingSign(null)
+    setSignatureTarget(null)
+    setEditImageMode(false)
+    setImagePick(null)
+    setPendingStaticFill(null)
+    setSelected(null)
+    setSelectedFormFieldId(null)
+    setFreshFormFieldId(null)
+    setFormDesignPreview(false)
+    setFormDesignTool(kind)
+  }
+
+  const nextFieldName = (prefix: string): string => {
+    const taken = editOpContext().fieldNames ?? new Set<string>()
+    for (let n = 1; ; n++) {
+      const name = `${prefix}_${n}`
+      if (!taken.has(name)) return name
+    }
+  }
+
+  /** Consecutive radio buttons join the group placed last; the first one starts a new group.
+   *  Done saves the button, so the group is remembered by name rather than read off the pending list */
+  const nextRadio = (): Pick<FormFieldInput, 'name' | 'exportValue'> => {
+    const remembered = lastRadioGroupRef.current
+    const name =
+      remembered &&
+      (formCatalog?.fields.get(remembered)?.kind === 'radio' ||
+        formFieldsRef.current.some((f) => f.input.kind === 'radio' && f.input.name === remembered))
+        ? remembered
+        : nextFieldName('radio')
+    lastRadioGroupRef.current = name
+    const used = new Set([
+      ...formFieldsRef.current
+        .filter((f) => f.input.kind === 'radio' && f.input.name === name)
+        .map((f) => f.input.exportValue),
+      ...(formCatalog?.fields.get(name)?.options ?? []),
+    ])
+    for (let n = 1; ; n++) {
+      const exportValue = `option_${n}`
+      if (!used.has(exportValue)) return { name, exportValue }
+    }
+  }
+
+  const addFormField = (
+    tool: FormDesignTool,
+    pageIndex: number,
+    rect: FormFieldInput['rect'],
+    keepTool = false,
+  ) => {
+    const kind: FormFieldKind = tool === 'date' ? 'text' : tool
+    const field: FormFieldInput =
+      kind === 'radio'
+        ? { ...nextRadio(), kind, pageIndex, rect }
+        : {
+            name: nextFieldName(tool),
+            kind,
+            pageIndex,
+            rect,
+            ...(tool === 'date' ? { dateFormat: 'yyyy-mm-dd' } : {}),
+            ...(kind === 'choice' ? { options: ['Option 1', 'Option 2'] } : {}),
+          }
+    const plan = applyEditOps([{ op: 'addFormField', field }])
+    if (plan.failures.length > 0) {
+      showNotice(plan.failures[0]!.error)
+      return
+    }
+    const created = plan.records[0]?.created?.[0] ?? null
+    setSelectedFormFieldId(created)
+    setFreshFormFieldId(created)
+    // One placement per arming, like WPS/Acrobat; Ctrl/⌘ or the ribbon toggle keeps the tool
+    if (!keepTool && !formDesignKeepTool) setFormDesignTool(null)
+  }
+
+  const patchFormField = (id: string, input: Partial<FormFieldInput>, coalesceKey?: string) => {
+    const field = formFieldsRef.current.find((f) => f.id === id)
+    const kind = field?.input.kind
+    // Changing the value or moving the button into another group must keep values unique there
+    if (kind === 'radio' && ('exportValue' in input || 'name' in input)) {
+      const next = (input.exportValue ?? field!.input.exportValue ?? '').trim()
+      const group = (input.name ?? field!.input.name).trim()
+      const taken =
+        formFieldsRef.current.some(
+          (f) =>
+            f.id !== id &&
+            f.input.kind === 'radio' &&
+            f.input.name === group &&
+            f.input.exportValue === next,
+        ) || (formCatalog?.fields.get(group)?.options ?? []).includes(next)
+      if (!next || taken) {
+        showNotice(t('formDesignExportValueTaken'))
+        return false
+      }
+    }
+    const ops: Op[] = [{ op: 'patchFormField', id, kind, input }]
+    // A radio group has one default: checking this button unchecks its pending siblings
+    if (kind === 'radio' && input.checked) {
+      for (const f of formFieldsRef.current) {
+        if (
+          f.id !== id &&
+          f.input.kind === 'radio' &&
+          f.input.name === field!.input.name &&
+          f.input.checked
+        )
+          ops.push({ op: 'patchFormField', id: f.id, kind, input: { checked: false } })
+      }
+    }
+    const plan = applyEditOps(ops, { coalesceKey })
+    if (plan.failures.length > 0)
+      showNotice(
+        t(
+          'options' in input
+            ? 'formDesignOptionsEmpty'
+            : 'exportValue' in input
+              ? 'formDesignExportValueTaken'
+              : 'formDesignNameInvalid',
+        ),
+      )
+    return plan.failures.length === 0
+  }
+
+  /** Existing widgets edit through their own bucket; only rect and required apply to them */
+  const patchDesignField = (
+    field: DesignField,
+    input: Partial<FormFieldInput>,
+    coalesceKey?: string,
+  ) => {
+    const widgetId = designWidgetId(field.id)
+    if (!widgetId) return patchFormField(field.id, input, coalesceKey)
+    if (input.rect && isSignedWidget(widgetId)) {
+      showNotice(t('formDesignSignedLocked'))
+      return false
+    }
+    const patch: Partial<FormWidgetEditInput> = {}
+    if (input.rect) patch.rect = input.rect
+    if (input.required !== undefined) patch.required = input.required
+    if (Object.keys(patch).length === 0) return true
+    const plan = applyEditOps(
+      [{ op: 'editFormWidget', widgetId, fieldName: field.name, input: patch }],
+      { coalesceKey },
+    )
+    return plan.failures.length === 0
+  }
+
+  const deleteFormField = (id: string) => {
+    const widgetId = designWidgetId(id)
+    if (widgetId) {
+      const w = formCatalog?.widgets.find((x) => x.id === widgetId)
+      if (w && isSignedWidget(widgetId)) {
+        showNotice(t('formDesignSignedLocked'))
+        return
+      }
+      if (w) {
+        applyEditOps([
+          { op: 'editFormWidget', widgetId, fieldName: w.fieldName, input: { remove: true } },
+        ])
+        showNotice(t('formDesignDeleted'))
+      }
+    } else if (formFieldsRef.current.some((f) => f.id === id)) {
+      applyEditOps([{ op: 'removeFormField', id }])
+      showNotice(t('formDesignDeleted'))
+    }
+    setSelectedFormFieldIds((cur) => cur.filter((x) => x !== id))
+    setFreshFormFieldId((cur) => (cur === id ? null : cur))
+  }
+
+  /** One undo step for a group move/align; signed widgets are skipped with a notice */
+  const applyDesignRects = (
+    changes: { field: DesignField; rect: FormFieldInput['rect'] }[],
+    coalesceKey?: string,
+  ) => {
+    const ops: Op[] = []
+    let locked = false
+    for (const { field, rect } of changes) {
+      const widgetId = designWidgetId(field.id)
+      if (!widgetId) ops.push({ op: 'patchFormField', id: field.id, input: { rect } })
+      else if (isSignedWidget(widgetId)) locked = true
+      else ops.push({ op: 'editFormWidget', widgetId, fieldName: field.name, input: { rect } })
+    }
+    if (locked) showNotice(t('formDesignSignedLocked'))
+    if (ops.length > 0) applyEditOps(ops, { coalesceKey })
+  }
+
+  /** Align/distribute/size the selection in display space (what the user sees), per page */
+  const arrangeSelected = (how: Arrange) => {
+    const byPage = new Map<number, DesignField[]>()
+    for (const f of selectedDesignFields)
+      byPage.set(f.pageIndex, [...(byPage.get(f.pageIndex) ?? []), f])
+    const changes: { field: DesignField; rect: FormFieldInput['rect'] }[] = []
+    for (const [pageIndex, fields] of byPage) {
+      if (fields.length < 2) continue
+      const geom = pageGeom(pageIndex)
+      const boxes = fields.map((f) => ({ f, b: pdfRectToCss(geom, f.rect, 1) }))
+      const anchor = boxes[0]!.b
+      const minL = Math.min(...boxes.map((x) => x.b.left))
+      const maxR = Math.max(...boxes.map((x) => x.b.left + x.b.width))
+      const minT = Math.min(...boxes.map((x) => x.b.top))
+      const maxB = Math.max(...boxes.map((x) => x.b.top + x.b.height))
+      const next = boxes.map(({ b }) => ({ ...b }))
+      switch (how) {
+        case 'left':
+          next.forEach((b) => (b.left = minL))
+          break
+        case 'right':
+          next.forEach((b) => (b.left = maxR - b.width))
+          break
+        case 'top':
+          next.forEach((b) => (b.top = minT))
+          break
+        case 'bottom':
+          next.forEach((b) => (b.top = maxB - b.height))
+          break
+        case 'centerH':
+          next.forEach((b) => (b.left = (minL + maxR) / 2 - b.width / 2))
+          break
+        case 'centerV':
+          next.forEach((b) => (b.top = (minT + maxB) / 2 - b.height / 2))
+          break
+        case 'sameWidth':
+          next.forEach((b) => (b.width = anchor.width))
+          break
+        case 'sameHeight':
+          next.forEach((b) => (b.height = anchor.height))
+          break
+        case 'sameSize':
+          next.forEach((b) => {
+            b.width = anchor.width
+            b.height = anchor.height
+          })
+          break
+        case 'distributeH':
+        case 'distributeV': {
+          if (next.length < 3) break
+          const horizontal = how === 'distributeH'
+          const order = next
+            .map((_, i) => i)
+            .sort((i, j) =>
+              horizontal ? next[i]!.left - next[j]!.left : next[i]!.top - next[j]!.top,
+            )
+          const total = next.reduce((acc, b) => acc + (horizontal ? b.width : b.height), 0)
+          const span = horizontal ? maxR - minL : maxB - minT
+          const gap = (span - total) / (next.length - 1)
+          let cursor = horizontal ? minL : minT
+          for (const i of order) {
+            const b = next[i]!
+            if (horizontal) b.left = cursor
+            else b.top = cursor
+            cursor += (horizontal ? b.width : b.height) + gap
+          }
+          break
+        }
+      }
+      const size = dispSize(pageIndex)
+      next.forEach((b, i) => {
+        const [ax, ay] = viewToPdf(geom, b.left, b.top)
+        const [bx, by] = viewToPdf(geom, b.left + b.width, b.top + b.height)
+        changes.push({
+          field: boxes[i]!.f,
+          rect: clampRectToPage(
+            [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)],
+            geom,
+            size.width,
+            size.height,
+          ),
+        })
+      })
+    }
+    if (changes.length > 0) applyDesignRects(changes)
+  }
+
+  /** Copyable description of a design field; saved widgets are re-created as new fields on paste */
+  const designFieldInput = (f: DesignField): FormFieldInput | null => {
+    if (f.pending) return f.pending.input
+    const widgetId = designWidgetId(f.id)
+    const w = widgetId ? formCatalog?.widgets.find((x) => x.id === widgetId) : undefined
+    if (!w) return null
+    return {
+      name: w.fieldName,
+      kind: w.kind,
+      pageIndex: w.pageIndex,
+      rect: f.rect,
+      required: f.required,
+      ...(w.kind === 'text'
+        ? {
+            multiLine: w.multiLine,
+            maxLen: w.maxLen ?? undefined,
+            textAlignment: w.textAlignment,
+            ...(w.dateFormat ? { dateFormat: w.dateFormat } : {}),
+          }
+        : {}),
+      ...(w.kind === 'radio' ? { exportValue: w.buttonValue } : {}),
+      ...(w.kind === 'choice'
+        ? { options: w.options.map((o) => o.exportValue), value: w.value }
+        : {}),
+    }
+  }
+
+  const copySelectedFormFields = () => {
+    const inputs = selectedDesignFields.flatMap((f) => designFieldInput(f) ?? [])
+    if (inputs.length === 0) return false
+    formClipboardRef.current = inputs
+    return true
+  }
+
+  /** Paste as new fields (fresh unique names, radio groups renamed together), shifted by 12 pt */
+  const pasteFormFields = (pageIndex?: number) => {
+    const items = formClipboardRef.current
+    if (items.length === 0) return
+    const taken = new Set(editOpContext().fieldNames ?? [])
+    const fresh = (base: string) => {
+      const stem = base.replace(/_\d+$/, '')
+      for (let n = 1; ; n++) {
+        const name = `${stem}_${n}`
+        if (!taken.has(name)) {
+          taken.add(name)
+          return name
+        }
+      }
+    }
+    const radioNames = new Map<string, string>()
+    const ops: Op[] = items.map((input) => {
+      let name = radioNames.get(input.name)
+      if (!name) {
+        name = fresh(input.name)
+        if (input.kind === 'radio') radioNames.set(input.name, name)
+      }
+      const [x1, y1, x2, y2] = input.rect
+      const page = pageIndex ?? input.pageIndex
+      const size = dispSize(page)
+      const geom = pageGeom(page)
+      // Down-and-right on screen, whatever the page rotation
+      const [ox, oy] = viewToPdf(geom, 0, 0)
+      const [px, py] = viewToPdf(geom, PASTE_OFFSET_PTS, PASTE_OFFSET_PTS)
+      const [dx, dy] = [px - ox, py - oy]
+      const rect = clampRectToPage(
+        [x1 + dx, y1 + dy, x2 + dx, y2 + dy],
+        geom,
+        size.width,
+        size.height,
+      )
+      return { op: 'addFormField', field: { ...input, name, pageIndex: page, rect } }
+    })
+    const plan = applyEditOps(ops)
+    if (plan.failures.length > 0) {
+      showNotice(plan.failures[0]!.error)
+      return
+    }
+    setSelectedFormFieldIds(plan.records.flatMap((r) => r.created ?? []))
+    setFreshFormFieldId(null)
+  }
+
+  const duplicateSelectedFormFields = () => {
+    const before = formClipboardRef.current
+    if (copySelectedFormFields()) pasteFormFields()
+    formClipboardRef.current = before
+  }
+
+  /** One undo step for the whole selection; signed widgets stay and are reported once */
+  const deleteSelectedFormFields = () => {
+    const ops: Op[] = []
+    let locked = false
+    for (const id of selectedFormFieldIds) {
+      const widgetId = designWidgetId(id)
+      if (widgetId) {
+        const w = formCatalog?.widgets.find((x) => x.id === widgetId)
+        if (!w) continue
+        if (isSignedWidget(widgetId)) locked = true
+        else
+          ops.push({
+            op: 'editFormWidget',
+            widgetId,
+            fieldName: w.fieldName,
+            input: { remove: true },
+          })
+      } else if (formFieldsRef.current.some((f) => f.id === id)) {
+        ops.push({ op: 'removeFormField', id })
+      }
+    }
+    if (locked) showNotice(t('formDesignSignedLocked'))
+    if (ops.length === 0) return
+    applyEditOps(ops)
+    setSelectedFormFieldIds([])
+    setFreshFormFieldId(null)
+    showNotice(t('formDesignDeleted'))
+  }
+
+  /** Scan every page for blanks a reader would fill (underscores, boxes, "Label:" gaps) and add them as pending fields */
+  const detectFields = async () => {
+    if (!doc || detectingFields) return
+    setDetectingFields(true)
+    try {
+      const taken = new Set(editOpContext().fieldNames ?? [])
+      const found: FormFieldInput[] = []
+      for (const origIdx of visList) {
+        const page = await doc.getPage(origIdx + 1)
+        const { items, shapes } = await collectDetectInput(page)
+        const g = pageGeom(origIdx)
+        const unit = g.userUnit ?? 1
+        const x0 = g.x0 ?? 0
+        const y0 = g.y0 ?? 0
+        const occupied = [
+          ...(liveFormCatalog?.byPage.get(origIdx) ?? []).map((w) => w.rect),
+          ...formFieldsRef.current
+            .filter((f) => f.input.pageIndex === origIdx)
+            .map((f) => f.input.rect),
+        ]
+        const fields = detectFormFields({
+          pageIndex: origIdx,
+          pageBox: [x0, y0, x0 + g.pw / unit, y0 + g.ph / unit],
+          items,
+          shapes,
+          occupied,
+          taken,
+        })
+        for (const f of fields) taken.add(f.name)
+        found.push(...fields)
+        if (found.length >= DETECT_FIELD_CAP) break
+      }
+      if (found.length === 0) {
+        showNotice(t('formDesignDetectedNone'))
+        return
+      }
+      const plan = applyEditOps(
+        found.slice(0, DETECT_FIELD_CAP).map((field) => ({ op: 'addFormField', field })),
+      )
+      if (plan.failures.length > 0) {
+        showNotice(plan.failures[0]!.error)
+        return
+      }
+      setFormDesignTool(null)
+      setFreshFormFieldId(null)
+      setSelectedFormFieldIds(plan.records.flatMap((r) => r.created ?? []))
+      showNotice(t('formDesignDetected', { count: plan.records.length }))
+    } finally {
+      setDetectingFields(false)
+    }
+  }
+
+  /** A signed field (saved visual signature or a pending one) stays put, as in Acrobat */
+  const isSignedWidget = (widgetId: string) =>
+    signedFormWidgetIds.has(widgetId) ||
+    !!formCatalog?.widgets.find((x) => x.id === widgetId)?.signed
+
+  /** Arrow keys move on screen; the display delta goes through each page's rotation */
+  const nudgeSelectedFormFields = (vx: number, vy: number) => {
+    applyDesignRects(
+      selectedDesignFields.map((field) => {
+        const geom = pageGeom(field.pageIndex)
+        const size = dispSize(field.pageIndex)
+        const [ax, ay] = viewToPdf(geom, 0, 0)
+        const [bx, by] = viewToPdf(geom, vx, vy)
+        const [dx, dy] = [bx - ax, by - ay]
+        const [x1, y1, x2, y2] = field.rect
+        return {
+          field,
+          rect: clampRectToPage(
+            [x1 + dx, y1 + dy, x2 + dx, y2 + dy],
+            geom,
+            size.width,
+            size.height,
+          ),
+        }
+      }),
+      `formFields:nudge:${selectedFormFieldIds.join(',')}`,
+    )
+  }
+
   const deleteSelected = () => {
     const sel = selected
     if (!sel) return
@@ -3272,6 +4433,96 @@ export default function App() {
   }
 
   /** Show a transient toast; the save-failure badge alone hides the actual reason */
+  const runCompare = async (): Promise<void> => {
+    if (!doc || compareBusy) return
+    // Both sides must come from the same extraction engine — pdf.js and pdfium
+    // break lines differently, and a cross-engine diff reports phantom changes
+    // on identical files. The open document therefore needs its current state
+    // on disk: no file yet, or pending edits, both mean "save first". Redaction
+    // marks stay out — a save does not apply them, so they could never unblock.
+    if (!filePath || ordinaryDirty) {
+      showNotice(t('compareNeedsSaved'))
+      return
+    }
+    setCompareBusy(true)
+    try {
+      const picked = await window.pdfApi.compareReadPdf()
+      if (!picked.ok) {
+        if (!('canceled' in picked)) showNotice(picked.reason)
+        return
+      }
+      const mine = await window.pdfApi.compareReadOpen(filePath, passwordRef.current)
+      if (!mine.ok) {
+        showNotice(mine.reason)
+        return
+      }
+      const mineSide: PageText[] = mine.pages.map((text, pageIndex) => ({ pageIndex, text }))
+      const theirs: PageText[] = picked.pages.map((text, pageIndex) => ({ pageIndex, text }))
+      compareSidesRef.current = { mine: mineSide, theirs }
+      setCompareName(picked.name)
+      setCompareResult(compareSides(mineSide, theirs, compareSwapped))
+    } catch (err) {
+      showNotice(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCompareBusy(false)
+    }
+  }
+
+  const compareSides = (mine: PageText[], theirs: PageText[], swapped: boolean): CompareResult =>
+    swapped ? compareDocuments(theirs, mine) : compareDocuments(mine, theirs)
+
+  const attachmentRows = (): AttachmentRow[] => {
+    const rows: AttachmentRow[] = []
+    const saved = savedAttachments ?? new Map<string, number>()
+    for (const [name, bytes] of saved) {
+      if (pendingAttachmentRemoves.includes(name)) {
+        rows.push({ name, bytes, saved: true, removing: true })
+        continue
+      }
+      rows.push({ name, bytes, saved: true })
+    }
+    for (const add of pendingAttachmentAdds) {
+      if (!pendingAttachmentRemoves.includes(add.name)) {
+        rows.push({
+          name: add.name,
+          bytes: Math.floor((add.bytesBase64.length * 3) / 4),
+          saved: false,
+        })
+      }
+    }
+    return rows
+  }
+
+  const addAttachment = async () => {
+    const picked = await window.pdfApi.pickAttachmentFile()
+    if (!picked.ok) {
+      if (!('cancelled' in picked)) showNotice(picked.reason)
+      return
+    }
+    setPendingAttachmentAdds((prev) => [
+      ...prev,
+      { name: picked.name, bytesBase64: picked.bytesBase64 },
+    ])
+  }
+
+  const exportAttachment = async (row: AttachmentRow) => {
+    const base64 = savedAttachmentBytesRef.current.get(row.name)
+    if (!filePath || !base64) return
+    const outcome = await window.pdfApi.exportAttachment(filePath, row.name, base64)
+    if ('targetPath' in outcome) showNotice(t('attachmentsExported', { name: row.name }))
+    else if (!('cancelled' in outcome)) showNotice(outcome.reason)
+  }
+
+  const toggleAttachmentRemove = (row: AttachmentRow): void => {
+    if (!row.saved) {
+      setPendingAttachmentAdds((prev) => prev.filter((a) => a.name !== row.name))
+      return
+    }
+    setPendingAttachmentRemoves((prev) =>
+      prev.includes(row.name) ? prev.filter((n) => n !== row.name) : [...prev, row.name],
+    )
+  }
+
   const showNotice = (msg: string) => {
     if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
     setNotice(msg)
@@ -3282,7 +4533,6 @@ export default function App() {
     if (!formHasXfa || !filePath || warnedXfaPathRef.current === filePath) return
     warnedXfaPathRef.current = filePath
     showNotice(t('formXfaWarning'))
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is not referentially stable (see CLAUDE.md)
   }, [filePath, formHasXfa])
 
   /** Localize known structured main-process errors; other messages pass through raw */
@@ -3319,8 +4569,15 @@ export default function App() {
   }
 
   const noticeSkippedTextInserts = (skipped: TextInsertFailure[]) => {
-    const pages = [...new Set(skipped.map((s) => s.pageIndex + 1))].sort((a, b) => a - b).join(', ')
-    showNotice(`${t('textInsertSkipped', { pages })}${skipDetail(skipped)}`)
+    // The bake layer's inserts ride the tail of the same textInserts array; a
+    // glyph no face covers there is OCR noise on a page the reader never
+    // edited, and nagging about it on every save is worse than the silence.
+    // An insert the reader typed is still worth its toast.
+    const userCount = textInsertsRef.current.length
+    const mine = skipped.filter((s) => s.editIndex < userCount)
+    if (mine.length === 0) return
+    const pages = [...new Set(mine.map((s) => s.pageIndex + 1))].sort((a, b) => a - b).join(', ')
+    showNotice(`${t('textInsertSkipped', { pages })}${skipDetail(mine)}`)
   }
 
   /** Pending edits in SavePdfRequest form; shared by in-place Save and Save As.
@@ -3329,8 +4586,10 @@ export default function App() {
   const editsPayload = (
     edits: LocalTextEdit[] = textEdits,
     noteFlush?: { drawings: LocalDrawing[]; noteEdits: LocalNoteEdit[] },
+    fields: LocalFormField[] = savableFormFields,
   ) => ({
     markups: markups.map(({ id: _id, ...rest }) => rest),
+    ...(noteAuthor ? { annotationAuthor: noteAuthor } : {}),
     annotDeletes: annotDeletes.map((d): AnnotDeleteInput => ({
       pageIndex: d.annot.pageIndex,
       objNum: d.annot.objNum,
@@ -3348,15 +4607,31 @@ export default function App() {
     })),
     drawings: (noteFlush?.drawings ?? drawings).map((d) => d.input),
     textEdits: edits.map((e) => e.input),
-    textInserts: textInserts.map((insert) => insert.input),
+    textInserts: [
+      ...textInserts.map((insert) => insert.input),
+      ...ocrBakeInserts.map((insert) => insert.input),
+    ],
     imageEdits: imageEdits.map((e) => e.input),
     staticFormFills,
     stamps: stampCfg ? renderStamps(stampCfg, visList) : [],
     formValues: [...formEdits.values()],
+    formFields: fields.map((f) => f.input),
+    blankPages: blankPages.map((b) => b.input),
+    formWidgetEdits: [...formWidgetEdits.values()],
     rotations: [...rotations].map(([pageIndex, delta]) => ({ pageIndex, delta })),
     deletedPages: [...deleted],
     ...(order ? { pageOrder: visList } : {}),
     ...(metadata ? { metadata } : {}),
+    // false = keep the file's own /Encrypt entries, true = write the dialog's
+    protectionDirty,
+    ...(diskPasswordRef.current !== null
+      ? { decryption: { userPassword: diskPasswordRef.current } }
+      : {}),
+    ...(encryption ? { encryption } : {}),
+    ...(pendingOutline?.edited && pendingOutline.tree ? { outline: pendingOutline.tree } : {}),
+    ...(pendingAttachmentAdds.length > 0 || pendingAttachmentRemoves.length > 0
+      ? { attachments: { add: pendingAttachmentAdds, remove: pendingAttachmentRemoves } }
+      : {}),
   })
 
   /** Resolved when the running save() lands; queued saves and Save As serialize behind it */
@@ -3372,16 +4647,23 @@ export default function App() {
       post-save reload has committed. Running the follow-up straight off the completion
       promise would reuse the pre-reload render's closure — dirty still true, the saved
       edits still listed — and write them onto the file a second time. */
-  const queuedSavesRef = useRef<{ autosave: boolean; resolve: (ok: boolean) => void }[]>([])
+  const queuedSavesRef = useRef<
+    { autosave: boolean; flushAll: boolean; resolve: (ok: boolean) => void }[]
+  >([])
 
-  const save = (autosave = false): Promise<boolean> => {
+  // flushAll also writes the field whose card is open: callers that treat success as
+  // "everything is in the file" (close-tab Save, flushThen) must not leave it behind
+  const save = (autosave = false, flushAll = false): Promise<boolean> => {
+    if (redactionRequestInFlightRef.current) return Promise.resolve(false)
     // A save is already writing: queue behind it instead of reporting failure — the
     // close prompt's "Save" and ⌘S regularly collide with the blur-triggered autosave
     // (the prompt itself blurs the window). The ref is set synchronously, so this also
     // covers two triggers landing in the same frame, where the saveState snapshot
     // still reads 'idle' for both.
     if (saveInFlightRef.current !== null) {
-      return new Promise<boolean>((resolve) => queuedSavesRef.current.push({ autosave, resolve }))
+      return new Promise<boolean>((resolve) =>
+        queuedSavesRef.current.push({ autosave, flushAll, resolve }),
+      )
     }
     // Fold an open floating-editor draft in first: keyboard save and autosave can land
     // mid-typing, and the post-save reload closes the editor — without this the
@@ -3389,12 +4671,31 @@ export default function App() {
     const edits = commitTextDraft()
     // Same for an open comment-edit box in the notes margin
     const noteFlush = commitNoteEdit()
+    // From the ref, not render state: a queued save drains on the first commit after the
+    // previous save lands, and that render may not have applied the reload's subtraction yet
+    const pending = formFieldsRef.current
+    const fields =
+      flushAll || !heldFormFieldId ? pending : pending.filter((f) => f.id !== heldFormFieldId)
     const anythingToSave =
-      ordinaryDirty ||
+      (flushAll ? ordinaryDirty : savableDirty) ||
       edits !== textEdits ||
       noteFlush.drawings !== drawings ||
-      noteFlush.noteEdits !== noteEdits
+      noteFlush.noteEdits !== noteEdits ||
+      ocrBakeInserts.length > 0
     if (!anythingToSave || !filePath) return Promise.resolve(!anythingToSave)
+    // Writing a protection with no owner password would hand ownership to
+    // anyone, so a protection change with both passwords empty is refused. An
+    // unchanged owner-only file is not affected: its own /Encrypt entries are
+    // carried over, so the save keeps the owner's password without knowing it.
+    if (
+      protectionDirty &&
+      encryption !== null &&
+      encryption.userPassword === '' &&
+      encryption.ownerPassword === ''
+    ) {
+      showNotice(t('pwOwnerNeeded'))
+      return Promise.resolve(false)
+    }
     // An explicit save opts this file into autosave
     if (!autosave) savedOnceRef.current = true
     // What this save writes — the post-save reload subtracts exactly this, keeping
@@ -3410,15 +4711,22 @@ export default function App() {
       imageEditIds: new Set(imageEdits.map((ie) => ie.id)),
       stampCfg,
       formEdits,
+      formFieldIds: new Set(fields.map((f) => f.id)),
+      blankPageIds: new Set(blankPages.map((b) => b.id)),
+      formWidgetEdits,
       rotations,
       metadata,
+      outline: pendingOutline?.edited ? pendingOutline.tree : null,
       pageMap: new Map(visList.map((origIdx, i) => [origIdx, i])),
     }
     inFlightNoteWritesRef.current = snapshot.noteEditWritten
     inFlightPageMapRef.current = snapshot.pageMap
     const run = (async (): Promise<boolean> => {
       setSaveState('saving')
-      const result = await window.pdfApi.save({ path: filePath, ...editsPayload(edits, noteFlush) })
+      const result = await window.pdfApi.save({
+        path: filePath,
+        ...editsPayload(edits, noteFlush, fields),
+      })
       if (!result.ok) {
         opFailed(result.error)
         return false
@@ -3431,6 +4739,12 @@ export default function App() {
       }
       if (result.skippedImageEdits && result.skippedImageEdits.length > 0) {
         noticeSkippedImages(result.skippedImageEdits)
+      }
+      // The write landed: a pending protection change is what the disk carries now
+      if (pendingDiskPasswordRef.current !== undefined) {
+        diskPasswordRef.current =
+          pendingDiskPasswordRef.current === '' ? null : pendingDiskPasswordRef.current
+        pendingDiskPasswordRef.current = undefined
       }
       // Reload: changes are in the file now, canvas renders directly, saved pending ops are cleared
       try {
@@ -3492,7 +4806,8 @@ export default function App() {
     queuedSavesRef.current = []
     // One explicit request makes the whole drained batch explicit (autosave opt-in)
     const autosaveOnly = queued.every((q) => q.autosave)
-    void save(autosaveOnly).then((ok) => {
+    const flushAll = queued.some((q) => q.flushAll)
+    void save(autosaveOnly, flushAll).then((ok) => {
       for (const q of queued) q.resolve(ok)
     })
   })
@@ -3564,9 +4879,23 @@ export default function App() {
             imageEdits: [],
             ...(lateNoteEdits.length > 0 ? { noteEdits: lateNoteEdits } : {}),
           }
-        : editsPayload(draftEdits, noteFlush)
+        : editsPayload(draftEdits, noteFlush, formFields)
     setSaveState('saving')
-    const result = await window.pdfApi.save({ path: filePath, targetPath, ...edits })
+    // the redaction copy is a save like any other: on a protected document the
+    // main process has to decrypt the source and re-protect the cleaned output
+    const protection = {
+      ...(encryption !== null ? { encryption } : {}),
+      ...(diskPasswordRef.current !== null
+        ? { decryption: { userPassword: diskPasswordRef.current } }
+        : {}),
+      protectionDirty,
+    }
+    const result = await window.pdfApi.save({
+      path: filePath,
+      targetPath,
+      ...edits,
+      ...protection,
+    })
     if (!result.ok) {
       opFailed(result.error)
       return false
@@ -3580,19 +4909,49 @@ export default function App() {
     if (result.skippedImageEdits && result.skippedImageEdits.length > 0) {
       noticeSkippedImages(result.skippedImageEdits)
     }
+    if (applyingRedactions) {
+      // The main process has committed this path and its read grant. Reload the
+      // sanitized bytes, clearing undo/search state that could expose old content.
+      const scrollTop = scrollRef.current?.scrollTop ?? 0
+      // a protection change rode this save: the file on disk now needs the new password
+      if (pendingDiskPasswordRef.current !== undefined) {
+        diskPasswordRef.current =
+          pendingDiskPasswordRef.current === '' ? null : pendingDiskPasswordRef.current
+        pendingDiskPasswordRef.current = undefined
+      }
+      setFilePath(targetPath)
+      setStatus('loading')
+      try {
+        await loadDoc(targetPath, doc)
+        // loadDoc leaves the text index and hits alone; both still hold the removed text
+        searchIndexCache.clear()
+        setSearchMatches([])
+        setSearchCur(0)
+        setStatus('ready')
+        requestAnimationFrame(() => {
+          if (scrollRef.current) scrollRef.current.scrollTop = scrollTop
+        })
+      } catch (err) {
+        // The write succeeded. Never resume editing a stale, unredacted canvas.
+        setStatus('error')
+        opFailed(err instanceof Error ? err.message : String(err))
+      }
+      redactionApplyConfirmedRef.current = false
+      setSaveState('idle')
+      return true
+    }
     // Back to idle, not 'saved': only the copy was written — this tab's edits are
     // still pending, so a saved-confirmation next to the unsaved badge would lie
     setSaveState('idle')
-    if (applyingRedactions) {
-      redactionApplyConfirmedRef.current = false
-      setRedactions([])
-    }
     return true
   }
 
-  const requestRedactionSaveAs = async () => {
-    if (redactions.length === 0) return
+  const requestRedactionSaveAs = () => {
+    if (redactions.length === 0 || redactionRequestInFlightRef.current) return
     const otherPending =
+      saveInFlightRef.current !== null ||
+      textDraft !== null ||
+      noteDraft !== null ||
       markups.length > 0 ||
       annotDeletes.length > 0 ||
       noteEdits.length > 0 ||
@@ -3602,6 +4961,9 @@ export default function App() {
       imageEdits.length > 0 ||
       stampCfg !== null ||
       formEdits.size > 0 ||
+      formFields.length > 0 ||
+      blankPages.length > 0 ||
+      formWidgetEdits.size > 0 ||
       rotations.size > 0 ||
       deleted.size > 0 ||
       order !== null ||
@@ -3610,19 +4972,15 @@ export default function App() {
       showNotice(t('redactSaveFirst'))
       return
     }
-    const confirmed = await appConfirmDialog({
-      message: t('redactConfirm'),
-      confirmLabel: t('ok'),
-      cancelLabel: t('cancel'),
-      danger: true,
-    })
-    if (!confirmed) return
+    if (!window.confirm(t('redactConfirm'))) return
     redactionApplyConfirmedRef.current = true
+    redactionRequestInFlightRef.current = true
     setRedactionCopyInFlight(true)
     void window.pdfApi
       .requestRedactionCopy(filePath)
-      .catch(() => undefined)
+      .catch((err: unknown) => opFailed(err instanceof Error ? err.message : String(err)))
       .finally(() => {
+        redactionRequestInFlightRef.current = false
         redactionApplyConfirmedRef.current = false
         setRedactionCopyInFlight(false)
       })
@@ -3645,9 +5003,18 @@ export default function App() {
       saveInFlightRef.current === null &&
       filePath !== '' &&
       !readOnly &&
-      !saveAsFlowRef.current,
+      !saveAsFlowRef.current &&
+      !redactionRequestInFlightRef.current,
     () => void save(true),
   )
+
+  // Done in the field popover persists the field; runs after the render that folded in
+  // the Enter-key name commit so the save sees the patched field
+  const [formDesignDoneSave, setFormDesignDoneSave] = useState(0)
+  useEffect(() => {
+    if (formDesignDoneSave > 0) void save()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formDesignDoneSave])
 
   // ── Page operations ──
 
@@ -3682,8 +5049,38 @@ export default function App() {
 
   // ── Drawing annotations ──
 
+  /** Drawn link box waiting for its target (URL or page) in the dialog */
+  const [linkDraft, setLinkDraft] = useState<LinkDraft | null>(null)
+
   const commitDrawing = (origIdx: number, input: DrawingInput) => {
-    applyEditOps([{ op: 'addDrawing', drawing: { ...input, pageIndex: origIdx } }])
+    // A link needs its target before it can join the edit ops (validate requires
+    // exactly one of url/destPage); the drawn box waits in the dialog
+    if (input.kind === 'link') {
+      setLinkDraft({ pageIndex: origIdx, rect: input.rect })
+      return
+    }
+    if (input.kind === 'measure') {
+      const scale = measureScaleRef.current
+      // First draw calibrates, and a re-calibration request turns the next line
+      // into the new reference: the dialog derives the scale from its real
+      // length, and the line itself becomes the first measurement.
+      if (!scale || measureRecalibrateRef.current) {
+        pendingMeasureRef.current = { ...input, pageIndex: origIdx }
+        setMeasureDrawnPts(Math.hypot(input.to[0] - input.from[0], input.to[1] - input.from[1]))
+        setMeasureScaleDlg(true)
+        return
+      }
+      input = {
+        ...input,
+        label: formatLength(
+          Math.hypot(input.to[0] - input.from[0], input.to[1] - input.from[1]),
+          scale,
+        ),
+      }
+    }
+    const plan = applyEditOps([{ op: 'addDrawing', drawing: { ...input, pageIndex: origIdx } }])
+    // a dropped op used to vanish on mouse-up with nothing on screen
+    if (plan.failures.length > 0) showNotice(plan.failures[0]!.error)
   }
 
   /** Render stamps in current page order; page numbers depend on visList, so both preview and save compute fresh */
@@ -3692,14 +5089,14 @@ export default function App() {
       buildStamps(
         pages.map((origIdx, i) => ({
           origIdx,
-          pw: sizes[origIdx]!.width,
-          ph: sizes[origIdx]!.height,
+          pw: allSizes[origIdx]!.width,
+          ph: allSizes[origIdx]!.height,
           displayNo: i + 1,
         })),
         cfg.wm,
         cfg.hf,
       ),
-    [sizes],
+    [allSizes],
   )
 
   const applyStamps = (wm: WatermarkConfig | null, hf: HeaderFooterConfig | null) => {
@@ -3758,8 +5155,12 @@ export default function App() {
     } else {
       const paths = sig.paths.map((p) => {
         const out: number[] = []
-        for (let i = 0; i < p.length; i += 2) {
-          out.push(...viewToPdf(geom, left + p[i]! * k, top + p[i + 1]! * k))
+        // walk whole pairs only: a trailing odd or non-finite value would emit NaN
+        for (let i = 0; i + 1 < p.length; i += 2) {
+          const x = p[i]!
+          const y = p[i + 1]!
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+          out.push(...viewToPdf(geom, left + x * k, top + y * k))
         }
         return out
       })
@@ -3907,6 +5308,41 @@ export default function App() {
     prepareStaticFormFill('text', image)
   }
 
+  const applyBates = (config: BatesConfig): void => {
+    const fontOf = (size: number) => `${size}px ${getComputedStyle(document.body).fontFamily}`
+    // Visible order, not the original file order: a reordered page takes the
+    // number of the position it now occupies, deleted pages get none, and
+    // inserted blank pages are numbered with everyone else. The page index is
+    // mapped back so the insert lands on the page the reader sees there.
+    const inserts = buildBatesInserts(
+      visList.map((origIdx) => {
+        const geom = pageGeom(origIdx)
+        return {
+          width: geom.pw,
+          height: geom.ph,
+          rotate: geom.rot,
+          x0: geom.x0,
+          y0: geom.y0,
+          userUnit: geom.userUnit,
+        }
+      }),
+      config,
+      (text, size) => measureTextWidth(text, fontOf(size)),
+    ).map((input) => ({ ...input, pageIndex: visList[input.pageIndex] ?? input.pageIndex }))
+    if (inserts.length === 0) {
+      setBatesDlg(false)
+      return
+    }
+    const plan = applyEditOps(inserts.map((input) => ({ op: 'addTextInsert' as const, input })))
+    setBatesDlg(false)
+    if (plan.failures.length > 0) {
+      // say what went wrong instead of "applied N pages" over an empty plan
+      showNotice(plan.failures[0]!.error)
+      return
+    }
+    showNotice(t('batesApplied', { count: inserts.length }))
+  }
+
   const placeTextInsert = (origIdx: number, vx: number, vy: number) => {
     const pending = pendingTextInsert
     if (!pending) return
@@ -3953,30 +5389,89 @@ export default function App() {
     setPendingStaticFill(null)
   }
 
+  const pdfRectFromView = (
+    geom: PageGeom,
+    left: number,
+    top: number,
+    w: number,
+    h: number,
+  ): [number, number, number, number] => {
+    const [ax, ay] = viewToPdf(geom, left, top)
+    const [bx, by] = viewToPdf(geom, left + w, top + h)
+    return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)]
+  }
+
+  const pageBoxShapesRef = useRef(
+    new Map<number, readonly (readonly [number, number, number, number])[]>(),
+  )
+  useEffect(() => {
+    pageBoxShapesRef.current = new Map()
+  }, [doc])
+  const pageBoxShapes = async (origIdx: number) => {
+    const cached = pageBoxShapesRef.current.get(origIdx)
+    if (cached) return cached
+    if (!doc) return []
+    const shapes = await collectDetectInput(await doc.getPage(origIdx + 1))
+      .then((r) => r.shapes)
+      .catch(() => [])
+    pageBoxShapesRef.current.set(origIdx, shapes)
+    return shapes
+  }
+
+  /** A check/cross dropped on an interactive check box ticks that field; on a printed box it fills the box */
+  const placeFormMark = async (
+    kind: 'check' | 'cross',
+    pick: Extract<SignatureData, { kind: 'image' }>,
+    origIdx: number,
+    vx: number,
+    vy: number,
+  ) => {
+    const geom = pageGeom(origIdx)
+    const [px, py] = viewToPdf(geom, vx, vy)
+    const widget = checkboxWidgetAt(liveFormCatalog?.byPage.get(origIdx) ?? [], px, py)
+    if (widget) {
+      applyEditOps([
+        { op: 'setFormValue', value: { name: widget.fieldName, kind: 'checkbox', checked: true } },
+      ])
+      return
+    }
+    const box = printedBoxAt(await pageBoxShapes(origIdx), px, py)
+    if (box) {
+      const rect = markRectForBox(box)
+      const image = renderStaticFormMark(kind, rect[2] - rect[0])
+      if (image) commitPlacedImage(origIdx, image.image, rect, kind)
+      return
+    }
+    const disp = geomDispSize(geom)
+    const left = Math.min(Math.max(vx - pick.width / 2, 0), Math.max(disp.width - pick.width, 0))
+    const top = Math.min(Math.max(vy - pick.height / 2, 0), Math.max(disp.height - pick.height, 0))
+    commitPlacedImage(
+      origIdx,
+      pick.image,
+      pdfRectFromView(geom, left, top, pick.width, pick.height),
+      kind,
+    )
+  }
+
   /** Drop the picked image centered on the click point, into the text-below band by default */
   const placeImage = (origIdx: number, vx: number, vy: number) => {
     const pick = imagePick
     if (!pick) return
+    const fill = pendingStaticFill
+    setImagePick(null)
+    setPendingStaticFill(null)
+    if (fill === 'check' || fill === 'cross') {
+      void placeFormMark(fill, pick, origIdx, vx, vy)
+      return
+    }
     const geom = pageGeom(origIdx)
     const disp = geomDispSize(geom)
-    const k = pendingStaticFill
-      ? staticFormFillPlaceK()
-      : imagePlaceK(pick, disp.width, disp.height)
+    const k = fill ? staticFormFillPlaceK() : imagePlaceK(pick, disp.width, disp.height)
     const w = pick.width * k
     const h = pick.height * k
     const left = Math.min(Math.max(vx - w / 2, 0), Math.max(disp.width - w, 0))
     const top = Math.min(Math.max(vy - h / 2, 0), Math.max(disp.height - h, 0))
-    const [ax, ay] = viewToPdf(geom, left, top)
-    const [bx, by] = viewToPdf(geom, left + w, top + h)
-    const rect: [number, number, number, number] = [
-      Math.min(ax, bx),
-      Math.min(ay, by),
-      Math.max(ax, bx),
-      Math.max(ay, by),
-    ]
-    commitPlacedImage(origIdx, pick.image, rect, pendingStaticFill)
-    setImagePick(null)
-    setPendingStaticFill(null)
+    commitPlacedImage(origIdx, pick.image, pdfRectFromView(geom, left, top, w, h), fill)
   }
 
   /** Queue an insertImage op; fill != null tags it as a static form fill (text/check/cross) */
@@ -4524,19 +6019,54 @@ export default function App() {
   )
 
   // ── Live page preview: pdfium re-renders the touched region without the moved/
-  // resized/deleted images and without deleted saved annotations, so the original
-  // vanishes immediately instead of at save ──
+  // resized/deleted images, without deleted saved annotations and without the text
+  // runs being edited, so the original vanishes immediately instead of at save ──
 
-  /** Pages with pending erase ops → image rects to remove + saved annotations to remove */
+  /** The open draft's erase probe; keyed on the run, so typing doesn't re-request */
+  const draftProbe = useMemo(
+    () =>
+      textDraft
+        ? {
+            probe: textEraseProbe(
+              textDraft.origIdx,
+              textDraft.rect,
+              textDraft.oldText,
+              textDraft.fontSize,
+            ),
+            rect: textDraft.cover ? unionCover(textDraft.rect, textDraft.cover) : textDraft.rect,
+          }
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the run, not the draft (typing must not re-request)
+    [
+      textDraft?.origIdx,
+      textDraft?.rect,
+      textDraft?.oldText,
+      textDraft?.fontSize,
+      textDraft?.cover,
+    ],
+  )
+  /** Pending edits the open draft stands in for (reopened / folded): the draft's probe
+      erases their run, so they take the draft's erased state */
+  const draftOwnedIds = useMemo(
+    () => new Set(textDraft ? [textDraft.editId, ...(textDraft.foldedIds ?? [])] : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- same: identity fields only
+    [textDraft?.editId, textDraft?.foldedIds],
+  )
+
+  /** Pages with pending erase ops → image rects, saved annotations and text runs to remove */
   const livePreviewRects = useMemo(() => {
     const map = new Map<
       number,
-      { rects: [number, number, number, number][]; annots: (SavedMarkupAnnot | SavedNoteAnnot)[] }
+      {
+        rects: [number, number, number, number][]
+        annots: (SavedMarkupAnnot | SavedNoteAnnot)[]
+        text: { probe: TextEditInput; rect: [number, number, number, number] }[]
+      }
     >()
     const jobFor = (pageIndex: number) => {
       let job = map.get(pageIndex)
       if (!job) {
-        job = { rects: [], annots: [] }
+        job = { rects: [], annots: [], text: [] }
         map.set(pageIndex, job)
       }
       return job
@@ -4545,12 +6075,40 @@ export default function App() {
       if (e.input.kind !== 'insertImage') jobFor(e.input.pageIndex).rects.push(e.input.oldRect)
     }
     for (const d of annotDeletes) jobFor(d.annot.pageIndex).annots.push(d.annot)
+    // The draft goes first: a reopened edit's run must be claimed by the draft's probe
+    if (draftProbe) jobFor(draftProbe.probe.pageIndex).text.push(draftProbe)
+    for (const te of textEdits) {
+      if (draftOwnedIds.has(te.id)) continue
+      const { pageIndex, rect, oldText, fontSize } = te.input
+      jobFor(pageIndex).text.push({
+        probe: textEraseProbe(pageIndex, rect, oldText, fontSize),
+        rect: te.cover ? unionCover(rect, te.cover) : rect,
+      })
+    }
     return map
-  }, [imageEdits, annotDeletes])
+  }, [imageEdits, annotDeletes, textEdits, draftProbe, draftOwnedIds])
 
   const [livePreview, setLivePreview] = useState<
-    Map<number, { png: string; clip: { x: number; y: number; width: number; height: number } }>
+    Map<
+      number,
+      {
+        png: string
+        clip: { x: number; y: number; width: number; height: number }
+        /** textEraseKey of every run the render erased */
+        erased: Set<string>
+      }
+    >
   >(new Map())
+  /** Whether a pending edit's original run is gone from the page render */
+  const runErased = (te: LocalTextEdit): boolean => {
+    const lp = livePreview.get(te.input.pageIndex)
+    if (!lp) return false
+    const probe = draftOwnedIds.has(te.id) && draftProbe ? draftProbe.probe : te.input
+    return lp.erased.has(textEraseKey(probe))
+  }
+  const draftErased =
+    !!draftProbe &&
+    !!livePreview.get(draftProbe.probe.pageIndex)?.erased.has(textEraseKey(draftProbe.probe))
   /** Last requested render key per page; skips redundant IPC round-trips */
   const livePreviewKeys = useRef(new Map<number, string>())
 
@@ -4573,7 +6131,11 @@ export default function App() {
       let y1 = Infinity
       let x2 = -Infinity
       let y2 = -Infinity
-      for (const r of [...job.rects, ...job.annots.map((a) => a.rect)]) {
+      for (const r of [
+        ...job.rects,
+        ...job.annots.map((a) => a.rect),
+        ...job.text.map((t) => t.rect),
+      ]) {
         const b = pdfRectToCss(geom, r, 1)
         x1 = Math.min(x1, b.left)
         y1 = Math.min(y1, b.top)
@@ -4600,7 +6162,11 @@ export default function App() {
       const annotKey = excludedAnnots
         .map((a) => `${a.objNum}:${a.subtype}:${imageRectKey(a.rect)}`)
         .join(',')
-      const key = `${job.rects.map(imageRectKey).join(';')}|${annotKey}|${pxWidth}|${rotIdx}`
+      const textKey = job.text.map((t) => textEraseKey(t.probe)).join(';')
+      // The clip is part of the key: a run's ink bounds arrive after its draft opens and
+      // widen the region, and the same probes must then render again
+      const clipKey = [clip.x, clip.y, clip.width, clip.height].map(Math.round).join(',')
+      const key = `${job.rects.map(imageRectKey).join(';')}|${annotKey}|${textKey}|${clipKey}|${pxWidth}|${rotIdx}`
       if (livePreviewKeys.current.get(pageIndex) === key) continue
       livePreviewKeys.current.set(pageIndex, key)
       void window.pdfApi
@@ -4609,15 +6175,21 @@ export default function App() {
           pageIndex,
           excludeRects: job.rects,
           ...(excludedAnnots.length > 0 ? { excludeAnnots: excludedAnnots } : {}),
+          ...(job.text.length > 0 ? { excludeText: job.text.map((t) => t.probe) } : {}),
           clip,
           pxWidth,
           rotate: rotIdx,
         })
-        .then((png) => {
+        .then((res) => {
           // Stale guard: a newer request for this page may have superseded this one
           // while the render ran — its result must not be overwritten by ours
           if (livePreviewKeys.current.get(pageIndex) !== key) return
-          if (png) setLivePreview((prev) => new Map(prev).set(pageIndex, { png, clip }))
+          if (!res) return
+          const erased = new Set<string>()
+          job.text.forEach((t, i) => {
+            if (res.textErased[i]) erased.add(textEraseKey(t.probe))
+          })
+          setLivePreview((prev) => new Map(prev).set(pageIndex, { png: res.png, clip, erased }))
         })
         .catch(() => {
           // Only clear the key if it is still ours; deleting a newer in-flight key
@@ -4629,17 +6201,34 @@ export default function App() {
     }
   }, [livePreviewRects, scale, pageGeom, rotDelta, filePath])
 
-  /** Export PNG: current page or all visible pages, 150dpi equivalent */
-  const exportImages = (allPages: boolean) =>
+  /** Export PNG or JPG: current page or all visible pages, 150dpi equivalent */
+  const exportImages = (allPages: boolean, format: 'png' | 'jpg' = 'png') =>
     flushThen(async () => {
       if (!doc || exporting) return
-      setExporting(true)
+      setExporting(format)
       try {
         const targets = allPages ? visList : [curOrigIdx].filter((i) => i >= 0)
         const images: string[] = []
         const pageNumbers: number[] = []
         const canvas = document.createElement('canvas')
+        const encodePage = (cvs: HTMLCanvasElement) =>
+          format === 'jpg'
+            ? (cvs.toDataURL('image/jpeg', 0.92).split(',')[1] ?? '')
+            : (cvs.toDataURL('image/png').split(',')[1] ?? '')
         for (const origIdx of targets) {
+          if (isBlankPage(origIdx)) {
+            const d = dispSize(origIdx)
+            canvas.width = Math.floor((d.width * 150) / 72)
+            canvas.height = Math.floor((d.height * 150) / 72)
+            const ctx2d = canvas.getContext('2d')
+            if (ctx2d) {
+              ctx2d.fillStyle = '#fff'
+              ctx2d.fillRect(0, 0, canvas.width, canvas.height)
+            }
+            images.push(encodePage(canvas))
+            pageNumbers.push(visList.indexOf(origIdx) + 1)
+            continue
+          }
           const page = await doc.getPage(origIdx + 1)
           const viewport = page.getViewport({
             scale: 150 / 72,
@@ -4648,7 +6237,7 @@ export default function App() {
           canvas.width = Math.floor(viewport.width)
           canvas.height = Math.floor(viewport.height)
           await page.render({ canvas, viewport }).promise
-          images.push(canvas.toDataURL('image/png').split(',')[1] ?? '')
+          images.push(encodePage(canvas))
           pageNumbers.push(visList.indexOf(origIdx) + 1)
         }
         canvas.width = 0
@@ -4657,12 +6246,13 @@ export default function App() {
           images,
           pageNumbers,
           baseName: fileName.replace(/\.pdf$/i, ''),
+          format,
         })
         if (!result.ok) opFailed(result.error)
       } catch (err) {
         opFailed(err instanceof Error ? err.message : String(err))
       } finally {
-        setExporting(false)
+        setExporting(null)
       }
     })
 
@@ -4727,6 +6317,44 @@ export default function App() {
     if (!doc) return threadsFromSaved(origIdx, [])
     return threadsFromSaved(origIdx, (await loadSavedAnnots(doc, origIdx)).notes)
   }
+
+  // ── All-document comments panel (Acrobat's Comments list) ──
+
+  /** Thread roots for every page, rebuilt when the panel is open and any note state moves */
+  const [commentEntries, setCommentEntries] = useState<CommentEntry[] | null>(null)
+  const [commentsLoading, setCommentsLoading] = useState(false)
+
+  useEffect(() => {
+    if (sidebar !== 'comments' || status !== 'ready' || !doc) {
+      setCommentEntries(null)
+      setCommentsLoading(false)
+      return
+    }
+    let cancelled = false
+    setCommentsLoading(true)
+    void (async () => {
+      // noteThreadsFor reads the visible-page cache and fetches the rest through
+      // pdf.js; one getAnnotations per uncached page, once per panel open
+      const out: CommentEntry[] = []
+      for (let origIdx = 0; origIdx < doc.numPages; origIdx++) {
+        for (const root of await noteThreadsFor(origIdx)) {
+          if (cancelled) return
+          const pageNo = visList.indexOf(origIdx) + 1
+          if (pageNo > 0) out.push({ origIdx, pageNo, root })
+        }
+      }
+      if (!cancelled) {
+        setCommentEntries(out)
+        setCommentsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // drawings/annotDeletes/noteEdits/savedNotes move the thread set; visList
+    // renumbers display pages on reorder; doc swaps documents
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebar, status, doc, drawings, annotDeletes, noteEdits, savedNotes, visList])
 
   /** Root pins DrawLayer renders for saved threads (pending roots render from drawings) */
   const savedNotePins = (origIdx: number): SavedNotePin[] =>
@@ -4830,7 +6458,7 @@ export default function App() {
       opFailed(t('redactStructureBlocked'))
       return undefined
     }
-    if (dirty && !(await save())) return undefined
+    if (dirty && !(await save(false, true))) return undefined
     return fn()
   }
 
@@ -4869,10 +6497,6 @@ export default function App() {
       }),
     )
   }
-  const insertBlankPageAt = (afterVisIdx: number) =>
-    rewriteInPlace(() =>
-      window.pdfApi.insertBlankPage({ path: filePath, afterPageIndex: afterVisIdx }),
-    )
   const splitPdfToFolder = (chunkSize: number) =>
     runFileOp(() => window.pdfApi.splitPdf({ path: filePath, chunkSize, baseName: baseName() }))
   const mergePagesToFile = (
@@ -4923,17 +6547,55 @@ export default function App() {
     void extractPagesToFile(pages.map((n) => n - 1))
   }
 
-  const insertPdf = (afterOrigIdx: number) =>
-    flushThen(async () => {
-      const result = await window.pdfApi.insertPdf({ path: filePath, afterPageIndex: afterOrigIdx })
+  const reduceFileSize = async (): Promise<void> => {
+    if (!filePath) return
+    const outcome = await window.pdfApi.reduceFileSize(filePath)
+    if (!outcome.ok) {
+      if (!('canceled' in outcome)) showNotice(outcome.reason)
+      return
+    }
+    const savedPct =
+      outcome.bytesBefore > 0 ? Math.round((1 - outcome.bytesAfter / outcome.bytesBefore) * 100) : 0
+    // a run that came out bigger writes nothing and lands here as <= 0%: the
+    // toast says the file is already small instead of inventing a reduction
+    showNotice(savedPct > 0 ? t('reduceDone', { pct: savedPct }) : t('reduceAlreadySmall'))
+  }
+
+  const insertPdf = (afterOrigIdx: number) => {
+    // the flush bakes the visible order into the file, so the anchor becomes its visible position
+    const afterPageIndex = visListOf(orderRef.current).indexOf(afterOrigIdx)
+    return flushThen(async () => {
+      const result = await window.pdfApi.insertPdf({ path: filePath, afterPageIndex })
       if (!result.ok) {
         opFailed(result.error)
         return
       }
       if (!('canceled' in result)) await loadDoc(filePath, doc)
     })
+  }
 
-  const insertBlankPage = (afterOrigIdx: number) => insertBlankPageAt(visList.indexOf(afterOrigIdx))
+  /** Pending edit like a new slide in Slides: shows up at once, drags, undoes, lands in the file on save. -1 / null = first page */
+  const insertBlankPage = (
+    afterOrigIdx: number | null,
+  ): { ok: true; pageIndex: number } | { ok: false; error: string } => {
+    const after = afterOrigIdx !== null && afterOrigIdx >= 0 ? afterOrigIdx : null
+    const neighbor = after ?? visListOf(orderRef.current)[0]
+    const size =
+      neighbor !== undefined && (allSizes[neighbor] ?? blankSizeNow(neighbor))
+        ? geomDispSize(pageGeomRef.current(neighbor))
+        : { width: 595.28, height: 841.89 }
+    const pageIndex = sizes.length + blankPagesRef.current.length
+    const plan = applyEditOpsRef.current([
+      { op: 'insertBlankPage', after, pageIndex, width: size.width, height: size.height },
+    ])
+    if (plan.failures.length > 0) {
+      const error = plan.failures[0]!.error
+      opFailed(error)
+      return { ok: false, error }
+    }
+    scrollAfterReorderRef.current = pageIndex
+    return { ok: true, pageIndex }
+  }
 
   const openSplitDlg = () => {
     setSplitInput('1')
@@ -5012,7 +6674,7 @@ export default function App() {
 
   /** Render the page as displayed (rotation included) for the crop dialog */
   const openPageCrop = async (origIdx: number) => {
-    if (!doc) return
+    if (!doc || isBlankPage(origIdx)) return
     try {
       const page = await doc.getPage(origIdx + 1)
       const rotation = (((page.rotate + rotDelta(origIdx)) % 360) + 360) % 360
@@ -5051,7 +6713,12 @@ export default function App() {
     setPrintMode('all')
     setPrintInput(String(printCurrentPage))
     setPrintInvalid(false)
+    setPrintParity('all')
     setPrintDlg(true)
+    window.pdfApi
+      .listPrinters()
+      .then(setPrinters)
+      .catch(() => undefined)
   }
 
   /** Print: save first (markups/forms/page ops all into the file), then reload from the file to render, avoiding a destroyed old doc */
@@ -5063,14 +6730,39 @@ export default function App() {
   const printDoc = async (pages?: number[]) => {
     if (printBusyRef.current) return
     printBusyRef.current = true
+    const job =
+      printDevice === PRINT_SYSTEM_DIALOG
+        ? undefined
+        : {
+            deviceName: printDevice,
+            copies: printCopies,
+            collate: printCollate,
+            duplex: printDuplex,
+            driverOptions: driverOptions
+              .filter(
+                (g) =>
+                  driverChoices[g.name] !== undefined && driverChoices[g.name] !== g.defaultValue,
+              )
+              .map((g) => ({ name: g.name, value: driverChoices[g.name]! })),
+          }
     try {
       await flushThen(async () => {
         setPrinting(true)
         try {
-          const data = await window.pdfApi.readFile(filePath)
-          const pdoc = await getDocument({ data: new Uint8Array(data), ...DOC_OPTS }).promise
+          if (job && IS_MAC && maySpoolOriginal(diskPasswordRef.current)) {
+            // macOS named printer: lp spools the flushed file itself — the
+            // vector original reaches the driver untouched, instead of a
+            // 150-200 DPI raster pass (hermesoffice#2347's route, quality half).
+            // An encrypted file stays encrypted on disk, which CUPS' pdftopdf
+            // cannot open, so those fall through to the raster path below.
+            const r = await window.pdfApi.printFile({ ...job, pages, path: filePath })
+            if (!r.ok && r.error) opFailed(r.error)
+            return
+          }
+          const data = await readFileBytes(window.pdfApi, filePath)
+          const pdoc = await getDocument({ data, ...DOC_OPTS }).promise
           try {
-            await printPdf(pdoc, pages)
+            await printPdf(pdoc, pages, job)
           } finally {
             void pdoc.loadingTask.destroy()
           }
@@ -5087,23 +6779,19 @@ export default function App() {
 
   /** Print dialog confirm: visible page numbers → 1-based file pages */
   const confirmPrint = () => {
-    if (printMode === 'all') {
-      setPrintDlg(false)
-      void printDoc()
-      return
-    }
-    if (printMode === 'current') {
-      setPrintDlg(false)
-      void printDoc([printCurrentPage])
-      return
-    }
-    const pages = parsePageRanges(printInput, pageCount)
-    if (!pages || pages.length === 0) {
+    const pages =
+      printMode === 'all'
+        ? Array.from({ length: pageCount }, (_x, i) => i + 1)
+        : printMode === 'current'
+          ? [printCurrentPage]
+          : parsePageRanges(printInput, pageCount)
+    const subset = pages ? filterPageParity(pages, printParity) : []
+    if (subset.length === 0) {
       setPrintInvalid(true)
       return
     }
     setPrintDlg(false)
-    void printDoc(pages)
+    void printDoc(printMode === 'all' && printParity === 'all' ? undefined : subset)
   }
 
   /** Capability surface for AI tools; rebuilt each render (AiPanel mirrors it via refs to get the latest) */
@@ -5121,6 +6809,9 @@ export default function App() {
     add(noteEdits.length, 'note edits')
     add(drawings.length, 'drawings')
     add(formEdits.size, 'form field changes')
+    add(formFields.length, 'new form fields (Form Design)')
+    add(blankPages.length, 'blank pages added')
+    add(formWidgetEdits.size, 'existing form field changes (Form Design)')
     add(rotations.size, 'page rotations')
     add(deleted.size, 'page deletions')
     if (order) parts.push('page order changed')
@@ -5154,6 +6845,7 @@ export default function App() {
     // scan still running: "unknown" must not read as "none" — a run started right
     // after open would otherwise never hear the file carries review feedback
     if (!aiAnnotCounts) {
+      startAiAnnotCountScan()
       return 'Whether the file contains notes/markups has not been determined yet; use read_annotations to check when the user asks about review feedback.'
     }
     let savedThreads = 0
@@ -5178,7 +6870,7 @@ export default function App() {
   const aiApi: PdfAppDeps = {
     doc: () => doc,
     fileName: () => fileName,
-    pageCount: () => sizes.length,
+    pageCount: pageCountNow,
     currentPage: () => (visList[currentPage - 1] ?? 0) + 1,
     readOnly: () => readOnly,
     ocrText: (origIdx) => ocrPages.get(origIdx)?.entry.text ?? null,
@@ -5362,13 +7054,16 @@ export default function App() {
       const image = renderStaticFormMark(kind, Math.max(rect[2] - rect[0], rect[3] - rect[1]))
       if (image) commitPlacedImage(origIdx, image.image, rect, kind)
     },
+    formWidgets: (origIdx) => liveFormCatalog?.byPage.get(origIdx) ?? [],
+    pageBoxes: pageBoxShapes,
     editFonts: () => editFonts,
     formEdits: () => formEdits,
     applyOps: (ops, opts) =>
       opts?.dryRun ? planEditOps(ops, editOpContext(), newId) : applyEditOpsRef.current(ops),
     metadata: () => metadataRef.current ?? docInfo,
     pageOrder: () => visListOf(orderRef.current),
-    pageGeom: (origIdx) => (sizes[origIdx] ? pageGeom(origIdx) : null),
+    pageGeom: (origIdx) =>
+      (allSizes[origIdx] ?? blankSizeNow(origIdx)) ? pageGeom(origIdx) : null,
     listImages: () => (filePath ? window.pdfApi.listPageImages(filePath) : Promise.resolve([])),
     isImageClaimed: isImageClaimedNow,
     insertImage: (origIdx, png, rect, layer) => {
@@ -5420,7 +7115,7 @@ export default function App() {
       applyEditOpsRef.current([{ op: 'setStamps', cfg }])
     },
     createDocument: (request) => window.pdfApi.createDocument(request),
-    insertBlankPage: insertBlankPageAt,
+    insertBlankPage,
     setPageSize: resizePages,
     cropPages: cropPagesOnDisk,
     replacePages: replacePagesOnDisk,
@@ -5450,6 +7145,178 @@ export default function App() {
   }
 
   /** Internal destination of a Link annotation → jump to that page */
+  // ── Bookmark editing (embedded outlines only; fail-closed on named dests) ──
+
+  /** The original tree as the write model: every node gains pageIndex (0-based)
+      resolved through doc.getPageIndex; a named destination or url-only entry
+      cannot be rebuilt exactly, so it marks the whole edit unresolvable. */
+  const resolveOutlineForEdit = async (
+    nodes: OutlineNode[],
+  ): Promise<{
+    tree: {
+      title: string
+      pageIndex: number
+      top?: number | null
+      children?: { title: string; pageIndex: number; top?: number | null }[]
+    }[]
+    unresolvable: boolean
+  }> => {
+    let unresolvable = false
+    const walk = async (
+      list: OutlineNode[],
+    ): Promise<
+      {
+        title: string
+        pageIndex: number
+        top?: number | null
+        children?: { title: string; pageIndex: number; top?: number | null }[]
+      }[]
+    > => {
+      const out: {
+        title: string
+        pageIndex: number
+        top?: number | null
+        children?: { title: string; pageIndex: number; top?: number | null }[]
+      }[] = []
+      for (const node of list) {
+        let pageIndex: number | null = null
+        let top: number | null = null
+        if (Array.isArray(node.dest)) {
+          const ref = node.dest[0]
+          try {
+            pageIndex =
+              typeof ref === 'number'
+                ? ref
+                : await doc!.getPageIndex(ref as Parameters<PDFDocumentProxy['getPageIndex']>[0])
+            top = destTop(node.dest)
+          } catch {
+            pageIndex = null
+          }
+        } else if (typeof node.dest === 'string') {
+          try {
+            const arr = await doc!.getDestination(node.dest)
+            if (Array.isArray(arr)) {
+              const ref = arr[0]
+              pageIndex =
+                typeof ref === 'number'
+                  ? ref
+                  : await doc!.getPageIndex(ref as Parameters<PDFDocumentProxy['getPageIndex']>[0])
+              top = destTop(arr)
+            }
+          } catch {
+            pageIndex = null
+          }
+        }
+        if (node.url || pageIndex === null) unresolvable = true
+        out.push({
+          title: node.title,
+          ...(pageIndex !== null ? { pageIndex } : { pageIndex: 0 }),
+          ...(top !== null ? { top } : {}),
+          ...(node.items?.length ? { children: await walk(node.items) } : {}),
+        })
+      }
+      return out
+    }
+    if (!doc) return { tree: [], unresolvable: true }
+    const tree = await walk(nodes)
+    return { tree, unresolvable }
+  }
+
+  const startBookmarkEdit = (): void => {
+    // A committed (unsaved) tree reopens as is; the file's outline is only the
+    // starting point when nothing is pending
+    if (pendingOutline?.tree) {
+      setPendingOutline({ ...pendingOutline, editing: true })
+      return
+    }
+    if (!outline || outlineGenerated || !doc) return
+    void resolveOutlineForEdit(outline).then((resolved) =>
+      setPendingOutline({
+        ...resolved,
+        tree: resolved.unresolvable ? null : resolved.tree,
+        edited: false,
+        editing: true,
+      }),
+    )
+  }
+
+  /** ✓: leave edit mode and keep an edited tree for Save; an untouched one is simply dropped */
+  const finishBookmarkEdit = (): void => {
+    setPendingOutline((prev) => (prev?.edited && prev.tree ? { ...prev, editing: false } : null))
+  }
+
+  const addBookmarkForCurrentPage = (): void => {
+    const base = pendingOutline
+    if (!base || base.tree === null) return
+    const title = t('outlineNewTitle')
+    const entry = {
+      title,
+      pageIndex: visList[currentPage - 1] ?? 0,
+      top: null,
+      children: [],
+    }
+    setPendingOutline({ ...base, edited: true, tree: [...base.tree, { ...entry, children: [] }] })
+  }
+
+  type BookmarkNode = {
+    title: string
+    pageIndex: number
+    top?: number | null
+    children?: BookmarkNode[]
+  }
+
+  /** Mutate one node by index path ('0.1.0'); a null outcome deletes it */
+  const mutateBookmark = (
+    list: BookmarkNode[],
+    path: number[],
+    fn: (node: BookmarkNode) => BookmarkNode | null,
+  ): BookmarkNode[] => {
+    const [head, ...rest] = path
+    const next: BookmarkNode[] = []
+    list.forEach((node, index) => {
+      if (index !== head) {
+        next.push(node)
+        return
+      }
+      if (rest.length === 0) {
+        const outcome = fn(node)
+        if (outcome !== null) next.push(outcome)
+        return
+      }
+      next.push(
+        node.children?.length
+          ? { ...node, children: mutateBookmark(node.children, rest, fn) }
+          : node,
+      )
+    })
+    return next
+  }
+
+  const deleteBookmarkAt = (path: string): void => {
+    const base = pendingOutline
+    if (!base?.tree) return
+    setPendingOutline({
+      ...base,
+      edited: true,
+      tree: mutateBookmark(base.tree, path.split('.').map(Number), () => null),
+    })
+  }
+
+  const renameBookmarkAt = (path: string, title: string): void => {
+    const base = pendingOutline
+    if (!base?.tree) return
+    const trimmed = title.trim()
+    if (trimmed === '') return
+    setPendingOutline({
+      ...base,
+      edited: true,
+      tree: mutateBookmark(base.tree, path.split('.').map(Number), (entry) => ({
+        ...entry,
+        title: trimmed,
+      })),
+    })
+  }
+
   const goToDest = async (dest: unknown) => {
     if (!doc) return
     try {
@@ -5485,6 +7352,21 @@ export default function App() {
   // Thumbnail context menu
   useDismissablePopover(thumbMenu != null, () => setThumbMenu(null), {
     inside: () => [thumbMenuRef.current],
+  })
+  useDismissablePopover(formMenu != null, () => setFormMenu(null), {
+    inside: () => [formMenuRef.current],
+  })
+  // The field menu is tall; keep it inside the window when opened near the bottom/right edge
+  useLayoutEffect(() => {
+    const el = formMenuRef.current
+    if (!formMenu || !el) return
+    const r = el.getBoundingClientRect()
+    const left = Math.max(0, Math.min(formMenu.x, window.innerWidth - r.width - 4))
+    const top = Math.max(0, Math.min(formMenu.y, window.innerHeight - r.height - 4))
+    if (left !== formMenu.x || top !== formMenu.y) setFormMenu({ ...formMenu, x: left, y: top })
+  }, [formMenu])
+  useDismissablePopover(arrangeOpen, () => setArrangeOpen(false), {
+    inside: () => [arrangeWrapRef.current],
   })
 
   // Draw-color palette (Annotate tab). Guarded by its own wrap ref — the
@@ -5522,22 +7404,27 @@ export default function App() {
     inside: () => [convertWrapRef.current],
   })
 
-  // Main process picked "Save" in the close prompt → save and report the result
+  // Main process asked for a save (close prompt, menu Save, export) → save and report the result
   useEffect(() => {
-    return window.pdfApi.onCloseSaveRequest(() => {
+    return window.pdfApi.onCloseSaveRequest(({ flushAll }) => {
       if (redactions.length > 0) {
         showNotice(t('redactSaveAsHint'))
         window.pdfApi.sendCloseSaveResult(false)
         return
       }
-      void save().then((ok) => window.pdfApi.sendCloseSaveResult(ok))
+      void save(false, flushAll).then((ok) => window.pdfApi.sendCloseSaveResult(ok))
     })
   })
 
   // Shell menu Save As → write pending edits to the picked path only; the original file is never mutated
   useEffect(() => {
     return window.pdfApi.onSaveAsRequest((targetPath) => {
-      void saveAsTo(targetPath).then((ok) => window.pdfApi.sendSaveAsResult(ok))
+      void saveAsTo(targetPath)
+        .catch((err: unknown) => {
+          opFailed(err instanceof Error ? err.message : String(err))
+          return false
+        })
+        .then((ok) => window.pdfApi.sendSaveAsResult(ok))
     })
   })
 
@@ -5549,6 +7436,7 @@ export default function App() {
   // Shortcuts: ⌘S/⌘F/⌘P/⌘±/⌘0 + page navigation (only ⌘ combos kept while an input control is focused)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (redactionRequestInFlightRef.current) return
       const target = e.target as HTMLElement | null
       const inEditable =
         !!target &&
@@ -5556,8 +7444,34 @@ export default function App() {
           target.tagName === 'TEXTAREA' ||
           target.tagName === 'SELECT' ||
           target.isContentEditable)
+      if (!shouldHandleDocumentUndo(e.target, e.key, e.metaKey || e.ctrlKey)) return
       if (e.metaKey || e.ctrlKey) {
         const k = e.key.toLowerCase()
+        if (ribbonTab === 'formDesign' && !formDesignPreview && !inEditable) {
+          if (k === 'c' && selectedFormFieldIds.length > 0) {
+            e.preventDefault()
+            copySelectedFormFields()
+            return
+          }
+          if (k === 'v' && formClipboardRef.current.length > 0) {
+            e.preventDefault()
+            pasteFormFields()
+            return
+          }
+          if (k === 'd' && selectedFormFieldIds.length > 0) {
+            e.preventDefault()
+            duplicateSelectedFormFields()
+            return
+          }
+          if (k === 'a') {
+            e.preventDefault()
+            const page = selectedDesignFields[0]?.pageIndex ?? visList[currentPage - 1]
+            setSelectedFormFieldIds(
+              page === undefined ? [] : (designFieldsByPage.get(page) ?? []).map((f) => f.id),
+            )
+            return
+          }
+        }
         if (k === 's') {
           e.preventDefault()
           void save()
@@ -5585,6 +7499,8 @@ export default function App() {
         return
       }
       if (e.key === 'Escape') {
+        // Modal dialogs own Escape; the states behind them must not react too
+        if (signDlg || stampDlg || propsDlg) return
         if (askPop) setAskPop(null)
         else if (textDraft) setTextDraft(null)
         else if (pendingTextInsert) setPendingTextInsert(null)
@@ -5595,11 +7511,37 @@ export default function App() {
         else if (noteDraft) setNoteDraft(null)
         else if (activeNote) setActiveNote(null)
         else if (drawTool) setDrawTool(null)
+        else if (formMenu) setFormMenu(null)
+        else if (formDesignTool) setFormDesignTool(null)
+        else if (selectedFormFieldIds.length > 0) setSelectedFormFieldIds([])
         else if (selected) setSelected(null)
         else if (searchOpen) closeSearch()
         return
       }
       if (inEditable) return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedFormFieldIds.length > 0) {
+        e.preventDefault()
+        deleteSelectedFormFields()
+        return
+      }
+      if (
+        selectedDesignFields.length > 0 &&
+        ribbonTab === 'formDesign' &&
+        e.key.startsWith('Arrow')
+      ) {
+        const step = NUDGE_PTS * (e.shiftKey ? 10 : 1)
+        const [vx, vy] =
+          e.key === 'ArrowLeft'
+            ? [-step, 0]
+            : e.key === 'ArrowRight'
+              ? [step, 0]
+              : e.key === 'ArrowUp'
+                ? [0, -step]
+                : [0, step]
+        e.preventDefault()
+        nudgeSelectedFormFields(vx, vy)
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
         e.preventDefault()
         deleteSelected()
@@ -5651,6 +7593,27 @@ export default function App() {
 
   // renamed / moved from the shell: keep saving to the file's new location
   useEffect(() => window.pdfApi.onFileRenamed((next) => setFilePath(next)), [])
+
+  // Re-read the signatures whenever the document on screen is (re)loaded: a save rewrites the
+  // file, which is exactly when an old signature stops matching
+  useEffect(() => {
+    if (!doc || !filePath) {
+      setDigitalSignatures([])
+      return
+    }
+    let cancelled = false
+    void window.pdfApi
+      .listDigitalSignatures(filePath)
+      .then((list) => {
+        if (!cancelled) setDigitalSignatures(list)
+      })
+      .catch(() => {
+        if (!cancelled) setDigitalSignatures([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [doc, filePath])
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -5714,13 +7677,21 @@ export default function App() {
     return (
       <div className="app">
         <div className="pdf-placeholder">
-          {status === 'loading' ? t('loading') : status === 'error' ? t('loadError') : t('noFile')}
+          {status === 'loading'
+            ? t('loading')
+            : status === 'error'
+              ? openError
+                ? `${t('loadError')}: ${openError}`
+                : t('loadError')
+              : t('noFile')}
         </div>
       </div>
     )
   }
 
   const menuOrig = thumbMenu?.origIdx ?? -1
+  const menuInGap = thumbMenu != null && thumbMenu.origIdx === null
+  const menuInsertAfter = menuInGap ? (thumbMenu.afterOrigIdx ?? -1) : menuOrig
 
   /** Ribbon AI buttons: expand the dock and auto-run the prompt in the assistant */
   const runAiPreset = (text: string): void => {
@@ -5763,7 +7734,7 @@ export default function App() {
                 <span className="rb-color-bar" style={{ background: cssRgb(highlightColor) }} />
               </span>
             </span>
-            {t('highlight')}
+            <span>{t('highlight')}</span>
           </button>
           <button
             className={`rb-highlight-caret${highlightColorOpen ? ' active' : ''}`}
@@ -5792,7 +7763,18 @@ export default function App() {
           <span className="rb-big-icon">
             <IconUnderline />
           </span>
-          {t('underline')}
+          <span>{t('underline')}</span>
+        </button>
+        <button
+          className="rb-big"
+          disabled={readOnly}
+          data-tip={t('squiggly')}
+          onClick={() => applyMarkup('squiggly')}
+        >
+          <span className="rb-big-icon">
+            <IconSquiggly />
+          </span>
+          <span>{t('squiggly')}</span>
         </button>
         <button
           className="rb-big"
@@ -5803,7 +7785,7 @@ export default function App() {
           <span className="rb-big-icon">
             <IconStrike />
           </span>
-          {t('strikeout')}
+          <span>{t('strikeout')}</span>
         </button>
       </div>
     </div>
@@ -5853,7 +7835,7 @@ export default function App() {
           <span className="rb-big-icon">
             <IconFitWidth />
           </span>
-          {t('fitWidth')}
+          <span>{t('fitWidth')}</span>
         </button>
         <button
           className="rb-big"
@@ -5865,7 +7847,7 @@ export default function App() {
           <span className="rb-big-icon">
             <IconFitPage />
           </span>
-          {t('fitPage')}
+          <span>{t('fitPage')}</span>
         </button>
       </div>
     </div>
@@ -5880,7 +7862,7 @@ export default function App() {
       <span className="rb-big-icon">
         <IconSearch />
       </span>
-      {t('search')}
+      <span>{t('search')}</span>
     </button>
   )
 
@@ -5902,7 +7884,7 @@ export default function App() {
       <span className="rb-big-icon">
         <IconEditText />
       </span>
-      {t('editText')}
+      <span>{t('editText')}</span>
     </button>
   )
 
@@ -5933,7 +7915,7 @@ export default function App() {
       <span className="rb-big-icon">
         <IconFormText />
       </span>
-      {t('insertText')}
+      <span>{t('insertText')}</span>
     </button>
   )
 
@@ -5942,6 +7924,70 @@ export default function App() {
     widget.signed || signedFormWidgetIds.has(widget.id)
   const firstSignatureWidget =
     formWidgets.find((widget) => widget.kind === 'signature' && !formWidgetSigned(widget)) ?? null
+
+  const applyProtection = (result: {
+    userPassword: string
+    ownerPassword: string
+    permissions: PdfPermissions
+  }): void => {
+    if (!mayChangeProtection(readOnly, diskLock)) {
+      showNotice(t('pwOwnerNeeded'))
+      setProtectionDlg(false)
+      return
+    }
+    setEncryption(result)
+    setProtectionDirty(true)
+    // the next save writes a file that only opens with the new password; the
+    // file ON DISK keeps the old one until that write lands, so the disk
+    // password follows the save instead of leading it
+    passwordRef.current = result.userPassword
+    pendingDiskPasswordRef.current = result.userPassword
+    setProtectionDlg(false)
+  }
+
+  const removeProtection = (): void => {
+    if (!mayChangeProtection(readOnly, diskLock)) {
+      showNotice(t('pwOwnerNeeded'))
+      setProtectionDlg(false)
+      return
+    }
+    setEncryption(null)
+    setProtectionDirty(true)
+    // the next save writes plain; until then the disk file still needs the old password
+    passwordRef.current = undefined
+    pendingDiskPasswordRef.current = ''
+    setProtectionDlg(false)
+  }
+
+  const openCertSignDialog = () => {
+    if (dirty || saveInFlightRef.current !== null) {
+      showNotice(t('certSaveFirst'))
+      return
+    }
+    setCertSignDlg(true)
+  }
+
+  /** The signed copy becomes this tab's document; reload it like a Save As target */
+  const adoptSignedFile = async (path: string) => {
+    setCertSignDlg(false)
+    const scrollTop = scrollRef.current?.scrollTop ?? 0
+    setFilePath(path)
+    setStatus('loading')
+    try {
+      await loadDoc(path, doc)
+      searchIndexCache.clear()
+      setSearchMatches([])
+      setSearchCur(0)
+      setStatus('ready')
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollTop
+      })
+      showNotice(t('certSigned', { name: path.split(/[\\/]/).pop() ?? path }))
+    } catch (err) {
+      setStatus('error')
+      opFailed(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   const openSignatureDialog = (target: FormWidget | null) => {
     setEditTextMode(false)
@@ -5979,7 +8025,7 @@ export default function App() {
           <span className="rb-big-icon">
             <IconThumbs />
           </span>
-          {t('thumbs')}
+          <span>{t('thumbs')}</span>
         </button>
         <button
           className={`rb-big${sidebar === 'outline' ? ' active' : ''}`}
@@ -5989,7 +8035,61 @@ export default function App() {
           <span className="rb-big-icon">
             <IconOutline />
           </span>
-          {t('outline')}
+          <span>{t('outline')}</span>
+        </button>
+        <button
+          className={`rb-big${sidebar === 'comments' ? ' active' : ''}`}
+          onClick={() => setSidebar((v) => (v === 'comments' ? null : 'comments'))}
+        >
+          <span className="rb-big-icon">
+            <IconComments />
+          </span>
+          <span>{t('commentsPanel')}</span>
+        </button>
+        <button
+          className={`rb-big${sidebar === 'compare' ? ' active' : ''}`}
+          disabled={status !== 'ready'}
+          onClick={() => setSidebar((v) => (v === 'compare' ? null : 'compare'))}
+        >
+          <span className="rb-big-icon">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="4" y="4" width="9" height="16" rx="1" />
+              <path d="M16 6.5 L20 6.5 M16 12 L20 12 M16 17.5 L20 17.5" />
+            </svg>
+          </span>
+          <span>{t('compare')}</span>
+        </button>
+        <button
+          className={`rb-big${sidebar === 'attachments' ? ' active' : ''}`}
+          disabled={status !== 'ready'}
+          onClick={() => setSidebar((v) => (v === 'attachments' ? null : 'attachments'))}
+        >
+          <span className="rb-big-icon">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 11.5 12.3 19.2 a4.6 4.6 0 0 1-6.5-6.5 L13.6 5 a3.1 3.1 0 0 1 4.4 4.4 L10.6 16.8 a1.6 1.6 0 0 1-2.2-2.2 L15 8" />
+            </svg>
+          </span>
+          <span>{t('attachments')}</span>
         </button>
         {searchBtn}
         <button
@@ -5998,7 +8098,7 @@ export default function App() {
           onClick={() => setSpread((v) => (v === 1 ? 2 : 1))}
         >
           <span className="rb-big-icon">{spread === 2 ? <IconSinglePage /> : <IconSpread />}</span>
-          {spread === 2 ? t('singlePage') : t('twoPage')}
+          <span>{spread === 2 ? t('singlePage') : t('twoPage')}</span>
         </button>
         <button
           className={`rb-big${nightMode ? ' active' : ''}`}
@@ -6008,14 +8108,14 @@ export default function App() {
           <span className="rb-big-icon">
             <IconNight />
           </span>
-          {t('nightMode')}
+          <span>{t('nightMode')}</span>
         </button>
       </div>
     </div>
   )
 
   return (
-    <div className="app">
+    <div className="app" inert={redactionCopyInFlight} aria-busy={redactionCopyInFlight}>
       <div className={`ribbon ${collapse.rootClass}`} ref={collapse.rootRef}>
         <div className="ribbon-tabs" onDoubleClick={collapse.onTabsDoubleClick}>
           <button
@@ -6049,7 +8149,8 @@ export default function App() {
           {RIBBON_TABS.map(({ id, labelKey }) => (
             <button
               key={id}
-              className={`ribbon-tab${ribbonTab === id ? ' active' : ''}`}
+              className={`ribbon-tab ${collapse.tabClass(ribbonTab === id)}`}
+              data-tip={collapse.tabTip(ribbonTab === id)}
               onClick={() => {
                 collapse.onTabPress(ribbonTab === id)
                 setRibbonTab(id)
@@ -6060,13 +8161,26 @@ export default function App() {
           ))}
           {!readOnly && (
             <button
-              className={`ribbon-tab ribbon-tab-context${ribbonTab === 'fillForm' ? ' active' : ''}`}
+              className={`ribbon-tab ribbon-tab-context ${collapse.tabClass(ribbonTab === 'fillForm')}`}
+              data-tip={collapse.tabTip(ribbonTab === 'fillForm')}
               onClick={() => {
                 collapse.onTabPress(ribbonTab === 'fillForm')
                 setRibbonTab('fillForm')
               }}
             >
               {t('ribbonTabFillForm')}
+            </button>
+          )}
+          {!readOnly && (
+            <button
+              className={`ribbon-tab ribbon-tab-context ${collapse.tabClass(ribbonTab === 'formDesign')}`}
+              data-tip={collapse.tabTip(ribbonTab === 'formDesign')}
+              onClick={() => {
+                collapse.onTabPress(ribbonTab === 'formDesign')
+                setRibbonTab('formDesign')
+              }}
+            >
+              {t('ribbonTabFormDesign')}
             </button>
           )}
           <span className="ribbon-tabs-spacer" />
@@ -6093,7 +8207,7 @@ export default function App() {
         <div className="ribbon-body" data-ribbon-body="">
           {ribbonTab === 'home' && (
             <>
-              {/* ---- Hermes AI (first slot: entry + one-click AI actions, docs parity) ---- */}
+              {/* ---- Genspark AI (first slot: entry + one-click AI actions, docs parity) ---- */}
               <div className="ribbon-group">
                 <div className="ribbon-group-items">
                   <button
@@ -6104,7 +8218,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <HermesMark size={26} />
                     </span>
-                    <span>Hermes AI</span>
+                    <span>Genspark AI</span>
                   </button>
                   <button
                     className="rb-big ai-entry"
@@ -6157,14 +8271,14 @@ export default function App() {
                     <button
                       className={`rb-big${convertOpen ? ' active' : ''}`}
                       data-tip={t('convertPdfTip')}
-                      disabled={convertBusy}
+                      disabled={convertBusy || exporting !== null}
                       onClick={() => setConvertOpen((v) => !v)}
                     >
                       <span className="rb-big-icon">
                         <IconConvertPdf />
                         <RbCaret />
                       </span>
-                      {t('convertPdf')}
+                      <span>{exporting ? t('exporting') : t('convertPdf')}</span>
                     </button>
                     {convertOpen && (
                       <div className="rb-drop rb-menu">
@@ -6173,6 +8287,29 @@ export default function App() {
                           {t('convertToExcel')}
                         </button>
                         <button onClick={() => void convertTo('pptx')}>{t('convertToPpt')}</button>
+                        <button onClick={() => void convertTo('md')}>
+                          {t('convertToMarkdown')}
+                        </button>
+                        <button onClick={() => void convertTo('html')}>{t('convertToHtml')}</button>
+                        <div className="rb-menu-sep" />
+                        <button
+                          title={t('exportImagesAll')}
+                          onClick={() => {
+                            setConvertOpen(false)
+                            void exportImages(true)
+                          }}
+                        >
+                          {t('exportImages')}
+                        </button>
+                        <button
+                          title={t('exportImagesAllJpg')}
+                          onClick={() => {
+                            setConvertOpen(false)
+                            void exportImages(true, 'jpg')
+                          }}
+                        >
+                          {t('exportImagesJpg')}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -6193,18 +8330,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconPrint />
                     </span>
-                    {printing ? t('printPreparing') : t('print')}
-                  </button>
-                  <button
-                    className="rb-big"
-                    data-tip={t('exportImagesAll')}
-                    disabled={exporting}
-                    onClick={() => void exportImages(true)}
-                  >
-                    <span className="rb-big-icon">
-                      <IconExportImg />
-                    </span>
-                    {exporting ? t('exporting') : t('exportImages')}
+                    <span>{printing ? t('printPreparing') : t('print')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6214,7 +8340,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconProps />
                     </span>
-                    {t('props')}
+                    <span>{t('props')}</span>
                   </button>
                 </div>
               </div>
@@ -6268,13 +8394,21 @@ export default function App() {
                         setPendingTextInsert(null)
                         setImagePick(null)
                         setEditImageMode(false)
+                        if (tool === 'measure' && drawTool === 'measure') {
+                          // a second click disarms the tool like every other
+                          // one and asks the next measure line to re-open the
+                          // scale dialog, so a wrong first entry is never
+                          // stuck for the session
+                          measureRecalibrateRef.current = true
+                          keepMeasureRecalibrateRef.current = true
+                        }
                         setDrawTool((v) => (v === tool ? null : tool))
                       }}
                     >
                       <span className="rb-big-icon">
                         <DrawIcon />
                       </span>
-                      {t(key)}
+                      <span>{t(key)}</span>
                     </button>
                   ))}
                   <button
@@ -6291,7 +8425,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconRect />
                     </span>
-                    {t('redact')}
+                    <span>{t('redact')}</span>
                   </button>
                   {redactions.length > 0 && (
                     <>
@@ -6323,8 +8457,42 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconSign />
                     </span>
-                    {t('sign')}
+                    <span>{t('sign')}</span>
                   </button>
+                  <button
+                    className="rb-big"
+                    disabled={readOnly || status !== 'ready'}
+                    data-tip={t('certSignHint')}
+                    onClick={openCertSignDialog}
+                  >
+                    <span className="rb-big-icon">
+                      <IconCertSign />
+                    </span>
+                    <span>{t('certSign')}</span>
+                  </button>
+                  <button
+                    className="rb-big"
+                    disabled={!protectionEditable || status !== 'ready'}
+                    data-tip={t('protectHint')}
+                    onClick={() => setProtectionDlg(true)}
+                  >
+                    <span className="rb-big-icon">
+                      <IconProtect />
+                    </span>
+                    <span>{t('protect')}</span>
+                  </button>
+                  {digitalSignatures.length > 0 && (
+                    <button
+                      className="rb-big"
+                      data-tip={t('sigPanelHint')}
+                      onClick={() => setSignaturesDlg(true)}
+                    >
+                      <span className="rb-big-icon">
+                        <IconSignatures />
+                      </span>
+                      <span>{t('sigPanel')}</span>
+                    </button>
+                  )}
                   <div ref={drawColorWrapRef} className="rb-drop-wrap">
                     <button
                       className={`rb-big${colorOpen ? ' active' : ''}`}
@@ -6342,7 +8510,7 @@ export default function App() {
                         </span>
                         <RbCaret />
                       </span>
-                      {t('drawColor')}
+                      <span>{t('drawColor')}</span>
                     </button>
                     {colorOpen && (
                       <ColorPickerPopover
@@ -6372,7 +8540,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconInsertImage />
                     </span>
-                    {t('insertImage')}
+                    <span>{t('insertImage')}</span>
                   </button>
                   <button
                     className={`rb-big${editImageMode ? ' active' : ''}`}
@@ -6391,7 +8559,26 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconEditImage />
                     </span>
-                    {t('editImage')}
+                    <span>{t('editImage')}</span>
+                  </button>
+                  <button
+                    className={`rb-big${drawTool === 'link' ? ' active' : ''}`}
+                    disabled={readOnly}
+                    data-tip={t('editLinkHint')}
+                    onClick={() => {
+                      setEditTextMode(false)
+                      setTextDraft(null)
+                      setPendingTextInsert(null)
+                      setPendingSign(null)
+                      setImagePick(null)
+                      setEditImageMode(false)
+                      setDrawTool((tool) => (tool === 'link' ? null : 'link'))
+                    }}
+                  >
+                    <span className="rb-big-icon">
+                      <IconLink />
+                    </span>
+                    <span>{t('editLink')}</span>
                   </button>
                 </div>
               </div>
@@ -6407,7 +8594,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconWatermark />
                     </span>
-                    {t('watermark')}
+                    <span>{t('watermark')}</span>
                   </button>
                 </div>
               </div>
@@ -6424,9 +8611,7 @@ export default function App() {
                     onClick={() => runAiPreset(t('aiFillFormPrompt'))}
                   >
                     <span className="rb-big-icon">
-                      <span className="ai-feature-icon" aria-hidden="true">
-                        <HermesMark size={20} />
-                      </span>
+                      <IconFormAiFill />
                     </span>
                     <span>{t('aiFillFormBtn')}</span>
                   </button>
@@ -6446,7 +8631,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconFormText />
                     </span>
-                    {t('formAddText')}
+                    <span>{t('formAddText')}</span>
                   </button>
                   <button
                     className={`rb-big${pendingStaticFill === 'check' ? ' active' : ''}`}
@@ -6457,7 +8642,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconFormCheck />
                     </span>
-                    {t('formAddCheck')}
+                    <span>{t('formAddCheck')}</span>
                   </button>
                   <button
                     className={`rb-big${pendingStaticFill === 'cross' ? ' active' : ''}`}
@@ -6468,7 +8653,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconFormCross />
                     </span>
-                    {t('formAddCross')}
+                    <span>{t('formAddCross')}</span>
                   </button>
                 </div>
               </div>
@@ -6485,7 +8670,7 @@ export default function App() {
                         <span className="rb-big-icon">
                           <IconPreviousField />
                         </span>
-                        {t('formPreviousField')}
+                        <span>{t('formPreviousField')}</span>
                       </button>
                       <button
                         className="rb-big"
@@ -6495,7 +8680,7 @@ export default function App() {
                         <span className="rb-big-icon">
                           <IconNextField />
                         </span>
-                        {t('formNextField')}
+                        <span>{t('formNextField')}</span>
                       </button>
                       <span className="form-ribbon-progress">
                         {t('formFieldProgress', {
@@ -6526,7 +8711,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconSign />
                     </span>
-                    {t('sign')}
+                    <span>{t('sign')}</span>
                   </button>
                   <button
                     className={`rb-big${imagePick && !pendingStaticFill ? ' active' : ''}`}
@@ -6537,7 +8722,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconInsertImage />
                     </span>
-                    {t('insertImage')}
+                    <span>{t('insertImage')}</span>
                   </button>
                 </div>
               </div>
@@ -6548,8 +8733,149 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconCompleteForm />
                     </span>
-                    {t('formComplete')}
+                    <span>{t('formComplete')}</span>
                   </button>
+                </div>
+              </div>
+            </>
+          )}
+          {ribbonTab === 'formDesign' && (
+            <>
+              <div className="ribbon-group">
+                <div className="ribbon-group-items">
+                  {(
+                    [
+                      ['text', IconFieldText, 'formDesignText', 'formDesignTextHint'],
+                      ['date', IconFieldDate, 'formDesignDate', 'formDesignDateHint'],
+                      [
+                        'checkbox',
+                        IconFieldCheckbox,
+                        'formDesignCheckbox',
+                        'formDesignCheckboxHint',
+                      ],
+                      ['radio', IconFieldRadio, 'formDesignRadio', 'formDesignRadioHint'],
+                      ['choice', IconFieldChoice, 'formDesignChoice', 'formDesignChoiceHint'],
+                      [
+                        'signature',
+                        IconFieldSignature,
+                        'formDesignSignature',
+                        'formDesignSignatureHint',
+                      ],
+                    ] as const
+                  ).map(([kind, FieldIcon, labelKey, hintKey]) => (
+                    <button
+                      key={kind}
+                      className={`rb-big${formDesignTool === kind ? ' active' : ''}`}
+                      disabled={readOnly}
+                      data-tip={t(hintKey)}
+                      aria-pressed={formDesignTool === kind}
+                      onClick={() => startFormDesignTool(kind)}
+                    >
+                      <span className="rb-big-icon">
+                        <FieldIcon />
+                      </span>
+                      <span>{t(labelKey)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="ribbon-sep" />
+              <div className="ribbon-group">
+                <div className="ribbon-group-items">
+                  <button
+                    className={`rb-big${formDesignKeepTool ? ' active' : ''}`}
+                    disabled={readOnly}
+                    data-tip={t('formDesignKeepToolHint')}
+                    aria-pressed={formDesignKeepTool}
+                    onClick={() => setFormDesignKeepTool((v) => !v)}
+                  >
+                    <span className="rb-big-icon">
+                      <IconFieldKeep />
+                    </span>
+                    <span>{t('formDesignKeepTool')}</span>
+                  </button>
+                  <button
+                    className={`rb-big${formDesignPreview ? ' active' : ''}`}
+                    disabled={readOnly}
+                    data-tip={t('formDesignPreviewHint')}
+                    aria-pressed={formDesignPreview}
+                    onClick={() => {
+                      setFormDesignTool(null)
+                      setSelectedFormFieldId(null)
+                      setFreshFormFieldId(null)
+                      setFormDesignPreview((v) => !v)
+                    }}
+                  >
+                    <span className="rb-big-icon">
+                      <IconFieldPreview />
+                    </span>
+                    <span>{t('formDesignPreview')}</span>
+                  </button>
+                  <button
+                    className="rb-big"
+                    disabled={readOnly || detectingFields || !doc}
+                    data-tip={t('formDesignDetectHint')}
+                    onClick={() => void detectFields()}
+                  >
+                    <span className="rb-big-icon">
+                      <IconFieldDetect />
+                    </span>
+                    <span>
+                      {detectingFields ? t('formDesignDetecting') : t('formDesignDetect')}
+                    </span>
+                  </button>
+                  <div className="rb-drop-wrap" ref={arrangeWrapRef}>
+                    <button
+                      className={`rb-big${arrangeOpen ? ' active' : ''}`}
+                      disabled={selectedFormFieldIds.length < 2}
+                      data-tip={t('formDesignArrangeHint')}
+                      onClick={() => setArrangeOpen((v) => !v)}
+                    >
+                      <span className="rb-big-icon">
+                        <IconFieldArrange />
+                        <RbCaret />
+                      </span>
+                      <span>{t('formDesignArrange')}</span>
+                    </button>
+                    {arrangeOpen && (
+                      <div className="rb-drop rb-menu">
+                        {arrangeItems.map(([how, label, min]) => (
+                          <button
+                            key={how}
+                            disabled={selectedFormFieldIds.length < min}
+                            onClick={() => {
+                              setArrangeOpen(false)
+                              arrangeSelected(how)
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="rb-big"
+                    disabled={selectedFormFieldIds.length === 0}
+                    data-tip={t('formDesignDelete')}
+                    onClick={deleteSelectedFormFields}
+                  >
+                    <span className="rb-big-icon">
+                      <IconTrash />
+                    </span>
+                    <span>{t('formDesignDelete')}</span>
+                  </button>
+                  <span className="form-ribbon-progress">
+                    {formDesignPreview
+                      ? t('formDesignPreviewOn')
+                      : formDesignTool
+                        ? t('formDesignPlaceHint')
+                        : formFields.length + formWidgetEdits.size > 0
+                          ? t('formDesignPending', {
+                              count: formFields.length + formWidgetEdits.size,
+                            })
+                          : t('formDesignEmptyHint')}
+                  </span>
                 </div>
               </div>
             </>
@@ -6566,7 +8892,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconRotateL />
                     </span>
-                    {t('rotateLeft')}
+                    <span>{t('rotateLeft')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6576,7 +8902,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconRotateR />
                     </span>
-                    {t('rotateRight')}
+                    <span>{t('rotateRight')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6586,7 +8912,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconRotateAll />
                     </span>
-                    {t('rotateAllPages')}
+                    <span>{t('rotateAllPages')}</span>
                   </button>
                 </div>
               </div>
@@ -6601,7 +8927,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconDeletePage />
                     </span>
-                    {t('deletePage')}
+                    <span>{t('deletePage')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6611,7 +8937,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconExtract />
                     </span>
-                    {t('extractPage')}
+                    <span>{t('extractPage')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6621,17 +8947,52 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconInsertPdf />
                     </span>
-                    {t('insertPdf')}
+                    <span>{t('insertPdf')}</span>
+                  </button>
+                  <button
+                    className="rb-big"
+                    disabled={status !== 'ready' || readOnly}
+                    data-tip={t('reduceHint')}
+                    onClick={() => void reduceFileSize()}
+                  >
+                    <span className="rb-big-icon">
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M15.5 4.5 A 8.5 8.5 0 1 0 19.5 11" />
+                        <path d="M15.5 2.5 L15.5 7.5 L10.5 7.5" />
+                      </svg>
+                    </span>
+                    <span>{t('reduce')}</span>
                   </button>
                   <button
                     className="rb-big"
                     disabled={readOnly}
-                    onClick={() => void insertBlankPage(curOrigIdx)}
+                    onClick={() => insertBlankPage(curOrigIdx)}
                   >
                     <span className="rb-big-icon">
                       <IconInsertBlank />
                     </span>
-                    {t('insertBlankPage')}
+                    <span>{t('insertBlankPage')}</span>
+                  </button>
+                  <button
+                    className="rb-big"
+                    disabled={readOnly || pageCount === 0}
+                    data-tip={t('batesHint')}
+                    onClick={() => setBatesDlg(true)}
+                  >
+                    <span className="rb-big-icon">
+                      <IconBates />
+                    </span>
+                    <span>{t('bates')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6641,7 +9002,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconReplacePages />
                     </span>
-                    {t('replacePages')}
+                    <span>{t('replacePages')}</span>
                   </button>
                 </div>
               </div>
@@ -6656,7 +9017,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconCropPages />
                     </span>
-                    {t('cropPages')}
+                    <span>{t('cropPages')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6666,7 +9027,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconPageSize />
                     </span>
-                    {t('pageSize')}
+                    <span>{t('pageSize')}</span>
                   </button>
                 </div>
               </div>
@@ -6681,7 +9042,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconReverse />
                     </span>
-                    {t('reversePages')}
+                    <span>{t('reversePages')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6691,13 +9052,13 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconSplitPdf />
                     </span>
-                    {t('splitPdf')}
+                    <span>{t('splitPdf')}</span>
                   </button>
                   <button className="rb-big" disabled={readOnly} onClick={() => void mergePdf()}>
                     <span className="rb-big-icon">
                       <IconMergePdf />
                     </span>
-                    {t('mergePdf')}
+                    <span>{t('mergePdf')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6707,7 +9068,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconMergePages />
                     </span>
-                    {t('mergePages')}
+                    <span>{t('mergePages')}</span>
                   </button>
                   <button
                     className="rb-big"
@@ -6717,7 +9078,7 @@ export default function App() {
                     <span className="rb-big-icon">
                       <IconSplitPages />
                     </span>
-                    {t('splitPages')}
+                    <span>{t('splitPages')}</span>
                   </button>
                 </div>
               </div>
@@ -6731,10 +9092,6 @@ export default function App() {
             </>
           )}
         </div>
-        <RibbonCollapseButton
-          state={collapse}
-          labels={{ collapse: t('ribbonCollapse'), pin: t('ribbonPin') }}
-        />
       </div>
       <input
         ref={imageFileRef}
@@ -6749,9 +9106,13 @@ export default function App() {
       />
       <div className="app-main">
         {/* dock wrapper animates the width between panel and rail (docs-style 180ms ease);
-            the panel stays mounted while collapsed so the chat history survives */}
-        <div className={`ai-dock${aiCollapsed ? ' collapsed' : ''}`}>
-          {aiCollapsed && (
+              the panel stays mounted while collapsed so the chat history survives */}
+        <div
+          className={`ai-dock${aiCollapsed ? ' collapsed' : ''}${
+            !aiSidebarEnabled && aiCollapsed ? ' ai-dock-off' : ''
+          }`}
+        >
+          {aiCollapsed && aiSidebarEnabled && (
             <button
               className="ai-rail"
               data-tip={t('aiOpenAssistant')}
@@ -6771,11 +9132,45 @@ export default function App() {
           />
         </div>
         <div className="app-content">
+          {digitalSignatures.length > 0 && (
+            <div className={`pdf-sig-banner ${overallSignatureStatus(digitalSignatures)}`}>
+              <IconSignatures />
+              <span>
+                {t(
+                  {
+                    valid: 'sigBannerValid',
+                    untrusted: 'sigBannerUntrusted',
+                    warning: 'sigBannerWarning',
+                    invalid: 'sigBannerInvalid',
+                  }[overallSignatureStatus(digitalSignatures)] as 'sigBannerValid',
+                )}
+              </span>
+              <button className="pdf-modal-btn" onClick={() => setSignaturesDlg(true)}>
+                {t('sigBannerView')}
+              </button>
+            </div>
+          )}
           <div className="pdf-body">
             {sidebar === 'outline' && outline && (
               <div className="pdf-thumbs pdf-outline-pane" style={{ width: sidebarW }}>
                 <div className="pdf-outline-header">
                   <span>{t('outline')}</span>
+                  {!outlineGenerated && (
+                    <button
+                      type="button"
+                      className="rb-icon"
+                      aria-label={t('outlineEdit')}
+                      data-tip={t('outlineEdit')}
+                      disabled={status !== 'ready' || readOnly}
+                      onClick={() =>
+                        pendingOutline?.editing ? finishBookmarkEdit() : startBookmarkEdit()
+                      }
+                    >
+                      <span style={{ fontSize: 12, fontWeight: 600 }} aria-hidden="true">
+                        {pendingOutline?.editing ? '✓' : '✎'}
+                      </span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="rb-icon"
@@ -6804,11 +9199,136 @@ export default function App() {
                   label={t('outline')}
                   emptyLabel={t('searchNoResults')}
                   onGoToDest={(dest) => void goToDest(dest)}
+                  pending={pendingOutline?.tree ?? null}
+                  editing={pendingOutline?.editing ?? false}
+                  labels={{
+                    add: t('outlineAdd'),
+                    rename: t('outlineRename'),
+                    delete: t('outlineDelete'),
+                  }}
+                  onGoToPage={(pageIndex) => scrollToPage(visList.indexOf(pageIndex) + 1)}
+                  onAdd={addBookmarkForCurrentPage}
+                  onRename={renameBookmarkAt}
+                  onDelete={deleteBookmarkAt}
+                />
+              </div>
+            )}
+            {sidebar === 'comments' && (
+              <div className="pdf-thumbs pdf-outline-pane" style={{ width: sidebarW }}>
+                <div className="pdf-outline-header">
+                  <span>{t('commentsPanel')}</span>
+                  <button
+                    type="button"
+                    className="rb-icon"
+                    aria-label={t('aiCollapsePanel')}
+                    data-tip={t('aiCollapsePanel')}
+                    onClick={() => setSidebar(null)}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m14 6-6 6 6 6" />
+                    </svg>
+                  </button>
+                </div>
+                <CommentsPanel
+                  t={t}
+                  entries={commentEntries ?? []}
+                  loading={commentsLoading || commentEntries === null}
+                  onOpen={(e) => {
+                    scrollToPage(visList.indexOf(e.origIdx) + 1)
+                    setNoteDraft(null)
+                    setActiveNote({ origIdx: e.origIdx, rootKey: e.root.key })
+                  }}
+                />
+              </div>
+            )}
+            {sidebar === 'compare' && (
+              <div className="pdf-thumbs" style={{ width: sidebarW }}>
+                <div className="pdf-outline-header">
+                  <span>{t('compare')}</span>
+                  <button
+                    type="button"
+                    className="rb-icon"
+                    aria-label={t('aiCollapsePanel')}
+                    onClick={() => setSidebar(null)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <ComparePanel
+                  t={t}
+                  result={compareResult}
+                  otherName={compareName}
+                  busy={compareBusy}
+                  onPick={() => void runCompare()}
+                  onSwap={() => {
+                    const swapped = !compareSwapped
+                    setCompareSwapped(swapped)
+                    const sides = compareSidesRef.current
+                    setCompareResult(sides ? compareSides(sides.mine, sides.theirs, swapped) : null)
+                  }}
+                  onGoToPage={(pageNo) => scrollToPage(pageNo)}
+                />
+              </div>
+            )}
+            {sidebar === 'attachments' && (
+              <div className="pdf-thumbs" style={{ width: sidebarW }}>
+                <div className="pdf-outline-header">
+                  <span>{t('attachments')}</span>
+                  <button
+                    type="button"
+                    className="rb-icon"
+                    aria-label={t('aiCollapsePanel')}
+                    onClick={() => setSidebar(null)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <AttachmentsPanel
+                  t={t}
+                  rows={attachmentRows()}
+                  onAdd={() => void addAttachment()}
+                  onExport={(row) => void exportAttachment(row)}
+                  onToggleRemove={toggleAttachmentRemove}
                 />
               </div>
             )}
             {sidebar === 'thumbs' && (
-              <div ref={thumbsRef} className="pdf-thumbs" style={{ width: sidebarW }}>
+              <div
+                ref={thumbsRef}
+                className="pdf-thumbs"
+                style={{ width: sidebarW }}
+                onContextMenu={(e) => {
+                  // .pdf-thumb's own padding-bottom is the inter-page gap; its handler lets that bubble up
+                  const target = e.target as HTMLElement
+                  if (
+                    readOnly ||
+                    (target !== e.currentTarget && !target.classList.contains('pdf-thumb'))
+                  )
+                    return
+                  e.preventDefault()
+                  // Gap click: insert after the page above the pointer (end of document below the last one)
+                  let above = -1
+                  for (const el of e.currentTarget.querySelectorAll<HTMLElement>('.pdf-thumb')) {
+                    if (el.getBoundingClientRect().top < e.clientY) above = Number(el.dataset.idx)
+                  }
+                  setThumbMenu({
+                    x: Math.min(e.clientX, window.innerWidth - 190),
+                    y: Math.min(e.clientY, window.innerHeight - 100),
+                    origIdx: null,
+                    afterOrigIdx: visList[above] ?? null,
+                  })
+                }}
+              >
                 {visList.map((origIdx, v) => {
                   const size = dispSize(origIdx)
                   return (
@@ -6848,6 +9368,7 @@ export default function App() {
                       }}
                       onClick={() => scrollToPage(v + 1)}
                       onContextMenu={(e) => {
+                        if (e.target === e.currentTarget) return
                         e.preventDefault()
                         setThumbMenu({
                           x: Math.min(e.clientX, window.innerWidth - 190),
@@ -6860,13 +9381,15 @@ export default function App() {
                         className="pdf-thumb-box"
                         style={{ aspectRatio: `${size.width} / ${size.height}` }}
                       >
-                        <PdfThumb
-                          doc={doc}
-                          pageNo={origIdx + 1}
-                          rotationDelta={rotDelta(origIdx)}
-                          visible={visibleThumbs.has(v)}
-                          rasterW={thumbRasterW}
-                        />
+                        {!isBlankPage(origIdx) && (
+                          <PdfThumb
+                            doc={doc}
+                            pageNo={origIdx + 1}
+                            rotationDelta={rotDelta(origIdx)}
+                            visible={visibleThumbs.has(v)}
+                            rasterW={thumbRasterW}
+                          />
+                        )}
                         {/* Pending erase ops patch the thumb too, so it tracks the canvas */}
                         {livePreview.has(origIdx) &&
                           (() => {
@@ -6910,6 +9433,7 @@ export default function App() {
                                 markups={mk}
                                 drawings={dw}
                                 textEdits={tes}
+                                erasedText={livePreview.get(origIdx)?.erased}
                                 textInserts={tis}
                                 imageEdits={ies}
                                 stamps={sts}
@@ -6923,7 +9447,9 @@ export default function App() {
                 })}
               </div>
             )}
-            {(sidebar === 'thumbs' || (sidebar === 'outline' && !!outline)) && (
+            {(sidebar === 'thumbs' ||
+              (sidebar === 'outline' && !!outline) ||
+              sidebar === 'comments') && (
               <div className="pdf-side-resizer" onPointerDown={startSidebarResize} />
             )}
             <div
@@ -7013,6 +9539,7 @@ export default function App() {
                       return (
                         <div
                           key={origIdx}
+                          data-page={origIdx}
                           className={`pdf-page${editTextMode && !readOnly ? ' pdf-editing-text' : ''}${
                             pendingTextInsert ? ' pdf-inserting-text' : ''
                           }`}
@@ -7060,14 +9587,22 @@ export default function App() {
                             }
                           }}
                         >
-                          <PdfPage
-                            doc={doc}
-                            pageNo={origIdx + 1}
-                            scale={scale}
-                            rotationDelta={rotDelta(origIdx)}
-                            visible={rowVisible}
-                            onRenderState={pageRenderState}
-                          />
+                          {!isBlankPage(origIdx) &&
+                            (failedPages.has(origIdx + 1) ? (
+                              <div className="pdf-page-broken">
+                                <span>{t('loadError')}</span>
+                                <span>#{origIdx + 1}</span>
+                              </div>
+                            ) : (
+                              <PdfPage
+                                doc={doc}
+                                pageNo={origIdx + 1}
+                                scale={scale}
+                                rotationDelta={rotDelta(origIdx)}
+                                visible={rowVisible}
+                                onRenderState={pageRenderState}
+                              />
+                            ))}
                           {livePreview.has(origIdx) &&
                             (() => {
                               const lp = livePreview.get(origIdx)!
@@ -7369,6 +9904,7 @@ export default function App() {
                                     te,
                                     geom,
                                     scale,
+                                    runErased(te),
                                   )
                                   // A border-drag of the block this edit addresses moves the
                                   // styled preview live with the pointer (the drag ghost of
@@ -7574,17 +10110,20 @@ export default function App() {
                                       )
                                   return (
                                     <>
-                                      {textDraft.cover && (
+                                      {textDraft.cover && !draftErased && (
                                         <div
                                           className="pdf-textedit-cover"
-                                          style={inflateCss(
-                                            pdfRectToCss(
-                                              geom,
-                                              unionCover(textDraft.rect, textDraft.cover),
-                                              scale,
+                                          style={{
+                                            ...inflateCss(
+                                              pdfRectToCss(
+                                                geom,
+                                                unionCover(textDraft.rect, textDraft.cover),
+                                                scale,
+                                              ),
+                                              1.5,
                                             ),
-                                            1.5,
-                                          )}
+                                            ...paperCss(false, textDraft.paper),
+                                          }}
                                         />
                                       )}
                                       <div
@@ -7701,6 +10240,7 @@ export default function App() {
                                             height: wrapCount * leadPx + (blk ? leadPx : 0) + 6,
                                             fontSize: fs,
                                             lineHeight: `${leadPx}px`,
+                                            ...paperCss(draftErased, textDraft.paper),
                                             ...(blk && blk.align !== 'left'
                                               ? { textAlign: blk.align }
                                               : {}),
@@ -8014,6 +10554,95 @@ export default function App() {
                                 }
                                 onTooSmall={() => showNotice(t('redactHint'))}
                               />
+                              <FormDesignLayer
+                                designing={
+                                  ribbonTab === 'formDesign' && !readOnly && !formDesignPreview
+                                }
+                                preview={ribbonTab === 'formDesign' && formDesignPreview}
+                                tool={
+                                  ribbonTab === 'formDesign' && !readOnly ? formDesignTool : null
+                                }
+                                geom={geom}
+                                scale={scale}
+                                pageWidth={size.width}
+                                pageHeight={size.height}
+                                fields={designFieldsByPage.get(origIdx) ?? []}
+                                selectedIds={selectedFormFieldIdSet}
+                                onCreate={(kind, rect, keep) =>
+                                  addFormField(kind, origIdx, rect, keep)
+                                }
+                                onSelect={(ids, mode) => {
+                                  setSelectedFormFieldIds((cur) => {
+                                    if (mode === 'replace') return ids
+                                    const next = cur.filter((x) => !ids.includes(x))
+                                    for (const id of ids) if (!cur.includes(id)) next.push(id)
+                                    return next
+                                  })
+                                  setFreshFormFieldId((cur) =>
+                                    ids.length === 1 && cur === ids[0] ? cur : null,
+                                  )
+                                }}
+                                onRects={(changes) => {
+                                  const fields = designFieldsByPage.get(origIdx) ?? []
+                                  applyDesignRects(
+                                    changes.flatMap(({ id, rect }) => {
+                                      const field = fields.find((x) => x.id === id)
+                                      return field ? [{ field, rect }] : []
+                                    }),
+                                  )
+                                }}
+                                onContextMenu={(e, fieldId) =>
+                                  setFormMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    fieldId,
+                                    pageIndex: origIdx,
+                                  })
+                                }
+                              />
+                              {ribbonTab === 'formDesign' &&
+                                !formDesignPreview &&
+                                selectedDesignField &&
+                                selectedDesignField.pageIndex === origIdx &&
+                                (() => {
+                                  const f = selectedDesignField
+                                  const box = pdfRectToCss(geom, f.rect, scale)
+                                  return (
+                                    <FormFieldProps
+                                      key={f.id}
+                                      field={f}
+                                      isNew={freshFormFieldId === f.id}
+                                      style={{ left: box.left, top: box.top + box.height + 6 }}
+                                      labels={{
+                                        required: t('formDesignRequired'),
+                                        multiLine: t('formDesignMultiLine'),
+                                        defaultValue: t('formDesignDefaultValue'),
+                                        defaultChecked: t('formDesignDefaultChecked'),
+                                        remove: t('formDesignDelete'),
+                                        done: t('formDesignDone'),
+                                        cancel: t('formDesignCancel'),
+                                        existingHint: t('formDesignExistingHint'),
+                                        exportValue: t('formDesignExportValue'),
+                                        radioGroupHint: t('formDesignRadioGroupHint'),
+                                        options: t('formDesignOptions'),
+                                        dateFormat: t('formDesignDateFormat'),
+                                      }}
+                                      onPatch={(input, key) => patchDesignField(f, input, key)}
+                                      onDelete={() => deleteFormField(f.id)}
+                                      onDone={() => {
+                                        setSelectedFormFieldId(null)
+                                        setFreshFormFieldId(null)
+                                        setFormDesignDoneSave((n) => n + 1)
+                                      }}
+                                      onCancel={() => {
+                                        if (!f.existing)
+                                          applyEditOps([{ op: 'removeFormField', id: f.id }])
+                                        setSelectedFormFieldId(null)
+                                        setFreshFormFieldId(null)
+                                      }}
+                                    />
+                                  )
+                                })()}
                               {/* Ghost pin for the note being typed into the margin draft card */}
                               {noteDraft?.origIdx === origIdx &&
                                 (() => {
@@ -8044,15 +10673,17 @@ export default function App() {
                                     </div>
                                   )
                                 })()}
-                              <LinkLayer
-                                doc={doc}
-                                pageNo={origIdx + 1}
-                                geom={geom}
-                                scale={scale}
-                                onGoToDest={(dest) => void goToDest(dest)}
-                              />
+                              {!isBlankPage(origIdx) && (
+                                <LinkLayer
+                                  doc={doc}
+                                  pageNo={origIdx + 1}
+                                  geom={geom}
+                                  scale={scale}
+                                  onGoToDest={(dest) => void goToDest(dest)}
+                                />
+                              )}
                               <FormLayer
-                                widgets={formCatalog?.byPage.get(origIdx) ?? []}
+                                widgets={liveFormCatalog?.byPage.get(origIdx) ?? []}
                                 geom={geom}
                                 scale={scale}
                                 readOnly={readOnly}
@@ -8060,10 +10691,13 @@ export default function App() {
                                 activeWidgetId={activeFormWidgetId}
                                 signedWidgetIds={signedFormWidgetIds}
                                 signatureLabel={t('formSignField')}
+                                dateInvalidLabel={(format) => t('formDateInvalid', { format })}
+                                datePickLabel={t('formDatePick')}
                                 registerControl={registerFormControl}
                                 onFocus={(widget) => {
                                   setActiveFormWidgetId(widget.id)
-                                  setRibbonTab('fillForm')
+                                  // Form Design preview fills in place; leaving the tab would end the preview
+                                  if (ribbonTab !== 'formDesign') setRibbonTab('fillForm')
                                 }}
                                 onSignature={(widget) => openSignatureDialog(widget)}
                                 onEdit={(v2) =>
@@ -8135,6 +10769,24 @@ export default function App() {
                     else if (e.key === 'Escape') closeSearch()
                   }}
                 />
+                <button
+                  className={`rb-icon pdf-search-opt${searchMatchCase ? ' is-active' : ''}`}
+                  data-tip={t('searchMatchCase')}
+                  aria-label={t('searchMatchCase')}
+                  aria-pressed={searchMatchCase}
+                  onClick={() => setSearchMatchCase((v) => !v)}
+                >
+                  Aa
+                </button>
+                <button
+                  className={`rb-icon pdf-search-opt${searchWholeWord ? ' is-active' : ''}`}
+                  data-tip={t('searchWholeWord')}
+                  aria-label={t('searchWholeWord')}
+                  aria-pressed={searchWholeWord}
+                  onClick={() => setSearchWholeWord((v) => !v)}
+                >
+                  W
+                </button>
                 <span className="pdf-search-count">
                   {searchQuery.trim()
                     ? activeMatches.length > 0
@@ -8204,6 +10856,30 @@ export default function App() {
                       onClick={() => applyMarkup('underline')}
                     >
                       <span className="sel-swatch sel-swatch-ul">U</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={activeMarkupTypes.has('squiggly') ? 'is-active' : undefined}
+                      data-tip={
+                        activeMarkupTypes.has('squiggly') ? t('removeMarkup') : t('squiggly')
+                      }
+                      aria-label={
+                        activeMarkupTypes.has('squiggly') ? t('removeMarkup') : t('squiggly')
+                      }
+                      onClick={() => applyMarkup('squiggly')}
+                    >
+                      {/* Swatch painted inline from the palette so it always matches the applied color */}
+                      <span className="sel-swatch">
+                        <svg width="14" height="10" viewBox="0 0 28 10" fill="none" aria-hidden>
+                          <polyline
+                            points="1,5 4.5,1.5 8,8.5 11.5,1.5 15,8.5 18.5,1.5 22,8.5 25.5,5"
+                            stroke={cssRgb(MARKUP_COLORS.squiggly)}
+                            strokeWidth="2.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -8400,49 +11076,87 @@ export default function App() {
                 </button>
               </div>
             )}
+            {ocrRun && (
+              <div className="pdf-toast pdf-toast-notice" role="status">
+                <span>
+                  {ocrRun.stop === null
+                    ? t('ocrRunning', { done: ocrRun.done, total: ocrRun.total })
+                    : ocrRun.stop === 'cap'
+                      ? t('ocrPageCap', {
+                          done: ocrRun.done,
+                          total: ocrRun.total,
+                          limit: AUTO_OCR_PAGE_CAP,
+                        })
+                      : t('ocrStopped', { done: ocrRun.done, total: ocrRun.total })}
+                </span>
+                {ocrRun.stop === null ? (
+                  <button type="button" onClick={() => ocrAbortRef.current?.abort()}>
+                    {t('cancel')}
+                  </button>
+                ) : (
+                  <>
+                    {ocrPending !== null && (
+                      <button
+                        type="button"
+                        onClick={() => startOcrPass(ocrPending, ocrRun?.done ?? 0)}
+                      >
+                        {t('ocrContinue')}
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setOcrRun(null)}>
+                      {t('ok')}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             {thumbMenu && (
               <div
                 ref={thumbMenuRef}
                 className="thumb-menu file-menu"
                 style={{ left: thumbMenu.x, top: thumbMenu.y }}
               >
+                {!menuInGap && (
+                  <>
+                    <button
+                      onClick={() => {
+                        rotatePage(menuOrig, -90)
+                        setThumbMenu(null)
+                      }}
+                    >
+                      {t('rotateLeft')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        rotatePage(menuOrig, 90)
+                        setThumbMenu(null)
+                      }}
+                    >
+                      {t('rotateRight')}
+                    </button>
+                    <button
+                      disabled={pageCount <= 1}
+                      onClick={() => {
+                        deletePage(menuOrig)
+                        setThumbMenu(null)
+                      }}
+                    >
+                      {t('deletePage')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setThumbMenu(null)
+                        void extractPage(menuOrig)
+                      }}
+                    >
+                      {t('extractPage')}
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => {
-                    rotatePage(menuOrig, -90)
                     setThumbMenu(null)
-                  }}
-                >
-                  {t('rotateLeft')}
-                </button>
-                <button
-                  onClick={() => {
-                    rotatePage(menuOrig, 90)
-                    setThumbMenu(null)
-                  }}
-                >
-                  {t('rotateRight')}
-                </button>
-                <button
-                  disabled={pageCount <= 1}
-                  onClick={() => {
-                    deletePage(menuOrig)
-                    setThumbMenu(null)
-                  }}
-                >
-                  {t('deletePage')}
-                </button>
-                <button
-                  onClick={() => {
-                    setThumbMenu(null)
-                    void extractPage(menuOrig)
-                  }}
-                >
-                  {t('extractPage')}
-                </button>
-                <button
-                  onClick={() => {
-                    setThumbMenu(null)
-                    void insertPdf(menuOrig)
+                    void insertPdf(menuInsertAfter)
                   }}
                 >
                   {t('insertPdf')}
@@ -8450,15 +11164,112 @@ export default function App() {
                 <button
                   onClick={() => {
                     setThumbMenu(null)
-                    void insertBlankPage(menuOrig)
+                    insertBlankPage(menuInsertAfter)
                   }}
                 >
                   {t('insertBlankPage')}
                 </button>
               </div>
             )}
+            {formMenu && (
+              <div
+                ref={formMenuRef}
+                className="thumb-menu file-menu"
+                style={{ left: formMenu.x, top: formMenu.y }}
+              >
+                {formMenu.fieldId && (
+                  <>
+                    <button
+                      disabled={selectedFormFieldIds.length !== 1}
+                      onClick={() => {
+                        setFormMenu(null)
+                        setSelectedFormFieldId(formMenu.fieldId)
+                      }}
+                    >
+                      {t('formDesignProperties')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFormMenu(null)
+                        copySelectedFormFields()
+                      }}
+                    >
+                      {t('formDesignCopy')}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setFormMenu(null)
+                        duplicateSelectedFormFields()
+                      }}
+                    >
+                      {t('formDesignDuplicate')}
+                    </button>
+                  </>
+                )}
+                <button
+                  disabled={formClipboardRef.current.length === 0}
+                  onClick={() => {
+                    setFormMenu(null)
+                    pasteFormFields(formMenu.pageIndex)
+                  }}
+                >
+                  {t('formDesignPaste')}
+                </button>
+                {formMenu.fieldId && (
+                  <>
+                    <div className="thumb-menu-sep" />
+                    {arrangeItems.map(([how, label, min]) => (
+                      <button
+                        key={how}
+                        disabled={selectedFormFieldIds.length < min}
+                        onClick={() => {
+                          setFormMenu(null)
+                          arrangeSelected(how)
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <div className="thumb-menu-sep" />
+                    <button
+                      onClick={() => {
+                        setFormMenu(null)
+                        deleteSelectedFormFields()
+                      }}
+                    >
+                      {t('formDesignDelete')}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             {stampDlg && (
               <StampDialog t={t} onCancel={() => setStampDlg(false)} onApply={applyStamps} />
+            )}
+            {linkDraft && (
+              <LinkDialog
+                t={t}
+                pageCount={pageCount}
+                onCancel={() => setLinkDraft(null)}
+                onApply={(target) => {
+                  const draft = linkDraft
+                  setLinkDraft(null)
+                  if (!draft) return
+                  applyEditOps([
+                    {
+                      op: 'addDrawing',
+                      drawing: {
+                        kind: 'link',
+                        pageIndex: draft.pageIndex,
+                        rect: draft.rect,
+                        ...('destPage' in target
+                          ? { destPage: (visList[target.destPage - 1] ?? target.destPage - 1) + 1 }
+                          : target),
+                      },
+                    },
+                  ])
+                }}
+              />
             )}
             {imageDialog?.kind === 'crop' && (
               <CropDialog
@@ -8496,6 +11307,81 @@ export default function App() {
                   setPropsDlg(false)
                   applyEditOps([{ op: 'setMetadata', metadata: meta }])
                 }}
+              />
+            )}
+            {protectionDlg && (
+              <ProtectionDialog
+                t={t}
+                hasPassword={encryption !== null || documentEncrypted}
+                permissions={
+                  encryption?.permissions ?? {
+                    printing: true,
+                    modifying: true,
+                    annotating: true,
+                    copying: true,
+                  }
+                }
+                onApply={applyProtection}
+                onRemove={removeProtection}
+                onClose={() => setProtectionDlg(false)}
+              />
+            )}
+            {batesDlg && (
+              <BatesDialog
+                t={t}
+                pageCount={pageCount}
+                onApply={applyBates}
+                onClose={() => setBatesDlg(false)}
+              />
+            )}
+            {measureScaleDlg && (
+              <MeasureScaleDialog
+                t={t}
+                drawnPts={measureDrawnPts}
+                onApply={(unitsPerPt, unit) => {
+                  measureScaleRef.current = { unitsPerPt, unit }
+                  setMeasureScaleDlg(false)
+                  measureRecalibrateRef.current = false
+                  const pending = pendingMeasureRef.current
+                  pendingMeasureRef.current = null
+                  if (pending) {
+                    const pts = Math.hypot(
+                      pending.to[0] - pending.from[0],
+                      pending.to[1] - pending.from[1],
+                    )
+                    commitDrawing(pending.pageIndex, {
+                      ...pending,
+                      label: formatLength(pts, measureScaleRef.current),
+                    })
+                  }
+                  showNotice(t('measureCalibrated', { unit }))
+                }}
+                onClose={() => {
+                  // cancelling drops the reference line: committing it would
+                  // label it with a scale the user just refused to set
+                  pendingMeasureRef.current = null
+                  measureRecalibrateRef.current = false
+                  setMeasureScaleDlg(false)
+                }}
+              />
+            )}
+            {certSignDlg && (
+              <CertSignDialog
+                t={t}
+                filePath={filePath}
+                pageCount={pageCount}
+                currentPage={currentPage}
+                hasSignatures={digitalSignatures.length > 0}
+                onCancel={() => setCertSignDlg(false)}
+                onSigned={(path) => void adoptSignedFile(path)}
+              />
+            )}
+            {signaturesDlg && (
+              <SignaturesDialog
+                t={t}
+                signatures={digitalSignatures}
+                onClose={() => setSignaturesDlg(false)}
+                onGoToPage={(pageIndex) => scrollToPage(pageIndex + 1)}
               />
             )}
             {signDlg && (
@@ -8676,12 +11562,113 @@ export default function App() {
               <div className="pdf-modal-mask" onClick={() => setPrintDlg(false)}>
                 <div className="pdf-modal" onClick={(e) => e.stopPropagation()}>
                   <div className="pdf-modal-title">{t('print')}</div>
+                  <label className="pdf-modal-row pdf-print-field">
+                    <span>{t('printPrinter')}</span>
+                    <select
+                      className="pdf-modal-input"
+                      value={printDevice}
+                      onChange={(e) => {
+                        const request = ++driverOptionsRequest.current
+                        setPrintDevice(e.target.value)
+                        setDriverChoices({})
+                        setDriverOptions([])
+                        if (e.target.value && IS_MAC)
+                          void window.pdfApi
+                            .printerOptions(e.target.value)
+                            .then((options) => {
+                              if (request === driverOptionsRequest.current)
+                                setDriverOptions(options)
+                            })
+                            .catch(() => {
+                              if (request === driverOptionsRequest.current) setDriverOptions([])
+                            })
+                      }}
+                    >
+                      <option value="">{t('printDefaultPrinter')}</option>
+                      {printers.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.displayName}
+                        </option>
+                      ))}
+                      <option value={PRINT_SYSTEM_DIALOG}>{t('printSystemDialog')}</option>
+                    </select>
+                  </label>
+                  <div className="pdf-modal-row pdf-print-field">
+                    <label className="pdf-print-copies">
+                      <span>{t('printCopies')}</span>
+                      <input
+                        className="pdf-modal-input"
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={printCopies}
+                        disabled={printDevice === PRINT_SYSTEM_DIALOG}
+                        onChange={(e) =>
+                          setPrintCopies(
+                            Math.min(999, Math.max(1, Math.round(Number(e.target.value)) || 1)),
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="pdf-modal-check">
+                      <input
+                        type="checkbox"
+                        checked={printCollate}
+                        disabled={printDevice === PRINT_SYSTEM_DIALOG || printCopies < 2}
+                        onChange={(e) => setPrintCollate(e.target.checked)}
+                      />
+                      {t('printCollate')}
+                    </label>
+                  </div>
+                  <label className="pdf-modal-row pdf-print-field">
+                    <span>{t('printDuplex')}</span>
+                    <select
+                      className="pdf-modal-input"
+                      value={printDuplex}
+                      disabled={printDevice === PRINT_SYSTEM_DIALOG}
+                      onChange={(e) => setPrintDuplex(e.target.value as PrintDuplex)}
+                    >
+                      {PRINT_DUPLEX_MODES.map((m) => (
+                        <option key={m} value={m}>
+                          {t(
+                            m === 'simplex'
+                              ? 'printDuplexOff'
+                              : m === 'longEdge'
+                                ? 'printDuplexLong'
+                                : 'printDuplexShort',
+                          )}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {driverOptions.map((group) => (
+                    <label key={group.name} className="pdf-modal-row pdf-print-field">
+                      <span>{group.translation}</span>
+                      <select
+                        className="pdf-modal-input"
+                        value={driverChoices[group.name] ?? group.defaultValue ?? group.values[0]}
+                        onChange={(e) =>
+                          setDriverChoices((c) => ({ ...c, [group.name]: e.target.value }))
+                        }
+                      >
+                        {group.values.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  <div className="pdf-print-divider" />
                   <label className="pdf-modal-row">
                     <input
                       type="radio"
                       name="print-range"
                       checked={printMode === 'all'}
-                      onChange={() => setPrintMode('all')}
+                      onChange={() => {
+                        setPrintMode('all')
+                        setPrintInvalid(false)
+                      }}
                     />
                     <span>{t('printRangeAll')}</span>
                   </label>
@@ -8690,7 +11677,10 @@ export default function App() {
                       type="radio"
                       name="print-range"
                       checked={printMode === 'current'}
-                      onChange={() => setPrintMode('current')}
+                      onChange={() => {
+                        setPrintMode('current')
+                        setPrintInvalid(false)
+                      }}
                     />
                     <span>
                       {t('printRangeCurrent')} ({printCurrentPage})
@@ -8720,6 +11710,24 @@ export default function App() {
                         else if (e.key === 'Escape') setPrintDlg(false)
                       }}
                     />
+                  )}
+                  <label className="pdf-modal-row pdf-print-field">
+                    <span>{t('printSubset')}</span>
+                    <select
+                      className="pdf-modal-input"
+                      value={printParity}
+                      onChange={(e) => {
+                        setPrintParity(e.target.value as PageParity)
+                        setPrintInvalid(false)
+                      }}
+                    >
+                      <option value="all">{t('printSubsetAll')}</option>
+                      <option value="odd">{t('printSubsetOdd')}</option>
+                      <option value="even">{t('printSubsetEven')}</option>
+                    </select>
+                  </label>
+                  {printInvalid && printMode !== 'custom' && (
+                    <div className="pdf-modal-hint pdf-print-empty">{t('printSubsetEmpty')}</div>
                   )}
                   <div className="pdf-modal-actions">
                     <button className="pdf-modal-btn" onClick={() => setPrintDlg(false)}>

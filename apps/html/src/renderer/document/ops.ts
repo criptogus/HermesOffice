@@ -97,26 +97,35 @@ function findAttribute(
   quote: string
   lead: string
 } | null {
-  const re = new RegExp(
-    `(\\s+)(${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?:\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+)))?`,
-    'i',
-  )
-  const m = re.exec(startTag)
-  if (!m) return null
-  const from = m.index
-  const to = m.index + m[0].length
-  const lead = m[1]!
-  if (m[3] === undefined) return { from, to, valueFrom: to, valueTo: to, quote: '', lead }
-  const raw = m[3]
-  const quote = raw.startsWith('"') ? '"' : raw.startsWith("'") ? "'" : ''
-  const valueTo = to - (quote ? 1 : 0)
-  const valueFrom = valueTo - (m[4] ?? m[5] ?? m[6] ?? '').length
-  return { from, to, valueFrom, valueTo, quote, lead }
+  const tagName = /^<[^\s/>]+/.exec(startTag)
+  if (!tagName) return null
+  const attrs = /(\s+)([^\s"'<>/=]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/gy
+  attrs.lastIndex = tagName[0].length
+  let m: RegExpExecArray | null
+  while ((m = attrs.exec(startTag))) {
+    if (m[2]!.toLowerCase() !== name.toLowerCase()) continue
+    const from = m.index
+    const to = m.index + m[0].length
+    const lead = m[1]!
+    if (m[3] === undefined) return { from, to, valueFrom: to, valueTo: to, quote: '', lead }
+    const raw = m[3]
+    const quote = raw.startsWith('"') ? '"' : raw.startsWith("'") ? "'" : ''
+    const valueTo = to - (quote ? 1 : 0)
+    const valueFrom = valueTo - (m[4] ?? m[5] ?? m[6] ?? '').length
+    return { from, to, valueFrom, valueTo, quote, lead }
+  }
+  return null
 }
 
-const ENTITY_RE = /&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/y
+const ENTITY_RE = /&(?:#(\d+)|#x([0-9a-fA-F]+)|[a-zA-Z][a-zA-Z0-9]*);/y
 
-/** raw index of the character at `decoded` in a text node whose entities each decode to one character */
+/** UTF-16 units the entity decodes to: an astral numeric reference is a surrogate pair */
+function entityUnits(entity: RegExpExecArray): number {
+  const code = entity[1] ? parseInt(entity[1], 10) : entity[2] ? parseInt(entity[2], 16) : 0
+  return code > 0xffff ? 2 : 1
+}
+
+/** raw index of the character at `decoded` in a text node, counting entities by their decoded width */
 export function decodedToRaw(raw: string, decoded: number): number {
   const target = Math.max(0, Math.floor(Number.isFinite(decoded) ? decoded : 0))
   let i = 0
@@ -126,7 +135,7 @@ export function decodedToRaw(raw: string, decoded: number): number {
     const entity = ENTITY_RE.exec(raw)
     if (entity) {
       i += entity[0].length
-      seen += 1
+      seen += entityUnits(entity)
       continue
     }
     const astral = raw.codePointAt(i)! > 0xffff
@@ -134,6 +143,36 @@ export function decodedToRaw(raw: string, decoded: number): number {
     seen += astral ? 2 : 1
   }
   return Math.min(i, raw.length)
+}
+
+/**
+ * The inverse of `decodedToRaw`: where a raw source index sits in the decoded text
+ * the DOM reports.
+ *
+ * The source editor selects *raw* characters, `wrap_text` is addressed in decoded
+ * ones, and the two disagree wherever an entity is spelled out — `&amp;` is six
+ * characters in the file and one in the document. Reading a range off the wrong
+ * side of that gap does not fail, it just wraps the wrong words, so a selection
+ * that starts inside an entity snaps to that entity's end and no further.
+ */
+export function rawToDecoded(raw: string, rawIndex: number): number {
+  const finite = Number.isFinite(rawIndex) ? Number(rawIndex) : 0
+  const target = Math.max(0, Math.min(Math.floor(finite), raw.length))
+  let i = 0
+  let seen = 0
+  while (i < target) {
+    ENTITY_RE.lastIndex = i
+    const entity = ENTITY_RE.exec(raw)
+    if (entity) {
+      i += entity[0].length
+      seen += entityUnits(entity)
+      continue
+    }
+    const astral = raw.codePointAt(i)! > 0xffff
+    i += astral ? 2 : 1
+    seen += astral ? 2 : 1
+  }
+  return seen
 }
 
 /** the element's source, widened to its whole line when nothing but indentation shares that line */

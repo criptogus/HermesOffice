@@ -1,12 +1,14 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { htmlLang } from '@hermesoffice/i18n'
+import { htmlDir, htmlLang } from '@hermesoffice/i18n'
 import { AppFrame } from './AppFrame'
 import { LocaleProvider } from './locale'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
 import '@hermesoffice/ui/dropdown.css'
-import '@hermesoffice/ui/app-dialog.css'
+import '@hermesoffice/ui/ai-model-picker.css'
+import '@hermesoffice/ui/ai-usage.css'
+import '@hermesoffice/ui/ai-skills.css'
 import './home.css'
 import './tabbar.css'
 import { installScreenTips } from '@hermesoffice/ui'
@@ -29,6 +31,7 @@ void Promise.all([
   window.aiOffice.getTheme().catch(() => 'system' as const),
 ]).then(([lang, onboardingSeen, theme]) => {
   document.documentElement.lang = htmlLang(lang)
+  document.documentElement.dir = htmlDir(lang)
   // apply theme attribute before first paint to avoid flash
   if (theme !== 'system') {
     document.documentElement.setAttribute('data-theme', theme)
@@ -37,10 +40,27 @@ void Promise.all([
     if (next === 'system') document.documentElement.removeAttribute('data-theme')
     else document.documentElement.setAttribute('data-theme', next)
   })
+  // The manual tab is the same bundle branched on ?mode=help: no onboarding,
+  // no home state, just the searchable topic browser (issue #1520).
+  //
+  // Split, though: this entry chunk is parsed on every launch whatever the tab
+  // is, and the screen plus its stylesheet are only ever wanted on the other
+  // one. A static import meant Home's first paint paid for a manual nobody had
+  // opened.
+  const isHelp = new URLSearchParams(location.search).get('mode') === 'help'
+  const HelpScreen = React.lazy(() =>
+    import('./i18n/help/HelpScreen').then((m) => ({ default: m.HelpScreen })),
+  )
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <LocaleProvider initial={lang}>
-        <AppFrame initialOnboardingSeen={onboardingSeen} />
+        {isHelp ? (
+          <React.Suspense fallback={<div className="boot" />}>
+            <HelpScreen />
+          </React.Suspense>
+        ) : (
+          <AppFrame initialOnboardingSeen={onboardingSeen} />
+        )}
       </LocaleProvider>
     </React.StrictMode>,
   )

@@ -37,6 +37,8 @@ export const pt = {
     'Problema de rede: não foi possível conectar ao serviço de IA. Verifique sua conexão e tente novamente',
   aiNewChat: 'Nova conversa',
   aiNoReply: '(sem resposta)',
+  aiRegionError:
+    'O fornecedor deste modelo não atende à sua região atual — escolha outro modelo ou mude de rede',
   aiOverloadedError:
     'O serviço de IA está sobrecarregado no momento — tente novamente em instantes',
   aiRegenerateTitle: 'Gerar novamente',
@@ -50,6 +52,10 @@ export const pt = {
   aiTimeoutError: 'A resposta da IA expirou',
   aiToolWebSearch: 'Pesquisa na Web',
   aiToolWebSearchDone: 'Pesquisa por "{query}" · {count} resultados',
+  aiToolImageSearch: 'Pesquisa de imagens',
+  aiToolImageSearchDone: 'Pesquisa de imagens "{query}" ({count} imagens)',
+  aiToolGenImage: 'Gerar imagem',
+  aiToolGenImageDone: 'Imagem gerada por IA inserida',
   aiTruncatedNote: '(A resposta foi cortada pelo limite de comprimento e pode estar incompleta.)',
   aiTurnLimit: 'Limite de etapas por execução atingido — envie outra instrução para continuar.',
   aiUndelivered: 'Não enviado',
@@ -65,6 +71,7 @@ export const pt = {
   aiClarifyDecideAnswer: '(decida por mim)',
   aiClarifyMulti: 'Seleção múltipla',
   aiClarifyNext: 'Próxima',
+  aiClarifyPrev: 'Anterior',
   aiClarifyOther: 'Outro (digite)',
   aiClarifySelected: '{n} selecionados',
   aiClarifySkip: 'Pular pesquisa',
@@ -130,7 +137,7 @@ export const pt = {
   aiChipTableEdit: 'Ajustar linhas/colunas',
   aiQueueTitle: 'Alterações na fila',
   aiQueueHint:
-    'Clique numa linha para localizar o trecho; o envio aplica todas as alterações numa única solicitação',
+    'Clique em uma linha para localizar o trecho; o envio aplica todas as alterações em uma única solicitação',
   aiQueueSend: 'Enviar {count} alterações',
   aiQueueDiscard: 'Limpar',
   aiQueueDiscardConfirm: 'Limpar as {count} alterações na fila?',

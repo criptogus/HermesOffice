@@ -42,7 +42,7 @@ function cellPoint(origin: { x: number; y: number }, row: number, column: number
 
 test.describe('sheets: Insert → Equation and Checkbox', () => {
   test('renders LaTeX to a picture and saves it into the workbook', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'equation.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -84,7 +84,7 @@ test.describe('sheets: Insert → Equation and Checkbox', () => {
   })
 
   test('inserts a checkbox rule that saves as a two-value list validation', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'checkbox.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -116,7 +116,7 @@ test.describe('sheets: Insert → Equation and Checkbox', () => {
 
 test.describe('sheets: Insert → Timeline', () => {
   test('filters a pivot by month range through the timeline panel', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-tier2-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-tier2-e2e-'))
     const workbook = join(scratch, 'timeline.xlsx')
     await copyFile(FIXTURE, workbook)
 
@@ -176,9 +176,9 @@ test.describe('sheets: Insert → Timeline', () => {
       // retry while the reopened session streams the pivot definition in.
       const picker = sheets.getByRole('dialog', { name: 'Insert Timeline' })
       const e1 = cellPoint(origin, 0, 4)
+      // the Insert tab is already selected; pressing the selected tab collapses the ribbon
       await expect(async () => {
         await sheets.mouse.click(e1.x, e1.y)
-        await sheets.getByRole('button', { name: 'Insert', exact: true }).click()
         await sheets.getByRole('button', { name: 'Timeline' }).click()
         await expect(picker).toBeVisible({ timeout: 2_000 })
       }).toPass({ timeout: 30_000 })

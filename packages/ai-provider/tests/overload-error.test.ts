@@ -38,6 +38,24 @@ describe('isAiOverloadedError', () => {
     ).toBe(false)
   })
 
+  it('still exempts a credits-exhausted body that carries an HTTP status', () => {
+    expect(
+      isAiOverloadedError(
+        new Error('HTTP 429: {"error":{"message":"Your Genspark credits have been exhausted"}}'),
+      ),
+    ).toBe(false)
+    expect(
+      isAiOverloadedError(new Error('HTTP 503: insufficient credits, top up to continue')),
+    ).toBe(false)
+  })
+
+  it('keeps a rate limit transient when it only names the credits bucket', () => {
+    expect(
+      isAiOverloadedError(new Error('HTTP 429: rate limit: credits per minute exceeded')),
+    ).toBe(true)
+    expect(isAiOverloadedError(new Error('rate limit reached for your credit tier'))).toBe(false)
+  })
+
   it('does not match other HTTP errors or generic failures', () => {
     expect(isAiOverloadedError(new Error('Claude HTTP 401: bad key'))).toBe(false)
     expect(isAiOverloadedError(new Error('HTTP 500: internal error'))).toBe(false)

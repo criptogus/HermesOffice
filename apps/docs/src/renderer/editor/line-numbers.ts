@@ -1,7 +1,9 @@
 import type { LineNumbering, SectionInfo } from '@hermesoffice/docx-engine'
+import type { PageCut } from '../pagination-cuts'
 import { sectionBidi, sectionColGeom } from '../pagination-sections'
 import type { BlockBox, BlockMetaOf } from '../pagination-types'
 import { pageFramesFromGaps } from './pagination-gaps'
+import { effectiveParaFlags } from './para-flags'
 
 /** Word's gap for an omitted w:distance (measured against Word output: 0.25in). */
 export const LINE_NUMBER_DEFAULT_DISTANCE_TWIPS = 360
@@ -199,6 +201,7 @@ export function syncLineNumbers(
   zoomFactor: number,
   metaOf?: BlockMetaOf,
   first?: { left: number; width: number },
+  cuts?: readonly PageCut[],
 ): void {
   let layer = wrap.querySelector(':scope > .page-line-numbers') as HTMLElement | null
   if (!hasLineNumbering(sections)) {
@@ -212,7 +215,7 @@ export function syncLineNumbers(
   }
   layer.textContent = ''
   applyDocFont(layer, pm)
-  const frames = pageFramesFromGaps(wrap, zoomFactor, first)
+  const frames = pageFramesFromGaps(wrap, zoomFactor, first, cuts)
   const wr = wrap.getBoundingClientRect()
   const lines: CanvasLine[] = []
   for (const b of blocks) {
@@ -220,7 +223,8 @@ export function syncLineNumbers(
     const sec = Math.min(b.section ?? 0, sections.length - 1)
     const ln = sections[sec]?.settings.lineNumbers
     if (!ln) continue
-    if (b.docxIndex !== undefined && metaOf?.(b.docxIndex)?.suppressLineNumbers) continue
+    const meta = b.docxIndex !== undefined ? metaOf?.(b.docxIndex) : undefined
+    if (effectiveParaFlags(b.el, meta).suppressLineNumbers) continue
     const set = sections[sec].settings
     const xs = columnLefts(sections[sec])
     for (const r of paragraphLineRects(b.el)) {
@@ -299,7 +303,8 @@ export function syncPreviewLineNumbers(
         )
         const ln = sections[sec]?.settings.lineNumbers
         if (!ln) continue
-        if (el.hasAttribute('data-idx') && metaOf?.(idx)?.suppressLineNumbers) continue
+        const meta = el.hasAttribute('data-idx') ? metaOf?.(idx) : undefined
+        if (effectiveParaFlags(el, meta).suppressLineNumbers) continue
         const colLeft =
           twipsToPx(sections[sec].settings.marginLeft) + (columnLefts(sections[sec])[col] ?? 0)
         for (const r of paragraphLineRects(el)) {

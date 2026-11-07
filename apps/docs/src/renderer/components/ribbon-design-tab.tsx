@@ -1,6 +1,14 @@
 import { useState } from 'react'
-import { type SectionSettings, type ThemeColors, type ThemeFonts } from '@hermesoffice/docx-engine'
-import { PromptModal } from './PromptModal'
+import {
+  type HfImage,
+  type PictureWatermarkSpec,
+  type SectionSettings,
+  type ThemeColors,
+  type ThemeFonts,
+  type Watermark,
+  type WatermarkSpec,
+} from '@hermesoffice/docx-engine'
+import { WatermarkDialog, type WatermarkPageBox } from './WatermarkDialog'
 import { useI18n, type StringKey } from '../i18n/locale'
 import {
   IconCaret,
@@ -14,18 +22,8 @@ import {
 
 /** icon size for the big icon-over-label ribbon buttons (slides ribbon parity) */
 import { BIG, TabProps, toggleDropdown } from './ribbon-tabs'
-
-const PAGE_COLORS: Array<{ nameKey: StringKey; hex: string | null }> = [
-  { nameKey: 'ribbonColorWhite', hex: null },
-  { nameKey: 'ribbonColorLightYellow', hex: 'FFF9E6' },
-  { nameKey: 'ribbonColorBeige', hex: 'F5F0E6' },
-  { nameKey: 'ribbonColorLightGreen', hex: 'EAF5EA' },
-  { nameKey: 'ribbonColorLightBlue', hex: 'E8F1FB' },
-  { nameKey: 'ribbonColorLightPurple', hex: 'F3EEFB' },
-  { nameKey: 'ribbonColorLightGray', hex: 'F2F2F2' },
-  { nameKey: 'ribbonColorDarkGray', hex: '333333' },
-  { nameKey: 'ribbonColorBlack', hex: '000000' },
-]
+import { RibbonColorPalette } from './ribbon-color-palette'
+import { PageBorderDialog, type PageBorderScope } from './PageBorderDialog'
 
 /** Word-like theme presets: font pair + color scheme applied together */
 const THEME_PRESETS: Array<{ nameKey: StringKey; fonts: ThemeFonts; colors: ThemeColors }> = [
@@ -208,8 +206,14 @@ interface DesignTabProps extends TabProps {
   onPageColor: (hex: string | null) => void
   section: SectionSettings | null
   onSection: (next: SectionSettings) => void
+  /** Page Border dialog > Apply to: Whole document */
+  onPageBorderAll: (props: SectionSettings['pageBorderProps'] | null) => void
   watermark: string | null
-  onWatermark: (text: string | null) => void
+  watermarkStyle: Omit<WatermarkSpec, 'text'> | null
+  watermarkPicture: PictureWatermarkSpec | null
+  /** the saved document's watermark shape, for reopening the dialog on it */
+  watermarkDocImage: HfImage | null
+  onWatermark: (spec: Watermark | null) => void
   themeFonts: ThemeFonts | null
   onThemeFonts: (fonts: ThemeFonts) => void
   onThemeColors: (colors: ThemeColors) => void
@@ -223,25 +227,51 @@ export function DesignTab({
   onPageColor,
   section,
   onSection,
+  onPageBorderAll,
   watermark,
+  watermarkStyle,
+  watermarkPicture,
+  watermarkDocImage,
   onWatermark,
   themeFonts,
   onThemeFonts,
   onThemeColors,
 }: DesignTabProps) {
   const { t, lang } = useI18n()
+  const [pageBorderDialog, setPageBorderDialog] = useState(false)
+  const applyPageBorder = (
+    props: SectionSettings['pageBorderProps'] | null,
+    scope: PageBorderScope,
+  ) => {
+    if (scope === 'whole') return onPageBorderAll(props)
+    if (!section) return
+    const { pageBorderProps: _drop, ...rest } = section
+    onSection(
+      props
+        ? { ...rest, pageBorder: true, pageBorderProps: props }
+        : { ...rest, pageBorder: false },
+    )
+  }
   const watermarkPresets = [
     ...WATERMARK_KEYS.map((key) => t(key)),
     ...(lang !== 'en' ? ['CONFIDENTIAL', 'DRAFT'] : []),
   ]
-  const [watermarkPromptOpen, setWatermarkPromptOpen] = useState(false)
+  const [watermarkDialogOpen, setWatermarkDialogOpen] = useState(false)
+  const watermarkPageBox: WatermarkPageBox | null = section
+    ? {
+        pageWidthPt: section.pageWidth / 20,
+        pageHeightPt: section.pageHeight / 20,
+        marginWidthPt: (section.pageWidth - section.marginLeft - section.marginRight) / 20,
+        marginHeightPt: (section.pageHeight - section.marginTop - section.marginBottom) / 20,
+      }
+    : null
   const applyTheme = (preset: (typeof THEME_PRESETS)[number]) => {
     onThemeFonts(preset.fonts)
     onThemeColors(preset.colors)
     setDropdown(() => null)
   }
   const customWatermark = () => {
-    setWatermarkPromptOpen(true)
+    setWatermarkDialogOpen(true)
     setDropdown(() => null)
   }
   return (
@@ -378,35 +408,19 @@ export function DesignTab({
               <span>{t('ribbonPageColor')}</span>
             </button>
             {dropdown === 'pagecolor' && (
-              <div data-rb-panel="" className="color-palette color-palette-page">
-                {PAGE_COLORS.map((c) => (
-                  <button
-                    key={c.hex ?? 'auto'}
-                    className={`color-swatch ${(pageColor ?? null) === c.hex ? 'selected' : ''}`}
-                    data-tip={t(c.nameKey)}
-                    aria-label={t(c.nameKey)}
-                    style={{ background: c.hex ? `#${c.hex}` : '#ffffff' }}
-                    onClick={() => {
-                      onPageColor(c.hex)
-                      setDropdown(() => null)
-                    }}
-                  />
-                ))}
-                <button
-                  className="color-none"
-                  onClick={() => {
-                    onPageColor(null)
-                    setDropdown(() => null)
-                  }}
-                >
-                  {t('ribbonNoColor')}
-                </button>
-              </div>
+              <RibbonColorPalette
+                current={pageColor}
+                noneLabel={t('ribbonNoColor')}
+                onPick={(hex) => {
+                  onPageColor(hex)
+                  setDropdown(() => null)
+                }}
+              />
             )}
           </div>
           <div className="rb-split-wrap">
             <button
-              className={`rb-big ${watermark ? 'active' : ''}`}
+              className={`rb-big ${watermark || watermarkPicture || watermarkDocImage ? 'active' : ''}`}
               disabled={!hasDoc}
               data-tip={t('ribbonWatermarkTip')}
               onClick={() => toggleDropdown(setDropdown, 'watermark')}
@@ -433,7 +447,7 @@ export function DesignTab({
                 ))}
                 <button onClick={customWatermark}>{t('ribbonWatermarkCustom')}</button>
                 <button
-                  className={!watermark ? 'active' : ''}
+                  className={!watermark && !watermarkPicture && !watermarkDocImage ? 'active' : ''}
                   onClick={() => {
                     onWatermark(null)
                     setDropdown(() => null)
@@ -460,9 +474,10 @@ export function DesignTab({
             {dropdown === 'pgborders' && section && (
               <div data-rb-panel="" className="layout-menu">
                 <button
-                  className={section.pageBorder ? 'active' : ''}
+                  className={section.pageBorder && !section.pageBorderProps ? 'active' : ''}
                   onClick={() => {
-                    onSection({ ...section, pageBorder: true })
+                    const { pageBorderProps: _drop, ...rest } = section
+                    onSection({ ...rest, pageBorder: true })
                     setDropdown(() => null)
                   }}
                 >
@@ -477,6 +492,15 @@ export function DesignTab({
                 >
                   {t('ribbonNone')}
                 </button>
+                <div className="rb-menu-sep" />
+                <button
+                  onClick={() => {
+                    setPageBorderDialog(true)
+                    setDropdown(() => null)
+                  }}
+                >
+                  {t('ribbonPageBorderDialog')}
+                </button>
               </div>
             )}
           </div>
@@ -484,14 +508,25 @@ export function DesignTab({
         <div className="ribbon-group-label">{t('ribbonGroupPageBackground')}</div>
       </div>
 
-      {watermarkPromptOpen && (
-        <PromptModal
-          title={t('ribbonWatermarkCustomTitle')}
-          placeholder={t('ribbonWatermarkPh')}
-          initial={watermark ?? ''}
-          allowEmpty
-          onSubmit={(text) => onWatermark(text || null)}
-          onClose={() => setWatermarkPromptOpen(false)}
+      {pageBorderDialog && section && (
+        <PageBorderDialog
+          section={section}
+          onApply={applyPageBorder}
+          onClose={() => setPageBorderDialog(false)}
+        />
+      )}
+      {watermarkDialogOpen && (
+        <WatermarkDialog
+          current={{
+            text: watermark,
+            style: watermarkStyle,
+            picture: watermarkPicture,
+            docImage: watermarkDocImage,
+          }}
+          presets={watermarkPresets}
+          pageBox={watermarkPageBox}
+          onApply={onWatermark}
+          onClose={() => setWatermarkDialogOpen(false)}
         />
       )}
     </>

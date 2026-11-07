@@ -63,6 +63,12 @@ describe('applyPageSetupState', () => {
     expect(patched).toContain('<printOptions headings="1"/>')
   })
 
+  it('applies the change to every printOptions match, not just the first', () => {
+    const xml = '<worksheet><sheetData/><printOptions headings="1"/><printOptions/></worksheet>'
+    const patched = applyPageSetupState(xml, { sheetName: 'S', printGridlines: true })
+    expect(patched.match(/<printOptions gridLines="1"/g)).toHaveLength(2)
+  })
+
   it('writes fit-to-page: pageSetUpPr plus fitToWidth/fitToHeight', () => {
     const xml = applyPageSetupState(BARE, {
       sheetName: 'S',
@@ -160,6 +166,22 @@ describe('buildHeaderFooterXml', () => {
         '</headerFooter>',
     )
   })
+
+  it('writes a stray ampersand as the && literal code and keeps real codes', () => {
+    expect(buildHeaderFooterXml({ center: 'R & D' }, null)).toBe(
+      '<headerFooter><oddHeader>&amp;CR &amp;&amp; D</oddHeader></headerFooter>',
+    )
+    expect(
+      buildHeaderFooterXml(
+        { left: 'A && B &', right: 'Tom&Jerry &P/&N &[Page] &"Arial,Bold"&12x' },
+        null,
+      ),
+    ).toBe(
+      '<headerFooter><oddHeader>&amp;LA &amp;&amp; B &amp;&amp;' +
+        '&amp;RTom&amp;&amp;Jerry &amp;P/&amp;N &amp;[Page] &amp;&quot;Arial,Bold&quot;&amp;12x</oddHeader>' +
+        '</headerFooter>',
+    )
+  })
 })
 
 describe('applyPageSetupState headerFooter', () => {
@@ -194,7 +216,9 @@ describe('applyPageSetupState headerFooter', () => {
       sheetName: 'S',
       header: { left: "Revenue $'000", right: 'Ref $& $1 $$' },
     })
-    expect(patched).toContain("<oddHeader>&amp;LRevenue $'000&amp;RRef $&amp; $1 $$</oddHeader>")
+    expect(patched).toContain(
+      "<oddHeader>&amp;LRevenue $'000&amp;RRef $&amp;&amp; $1 $$</oddHeader>",
+    )
     expect(patched).not.toContain('Old')
   })
 
@@ -347,6 +371,15 @@ describe('applyPrintAreas', () => {
     )
   })
 
+  it('rejects a print area without a row-bounded range (our reader and schema only accept A1:B2 forms)', () => {
+    expect(() => applyPrintAreas(WORKBOOK, [{ sheetName: 'Sheet1', printArea: 'A:A' }])).toThrow(
+      PageSetupError,
+    )
+    expect(() => applyPrintAreas(WORKBOOK, [{ sheetName: 'Sheet1', printArea: 'A1:B' }])).toThrow(
+      'Invalid print area "A1:B".',
+    )
+  })
+
   it('writes and clears _xlnm.Print_Titles as absolute row spans', () => {
     const xml = applyPrintAreas(WORKBOOK, [{ sheetName: 'Sheet1', printTitles: '1:2' }])
     expect(xml).toContain(
@@ -405,5 +438,35 @@ describe('applyPageSetupState page breaks', () => {
   it('drops a zero break id instead of writing an invalid brk', () => {
     const xml = applyPageSetupState(BARE, { sheetName: 'S', rowBreaks: [0] })
     expect(xml).toBe(BARE)
+  })
+})
+
+describe('applyPageSetupState rightToLeft', () => {
+  it('writes rightToLeft="1" onto the sheetView and keeps the other attributes', () => {
+    const xml = applyPageSetupState(WITH_VIEW, { sheetName: 'S', rightToLeft: true })
+    expect(xml).toContain('<sheetView rightToLeft="1" workbookViewId="0"/>')
+    const headed = applyPageSetupState(
+      '<worksheet><sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews><sheetData/></worksheet>',
+      { sheetName: 'S', rightToLeft: true },
+    )
+    expect(headed).toContain('showGridLines="0"')
+    expect(headed).toContain('rightToLeft="1"')
+  })
+
+  it('drops the attribute on false and leaves a sheet without one unchanged', () => {
+    const rtl =
+      '<worksheet><sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews><sheetData/></worksheet>'
+    expect(applyPageSetupState(rtl, { sheetName: 'S', rightToLeft: false })).toBe(
+      '<worksheet><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetData/></worksheet>',
+    )
+    expect(applyPageSetupState(WITH_VIEW, { sheetName: 'S', rightToLeft: false })).toBe(WITH_VIEW)
+  })
+
+  it('creates a sheetViews section on a bare worksheet when mirrored', () => {
+    const xml = applyPageSetupState(BARE, { sheetName: 'S', rightToLeft: true })
+    expect(xml).toBe(
+      '<worksheet><sheetViews><sheetView workbookViewId="0" rightToLeft="1"/></sheetViews>' +
+        '<sheetData/></worksheet>',
+    )
   })
 })

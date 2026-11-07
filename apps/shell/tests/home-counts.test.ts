@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createI18n } from '@hermesoffice/i18n'
+import { createI18n, LANGS, type Lang } from '@hermesoffice/i18n'
 import { normalizeRecentQuery, pageRecentPaths } from '../src/main/recent-files'
-import { fileCountKey, timelineCountKey, visiblePageCount } from '../src/renderer/src/counts'
+import { fileCountLabel, visiblePageCount } from '../src/renderer/src/counts'
 import { strings } from '../src/renderer/src/strings'
 
 const tempDirs: string[] = []
@@ -32,6 +32,25 @@ describe('home visible counts', () => {
     expect(page.total).toBe(1)
     expect(page.entries.map((entry) => entry.path)).toEqual([docPath])
     expect(visiblePageCount(page)).toBe(1)
+  })
+
+  it('stats only the returned page, not the whole list (missing files outside the page stay unstat-ted)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shell-counts-'))
+    tempDirs.push(dir)
+    // one real file and many paths that do not exist
+    const real = join(dir, 'real.docx')
+    writeFileSync(real, 'x')
+    const paths = [real, ...Array.from({ length: 300 }, (_, i) => join(dir, `gone-${i}.docx`))]
+    const page = pageRecentPaths(paths, { offset: 0, limit: 1 }, new Set())
+    // totals count the whole list, but only the first entry was stat-ted
+    expect(page.total).toBe(301)
+    expect(page.totalAll).toBe(301)
+    expect(page.entries).toHaveLength(1)
+    expect(page.entries[0]!.path).toBe(real)
+    expect(page.entries[0]!.missing).toBeFalsy()
+    // paging past the missing files still flags them per-page
+    const tail = pageRecentPaths(paths, { offset: 300, limit: 1 }, new Set())
+    expect(tail.entries[0]!.missing).toBe(true)
   })
 
   it('counts .xlsm under the sheets (xlsx) filter', () => {
@@ -117,6 +136,26 @@ describe('recent query ext normalization', () => {
     expect(page.entries.map((entry) => entry.path)).toEqual([bookPath])
   })
 
+  it('coerces string offset and limit from the IPC boundary instead of paging from one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shell-counts-'))
+    tempDirs.push(dir)
+    const paths = [0, 1, 2, 3].map((i) => {
+      const p = join(dir, `n${i}.md`)
+      writeFileSync(p, 'note')
+      return p
+    })
+
+    // RecentQuery crosses preload, so "2"/"2" is a legal page request; it used to
+    // fall back to offset 0 and hand back page one under a total advertising more.
+    const page = pageRecentPaths(paths, { offset: '2', limit: '2' } as never, new Set())
+    expect(page.entries.map((e) => e.path)).toEqual([paths[2], paths[3]])
+    expect(page.total).toBe(4)
+    expect(normalizeRecentQuery({ offset: '10' }).offset).toBe(10)
+    expect(normalizeRecentQuery({ limit: '5' }).limit).toBe(5)
+    // genuinely non-numeric input still falls back
+    expect(normalizeRecentQuery({ offset: 'abc' }).offset).toBe(0)
+  })
+
   it('shares the sheets/html families with the starred view (same helper)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'shell-counts-'))
     tempDirs.push(dir)
@@ -140,20 +179,39 @@ describe('recent query ext normalization', () => {
 
 describe('count labels', () => {
   const translate = createI18n(strings)
+  const label = (lang: Lang, n: number) =>
+    fileCountLabel(n, lang, (key, params) => translate(lang, key, params))
 
   it('uses singular and plural file labels', () => {
-    expect(translate('en', fileCountKey(1), { n: 1 })).toBe('1 file')
-    expect(translate('en', fileCountKey(2), { n: 2 })).toBe('2 files')
-  })
-
-  it('uses singular and plural activity item labels', () => {
-    expect(translate('en', timelineCountKey(1), { n: 1 })).toBe('1 item')
-    expect(translate('en', timelineCountKey(2), { n: 2 })).toBe('2 items')
+    expect(label('en', 1)).toBe('1 file')
+    expect(label('en', 2)).toBe('2 files')
+    expect(label('en', 0)).toBe('0 files')
   })
 
   it('picks the singular form in every locale with plural inflection', () => {
-    expect(translate('fr', fileCountKey(1), { n: 1 })).toBe('1 fichier')
-    expect(translate('de', fileCountKey(1), { n: 1 })).toBe('1 Datei')
-    expect(translate('zh', fileCountKey(1), { n: 1 })).toBe('1 个文件')
+    expect(label('fr', 1)).toBe('1 fichier')
+    expect(label('de', 1)).toBe('1 Datei')
+    expect(label('zh', 1)).toBe('1 \u4e2a\u6587\u4ef6')
+  })
+
+  it('follows CLDR categories: fr zero, cs few, ru one at 21, ar dual/many', () => {
+    expect(label('fr', 0)).toBe('0 fichier')
+    expect(label('cs', 1)).toBe('1 soubor')
+    expect(label('cs', 3)).toBe('3 soubory')
+    expect(label('cs', 5)).toBe('5 soubor\u016f')
+    expect(label('ru', 21)).toBe('21 \u0444\u0430\u0439\u043b')
+    expect(label('ru', 5)).toBe('\u0424\u0430\u0439\u043b\u043e\u0432: 5')
+    expect(label('pl', 2)).toBe('Pliki: 2')
+    expect(label('ar', 0)).toBe('لا توجد ملفات')
+    expect(label('ar', 2)).toBe('ملفان')
+    expect(label('ar', 3)).toBe('3 ملفات')
+    expect(label('ar', 11)).toBe('11 ملفًا')
+    expect(label('ar', 100)).toBe(strings.ar.fileCount.replace('{n}', '100'))
+  })
+
+  it('falls back to the one/other pair in every locale', () => {
+    for (const lang of LANGS) {
+      for (const n of [0, 1, 2, 5, 11, 21, 100]) expect(label(lang, n)).not.toContain('{n}')
+    }
   })
 })

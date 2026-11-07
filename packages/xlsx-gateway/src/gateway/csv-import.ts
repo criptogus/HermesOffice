@@ -7,12 +7,13 @@ import JSZip from 'jszip'
 import { encodeXlsxEscapes } from './xlsx-escapes'
 import { DEFAULT_THEME_XML } from './xlsx-default-theme'
 import { MINIMAL_STYLESHEET_XML } from './xlsx-default-styles'
+import { validateSheetName } from './xlsx-sheets'
 
 const DELIMITERS = [',', ';', '\t'] as const
 
-/** Max CSV rows/cols parsed: prevents row-count bomb within byte cap from OOMing. */
-export const MAX_CSV_ROWS = 200_000
-export const MAX_CSV_COLS = 1_000
+/** Excel's sheet bounds; anything past them cannot land in a workbook anyway. */
+export const MAX_CSV_ROWS = 1_048_576
+export const MAX_CSV_COLS = 16_384
 
 // Excel writes CSV in the system's legacy charset, not UTF-8 (GBK on Chinese
 // Windows, Shift_JIS on Japanese), so decoding everything as UTF-8 turns every
@@ -92,8 +93,10 @@ export function decodeCsvBuffer(bytes: Uint8Array, preferred?: string): string {
 
   let best = decode(bytes, 'utf-8') ?? ''
   let bestScore = score(best)
+  const utf16 = ['utf-16le', 'utf-16be'] as const
   const candidates = preferred ? [preferred, ...LEGACY_CHARSETS] : LEGACY_CHARSETS
-  for (const charset of candidates) {
+  // CJK-only UTF-16 carries too few NUL bytes for the sniffer above; let the scorer pick.
+  for (const charset of [...utf16, ...candidates]) {
     const candidate = decode(bytes, charset)
     if (candidate === null) continue
     const candidateScore = score(candidate)
@@ -167,6 +170,16 @@ export function parseCsv(input: string, delimiter = sniffDelimiter(input)): stri
   }
   let row: string[] = []
   let field = ''
+  const pushField = (): void => {
+    row.push(field)
+    if (row.length > MAX_CSV_COLS) fail(`too many columns (cap ${MAX_CSV_COLS})`)
+    field = ''
+  }
+  const pushRow = (): void => {
+    rows.push(row)
+    if (rows.length > MAX_CSV_ROWS) fail(`too many rows (cap ${MAX_CSV_ROWS})`)
+    row = []
+  }
   let quoted = false
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index]
@@ -178,6 +191,9 @@ export function parseCsv(input: string, delimiter = sniffDelimiter(input)): stri
         } else {
           quoted = false
         }
+      } else if (character === '\r') {
+        if (text[index + 1] === '\n') index += 1
+        field += '\n'
       } else {
         field += character
       }
@@ -186,34 +202,31 @@ export function parseCsv(input: string, delimiter = sniffDelimiter(input)): stri
     if (character === '"' && field === '') {
       quoted = true
     } else if (character === delimiter) {
-      row.push(field)
-      if (row.length > MAX_CSV_COLS) fail(`too many columns (cap ${MAX_CSV_COLS})`)
-      field = ''
+      pushField()
     } else if (character === '\n' || character === '\r') {
       if (character === '\r' && text[index + 1] === '\n') index += 1
-      row.push(field)
-      rows.push(row)
-      if (rows.length > MAX_CSV_ROWS) fail(`too many rows (cap ${MAX_CSV_ROWS})`)
-      row = []
-      field = ''
+      pushField()
+      pushRow()
     } else {
       field += character
     }
   }
   if (field !== '' || row.length > 0) {
-    row.push(field)
-    rows.push(row)
+    pushField()
+    pushRow()
   }
   // A trailing newline produces one empty row — drop it.
   while (rows.length > 0 && rows[rows.length - 1]?.every((cell) => cell === '')) rows.pop()
   return rows
 }
 
-/// Plain decimal numbers only; leading zeros ("007") stay text so codes and
-/// phone numbers survive the import. Integers past Excel's 15-digit precision
-/// stay text too, so long IDs are not corrupted on open.
+/// Plain decimal numbers only (".5", "1." and "-.5" count, as in Excel); leading
+/// zeros ("007") and a "+" sign ("+86") stay text so codes and phone numbers
+/// survive the import. Integers past Excel's 15-digit precision stay text too,
+/// so long IDs are not corrupted on open.
 export function isNumericCell(value: string): boolean {
-  if (!/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(value)) return false
+  if (!/^-?(?:(?:0|[1-9][0-9]*)(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value))
+    return false
   if (!/[.eE]/.test(value) && value.replace(/^-/, '').length > 15) return false
   return Number.isFinite(Number(value))
 }
@@ -248,7 +261,7 @@ export function buildWorksheetXml(rows: readonly (readonly string[])[]): string 
       const reference = `${columnLabel(columnIndex)}${rowIndex + 1}`
       cells.push(
         isNumericCell(value)
-          ? `<c r="${reference}"><v>${value}</v></c>`
+          ? `<c r="${reference}"><v>${Number(value)}</v></c>`
           : `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(encodeXlsxEscapes(value))}</t></is></c>`,
       )
     })
@@ -266,6 +279,21 @@ export async function csvToXlsxBuffer(csvText: string, sheetName = 'Sheet1'): Pr
   const rows = parseCsv(csvText, resolveImportDelimiter(csvText))
   if (rows.length === 0) throw new Error('The CSV file has no data rows.')
   return xlsxBufferFromRows(rows, sheetName)
+}
+
+/**
+ * Open-path conversion. `delimiter` pins the split for callers that already
+ * know the format (a .tsv); leaving it unset lets the sniffer and its
+ * prose-shatter guard decide, which is right for a bare .csv but unreliable
+ * for a tab-delimited file whose fields hold enough commas to out-count tabs.
+ */
+export async function csvToXlsxBufferForOpen(
+  csvText: string,
+  sheetName = 'Sheet1',
+  delimiter?: string,
+): Promise<{ buffer: Buffer; empty: boolean }> {
+  const rows = parseCsv(csvText, delimiter ?? resolveImportDelimiter(csvText))
+  return { buffer: await xlsxBufferFromRows(rows, sheetName), empty: rows.length === 0 }
 }
 
 /**
@@ -323,6 +351,7 @@ async function xlsxBufferFromRows(
   rows: readonly (readonly string[])[],
   sheetName: string,
 ): Promise<Buffer> {
+  validateSheetName(sheetName)
   const zip = new JSZip()
   zip.file(
     '[Content_Types].xml',

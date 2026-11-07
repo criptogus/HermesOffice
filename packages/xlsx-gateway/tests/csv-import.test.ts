@@ -57,6 +57,14 @@ describe('parseCsv with explicit delimiters', () => {
     ])
   })
 
+  it('normalizes a CRLF or lone CR inside a quoted field to one newline', () => {
+    expect(parseCsv('"line1\r\nline2",c\n1,2', ',')).toEqual([
+      ['line1\nline2', 'c'],
+      ['1', '2'],
+    ])
+    expect(parseCsv('"line1\rline2",c', ',')).toEqual([['line1\nline2', 'c']])
+  })
+
   it('handles CRLF and drops the trailing empty row', () => {
     expect(parseCsv('a,b\r\n1,2\r\n', ',')).toEqual([
       ['a', 'b'],
@@ -142,14 +150,32 @@ describe('decodeCsvBuffer', () => {
   it('decodes UTF-16LE without a BOM from the NUL pattern', () => {
     expect(decodeCsvBuffer(utf16leBytes('a,b'))).toBe('a,b')
   })
+
+  it('decodes BOM-less UTF-16 CJK-only text in either byte order', () => {
+    const text = Array(6)
+      .fill(
+        '\u59d3\u540d\u90e8\u95e8\u804c\u4f4d\u5de5\u53f7\u5907\u6ce8\u90ae\u7bb1\u7535\u8bdd\u5730',
+      )
+      .join('\n')
+    const le = utf16leBytes(text)
+    const be = new Uint8Array(le.length)
+    for (let i = 0; i < le.length; i += 2) {
+      be[i] = le[i + 1]!
+      be[i + 1] = le[i]!
+    }
+    expect(decodeCsvBuffer(le)).toBe(text)
+    expect(decodeCsvBuffer(be)).toBe(text)
+    expect(decodeCsvBuffer(le, 'gb18030')).toBe(text)
+  })
 })
 
 describe('parseCsv row/col caps', () => {
-  it('rejects too many columns', () => {
-    const wide = Array(MAX_CSV_COLS + 2)
+  it('rejects too many columns, counting the last field of an unterminated row', () => {
+    const wide = Array(MAX_CSV_COLS + 1)
       .fill('a')
       .join(',')
     expect(() => parseCsv(wide, ',')).toThrow(/too many columns/)
+    expect(parseCsv(Array(MAX_CSV_COLS).fill('a').join(','), ',')[0]).toHaveLength(MAX_CSV_COLS)
   })
 
   it('accepts normal grids', () => {
@@ -157,8 +183,8 @@ describe('parseCsv row/col caps', () => {
   })
 
   it('exposes row/col caps', () => {
-    expect(MAX_CSV_ROWS).toBe(200_000)
-    expect(MAX_CSV_COLS).toBe(1_000)
+    expect(MAX_CSV_ROWS).toBe(1_048_576)
+    expect(MAX_CSV_COLS).toBe(16_384)
   })
 })
 
@@ -168,6 +194,15 @@ describe('isNumericCell', () => {
     expect(isNumericCell('-12.5')).toBe(true)
     expect(isNumericCell('1e10')).toBe(true)
     expect(isNumericCell('0')).toBe(true)
+  })
+
+  it('accepts Excel-style bare-dot decimals but keeps a leading plus as text', () => {
+    for (const value of ['.5', '1.', '-.5', '-1.', '.5e2']) {
+      expect(isNumericCell(value), value).toBe(true)
+    }
+    for (const value of ['+1', '+86', '.', '-.', '-', '1..5', '.5.']) {
+      expect(isNumericCell(value), value).toBe(false)
+    }
   })
 
   it('rejects leading-zero codes so they stay text', () => {

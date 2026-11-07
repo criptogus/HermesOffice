@@ -51,7 +51,7 @@ async function shownBoxes(
 
 test.describe('sheets: export the active sheet as CSV', () => {
   test('File > Export CSV writes a BOM-prefixed CSV of the grid', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-csv-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-csv-e2e-'))
     const workbook = join(scratch, 'export-source.xlsx')
     const target = join(scratch, 'exported.csv')
     await copyFile(FIXTURE, workbook)
@@ -94,7 +94,7 @@ test.describe('sheets: export the active sheet as CSV', () => {
   })
 
   test('Export CSV with formulas: Continue on the loss warning writes the file and toasts', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-csv-formula-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-csv-formula-e2e-'))
     const workbook = join(scratch, 'formula-source.xlsx')
     const target = join(scratch, 'exported.csv')
     await copyFile(FORMULA_FIXTURE, workbook)
@@ -139,7 +139,7 @@ test.describe('sheets: export the active sheet as CSV', () => {
   })
 
   test('Save As with a .csv pick rides the formula warning through to the file', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-csv-saveas-e2e-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-csv-saveas-e2e-'))
     const workbook = join(scratch, 'saveas-source.xlsx')
     const target = join(scratch, 'saved.csv')
     await copyFile(FORMULA_FIXTURE, workbook)

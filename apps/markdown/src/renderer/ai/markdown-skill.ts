@@ -1,6 +1,7 @@
 import type { AgentSkill } from '@hermesoffice/agent-core'
 import type { Editor } from '@tiptap/core'
 import type { AiDocWriter } from './doc-writer'
+import { redactLabelsOf, placeholderInstruction } from '../editor/redact'
 import {
   AGENT_TOOLS,
   buildDocContext,
@@ -11,13 +12,14 @@ import {
 
 export const MARKDOWN_RULES = [
   'All markdown passed to tools must be pure GFM plus math. Rules:',
-  '- Allowed syntax, and nothing else: `#`–`######` headings, paragraphs, `**bold**`, `*italic*`, `~~strikethrough~~`, `` `inline code` ``, `[links](url)`, `![images](path)`, `-` / `1.` lists, `- [ ]` task lists, `>` blockquotes, ``` fenced code blocks, `|` pipe tables, `---` horizontal rules, hard line breaks (two trailing spaces), LaTeX math, ```mermaid diagrams, and ```wavedrom timing diagrams.',
+  '- Allowed syntax, and nothing else: `#`–`######` headings, paragraphs, `**bold**`, `*italic*`, `~~strikethrough~~`, `` `inline code` ``, `[links](url)`, `![images](path)`, `-` / `1.` lists, `- [ ]` task lists, `>` blockquotes, ``` fenced code blocks, `|` pipe tables, `---` horizontal rules, footnotes (a `[^1]` reference with a matching `[^1]: definition text` line), hard line breaks (two trailing spaces), LaTeX math, ```mermaid diagrams, and ```wavedrom timing diagrams.',
   '- Math: `$...$` inline and `$$...$$` blocks are rendered with KaTeX. The content of `$...$` must not start or end with whitespace, and the closing `$` must not be followed by a digit (so currency amounts stay text).',
   '- Diagrams: a fenced code block with the `mermaid` language (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, mindmap, timeline) renders as a diagram. Use it when the user asks for a flow, process, architecture, or timeline chart. The syntax must be valid mermaid — an invalid block falls back to showing its source.',
   "- Timing diagrams: a fenced code block with the `wavedrom` language holding WaveJSON (`{ signal: [{ name: 'clk', wave: 'p....' }, …] }`) renders as a digital timing diagram. Use it only for clock / bus / signal waveforms.",
   '- Never emit raw HTML — no tag of any kind (`<span>`, `<div>`, `<p>`, `<img>`, `<br>`, `<u>`, `<mark>`, …) and no style attributes. The editor forces everything through its GFM-only schema: semantic tags degrade to plain GFM and all other tags and styling are silently dropped.',
-  '- Never emit other non-GFM extensions: `==highlight==`, `++underline++`, `:::` fenced divs, footnotes, or emoji shortcodes. They are not parsed and end up as literal text in the document.',
-  '- This editor has no colored text, fonts, font sizes, underline, highlight, alignment, or line spacing. If the user asks for such styling, explain that pure markdown cannot express it — never fake it with HTML.',
+  '- Never emit other non-GFM extensions: `++underline++`, `:::` fenced divs, or emoji shortcodes. They are not parsed and end up as literal text in the document. `==highlight==` is fine and renders as text highlighting.',
+  '- Footnotes: a `[^1]` reference needs a `[^1]: definition` line somewhere in the document (usually at the end). Labels hold no whitespace or brackets. Every reference must have a definition, and vice versa.',
+  '- This editor has no colored text, fonts, font sizes, underline, alignment, or line spacing. If the user asks for such styling, explain that pure markdown cannot express it — never fake it with HTML.',
   '- Express emphasis through structure instead: headings for hierarchy, bold for key phrases, blockquotes for callout-style notes, tables for comparisons.',
 ].join('\n')
 
@@ -59,6 +61,13 @@ const AGENT_SYSTEM_PROMPT = [
   '- The plan: a single `#` title, `##` sections with the key points of each, tone and target length; tables for comparisons, task lists for actionable items, blockquotes for important notes.',
   '- Never invent facts or numbers; use web_search when the topic needs current information, put the findings into context, and attribute sources.',
   '',
+  '## Mind map',
+  '- When the user asks for a mind map / knowledge structure / overview diagram of the document or a topic, call generate_mindmap with the whole tree in one call — never draw it with text and never ask the user to confirm first;',
+  '- The root is the document title (or the focus topic when the user named one — also pass it as `focus`); its children are the main sections/headings, then key concepts, 2-5 per node, 2-4 levels deep;',
+  "- Labels are short phrases (2-8 words) in the document's own language and wording, taken from its headings and key sentences — never invent topics the document does not cover;",
+  "- Cite each node's source with `block` (a block index from the current block list); omit it for nodes that span several blocks. Only cite indexes that exist;",
+  "- generate_mindmap does not modify the document. After it returns, reply with one short sentence (e.g. that the map is ready and branches can be expanded). If the user wants the map inside the document, point at the card's insert button — it writes the map in as an editable mermaid diagram.",
+  '',
   '## Conversation',
   '- Answer questions about the document directly, without editing it.',
   '- Keep replies short; the edits themselves are the deliverable. Summarize what you changed in one or two sentences.',
@@ -79,9 +88,16 @@ export function createMarkdownSkill(
     id: 'markdown',
     // live: the predicate is re-read before every model request
     get systemPrompt() {
-      return imageGenAvailable?.() === false
-        ? AGENT_SYSTEM_PROMPT + IMAGE_GEN_OFF_NOTE
-        : AGENT_SYSTEM_PROMPT
+      const base =
+        imageGenAvailable?.() === false
+          ? AGENT_SYSTEM_PROMPT + IMAGE_GEN_OFF_NOTE
+          : AGENT_SYSTEM_PROMPT
+      // only when the open document actually withholds something, so a
+      // document without spans pays nothing and the model is not told to
+      // look for markers that are not there
+      const editor = getEditor()
+      const labels = editor ? redactLabelsOf(editor.getJSON() as never) : []
+      return labels.length > 0 ? `${base}\n\n${placeholderInstruction(labels)}` : base
     },
     get tools() {
       return imageGenAvailable?.() === false

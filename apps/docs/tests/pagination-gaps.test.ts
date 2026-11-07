@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   GAP_BAND,
+  gapLedgerOf,
   alignGapHfStrips,
+  canvasZoomOf,
   alignTableGapFills,
   makeGapEl,
   pageFramesFromGaps,
@@ -9,13 +14,24 @@ import {
   syncPageSheets,
   syncPhantomRowspans,
   clampCellBoxTops,
+  pinCellBoxesToPage,
   clampCellImageTops,
   pageBorderArtStripStyle,
   pageBorderStyleOf,
   rowFillAttrs,
   syncPageBorders,
+  syncFloatShifts,
 } from '../src/renderer/editor/pagination-gaps'
+import { leadDropsSpaceBefore } from '../src/renderer/pagination-cuts'
+import { measureBlocks } from '../src/renderer/pagination-measure'
 import { createLineRectsCache, singleCutCell } from '../src/renderer/pagination'
+import { Editor } from '@tiptap/core'
+import { NodeSelection } from '@tiptap/pm/state'
+import { buildShapeParagraphXml, parseDocx } from '@hermesoffice/docx-engine'
+import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
+import { blocksToPmDoc } from '../src/renderer/editor/convert'
+import { editorExtensions } from '../src/renderer/editor/extensions'
+import { setFloatingWrap } from '../src/renderer/editor/floating-z-order'
 
 const rowOf = (cells: number): HTMLTableRowElement => {
   const tr = document.createElement('tr')
@@ -25,11 +41,84 @@ const rowOf = (cells: number): HTMLTableRowElement => {
 
 const m = { marginTop: 96, marginBottom: 96, marginLeft: 90, marginRight: 90 }
 
-describe('page gap header push', () => {
-  it('writes the push even when zero so a later page clears an earlier one', () => {
-    expect(makeGapEl({ ...m, sectionMarginTop: 70 }, 'cell').dataset.topPush).toBe('26.0')
-    expect(makeGapEl({ ...m, sectionMarginTop: 96 }, 'cell').dataset.topPush).toBe('0.0')
-    expect(makeGapEl(m, 'cell').dataset.topPush).toBeUndefined()
+describe('gap ledger', () => {
+  it('records the header push even when zero so a later page clears an earlier one', () => {
+    const [a, b, c] = gapLedgerOf(
+      [
+        { pos: 1, kind: 'cell', page: 1, metrics: { ...m, sectionMarginTop: 70 } },
+        { pos: 2, kind: 'cell', page: 2, metrics: { ...m, sectionMarginTop: 96 } },
+        { pos: 3, kind: 'cell', page: 3, metrics: m },
+      ],
+      [],
+    )
+    expect([a.topPushPx, b.topPushPx, c.topPushPx]).toEqual([26, 0, undefined])
+    expect(a.heightPx).toBe(96 + GAP_BAND + 96)
+  })
+
+  it('cut markers and overlay anchors are zero-height boundaries; carry spacers have no page', () => {
+    const el = document.createElement('p')
+    const entries = gapLedgerOf(
+      [
+        { pos: 1, kind: 'cut', page: 1, metrics: m },
+        {
+          el,
+          carryPx: 120,
+          metrics: { marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0 },
+        },
+        {
+          pos: 9,
+          kind: 'table',
+          page: 3,
+          metrics: m,
+          floatGap: true,
+          repeatHeaderPx: 18,
+          pullUp: 40,
+        },
+      ],
+      [2],
+    )
+    expect(entries.map((e) => [e.page, e.kind, e.heightPx])).toEqual([
+      [1, 'cut', 0],
+      [3, 'table', 96 + GAP_BAND + 96],
+      [2, 'cut', 0],
+    ])
+    expect(entries[1]).toMatchObject({ floatGap: true, repeatHeaderPx: 18, pullUpPx: 0 })
+  })
+})
+
+describe('gap paper box (every gap kind)', () => {
+  const m = {
+    marginTop: 96,
+    marginBottom: 130,
+    bodyMarginBottom: 96,
+    marginLeft: 90,
+    marginRight: 90,
+  }
+  const kinds = ['block', 'inline', 'cell', 'table'] as const
+  it('every page-turning gap kind owns a .page-gap-paper box carrying the body margin', () => {
+    for (const kind of kinds) {
+      const el = makeGapEl(m, kind, 3)
+      const paper = el.classList.contains('page-gap-paper')
+        ? el
+        : el.querySelector('.page-gap-paper')
+      expect(paper, kind).not.toBeNull()
+      expect(el.style.getPropertyValue('--gap-body-mb'), kind).toBe('96px')
+      expect(el.style.getPropertyValue('--gap-mb'), kind).toBe('130px')
+    }
+  })
+  it('a cut marker has no paper box (zero-height, hosts nothing)', () => {
+    const el = makeGapEl(m, 'cut')
+    expect(el.classList.contains('page-gap-paper')).toBe(false)
+    expect(el.querySelector('.page-gap-paper')).toBeNull()
+  })
+  it('the crop-mark rule targets the paper box only, not individual gap kinds', () => {
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../src/renderer/styles.css'),
+      'utf8',
+    )
+    const marks = css.match(/^[^{}]*page-gap[^{}]*::after[^{]*\{[^}]*--cm-len[^}]*\}/gm) ?? []
+    expect(marks.length).toBeGreaterThan(0)
+    for (const rule of marks) expect(rule).not.toMatch(/page-gap-(block|inline|cell|table|cut)/)
   })
 })
 
@@ -248,6 +337,113 @@ describe('clampCellBoxTops', () => {
   })
 })
 
+describe('pinCellBoxesToPage', () => {
+  const rect = (top: number, left: number, height: number, width: number) =>
+    ({ top, left, bottom: top + height, right: left + width, height, width }) as DOMRect
+  const pageBox = (
+    pm: HTMLElement,
+    top: number,
+    left: number,
+    data: Record<string, string>,
+  ): HTMLElement => {
+    const strut = document.createElement('div')
+    strut.className = 'doc-cell-boxes doc-cell-boxes-page'
+    const box = document.createElement('div')
+    box.className = 'doc-textbox'
+    Object.assign(box.dataset, { cellPage: '1', pageRelV: '1', ...data })
+    box.getBoundingClientRect = () => rect(top, left, 108, 88)
+    strut.appendChild(box)
+    pm.appendChild(strut)
+    return box
+  }
+  const paper = (): HTMLElement => {
+    const pm = document.createElement('div')
+    pm.style.paddingTop = '94px'
+    pm.style.paddingLeft = '113px'
+    pm.getBoundingClientRect = () => rect(0, 0, 3000, 794)
+    return pm
+  }
+
+  it('moves a page-relative box from its cell origin to the page position and stamps the page', () => {
+    const pm = paper()
+    // first page: cell at y=172 hosts the avatar (page Y 67.7) and a full-width bar (page X 0.1)
+    const avatar = pageBox(pm, 172 + 67.7, 113 + 22.3, {
+      cellPageX: '22.3',
+      cellPageY: '67.7',
+      pageRelFrom: 'page',
+    })
+    const bar = pageBox(pm, 172 + 1.3, 113 + 0.1, {
+      cellPageX: '0.1',
+      cellPageY: '1.3',
+      pageRelFrom: 'page',
+      pageRelX: '1',
+      pageRelXFrom: 'page',
+    })
+    // margin-relative X keeps the column origin (only a paper-edge X skips the margin)
+    const marginX = pageBox(pm, 172 + 1.3, 113 + 40, {
+      cellPageX: '30',
+      cellPageY: '1.3',
+      pageRelFrom: 'page',
+      pageRelX: '1',
+    })
+    pinCellBoxesToPage(pm, 1)
+    expect(avatar.style.getPropertyValue('--cell-page-dy')).toBe('-172.0px')
+    expect(avatar.style.getPropertyValue('--cell-page-dx')).toBe('0.0px')
+    expect(avatar.dataset.pinPage).toBe('0')
+    expect(bar.style.getPropertyValue('--cell-page-dy')).toBe('-172.0px')
+    expect(bar.style.getPropertyValue('--cell-page-dx')).toBe('-113.0px')
+    expect(marginX.style.getPropertyValue('--cell-page-dx')).toBe('-10.0px')
+  })
+
+  it('adds the centered page offset (--page-cx) of the owning block', () => {
+    const pm = paper()
+    const box = pageBox(pm, 172 + 1.3, 60 + 113 + 0.1, {
+      cellPageX: '0.1',
+      cellPageY: '1.3',
+      pageRelFrom: 'page',
+      pageRelX: '1',
+      pageRelXFrom: 'page',
+    })
+    box.parentElement!.style.setProperty('--page-cx', '60px')
+    pinCellBoxesToPage(pm, 1)
+    expect(box.style.getPropertyValue('--cell-page-dx')).toBe('-113.0px')
+  })
+
+  it('resolves against the paper of the page the box sits on; margin-relative Y adds that page top margin', () => {
+    const pm = paper()
+    const gap = makeGapEl({ ...m, marginTop: 80, marginLeft: 100 }, 'block')
+    // gap bottom at 1300: the second paper starts at 1300 - 80
+    gap.getBoundingClientRect = () => rect(1300 - 80 - GAP_BAND - 96, 0, 80 + GAP_BAND + 96, 794)
+    pm.appendChild(gap)
+    const box = pageBox(pm, 1500, 300, { cellPageX: '10', cellPageY: '20', pageRelFrom: 'margin' })
+    pinCellBoxesToPage(pm, 1)
+    // target top = 1220 + 80 + 20 = 1320; target left = 100 + 10
+    expect(box.style.getPropertyValue('--cell-page-dy')).toBe('-180.0px')
+    expect(box.style.getPropertyValue('--cell-page-dx')).toBe('-190.0px')
+    expect(box.dataset.pinPage).toBe('1')
+  })
+
+  it('is idempotent: a re-run against the shifted rect keeps the shift', () => {
+    const pm = paper()
+    const box = pageBox(pm, 239.7, 135.3, {
+      cellPageX: '22.3',
+      cellPageY: '67.7',
+      pageRelFrom: 'page',
+    })
+    pinCellBoxesToPage(pm, 1)
+    box.getBoundingClientRect = () => rect(67.7, 135.3, 108, 88)
+    pinCellBoxesToPage(pm, 1)
+    expect(box.style.getPropertyValue('--cell-page-dy')).toBe('-172.0px')
+  })
+
+  it('clampCellBoxTops leaves page-positioned boxes alone', () => {
+    const pm = paper()
+    const box = pageBox(pm, -20, 0, { cellPageX: '0', cellPageY: '0', pageRelFrom: 'page' })
+    clampCellBoxTops(pm, 0, 1)
+    expect(box.style.getPropertyValue('--page-float-dy')).toBe('')
+  })
+})
+
 describe('clampCellImageTops', () => {
   const cellImage = (pm: HTMLElement, imgTop: number, cellTop: number): HTMLElement => {
     const table = document.createElement('table')
@@ -355,7 +551,7 @@ describe('alignTableGapFills', () => {
   })
 })
 
-describe('page frames and sheets (differing-width documents, genoffice#246)', () => {
+describe('page frames and sheets (differing-width documents, hermesoffice#246)', () => {
   const rect = (top: number, height: number, left = 0, width = 1056) =>
     ({ top, height, left, width, bottom: top + height, right: left + width }) as DOMRect
   /** wrap holding a paper and two gaps: page 0 (portrait) → page 1 (landscape) → page 2 (portrait) */
@@ -844,5 +1040,119 @@ describe('rowFillAttrs', () => {
     expect(rowFillAttrs(310.4, 10.4)).toEqual({ style: 'height:310px', 'data-split-extra': '10.0' })
     expect(rowFillAttrs(309.6, 9.6)).toEqual({ style: 'height:310px', 'data-split-extra': '10.0' })
     expect(rowFillAttrs(310.4)).toEqual({ style: 'height:310px' })
+  })
+
+  // border-spacing 2px: the measured pitch is tr height + 2, so the tr gets the
+  // pitch less the gap and the extra is measured against the pitch it renders
+  it('takes the border-spacing gap out of a separate-borders row height', () => {
+    expect(rowFillAttrs(310.4, 10.4, 2)).toEqual({
+      style: 'height:308px',
+      'data-split-extra': '10.0',
+    })
+    expect(rowFillAttrs(310.4, 0, 2)).toEqual({ style: 'height:308px' })
+  })
+})
+
+describe('leadDropsSpaceBefore', () => {
+  const blocks = [{ section: 0 }, { section: 0 }, { section: 1 }, {}]
+  it('drops the space-before of a page-leading block after a natural break', () => {
+    expect(leadDropsSpaceBefore(blocks, 1)).toBe(true)
+  })
+  it('keeps it on the first block of a new section and of the document', () => {
+    expect(leadDropsSpaceBefore(blocks, 2)).toBe(false)
+    expect(leadDropsSpaceBefore(blocks, 0)).toBe(false)
+  })
+  it('treats an unset section as section 0', () => {
+    expect(leadDropsSpaceBefore(blocks, 3)).toBe(false)
+  })
+})
+
+describe('page-break-lead margin drop', () => {
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../src/renderer/styles.css'),
+    'utf8',
+  )
+  it('is display-only: the measuring pass still sees the declared space-before', () => {
+    expect(css).toMatch(
+      /\.page-break-lead:not\(\.measuring-natural \*\)\s*\{\s*margin-top: 0 !important;/,
+    )
+    expect(css).not.toMatch(/\n\.page-break-lead\s*\{/)
+  })
+})
+
+describe('canvasZoomOf', () => {
+  it('reads the zoom the host applies, not the caller fallback', () => {
+    expect(canvasZoomOf({ style: { zoom: '0.84' } }, 1)).toBe(0.84)
+    expect(canvasZoomOf({ style: { zoom: '1' } }, 0.84)).toBe(1)
+  })
+  it('an unset or unusable inline zoom is the unzoomed canvas', () => {
+    expect(canvasZoomOf({ style: { zoom: '' } }, 0.84)).toBe(1)
+    expect(canvasZoomOf({ style: { zoom: 'abc' } }, 0.84)).toBe(1)
+  })
+  it('without a host the fallback stands', () => {
+    expect(canvasZoomOf(null, 0.84)).toBe(0.84)
+  })
+})
+
+describe('a single shape rides the chrome rotator layer', () => {
+  const rect = (top: number, height: number): DOMRect =>
+    ({ top, height, bottom: top + height, left: 0, right: 100, width: 100 }) as DOMRect
+
+  it('syncFloatShifts parks the canvas display shift on the rotator', () => {
+    const pm = document.createElement('div')
+    const wrapper = document.createElement('div')
+    wrapper.className = 'doc-protected-floating'
+    const rotator = document.createElement('div')
+    rotator.className = 'box-rotator'
+    const box = document.createElement('div')
+    box.className = 'doc-textbox'
+    rotator.append(box)
+    wrapper.append(rotator)
+    pm.append(wrapper)
+    box.getBoundingClientRect = () => rect(50, 113)
+
+    // virtual top 100 under origin 0: the box paints 50 px too high
+    syncFloatShifts(pm, [{ el: box, top: 100 }], 0, 1)
+    expect(rotator.style.getPropertyValue('--page-float-dy')).toBe('50.0px')
+    // the box itself must stay unshifted inside the turning layer
+    expect(box.style.getPropertyValue('--page-float-dy')).toBe('')
+    expect(box.dataset.pageFloatDy).toBe('50')
+
+    // idempotent: with the shift applied the rect already includes it
+    box.getBoundingClientRect = () => rect(100, 113)
+    syncFloatShifts(pm, [{ el: box, top: 100 }], 0, 1)
+    expect(rotator.style.getPropertyValue('--page-float-dy')).toBe('50.0px')
+  })
+
+  it('measureBlocks finds the floating box nested under the rotator', async () => {
+    const shapeXml = buildShapeParagraphXml({ prst: 'rect', withTextbox: true, id: 42 }).replace(
+      '<wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>',
+      '<wp:positionH relativeFrom="column"><wp:posOffset>500000</wp:posOffset></wp:positionH>',
+    )
+    const parsed = await parseDocx(await buildDocx({ bodyXml: shapeXml }))
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: blocksToPmDoc(parsed.blocks) as never,
+    })
+    let pos = -1
+    editor.state.doc.descendants((node, at) => {
+      if (pos === -1 && node.type.name === 'docProtected' && node.attrs.textboxes) pos = at
+      return true
+    })
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos)))
+    setFloatingWrap(editor, 'front')
+    const wrapper = editor.view.nodeDOM(pos) as HTMLElement
+    const boxEl = wrapper.querySelector('.doc-textbox') as HTMLElement
+    expect(wrapper.classList.contains('doc-protected-floating')).toBe(true)
+    wrapper.getBoundingClientRect = () => rect(0, 0)
+    boxEl.getBoundingClientRect = () => rect(120, 113)
+
+    const measured = measureBlocks(editor.view.dom as HTMLElement, 0, 1)
+    const found = measured.floats.filter((f) => f.el === boxEl)
+    expect(found).toHaveLength(1)
+    expect(found[0].top).toBe(120)
+    expect(found[0].height).toBe(113)
+    editor.destroy()
   })
 })

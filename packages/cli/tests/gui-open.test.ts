@@ -4,12 +4,16 @@ import { describe, expect, it } from 'vitest'
 import { hermesofficeUserDataDir, guiOpenDocuments } from '../src/gui'
 import { run, tempDir } from './helpers'
 
-function registry(dir: string, pid: number, paths: string[]): Record<string, string> {
+function writeRegistry(dir: string, pid: number, paths: string[]): void {
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, 'open-documents.json'),
     JSON.stringify({ pid, updatedAt: new Date().toISOString(), paths }),
   )
+}
+
+function registry(dir: string, pid: number, paths: string[]): Record<string, string> {
+  writeRegistry(dir, pid, paths)
   return { ...process.env, HERMESOFFICE_AUDIT_LOG: 'off', HERMESOFFICE_USER_DATA: dir }
 }
 
@@ -32,16 +36,41 @@ describe('GUI-open documents', () => {
 
   it('ignores a missing, malformed or crash-leftover registry', () => {
     const dir = tempDir()
-    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toBeNull()
+    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toEqual([])
     writeFileSync(join(dir, 'open-documents.json'), '{not json')
-    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toBeNull()
+    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toEqual([])
     registry(dir, 2 ** 22 + 12345, ['/x.docx'])
-    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toBeNull()
+    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toEqual([])
     registry(dir, process.pid, ['/x.docx'])
-    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toEqual({
-      pid: process.pid,
-      paths: ['/x.docx'],
-    })
+    expect(guiOpenDocuments({ HERMESOFFICE_USER_DATA: dir })).toEqual([
+      { pid: process.pid, paths: ['/x.docx'] },
+    ])
+  })
+
+  it('refuses a file open in the dev registry after finding a live packaged registry', async () => {
+    const dir = tempDir()
+    const xlsx = await workbook(dir)
+    const ops = join(dir, 'ops.json')
+    writeFileSync(ops, JSON.stringify([{ op: 'set_range', range: 'A1', values: [['z']] }]))
+    const appRoot = tempDir()
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      APPDATA: appRoot,
+      HERMESOFFICE_AUDIT_LOG: 'off',
+      HOME: appRoot,
+      XDG_CONFIG_HOME: appRoot,
+    }
+    delete env.HERMESOFFICE_USER_DATA
+    const packagedDir = hermesofficeUserDataDir(env)
+    // The in-process CLI must resolve userData from this env, never the real home directory.
+    expect(packagedDir.startsWith(appRoot)).toBe(true)
+    writeRegistry(packagedDir, process.pid, [join(dir, 'packaged.xlsx')])
+    writeRegistry(`${packagedDir} Dev`, process.pid, [xlsx])
+
+    const refused = await run(['sheet', 'apply', xlsx, '--ops', ops, '--json'], { env })
+
+    expect(refused.code).toBe(2)
+    expect(refused.json().detail).toMatchObject({ gui_pid: process.pid })
   })
 
   it('refuses an in-place edit of an open file unless --force, other files pass', async () => {

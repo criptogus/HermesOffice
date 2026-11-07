@@ -9,6 +9,10 @@
  * the offline pagination model (lo-fonts measures the same set of files).
  */
 
+/* Metric aliases ('X GO' size-adjusted faces) are generated from
+   packages/font-metrics/measurements by tools/build-font-aliases.mjs. */
+@import './fonts.generated.css';
+
 /* "Carlito GO": Carlito with Vietnamese stacked diacritics fixed at build time
    (tools/patch-carlito-vi.py); renamed per OFL Reserved Font Name clause */
 @font-face {
@@ -66,6 +70,20 @@
   src: url('./Caladea-BoldItalic.ttf');
   font-weight: bold;
   font-style: italic;
+  font-display: block;
+}
+
+/* Cambria Math is an Office-private face Chromium cannot see; its Latin text
+ * glyphs carry Cambria's advances and the face has no bold cut, so Word
+ * emboldens the regular outlines (probe 2026-10-14: bold headings measure
+ * 0.92x Caladea Bold, Caladea Regular within 0.5% once kerned). One
+ * regular-weight face lets Chromium synthesise bold the same way; math
+ * symbols fall through to STIX. */
+@font-face {
+  font-family: 'Cambria Math GO';
+  src: url('./Caladea-Regular.ttf');
+  font-weight: normal;
+  font-style: normal;
   font-display: block;
 }
 
@@ -241,15 +259,18 @@
 }
 
 /* Missing KR font names (Noto/Source Han KR variants): Word keeps hangul on
- * Batang but renders Latin/digits with the theme Latin face (M3 probe sample
- * 13: Batang-metric Latin measures 1.13–1.19× Cambria/Calibri). Claims
- * printable ASCII only — U+0020 stays on the Batang-normalized KR subsets so
- * hangul word spacing is untouched. Serif class only: the missing-KR chain is
- * always Batang-ward (cssFontFamily). */
+ * Batang but renders every non-hangul character with the substituted Latin
+ * face (M3 probe sample 13: Batang-metric Latin measures 1.13–1.19×
+ * Cambria/Calibri; prod corpus 20261020 sample 023 Word PDF: U+0020 0.22em,
+ * U+00B7 0.28, curly quotes 0.375, × 0.55 all drawn by Cambria, never the
+ * Batang 0.333/0.5 glyphs). Claims Basic Latin incl. the space, Latin-1
+ * Supplement and General Punctuation; a flagged balanced space is
+ * re-wrapped by .doc-balanced-space and unaffected. Serif class only: the
+ * missing-KR chain is always Batang-ward (cssFontFamily). */
 @font-face {
   font-family: 'KR Theme Latin GO';
   src: local('Cambria'), url('./Caladea-Regular.ttf');
-  unicode-range: U+0021-007E;
+  unicode-range: U+0020-007E, U+00A0-00FF, U+2010-2027, U+2030-205E;
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -283,6 +304,31 @@
   font-display: block;
 }
 
+/* SimSun ASCII is half-width fixed pitch (Word PDF: 0.5em per character at
+ * 12pt); the -Che face carries the same 0.5em advances. */
+@font-face {
+  font-family: 'HermesOffice SimSun Latin';
+  src: url('./HermesOfficeCheLatinKR.woff2') format('woff2');
+  unicode-range: U+0020-007E;
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Under balanceSingleByteDoubleByteWidth Word lays out a space beside an East
+ * Asian character or another space at 0.5em whatever the run font (line-metrics
+ * balancedSpaceOffsets); .doc-balanced-space (styles.css) draws such spaces from
+ * this one-glyph face (tools/build-balanced-space-font.py). Its 0.8/0.2 line
+ * box sits inside every CJK face's, so the wrapped span never lifts a line. */
+@font-face {
+  font-family: 'HermesOffice Balanced Space';
+  src: url('./HermesOfficeBalancedSpace.woff2') format('woff2');
+  unicode-range: U+0020;
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
 /*
  * Arabic fallback: unmodified Noto Naskh/Sans Arabic subsets (Arabic blocks +
  * presentation forms + digits/punctuation). Without them, missing Arabic fonts
@@ -299,62 +345,6 @@
 @font-face {
   font-family: 'Noto Sans Arabic';
   src: url('./NotoSansArabic-Regular-subset.woff2') format('woff2');
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-/* Stand-ins for Traditional/Simplified Arabic (compact Windows naskh faces
- * Word downloads from M365 and renders real). Ratios are the shaped width of
- * a long Arabic body in the cloud font vs the bundled Noto Naskh
- * subset (harfbuzz over the real files, 2026-09-11): Traditional Arabic
- * 0.800 (bold cut 0.834), Simplified Arabic 0.924 (bold 0.916). Registered
- * weight-normal only so Blink still synthesizes bold; bold runs keep the
- * regular ratio. Canvas measureText resolves the same @font-face, so metrics
- * follow automatically. */
-@font-face {
-  font-family: 'Noto Naskh Arabic TA';
-  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
-  size-adjust: 80%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Noto Naskh Arabic SA';
-  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
-  size-adjust: 92.4%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-/* Documents declaring Noto Naskh/Sans Arabic by name resolve to the bundled
- * subsets, which run ~13% wider than Word's rendering of those faces; kept
- * separate from the 90% TA alias (different calibration source). */
-@font-face {
-  font-family: 'Noto Naskh Arabic W';
-  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
-  size-adjust: 87%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Noto Sans Arabic W';
-  src: url('./NotoSansArabic-Regular-subset.woff2') format('woff2');
-  size-adjust: 87%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-/* Missing Arabic serif names (incl. Persian B/XB/IR faces) substitute wholesale
- * to Times New Roman in Word; the bundled Naskh subset shapes 1.125× (Arabic) /
- * 1.074× (Persian) wider than Times (M3 probe 2026-08-14, whole-sentence shaped
- * R). 90% splits the difference; same value as the TA alias above but from a
- * different calibration source, so they stay separate (like the W alias). */
-@font-face {
-  font-family: 'Noto Naskh Arabic TNR';
-  src: url('./NotoNaskhArabic-Regular-subset.woff2') format('woff2');
-  size-adjust: 90%;
   font-weight: normal;
   font-style: normal;
   font-display: block;
@@ -386,473 +376,6 @@
   font-display: block;
 }
 
-/* Nunito Sans is an Office cloud font Word downloads and renders real (probe
- * 2026-08-23). Its advances run 4.4% wider than Helvetica (272.93 vs 261.5pt
- * per probe string @12pt, measured from Word's cached NunitoSans-Regular), so
- * the size-adjusted alias keeps line wraps aligned with Word. A locally
- * installed Nunito still precedes this alias in the chain. */
-@font-face {
-  font-family: 'Nunito Sans GO';
-  src: local('Helvetica'), local('ArialMT'), url('./LiberationSans-Regular.ttf');
-  size-adjust: 104.4%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Nunito Sans GO';
-  src: local('Helvetica-Bold'), local('Arial-BoldMT'), url('./LiberationSans-Bold.ttf');
-  size-adjust: 104.4%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Nunito Sans GO';
-  src: local('Helvetica-Oblique'), local('Arial-ItalicMT'), url('./LiberationSans-Italic.ttf');
-  size-adjust: 104.4%;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-
-/* Segoe UI is an M365 cloud font Word downloads and renders real; where it is
- * not installed Chromium falls to Helvetica/Arial, whose letters run wider.
- * Ratios are shaped widths of a long Arabic body in the cloud cuts vs
- * Helvetica (fontTools/harfbuzz, 2026-09-11): letters 0.986 regular,
- * 0.987 bold, 0.975 italic, 0.995 bold italic; digits 0.969 upright regular,
- * 1.034 bold. An installed Segoe UI precedes this alias in the chain. */
-@font-face {
-  font-family: 'Segoe UI GO';
-  src: local('Helvetica'), local('ArialMT'), url('./LiberationSans-Regular.ttf');
-  size-adjust: 98.6%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Segoe UI GO';
-  src: local('Helvetica-Bold'), local('Arial-BoldMT'), url('./LiberationSans-Bold.ttf');
-  size-adjust: 98.7%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Segoe UI GO';
-  src: local('Helvetica-Oblique'), local('Arial-ItalicMT'), url('./LiberationSans-Italic.ttf');
-  size-adjust: 97.5%;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Segoe UI GO';
-  src:
-    local('Helvetica-BoldOblique'), local('Arial-BoldItalicMT'),
-    url('./LiberationSans-BoldItalic.ttf');
-  size-adjust: 99.5%;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Segoe UI GO';
-  src: local('Helvetica'), local('ArialMT'), url('./LiberationSans-Regular.ttf');
-  size-adjust: 96.9%;
-  unicode-range: U+0030-0039;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Segoe UI GO';
-  src: local('Helvetica-Bold'), local('Arial-BoldMT'), url('./LiberationSans-Bold.ttf');
-  size-adjust: 103.4%;
-  unicode-range: U+0030-0039;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-
-/* Consolas ships only inside Office (Word's DFonts), so Chromium never resolves
- * it and the mono chain fell to Menlo, whose 0.602em advance runs 9.5% wider
- * than Consolas' 0.550em (hmtx, both fonts): indented code drifted right and
- * long lines wrapped. The size-adjusted alias keeps advances at Consolas' pitch;
- * a locally installed Consolas still precedes it in the chain. */
-@font-face {
-  font-family: 'Consolas GO';
-  src: local('Menlo-Regular'), local('CourierNewPSMT'), url('./LiberationMono-Regular.ttf');
-  size-adjust: 91.3%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Consolas GO';
-  src: local('Menlo-Bold'), local('CourierNewPS-BoldMT'), url('./LiberationMono-Bold.ttf');
-  size-adjust: 91.3%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Consolas GO';
-  src: local('Menlo-Italic'), local('CourierNewPS-ItalicMT'), url('./LiberationMono-Italic.ttf');
-  size-adjust: 91.3%;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Consolas GO';
-  src:
-    local('Menlo-BoldItalic'), local('CourierNewPS-BoldItalicMT'),
-    url('./LiberationMono-BoldItalic.ttf');
-  size-adjust: 91.3%;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-
-/* Century Gothic ships only inside Office (Word's DFonts), so Chromium fell to
- * the Helvetica-class sans: ~9% narrower per body line (hmtx of both fonts,
- * 2026-09-12). Its geometry is not a uniform scale of Liberation Sans: the
- * lowercase runs +10.6% (+1.7% bold), capitals -5% (-7.3% bold), digits, space
- * and punctuation within 1%, so per-case faces carry the adjustment (later
- * faces win inside their unicode-range). Latin-1 accented letters measure
- * the same per-case ratios and share the faces; Latin Extended-A does not. Pitch stays the probed 1.226
- * (`lineHeightFactor`). */
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Regular.ttf');
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Regular.ttf');
-  size-adjust: 110.6%;
-  unicode-range: U+0061-007A, U+00DF-00F6, U+00F8-00FF;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Regular.ttf');
-  size-adjust: 95%;
-  unicode-range: U+0041-005A, U+00C0-00D6, U+00D8-00DE;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Bold.ttf');
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Bold.ttf');
-  size-adjust: 101.7%;
-  unicode-range: U+0061-007A, U+00DF-00F6, U+00F8-00FF;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Bold.ttf');
-  size-adjust: 92.7%;
-  unicode-range: U+0041-005A, U+00C0-00D6, U+00D8-00DE;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Italic.ttf');
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Italic.ttf');
-  size-adjust: 110.6%;
-  unicode-range: U+0061-007A, U+00DF-00F6, U+00F8-00FF;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-Italic.ttf');
-  size-adjust: 95%;
-  unicode-range: U+0041-005A, U+00C0-00D6, U+00D8-00DE;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-BoldItalic.ttf');
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-BoldItalic.ttf');
-  size-adjust: 101.7%;
-  unicode-range: U+0061-007A, U+00DF-00F6, U+00F8-00FF;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Century Gothic GO';
-  src: url('./LiberationSans-BoldItalic.ttf');
-  size-adjust: 92.7%;
-  unicode-range: U+0041-005A, U+00C0-00D6, U+00D8-00DE;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-
-/* Aptos (M365 default body face since 2023): Word renders the real font, but
- * it ships only inside Office, so Chromium never resolves it and the chain
- * fell to Carlito — 5% narrower per line, one line short per paragraph (SAS
- * probe 2026-09-03: seven samples, pitch stays Calibri's 1.22). Aptos is not
- * a uniform scale of Calibri: letters run +6.8% (frequency-weighted over the
- * corpus; 106.5% balances the per-document line error within +/-0.6%),
- * digits +5.4%, the space -10%. Later faces win inside their unicode-range,
- * so the digit and space rules override the general one. Aptos Display (the
- * heading cut, measured from Word's cloud-font cache) is tighter: letters
- * ~Carlito, bold +3%, digits +3.2%/+6.5%, space -14.7%. */
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 106.5%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 110%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 106.9%;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 110.2%;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 105.4%;
-  unicode-range: U+0030-0039;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 105.4%;
-  unicode-range: U+0030-0039;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 105.4%;
-  unicode-range: U+0030-0039;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 105.4%;
-  unicode-range: U+0030-0039;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 89.8%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 89.8%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 89.8%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 89.8%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 99.9%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 103%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 100.5%;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 103.5%;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 103.2%;
-  unicode-range: U+0030-0039;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 106.5%;
-  unicode-range: U+0030-0039;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 103.2%;
-  unicode-range: U+0030-0039;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 106.5%;
-  unicode-range: U+0030-0039;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Regular.ttf');
-  size-adjust: 85.3%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Bold.ttf');
-  size-adjust: 85.3%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-Italic.ttf');
-  size-adjust: 85.3%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: normal;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Aptos Display GO';
-  src: url('@hermesoffice/ui/fonts/Carlito-BoldItalic.ttf');
-  size-adjust: 85.3%;
-  unicode-range: U+0020, U+00A0;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Nunito Sans GO';
-  src:
-    local('Helvetica-BoldOblique'), local('Arial-BoldItalicMT'),
-    url('./LiberationSans-BoldItalic.ttf');
-  size-adjust: 104.4%;
-  font-weight: bold;
-  font-style: italic;
-  font-display: block;
-}
-
 /* Poppins is an M365 cloud font Word downloads and renders real (probe
  * 2026-09-01: PDF embeds Poppins-Regular/Bold, line factor exactly 1.500).
  * The Helvetica class runs ~12.6% narrower, so the real Latin subset is
@@ -868,6 +391,26 @@
 @font-face {
   font-family: 'HermesOffice Poppins';
   src: url('./HermesOfficePoppins-Bold-subset.woff2') format('woff2');
+  font-weight: bold;
+  font-style: normal;
+  font-display: block;
+}
+
+/* DM Sans (Google Fonts) renders real in Word when installed (corpus
+ * 2026-09-30: PDF embeds DMSans-Regular/Bold = the 1.200 statics, line factor
+ * 1.302). The Helvetica class runs ~7% narrower and 1.15-spaced, so the real
+ * Latin subset is bundled (tools/build-dm-sans-font.py). A locally installed
+ * DM Sans still precedes this face in the chain. */
+@font-face {
+  font-family: 'HermesOffice DM Sans';
+  src: url('./HermesOfficeDMSans-Regular-subset.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'HermesOffice DM Sans';
+  src: url('./HermesOfficeDMSans-Bold-subset.woff2') format('woff2');
   font-weight: bold;
   font-style: normal;
   font-display: block;
@@ -977,6 +520,17 @@
   font-style: normal;
 }
 
+/* Same for the PMingLiU stand-in: Songti TC ships a real Bold face that is barely
+ * heavier than Regular (ink 0.055 vs 0.046), while Word synthesizes bold on PMingLiU
+ * (0.075). Registering weight-normal only makes Blink synthesize (0.082) instead of
+ * selecting the anemic face, so bold TC headings read as bold like in Word. */
+@font-face {
+  font-family: 'HermesOffice Songti TC';
+  src: local('STSongti-TC-Regular'), local('Songti TC Regular');
+  font-weight: normal;
+  font-style: normal;
+}
+
 /* East Asian system faces used as chain fallbacks (Hiragino Sans/Mincho,
  * MS Mincho/Gothic, AppleMyungjo, Batang, Heiti TC, (P)MingLiU) draw Cyrillic
  * and Greek as JIS fullwidth glyphs (Т measures 1em), exploding advances in
@@ -1007,314 +561,14 @@
   font-weight: bold;
   font-style: normal;
 }
-/* Meiryo / Meiryo UI (Word-private on macOS; Word renders them real, probe
- * 2026-09-03 from Word's meiryo.ttc). Meiryo UI kana are proportional
- * (text-weighted mean 0.769em, bold 0.820em), U+30FC 0.816/0.882em,
- * ideographic space and 、。 0.664em, corner/angle brackets and ・ 0.5em, at
- * full glyph height; kanji and （）：；！？ stay 1em and fall through to the
- * chain. The bundled HermesOffice UI Kana JP faces (tools/build-meiryo-ui-kana-
- * font.py: Noto Sans JP outlines condensed horizontally to Meiryo UI's exact
- * per-glyph advances) carry those ranges — a size-adjust alias would shrink
- * the height too and leave kana at ~77% next to full-size kanji. Latin in
- * both cuts is Verdana-derived at 0.9705x (bold 0.948x); Hiragino W3/W6
- * backstops hosts without Verdana. Installed Meiryo (Windows) still precedes
- * these aliases in the chain. */
+/* MS Reference Sans Serif (Office DFonts) is Verdana under another name: hhea
+   and hmtx tables are identical. Word has only the regular cut and fakes bold
+   and italic without widening (prod corpus 20261020: bold heading 169.1pt =
+   regular advances), so the alias registers weight-normal only and lets
+   Chromium synthesize, which keeps the advances too. */
 @font-face {
-  font-family: 'Meiryo UI GO';
-  src: url('./HermesOfficeUIKanaJP-Regular.woff2') format('woff2');
-  unicode-range: U+3000-3002, U+3008-3011, U+3014-3015, U+3041-3096, U+3099-30FF;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Meiryo UI GO';
-  src: url('./HermesOfficeUIKanaJP-Bold.woff2') format('woff2');
-  unicode-range: U+3000-3002, U+3008-3011, U+3014-3015, U+3041-3096, U+3099-30FF;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Meiryo UI GO';
-  src: local('Verdana'), local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+0020-007E, U+00A0-024F;
-  size-adjust: 97.05%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Meiryo UI GO';
-  src: local('Verdana-Bold'), local('Verdana Bold'), local('HiraginoSans-W6');
-  unicode-range: U+0020-007E, U+00A0-024F;
-  size-adjust: 94.8%;
-  font-weight: bold;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Meiryo GO';
-  src: local('Verdana'), local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+0020-007E, U+00A0-024F;
-  size-adjust: 97.05%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Meiryo GO';
-  src: local('Verdana-Bold'), local('Verdana Bold'), local('HiraginoSans-W6');
-  unicode-range: U+0020-007E, U+00A0-024F;
-  size-adjust: 94.8%;
-  font-weight: bold;
-  font-style: normal;
-}
-/* Berlin Sans FB Demi (Office display face): Word renders the real bold cut;
-   Arial Bold rescaled to its advances (probe 2026-09-17: 0.953x at 15pt), and the
-   demi weight is bold at every requested weight */
-@font-face {
-  font-family: 'Berlin Sans FB GO';
-  src:
-    local('Arial-BoldMT'),
-    local('Arial Bold'),
-    url('./LiberationSans-Bold.ttf') format('truetype');
-  size-adjust: 95.3%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'Berlin Sans FB GO';
-  src:
-    local('Arial-BoldMT'),
-    local('Arial Bold'),
-    url('./LiberationSans-Bold.ttf') format('truetype');
-  size-adjust: 95.3%;
-  font-weight: bold;
-  font-style: normal;
-  font-display: block;
-}
-/* MS Gothic family (Word-private on macOS, so the JA chain lands on Hiragino
- * Sans whose Latin is proportional and kana fullwidth). Advances measured from
- * Word's msgothic.ttc and confirmed by a Word probe (2026-09-03): MS Gothic
- * Latin is monospaced 0.5em; MS PGothic / MS UI Gothic have proportional kana
- * (frequency-weighted hiragana 0.900/0.776em, katakana 0.869/0.744em, long
- * vowel mark 0.961/0.816em), half-width brackets/colons, 0.664em ideographic
- * space/comma/period and Arial-class Latin at 0.9137x (space 1.0967x). Only
- * the ranges that differ from the Hiragino stand-in are claimed; kanji and the
- * fullwidth marks that stay 1em fall through to the chain. Latin-1 symbols the
- * real faces draw fullwidth (section/degree/plus-minus/multiply/divide...) come
- * from the bundled CJK subset where it has 1em glyphs and from the mono face
- * scaled up otherwise, since the chain's JA faces expose no Latin-1. The kana
- * and punctuation ranges live in separate "JA GO" families so a dual-slot run
- * keeps only the Latin alias in its ascii head and its eastAsia face still owns
- * the kana. Real faces (Windows) precede these aliases in the chain. */
-@font-face {
-  font-family: 'MS Gothic GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range:
-    U+0020-007E, U+00A0-00A6, U+00A9-00AF, U+00B2-00B3, U+00B5, U+00B7-00D6, U+00D8-00F6,
-    U+00F8-00FF;
-  size-adjust: 83.333%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS Gothic GO';
-  src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
-  unicode-range: U+00A7, U+00B1, U+00B6, U+00D7, U+00F7;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS Gothic GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range: U+00A8, U+00B0, U+00B4;
-  size-adjust: 166.667%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-/* MS Mincho: the same fixed-pitch half-width Latin as MS Gothic (Word probe 2026-09-17) */
-@font-face {
-  font-family: 'MS Mincho GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range:
-    U+0020-007E, U+00A0-00A6, U+00A9-00AF, U+00B2-00B3, U+00B5, U+00B7-00D6, U+00D8-00F6,
-    U+00F8-00FF;
-  size-adjust: 83.333%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS Mincho GO';
-  src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
-  unicode-range: U+00A7, U+00B1, U+00B6, U+00D7, U+00F7;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS Mincho GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range: U+00A8, U+00B0, U+00B4;
-  size-adjust: 166.667%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS PGothic GO';
-  src: url('./LiberationSans-Regular.ttf') format('truetype');
-  unicode-range: U+0021-007E, U+00A1-00A6, U+00A8-00AF, U+00B2-00D6, U+00D8-00F6, U+00F8-00FF;
-  size-adjust: 91.37%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS PGothic GO';
-  src: url('./LiberationSans-Regular.ttf') format('truetype');
-  unicode-range: U+0020, U+00A0;
-  size-adjust: 109.67%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS PGothic GO';
-  src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
-  unicode-range: U+00A7, U+00B1, U+00D7, U+00F7;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS PGothic GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range: U+00B0;
-  size-adjust: 166.667%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS PGothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+3041-3096, U+3099-309F;
-  size-adjust: 90.03%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS PGothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+30A1-30FA, U+30FD-30FF;
-  size-adjust: 86.88%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS PGothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+30FC;
-  size-adjust: 96.09%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS PGothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+3000-3002;
-  size-adjust: 66.4%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS PGothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range:
-    U+3008-3011, U+3014-3015, U+30FB, U+FF08-FF09, U+FF1A-FF1B, U+FF3B, U+FF3D-FF3E, U+FF40, U+FF5B,
-    U+FF5D;
-  size-adjust: 50%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS UI Gothic GO';
-  src: url('./LiberationSans-Regular.ttf') format('truetype');
-  unicode-range: U+0021-007E, U+00A1-00A6, U+00A8-00AF, U+00B2-00D6, U+00D8-00F6, U+00F8-00FF;
-  size-adjust: 91.37%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS UI Gothic GO';
-  src: url('./LiberationSans-Regular.ttf') format('truetype');
-  unicode-range: U+0020, U+00A0;
-  size-adjust: 109.67%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS UI Gothic GO';
-  src: url('./NotoSansCJKsc-Regular-subset.woff2') format('woff2');
-  unicode-range: U+00A7, U+00B1, U+00D7, U+00F7;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS UI Gothic GO';
-  src: url('./LiberationMono-Regular.ttf') format('truetype');
-  unicode-range: U+00B0;
-  size-adjust: 166.667%;
-  font-weight: normal;
-  font-style: normal;
-  font-display: block;
-}
-@font-face {
-  font-family: 'MS UI Gothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+3041-3096, U+3099-309F;
-  size-adjust: 77.58%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS UI Gothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+30A1-30FA, U+30FD-30FF;
-  size-adjust: 74.42%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS UI Gothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+30FC;
-  size-adjust: 81.64%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS UI Gothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range: U+3000-3002;
-  size-adjust: 66.4%;
-  font-weight: normal;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'MS UI Gothic JA GO';
-  src: local('Hiragino Sans'), local('HiraginoSans-W3');
-  unicode-range:
-    U+3008-3011, U+3014-3015, U+30FB, U+FF08-FF09, U+FF1A-FF1B, U+FF3B, U+FF3D-FF3E, U+FF40, U+FF5B,
-    U+FF5D;
-  size-adjust: 50%;
+  font-family: 'MS Reference Sans Serif GO';
+  src: local('Verdana');
   font-weight: normal;
   font-style: normal;
 }
@@ -1373,21 +627,6 @@
   font-style: normal;
 }
 
-/* Ethiopic faces (Nyala/Ebrima/Abyssinica) are missing on macOS and fall back
- * to Kefa, 1.35-1.4x wider than Word's Nyala. Only routed when an Ethiopic
- * face is declared, so no unicode-range needed; on Windows the declared name
- * itself resolves ahead of this alias. */
-@font-face {
-  font-family: 'HermesOffice Ethiopic';
-  /* Chromium local() matches PostScript/full names, not family names */
-  src: local('Kefa-Regular'), local('Kefa Regular'), local('Kefa');
-  /* verified on regression sample 39: line breaks match Word at 72%; the
-     residual page-4 spill is line-height, not width */
-  size-adjust: 72%;
-  font-weight: normal;
-  font-style: normal;
-}
-
 /* Tamil: Word substitutes missing Tamil families with Latha; Chromium's macOS
  * fallback (Tamil Sangam MN) shapes ~27% narrower (M3 probe: sentence R 0.728,
  * space 0.39x) — too far for size-adjust (137% would inflate glyph ink). Noto
@@ -1397,6 +636,25 @@
   font-family: 'HermesOffice Tamil';
   src: url('./HermesOfficeTamil-Regular.woff2') format('woff2');
   font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Nirmala UI (M365 cloud face Word renders real) has no macOS twin and
+ * Chromium's Kohinoor Bangla shapes ~8% narrower: Noto Sans Bengali with
+ * advances rewritten to Nirmala UI's (tools/build-bengali-font.py; shaped
+ * body paragraphs within 0.98-1.02 of Nirmala UI). */
+@font-face {
+  font-family: 'HermesOffice Bengali';
+  src: url('./HermesOfficeBengali-Regular.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'HermesOffice Bengali';
+  src: url('./HermesOfficeBengali-Bold.woff2') format('woff2');
+  font-weight: bold;
   font-style: normal;
   font-display: block;
 }

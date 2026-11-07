@@ -26,10 +26,29 @@ function parsedWith(styleId: string, display: StyleDisplay): ParsedDocFull {
     basedOn: 'Normal',
     display,
   } as StyleInfo)
-  return { styles, docDefaults: {}, blocks: [] } as unknown as ParsedDocFull
+  // one list definition: the .doc-li collapse rules are keyed per list (data-num)
+  const numbering = new Map([['1', { numId: '1', abstractNumId: '0' }]])
+  return { styles, docDefaults: {}, blocks: [], numbering } as unknown as ParsedDocFull
 }
 
 describe('docStyleCss spacing', () => {
+  it('doNotUseHTMLParagraphAutoSpacing: space-before is padding and auto spacing is 0', () => {
+    // Word probe 2026-10-22: after=200 + before=220 lay out 21pt apart (the sum), not 11
+    const parsed = parsedWith('FormalParts', { spaceBeforeTwips: 220, spaceAfterTwips: 120 })
+    const plain = docStyleCss(parsed)
+    expect(plain).toContain('[data-style="FormalParts"] { margin-top:11.0pt;margin-bottom:6.0pt }')
+    const css = docStyleCss({ ...parsed, doNotUseHTMLParagraphAutoSpacing: true })
+    expect(css).toContain('[data-style="FormalParts"] { padding-top:11.0pt;margin-bottom:6.0pt }')
+    expect(css).toMatch(
+      /\.doc-page p, [^{]*\{ margin-top:0;padding-top:0\.0pt;margin-bottom:0\.0pt;/,
+    )
+    const auto = docStyleCss({
+      ...parsedWith('web', { spaceBeforeAuto: true, spaceAfterAuto: true }),
+      doNotUseHTMLParagraphAutoSpacing: true,
+    })
+    expect(auto).toContain('[data-style="web"] { padding-top:0.0pt;margin-bottom:0.0pt }')
+  })
+
   it('resolves style-level autospacing to Word auto 14pt and zeroes it between list items', () => {
     const css = docStyleCss(
       parsedWith('text-start', {
@@ -40,22 +59,28 @@ describe('docStyleCss spacing', () => {
       }),
     )
     expect(css).toContain('[data-style="text-start"] { margin-top:14.0pt;margin-bottom:14.0pt }')
-    expect(css).toContain('.doc-li[data-style="text-start"]:has(+ .doc-li) { margin-bottom:0 }')
-    expect(css).toContain('.doc-li + .doc-li[data-style="text-start"] { margin-top:0 }')
+    expect(css).toContain(
+      '.doc-li[data-num="1"][data-style="text-start"]:has(+ .doc-li[data-num="1"]) { margin-bottom:0 }',
+    )
+    expect(css).toContain(
+      '.doc-li[data-num="1"] + .doc-li[data-num="1"][data-style="text-start"] { margin-top:0 }',
+    )
     // no !important: a direct explicit w:before/w:after (inline margin, auto off)
     // must override the style-level list collapse
-    expect(css).not.toContain(
-      '.doc-li[data-style="text-start"]:has(+ .doc-li) { margin-bottom:0 !important }',
+    expect(css).not.toMatch(
+      /\[data-style="text-start"\]:has\(\+ [^{]*\{ margin-bottom:0 !important/,
     )
-    expect(css).not.toContain(
-      '.doc-li + .doc-li[data-style="text-start"] { margin-top:0 !important }',
+    expect(css).not.toMatch(
+      /\+ \.doc-li[^{]*\[data-style="text-start"\] \{ margin-top:0 !important/,
     )
   })
 
   it('suppresses style-level auto space-before on the document first block', () => {
     const css = docStyleCss(parsedWith('web', { spaceBeforeAuto: true }))
     expect(css).toContain(
-      '.doc-page > [data-style="web"]:nth-child(1 of :not(.page-float-host)) { margin-top:0 }',
+      '.doc-page > [data-style="web"]:nth-child(1 of :not(.page-float-host)), ' +
+        '.doc-page > .doc-protected:nth-child(1 of :not(.page-float-host)) > ' +
+        ':is(.doc-anchor-line, .doc-textbox-stray)[data-style="web"] { margin-top:0 }',
     )
   })
 
@@ -64,7 +89,9 @@ describe('docStyleCss spacing', () => {
     ;(parsed as unknown as { docDefaults: object }).docDefaults = { spaceBeforeAuto: true }
     const css = docStyleCss(parsed)
     expect(css).toContain(
-      ':not([data-style]):nth-child(1 of :not(.page-float-host)) { margin-top:0 }',
+      ':not([data-style]):nth-child(1 of :not(.page-float-host)), ' +
+        '.doc-page > .doc-protected:nth-child(1 of :not(.page-float-host)) > ' +
+        ':is(.doc-anchor-line, .doc-textbox-stray):not([data-style]) { margin-top:0 }',
     )
   })
 
@@ -88,10 +115,10 @@ describe('docStyleCss spacing', () => {
     const css = docStyleCss(parsed)
     const cell = '.doc-table :is(td, th, .cell-clip, .cell-vert) > '
     expect(css).toContain(
-      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style]):nth-child(1 of :not(.doc-cell-boxes)) { margin-top:0 }`,
+      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field, .doc-protected-formula-display, .doc-img-para, .doc-textbox-para, .doc-cell-para):not([data-style]):nth-child(1 of :not(.doc-cell-boxes)) { margin-top:0 }`,
     )
     expect(css).toContain(
-      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style]):nth-last-child(1 of :not(.doc-cell-boxes)) { margin-bottom:0 }`,
+      `${cell}:is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field, .doc-protected-formula-display, .doc-img-para, .doc-textbox-para, .doc-cell-para):not([data-style]):nth-last-child(1 of :not(.doc-cell-boxes)) { margin-bottom:0 }`,
     )
   })
 
@@ -118,6 +145,37 @@ describe('docStyleCss spacing', () => {
     expect(zero).toContain('[data-style="Loose"]:not(.doc-lh-fixed) span { line-height:inherit }')
   })
 
+  it('emits the strut face box for the glyph shift at the document and style level', () => {
+    const parsed = parsedWith('Serif', { fontAscii: 'Times New Roman', font: 'Times New Roman' })
+    ;(parsed as { docDefaults: object }).docDefaults = { asciiFont: 'Calibri' }
+    const css = docStyleCss(parsed)
+    expect(css).toMatch(/--doc-font-box:1\.0000;--doc-font-skew:0\.5000/)
+    expect(css).toMatch(
+      /\[data-style="Serif"\] \{[^}]*--doc-font-box:1\.1074;--doc-font-skew:0\.6748/,
+    )
+    // an unknown face resets the document box so it stays at the CSS centre
+    const unknown = docStyleCss(parsedWith('Odd', { fontAscii: 'HCI Poppy', font: 'HCI Poppy' }))
+    expect(unknown).toMatch(
+      /\[data-style="Odd"\] \{[^}]*--doc-font-box:initial;--doc-font-skew:initial/,
+    )
+  })
+
+  it('emits the fixed-rule glyph shift override per style, released by auto multiples', () => {
+    const atLeast = docStyleCss(parsedWith('Tight', { lineRule: 'atLeast', lineRawTwips: 480 }))
+    expect(atLeast).toMatch(
+      /\[data-style="Tight"\] \{[^}]*--doc-lead-top:calc\(max\(0px, \(24\.0pt - var\(--doc-line-grid, calc\(var\(--doc-line-factor,1\.2\) \* 1em\)\)\) \/ 2\) \+ var\(--doc-lead-gap, 0px\)\)/,
+    )
+    expect(atLeast).not.toMatch(/\[data-style="Tight"\] \{[^}]*--doc-lh-cap/)
+    const exact = docStyleCss(parsedWith('Fixed', { lineRule: 'exact', lineRawTwips: 480 }))
+    expect(exact).toMatch(
+      /\[data-style="Fixed"\] \{[^}]*--doc-lead-top:var\(--doc-lead-exact, 0px\)/,
+    )
+    // the 0.8 h shift reads the rule height from --doc-lh-cap
+    expect(exact).toMatch(/\[data-style="Fixed"\] \{[^}]*--doc-lh-cap:24\.0pt/)
+    const auto = docStyleCss(parsedWith('Body', { lineRule: 'auto', lineRawTwips: 360 }))
+    expect(auto).toMatch(/\[data-style="Body"\] \{[^}]*--doc-lead-top:initial/)
+  })
+
   it('lets a direct ctxSp off (.ctx-sp-off) escape the style-level suppression', () => {
     const css = docStyleCss(parsedWith('ListBullet', { contextualSpacing: true }))
     expect(css).toContain(
@@ -136,6 +194,104 @@ describe('docStyleCss spacing', () => {
     expect(css).toContain(
       '[data-style="SBul"] + [data-style="SBul"].ctx-sp { margin-top:0 !important }',
     )
+  })
+
+  // Word probe 2026-10-20: contextualSpacing compares with the next paragraph in
+  // cell-flow order - the first cell's first paragraph after a paragraph before
+  // the table, the next cell's first paragraph after a cell's last one, and the
+  // end-of-row mark (default style) after the row's last cell
+  const viaCell = (cell: string, para: string) => [
+    `${cell} > ${para}`,
+    `${cell} > :is(.cell-clip, .cell-vert) > ${para}`,
+  ]
+  const cellFirst = (cell: string, s: string) =>
+    viaCell(cell, `${s}:nth-child(1 of :not(.doc-cell-boxes))`)
+  const cellLast = (cell: string, s: string) =>
+    `:is(${viaCell(cell, `${s}:nth-last-child(1 of :not(.doc-cell-boxes))`).join(', ')})`
+  const beforeTable = (s: string) =>
+    `:has(${cellFirst('table.doc-table > tbody > tr:first-child > :is(td, th):first-child', s)
+      .map((p) => `+ ${p}`)
+      .join(', ')})`
+  const nextCell = (s: string) =>
+    `:is(td, th):has(${cellFirst(':is(td, th)', s)
+      .map((p) => `+ ${p}`)
+      .join(', ')})`
+
+  it('swallows the space-after before a table whose first cell opens with the same style', () => {
+    const lp = '[data-style="ListParagraph"]'
+    const css = docStyleCss(parsedWith('ListParagraph', { contextualSpacing: true }))
+    expect(css).toContain(
+      `.doc-page ${lp}${beforeTable(lp)}:not(.ctx-sp-off) { margin-bottom:0 !important }`,
+    )
+    const direct = docStyleCss(parsedWith('SBul', {}))
+    expect(direct).toContain(
+      `.doc-page [data-style="SBul"].ctx-sp${beforeTable('[data-style="SBul"]')} { margin-bottom:0 !important }`,
+    )
+  })
+
+  it('drops a cell-closing space-after only toward a same-style next cell or the default-style row end', () => {
+    const lp = '[data-style="ListParagraph"]'
+    const css = docStyleCss(parsedWith('ListParagraph', { contextualSpacing: true }))
+    expect(css).toContain(
+      `.doc-page .doc-table ${cellLast(nextCell(lp), `${lp}:not(.ctx-sp-off)`)} { margin-bottom:0 !important }`,
+    )
+    // a non-default style keeps its space-after in the row's last cell
+    expect(css).not.toContain(cellLast(':is(td, th):last-child', `${lp}:not(.ctx-sp-off)`))
+
+    const parsed = parsedWith('X', {})
+    parsed.styles.set('Normal', {
+      ...parsed.styles.get('Normal')!,
+      display: { contextualSpacing: true },
+    } as StyleInfo)
+    const dflt = docStyleCss(parsed)
+    const n = '[data-style="Normal"]'
+    expect(dflt).toContain(
+      `.doc-page .doc-table ${cellLast(':is(td, th):last-child', `${n}:not(.ctx-sp-off)`)} { margin-bottom:0 !important }`,
+    )
+    expect(dflt).toContain(
+      `.doc-page .doc-table ${cellLast(':is(td, th):last-child', ':is(p, .doc-li):not([data-style], .ctx-sp-off)')} { margin-bottom:0 !important }`,
+    )
+    const plain = docStyleCss(parsedWith('X', {}))
+    expect(plain).toContain(
+      `.doc-page .doc-table ${cellLast(':is(td, th):last-child', `${n}.ctx-sp`)} { margin-bottom:0 !important }`,
+    )
+  })
+
+  it('matches exact-height (.cell-clip) and vertical (.cell-vert) cell wrappers in the DOM', () => {
+    const lp = '[data-style="ListParagraph"]'
+    const css = docStyleCss(parsedWith('ListParagraph', { contextualSpacing: true }))
+    const decl = ' { margin-bottom:0 !important }'
+    const selectors = css
+      .split('\n')
+      .filter((l) => l.includes(lp) && l.includes('.doc-table') && l.endsWith(decl))
+      .map((l) => l.slice(0, -decl.length))
+    // before-table rule, its page-widget twin, and the cell-closing rule
+    expect(selectors).toHaveLength(3)
+    const cell = (wrap: string, cls: string, ...ps: string[]) =>
+      `<td>${wrap ? `<div class="${wrap}">` : ''}${ps
+        .map((p) => `<p data-style="ListParagraph" class="${cls}">${p}</p>`)
+        .join('')}${wrap ? '</div>' : ''}</td>`
+    document.body.innerHTML = `<div class="doc-page">
+      <p id="before" data-style="ListParagraph">x</p>
+      <table class="doc-table"><tbody>
+        <tr>${cell('cell-clip', 'a1', 'a', 'a')}${cell('cell-vert', 'b1', 'b')}${cell('', 'c1', 'c')}</tr>
+      </tbody></table></div>`
+    // jsdom lacks `:nth-child(1 of S)`; no .doc-cell-boxes here so plain nth-child is equivalent
+    const q = (sel: string) =>
+      document.querySelectorAll(sel.replaceAll(' of :not(.doc-cell-boxes)', ''))
+    const hits = (sel: string) => [...q(sel)].map((el) => `${el.id}${el.className}`).sort()
+    // a and b are followed by a same-style cell; c closes the row with a non-default style
+    expect(hits(selectors.join(', '))).toEqual(['a1', 'b1', 'before'])
+    document.body.innerHTML = ''
+  })
+})
+
+describe('docStyleCss CJK line factor', () => {
+  it('a style declaring a missing Noto CJK JP East Asian face emits the SimSun factor', () => {
+    const css = docStyleCss(
+      parsedWith('body-ja', { font: 'Noto Sans CJK JP', fontAscii: 'Calibri' } as StyleDisplay),
+    )
+    expect(css).toContain('--doc-line-factor-cjk:1.3')
   })
 })
 
@@ -186,5 +342,34 @@ describe('docStyleCss styles off the Normal chain', () => {
     expect(/\[data-style="NoSpacing"\] \{ ([^}]*) \}/.exec(css)![1]).toContain(
       'margin-bottom:3.0pt',
     )
+  })
+
+  it('resets the glyph shift and snapping multiple to the line it lays out with', () => {
+    const rule = (css: string): string => /\[data-style="NoSpacing"\] \{ ([^}]*) \}/.exec(css)![1]
+    // single line: Normal's 1.08 multiple must not shift its glyphs
+    const single = rule(docStyleCss(parsedOff({ sizeHalfPoints: 22 })))
+    expect(single).toContain('--doc-lead-top:initial')
+    expect(single).toContain('--doc-line-mult:1')
+    // docDefaults multiple
+    const ddAuto = rule(
+      docStyleCss(parsedOff({}, { lineRule: 'auto', lineRawTwips: 360, lineSpacing: 1.5 })),
+    )
+    expect(ddAuto).toContain('--doc-lead-top:initial')
+    expect(ddAuto).toContain('--doc-line-mult:1.5')
+    // docDefaults atLeast bottom-aligns by its own floor
+    const ddAtLeast = rule(docStyleCss(parsedOff({}, { lineRule: 'atLeast', lineRawTwips: 480 })))
+    expect(ddAtLeast).toMatch(/--doc-lead-top:calc\(max\(0px, \(24\.0pt - /)
+    expect(ddAtLeast).not.toContain('--doc-line-mult')
+    // the style's own rule still wins over docDefaults
+    const own = rule(
+      docStyleCss(
+        parsedOff(
+          { lineRule: 'auto', lineRawTwips: 480, lineSpacing: 2 },
+          { lineRule: 'atLeast', lineRawTwips: 480 },
+        ),
+      ),
+    )
+    expect(own).toContain('--doc-lead-top:initial')
+    expect(own).toContain('--doc-line-mult:2')
   })
 })

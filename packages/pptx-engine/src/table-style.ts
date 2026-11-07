@@ -23,6 +23,11 @@ export interface TablePartStyle {
   fill?: Fill
   bold?: boolean
   textColor?: string
+  /** <a:tcTxStyle><a:fontRef idx>: the theme font scheme cell text follows (every built-in
+   *  style says minor), ranking above presentation defaults but below the cell's own styles */
+  fontRef?: 'minor' | 'major'
+  /** <a:tcTxStyle><a:font>: explicit per-bucket typefaces */
+  font?: { latin?: string; ea?: string; cs?: string }
 }
 
 export interface TableStyleDef {
@@ -465,13 +470,16 @@ export function resolveTableStyle(
     const def = parseTableStylesXml(tableStylesXml, styleId, theme)
     if (def) return def
   }
-  // A tableStyles part that defines explicit styles but not this id renders unstyled in
-  // PowerPoint — the built-in gallery only backs an empty part (def-id only). Measured on
-  // prod imports: same undefined Medium2/Accent1 id styled with an empty part, transparent
-  // with a populated one (decorative shapes behind the table show through).
-  if (tableStylesXml && /<a:tblStyle[\s>]/.test(tableStylesXml)) return undefined
+  // The built-in gallery backs an undefined id even when the part defines other styles
+  // (prod deck: Light Style 1 - Accent 3 banding drawn next to a one-entry part). The
+  // earlier "transparent with a populated part" reading came from decks whose cells
+  // carried an explicit <a:noFill/>, which hides any style fill anyway.
   const builtin = BUILTIN[styleId]
-  if (builtin) return builtinStyle(builtin.family, builtin.accent, theme)
+  if (builtin) {
+    const def = builtinStyle(builtin.family, builtin.accent, theme)
+    def.wholeTbl = { fontRef: 'minor', ...def.wholeTbl }
+    return def
+  }
   if (styleId === LEGACY_NO_STYLE) return {}
   return undefined
 }
@@ -543,6 +551,13 @@ function readPart(part: unknown, theme: Theme | undefined): TablePartStyle | und
   if (p['a:tcTxStyle']) {
     const tx = asXmlNode(p['a:tcTxStyle'])
     if (tx['@_b'] === 'on') out.bold = true
+    const refIdx = asXmlNode(tx['a:fontRef'])['@_idx']
+    if (refIdx === 'minor' || refIdx === 'major') out.fontRef = refIdx
+    if (tx['a:font']) {
+      const f = asXmlNode(tx['a:font'])
+      const face = (tag: string) => asXmlNode(f[tag])['@_typeface'] as string | undefined
+      out.font = { latin: face('a:latin'), ea: face('a:ea'), cs: face('a:cs') }
+    }
     const c = readColor(tx, theme)
     if (c) out.textColor = c
   }

@@ -159,9 +159,9 @@ export function normalizeSections(
   const starts = new Array<number>(sections.length)
   let nextStart = total
   for (let i = sections.length - 1; i >= 0; i--) {
-    const own = sections[i]!.slideIndices.length
-      ? Math.min(...sections[i]!.slideIndices)
-      : nextStart
+    const indices = sections[i]!.slideIndices
+    let own = nextStart
+    for (let k = 0; k < indices.length; k++) own = Math.min(own, indices[k]!)
     starts[i] = Math.min(own, nextStart)
     nextStart = starts[i]!
   }

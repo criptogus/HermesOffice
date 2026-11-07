@@ -51,13 +51,22 @@ export interface OutlineIssue {
   message: string
 }
 
-export const PLACEHOLDER = /\bXX+%?|\blorem\b|\bTBD\b|\bTODO\b|\{\{|\[insert\b|\bN\/A\b/i
+export const PLACEHOLDER = /\bXX+(?:%|\b)|\blorem\b|\bTBD\b|\bTODO\b|\{\{|\[insert\b|\bN\/A\b/i
 const HAS_CJK = new RegExp('[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]')
 const MIN_BRIEF = 40
+/** Raw LLM outline budget; larger payloads are rejected before JSON.parse. */
+const MAX_OUTLINE_RAW_CHARS = 512_000
+/** Per-page image query budget; extras are dropped with a warning. */
+const MAX_IMAGE_QUERIES_PER_PAGE = 8
 
 export function parseOutline(
   raw: string,
 ): { ok: true; outline: DeckOutline; issues: OutlineIssue[] } | { ok: false; error: string } {
+  // LLM output is untrusted: refuse a megabyte dump before JSON.parse builds
+  // a giant object graph from it.
+  if (typeof raw !== 'string' || raw.length > MAX_OUTLINE_RAW_CHARS) {
+    return { ok: false, error: `outline too large (limit ${MAX_OUTLINE_RAW_CHARS} chars)` }
+  }
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -127,6 +136,10 @@ function normalizePage(raw: unknown, i: number, issues: OutlineIssue[]): Outline
     warn('"image_queries" is missing; use [] for a page without photos')
   const image_queries: string[] = []
   for (const q of queries) {
+    if (image_queries.length >= MAX_IMAGE_QUERIES_PER_PAGE) {
+      warn(`"image_queries" capped at ${MAX_IMAGE_QUERIES_PER_PAGE} per page; extras dropped`)
+      break
+    }
     if (typeof q !== 'string' || !q.trim()) {
       err(
         '"image_queries" entries must be non-empty strings (an English scene query or an http(s) URL)',

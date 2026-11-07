@@ -2,7 +2,7 @@
 /// English-only and (for role:'windowMenu' on Windows/Linux) follow macOS
 /// conventions (Zoom, Ctrl+M minimize, Bring All to Front).
 import type { MenuItemConstructorOptions, WebContents } from 'electron'
-import { contextMenuLabels, type ContextMenuLabels } from './context-menu'
+import { baseLang, contextMenuLabels, type ContextMenuLabels } from './context-menu'
 
 export interface AppMenuLabels extends ContextMenuLabels {
   window: string
@@ -24,6 +24,8 @@ export interface AppMenuLabels extends ContextMenuLabels {
   about: string
   checkUpdates: string
   version: string
+  settings: string
+  nameWithAi: string
 }
 
 type Labels = Omit<AppMenuLabels, keyof ContextMenuLabels>
@@ -45,9 +47,11 @@ const EN: Labels = {
   zoomOut: 'Zoom Out',
   fullscreen: 'Full Screen',
   help: 'Help',
-  about: 'About GenOffice',
+  about: 'About HermesOffice',
   checkUpdates: 'Check for Updates…',
   version: 'Version',
+  settings: 'Settings…',
+  nameWithAi: 'Name with AI…',
 }
 
 // Shared table, same rationale as context-menu.ts: one copy instead of
@@ -70,9 +74,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: '缩小',
     fullscreen: '全屏',
     help: '帮助',
-    about: '关于 GenOffice',
+    about: '关于 HermesOffice',
     checkUpdates: '检查更新…',
     version: '版本',
+    nameWithAi: '用 AI 命名…',
+    settings: '设置…',
   },
   en: EN,
   ja: {
@@ -92,9 +98,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: '縮小',
     fullscreen: 'フルスクリーン',
     help: 'ヘルプ',
-    about: 'GenOffice について',
+    about: 'HermesOffice について',
     checkUpdates: '更新を確認…',
     version: 'バージョン',
+    nameWithAi: 'AI で名前を変更…',
+    settings: '設定…',
   },
   ko: {
     window: '창',
@@ -113,9 +121,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: '축소',
     fullscreen: '전체 화면',
     help: '도움말',
-    about: 'GenOffice 정보',
+    about: 'HermesOffice 정보',
     checkUpdates: '업데이트 확인…',
     version: '버전',
+    nameWithAi: 'AI로 이름 지정…',
+    settings: '설정…',
   },
   fr: {
     window: 'Fenêtre',
@@ -134,9 +144,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Zoom arrière',
     fullscreen: 'Plein écran',
     help: 'Aide',
-    about: 'À propos de GenOffice',
+    about: 'À propos de HermesOffice',
     checkUpdates: 'Rechercher les mises à jour…',
     version: 'Version',
+    nameWithAi: "Nommer avec l'IA…",
+    settings: 'Réglages…',
   },
   de: {
     window: 'Fenster',
@@ -155,9 +167,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Verkleinern',
     fullscreen: 'Vollbild',
     help: 'Hilfe',
-    about: 'Über GenOffice',
+    about: 'Über HermesOffice',
     checkUpdates: 'Nach Updates suchen…',
     version: 'Version',
+    nameWithAi: 'Mit KI benennen…',
+    settings: 'Einstellungen…',
   },
   es: {
     window: 'Ventana',
@@ -176,9 +190,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Alejar',
     fullscreen: 'Pantalla completa',
     help: 'Ayuda',
-    about: 'Acerca de GenOffice',
+    about: 'Acerca de HermesOffice',
     checkUpdates: 'Buscar actualizaciones…',
     version: 'Versión',
+    nameWithAi: 'Nombrar con IA…',
+    settings: 'Ajustes…',
   },
   th: {
     window: 'หน้าต่าง',
@@ -197,9 +213,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'ย่อ',
     fullscreen: 'เต็มหน้าจอ',
     help: 'วิธีใช้',
-    about: 'เกี่ยวกับ GenOffice',
+    about: 'เกี่ยวกับ HermesOffice',
     checkUpdates: 'ตรวจหาการอัปเดต…',
     version: 'เวอร์ชัน',
+    nameWithAi: 'ตั้งชื่อด้วย AI…',
+    settings: 'การตั้งค่า…',
   },
   id: {
     window: 'Jendela',
@@ -218,9 +236,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Perkecil',
     fullscreen: 'Layar Penuh',
     help: 'Bantuan',
-    about: 'Tentang GenOffice',
+    about: 'Tentang HermesOffice',
     checkUpdates: 'Periksa Pembaruan…',
     version: 'Versi',
+    nameWithAi: 'Beri nama dengan AI…',
+    settings: 'Pengaturan…',
   },
   ru: {
     window: 'Окно',
@@ -239,9 +259,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Уменьшить',
     fullscreen: 'Полноэкранный режим',
     help: 'Справка',
-    about: 'О GenOffice',
+    about: 'О HermesOffice',
     checkUpdates: 'Проверить обновления…',
     version: 'Версия',
+    nameWithAi: 'Назвать с помощью ИИ…',
+    settings: 'Настройки…',
   },
   ar: {
     window: 'نافذة',
@@ -260,9 +282,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'تصغير العرض',
     fullscreen: 'ملء الشاشة',
     help: 'تعليمات',
-    about: 'حول GenOffice',
+    about: 'حول HermesOffice',
     checkUpdates: 'التحقق من التحديثات…',
     version: 'الإصدار',
+    nameWithAi: 'التسمية بالذكاء الاصطناعي…',
+    settings: 'الإعدادات…',
   },
   pt: {
     window: 'Janela',
@@ -281,9 +305,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Reduzir',
     fullscreen: 'Tela Cheia',
     help: 'Ajuda',
-    about: 'Sobre o GenOffice',
+    about: 'Sobre o HermesOffice',
     checkUpdates: 'Procurar atualizações…',
     version: 'Versão',
+    nameWithAi: 'Nomear com IA…',
+    settings: 'Configurações…',
   },
   it: {
     window: 'Finestra',
@@ -302,9 +328,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Riduci',
     fullscreen: 'Schermo intero',
     help: 'Aiuto',
-    about: 'Informazioni su GenOffice',
+    about: 'Informazioni su HermesOffice',
     checkUpdates: 'Controlla aggiornamenti…',
     version: 'Versione',
+    nameWithAi: 'Assegna un nome con IA…',
+    settings: 'Impostazioni…',
   },
   pl: {
     window: 'Okno',
@@ -323,9 +351,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Pomniejsz',
     fullscreen: 'Pełny ekran',
     help: 'Pomoc',
-    about: 'O programie GenOffice',
+    about: 'O programie HermesOffice',
     checkUpdates: 'Sprawdź aktualizacje…',
     version: 'Wersja',
+    nameWithAi: 'Nazwij za pomocą AI…',
+    settings: 'Ustawienia…',
   },
   cs: {
     window: 'Okno',
@@ -344,9 +374,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Oddálit',
     fullscreen: 'Celá obrazovka',
     help: 'Nápověda',
-    about: 'O aplikaci GenOffice',
+    about: 'O aplikaci HermesOffice',
     checkUpdates: 'Zkontrolovat aktualizace…',
     version: 'Verze',
+    nameWithAi: 'Pojmenovat pomocí AI…',
+    settings: 'Nastavení…',
   },
   nl: {
     window: 'Venster',
@@ -365,9 +397,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Uitzoomen',
     fullscreen: 'Volledig scherm',
     help: 'Help',
-    about: 'Over GenOffice',
+    about: 'Over HermesOffice',
     checkUpdates: 'Controleren op updates…',
     version: 'Versie',
+    nameWithAi: 'Naam geven met AI…',
+    settings: 'Instellingen…',
   },
   ms: {
     window: 'Tetingkap',
@@ -386,9 +420,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'Zum Keluar',
     fullscreen: 'Skrin Penuh',
     help: 'Bantuan',
-    about: 'Perihal GenOffice',
+    about: 'Perihal HermesOffice',
     checkUpdates: 'Semak Kemas Kini…',
     version: 'Versi',
+    nameWithAi: 'Namakan dengan AI…',
+    settings: 'Tetapan…',
   },
   he: {
     window: 'חלון',
@@ -407,9 +443,11 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'הקטן',
     fullscreen: 'מסך מלא',
     help: 'עזרה',
-    about: 'אודות GenOffice',
+    about: 'אודות HermesOffice',
     checkUpdates: 'בדוק עדכונים…',
     version: 'גרסה',
+    nameWithAi: 'מתן שם באמצעות AI…',
+    settings: 'הגדרות…',
   },
   hi: {
     window: 'विंडो',
@@ -428,9 +466,57 @@ const LABELS: Record<string, Labels> = {
     zoomOut: 'ज़ूम आउट',
     fullscreen: 'पूर्ण स्क्रीन',
     help: 'सहायता',
-    about: 'GenOffice के बारे में',
+    about: 'HermesOffice के बारे में',
     checkUpdates: 'अपडेट जांचें…',
     version: 'संस्करण',
+    nameWithAi: 'AI से नाम दें…',
+    settings: 'सेटिंग्स…',
+  },
+  vi: {
+    window: 'Cửa sổ',
+    minimize: 'Thu nhỏ',
+    closeWindow: 'Đóng cửa sổ',
+    edit: 'Chỉnh sửa',
+    undo: 'Hoàn tác',
+    redo: 'Làm lại',
+    delete: 'Xóa',
+    view: 'Xem',
+    reload: 'Tải lại',
+    forceReload: 'Buộc tải lại',
+    toggleDevTools: 'Công cụ nhà phát triển',
+    actualSize: 'Kích cỡ thực',
+    zoomIn: 'Phóng to',
+    zoomOut: 'Thu nhỏ',
+    fullscreen: 'Toàn màn hình',
+    help: 'Trợ giúp',
+    about: 'Giới thiệu HermesOffice',
+    checkUpdates: 'Kiểm tra bản cập nhật…',
+    version: 'Phiên bản',
+    nameWithAi: 'Đặt tên bằng AI…',
+    settings: 'Cài đặt…',
+  },
+  tr: {
+    window: 'Pencere',
+    minimize: 'Simge Durumuna Küçült',
+    closeWindow: 'Pencereyi Kapat',
+    edit: 'Düzenle',
+    undo: 'Geri Al',
+    redo: 'Yinele',
+    delete: 'Sil',
+    view: 'Görünüm',
+    reload: 'Yeniden Yükle',
+    forceReload: 'Zorla Yeniden Yükle',
+    toggleDevTools: 'Geliştirici Araçları',
+    actualSize: 'Gerçek Boyut',
+    zoomIn: 'Yakınlaştır',
+    zoomOut: 'Uzaklaştır',
+    fullscreen: 'Tam Ekran',
+    help: 'Yardım',
+    about: 'HermesOffice Hakkında',
+    checkUpdates: 'Güncellemeleri Denetle…',
+    version: 'Sürüm',
+    nameWithAi: 'AI ile adlandır…',
+    settings: 'Ayarlar…',
   },
   'zh-TW': {
     window: '視窗',
@@ -449,14 +535,16 @@ const LABELS: Record<string, Labels> = {
     zoomOut: '縮小',
     fullscreen: '全螢幕',
     help: '說明',
-    about: '關於 GenOffice',
+    about: '關於 HermesOffice',
     checkUpdates: '檢查更新…',
     version: '版本',
+    nameWithAi: '用 AI 命名…',
+    settings: '設定…',
   },
 }
 
 export function appMenuLabels(lang: string): AppMenuLabels {
-  return { ...contextMenuLabels(lang), ...(LABELS[lang] ?? EN) }
+  return { ...contextMenuLabels(lang), ...(LABELS[lang] ?? LABELS[baseLang(lang)] ?? EN) }
 }
 
 /** macOS keeps the native role (Minimize/Zoom/Front, window list); Windows/Linux
@@ -529,21 +617,43 @@ export function toggleDevToolsItem(labels: AppMenuLabels): MenuItemConstructorOp
   }
 }
 
-/** role:'viewMenu' expands identically on every platform, so no branch. */
-export function viewMenuTemplate(labels: AppMenuLabels): MenuItemConstructorOptions {
-  return {
-    label: labels.view,
-    submenu: [
+export interface ViewMenuOptions {
+  /** Reload / Force Reload / DevTools (default on) */
+  readonly devItems?: boolean
+  /** Actual Size / Zoom In / Zoom Out page-zoom roles (default on) */
+  readonly pageZoom?: boolean
+}
+
+/**
+ * role:'viewMenu' expands identically on every platform, so no branch. Menu
+ * accelerators beat renderer key handlers on macOS, so apps whose document
+ * shortcuts collide with ⌘R / ⌘0 / ⌘+ / ⌘- opt those groups out.
+ */
+export function viewMenuTemplate(
+  labels: AppMenuLabels,
+  { devItems = true, pageZoom = true }: ViewMenuOptions = {},
+): MenuItemConstructorOptions {
+  const groups: MenuItemConstructorOptions[][] = []
+  if (devItems) {
+    groups.push([
       { role: 'reload', label: labels.reload },
       { role: 'forceReload', label: labels.forceReload },
       toggleDevToolsItem(labels),
-      { type: 'separator' },
+    ])
+  }
+  if (pageZoom) {
+    groups.push([
       { role: 'resetZoom', label: labels.actualSize },
       { role: 'zoomIn', label: labels.zoomIn },
       { role: 'zoomOut', label: labels.zoomOut },
-      { type: 'separator' },
-      { role: 'togglefullscreen', label: labels.fullscreen },
-    ],
+    ])
+  }
+  groups.push([{ role: 'togglefullscreen', label: labels.fullscreen }])
+  return {
+    label: labels.view,
+    submenu: groups.flatMap((group, index) =>
+      index === 0 ? group : [{ type: 'separator' }, ...group],
+    ),
   }
 }
 
@@ -576,19 +686,72 @@ export function aboutMenuItem(labels: AppMenuLabels): MenuItemConstructorOptions
     click: async () => {
       const { app, dialog, clipboard } = await import('electron')
       const version = app.getVersion()
+      const appName = app.getName()
       const canCheck = updateCheckInvoker !== null
       const { response } = await dialog.showMessageBox({
         type: 'info',
-        title: 'GenOffice',
-        message: 'GenOffice',
+        title: appName,
+        message: appName,
         detail: `${labels.version} ${version}`,
         buttons: ['OK', labels.copy, ...(canCheck ? [labels.checkUpdates] : [])],
         defaultId: 0,
         cancelId: 0,
       })
-      if (response === 1) clipboard.writeText(`GenOffice ${version}`)
+      if (response === 1) clipboard.writeText(`${appName} ${version}`)
       if (response === 2) updateCheckInvoker?.()
     },
+  }
+}
+
+/** The Settings entry, shared by every app: one label, one accelerator
+ * (⌘, on macOS and Ctrl+, elsewhere), one action. The shell owns the
+ * Settings view, so it registers the action; an app running on its own
+ * falls back to its own preferences entry. */
+let settingsInvoker: (() => void) | null = null
+
+export function setSettingsInvoker(invoke: (() => void) | null): void {
+  settingsInvoker = invoke
+}
+
+export function settingsMenuItem(
+  labels: AppMenuLabels,
+  fallback?: () => void,
+): MenuItemConstructorOptions {
+  return {
+    label: labels.settings,
+    accelerator: 'CmdOrCtrl+,',
+    click: () => (settingsInvoker ?? fallback)?.(),
+  }
+}
+
+/** macOS application menu — the one under the app name. Electron's
+ * role:'appMenu' is a fixed template, so an entry of our own means spelling
+ * the menu out; the native roles keep the standard order and labels. Only
+ * macOS has this menu, so every other platform gets undefined. */
+export function appMenuTemplate(
+  platform: NodeJS.Platform,
+  labels: AppMenuLabels,
+  {
+    extra = [],
+    appLabel = 'HermesOffice',
+  }: { extra?: MenuItemConstructorOptions[]; appLabel?: string } = {},
+): MenuItemConstructorOptions | undefined {
+  if (platform !== 'darwin') return undefined
+  return {
+    // Electron rejects a menu item that has neither label, role nor type
+    label: appLabel,
+    submenu: [
+      { role: 'about', label: labels.about },
+      ...extra,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' },
+    ],
   }
 }
 

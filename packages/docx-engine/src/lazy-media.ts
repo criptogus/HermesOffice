@@ -7,7 +7,7 @@
  * original bytes (see zip-splice.ts).
  */
 
-export const LAZY_MEDIA_SCHEME = 'genoffice-docx-media'
+export const LAZY_MEDIA_SCHEME = 'hermesoffice-docx-media'
 
 const MAGIC = 'GENOFFICE-LAZY-MEDIA\n'
 const HASH_RE = /^[0-9a-f]{64}$/

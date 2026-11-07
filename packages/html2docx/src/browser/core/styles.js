@@ -2,6 +2,25 @@
     'SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'TITLE',
   ]);
   let shotCounter = 0;
+  const MAX_SCREENSHOT_SLICE_COUNT = 64;
+  const DEFAULT_SCREENSHOT_SLICE_HEIGHT = 700;
+  function boundedScreenshotSliceCount(height, maxSliceHeight = DEFAULT_SCREENSHOT_SLICE_HEIGHT) {
+    const value = Number(height);
+    const sliceHeight = Number(maxSliceHeight);
+    if (
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      !Number.isFinite(sliceHeight) ||
+      sliceHeight <= 0
+    ) {
+      return 0;
+    }
+    const count = Math.ceil(value / sliceHeight);
+    // Clamp rather than reject: the bound still caps the work a hostile height
+    // can demand, while a legitimately tall page keeps its first slices (the
+    // document top) instead of converting to nothing.
+    return Math.min(count, MAX_SCREENSHOT_SLICE_COUNT);
+  }
 
   const styleCache = new WeakMap();
   function cs(el) {

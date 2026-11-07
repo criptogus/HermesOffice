@@ -8,7 +8,7 @@
  * (center-cropped to their frame) and text runs on a fixed px canvas.
  *
  * Host facilities (network fetch, image decoding, font metrics) are injected so
- * this module stays testable in plain Node and usable from the genoffice CLI.
+ * this module stays testable in plain Node and usable from the hermesoffice CLI.
  */
 import {
   addElement,
@@ -93,6 +93,10 @@ export interface SpecShape extends SpecBase {
   stroke?: { color: string; widthPt: number }
   paragraphs?: SpecParagraph[]
   valign?: 'top' | 'middle' | 'bottom'
+  /** mirror the shape horizontally (an arrow points the other way) */
+  flipH?: boolean
+  /** mirror vertically; a `line` box draws bottom-left to top-right */
+  flipV?: boolean
 }
 
 export interface SpecText extends SpecBase {
@@ -133,6 +137,30 @@ function num(v: unknown): number | undefined {
 }
 
 /**
+ * Index of the `}` that closes the object opening at `start`, tracking string
+ * literals and escapes so a brace inside one does not count. -1 when the walk
+ * runs out of text or the braces never balance.
+ */
+function matchingBrace(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return i
+  }
+  return -1
+}
+
+/**
  * Extracts and validates the spec from raw LLM output. Tolerant of fences and
  * junk around the JSON; invalid elements are dropped with a warning rather
  * than failing the page. Returns an error only when nothing usable remains,
@@ -151,8 +179,13 @@ export function parsePageSpec(
 ): { ok: true; spec: PageSpec; warnings: string[] } | { ok: false; error: string } {
   const text = String(raw ?? '')
   const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) return { ok: false, error: 'no JSON object found in the output' }
+  if (start < 0) return { ok: false, error: 'no JSON object found in the output' }
+  // Prose around the spec can carry braces of its own, so the object's own
+  // closing brace is the one that matches it; the last brace in the text is
+  // only a fallback for output the walk cannot balance.
+  const matched = matchingBrace(text, start)
+  const end = matched >= 0 ? matched : text.lastIndexOf('}')
+  if (end <= start) return { ok: false, error: 'no JSON object found in the output' }
   let parsed: unknown
   try {
     parsed = JSON.parse(text.slice(start, end + 1))
@@ -175,6 +208,13 @@ export function parsePageSpecObject(
 
   const warnings: string[] = []
   const elements: SpecElement[] = []
+  /** Index each retained element had in the model's own array, so duplicate
+      advice still names the element numbers the model wrote. */
+  const keptRawIdx: number[] = []
+  const keep = (el: SpecElement, rawIdx: number): void => {
+    elements.push(el)
+    keptRawIdx.push(rawIdx)
+  }
   let images = 0
 
   const parseParagraphs = (v: unknown): SpecParagraph[] => {
@@ -253,7 +293,10 @@ export function parsePageSpecObject(
     const type = el.type
 
     if (type === 'image') {
-      const url = typeof el.url === 'string' ? el.url.trim() : ''
+      const url =
+        typeof el.url === 'string'
+          ? el.url.trim().replace(/^https?:\/\//i, (scheme) => scheme.toLowerCase())
+          : ''
       if (!/^https?:\/\//.test(url) && !(opts.localImages && url)) {
         warnings.push(`element ${i}: image url must be http(s), dropped`)
         continue
@@ -263,7 +306,7 @@ export function parsePageSpecObject(
         continue
       }
       images += 1
-      elements.push({ type: 'image', url, ...base })
+      keep({ type: 'image', url, ...base }, i)
       continue
     }
 
@@ -274,12 +317,15 @@ export function parsePageSpecObject(
         continue
       }
       const valign = el.valign
-      elements.push({
-        type: 'text',
-        ...base,
-        paragraphs,
-        ...(valign === 'top' || valign === 'middle' || valign === 'bottom' ? { valign } : {}),
-      })
+      keep(
+        {
+          type: 'text',
+          ...base,
+          paragraphs,
+          ...(valign === 'top' || valign === 'middle' || valign === 'bottom' ? { valign } : {}),
+        },
+        i,
+      )
       continue
     }
 
@@ -303,15 +349,20 @@ export function parsePageSpecObject(
       }
       const paragraphs = parseParagraphs(el.paragraphs)
       const valign = el.valign
-      elements.push({
-        type: 'shape',
-        shape,
-        ...base,
-        ...(fill ? { fill } : {}),
-        ...(stroke ? { stroke } : {}),
-        ...(paragraphs.some((p) => p.runs.some((r) => r.text.trim())) ? { paragraphs } : {}),
-        ...(valign === 'top' || valign === 'middle' || valign === 'bottom' ? { valign } : {}),
-      })
+      keep(
+        {
+          type: 'shape',
+          shape,
+          ...base,
+          ...(fill ? { fill } : {}),
+          ...(stroke ? { stroke } : {}),
+          ...(paragraphs.some((p) => p.runs.some((r) => r.text.trim())) ? { paragraphs } : {}),
+          ...(valign === 'top' || valign === 'middle' || valign === 'bottom' ? { valign } : {}),
+          ...(el.flipH === true ? { flipH: true } : {}),
+          ...(el.flipV === true ? { flipV: true } : {}),
+        },
+        i,
+      )
       continue
     }
 
@@ -324,7 +375,7 @@ export function parsePageSpecObject(
       error: `no valid elements (${warnings.join('; ') || 'all dropped'})`,
     }
   }
-  warnings.push(...nearDuplicateTextWarnings(rawEls))
+  warnings.push(...duplicateTextWarnings(elements, keptRawIdx))
   return {
     ok: true,
     spec: {
@@ -335,7 +386,7 @@ export function parsePageSpecObject(
   }
 }
 
-/** Text of a raw spec element for the duplicate check, or null when it has none. */
+/** Text of a spec element for the duplicate check, or null when it has none. */
 function rawElementText(el: unknown): string | null {
   const rec = asRecord(el)
   if (rec.type !== 'text' && rec.type !== 'shape') return null
@@ -361,14 +412,26 @@ const DUP_PREFIX_SHARE = 0.6
  * always an authoring slip — a subtitle restating the chart caption, a
  * heading pasted twice. Compared on normalized text: identical, or sharing a
  * long common prefix that covers most of the shorter one. Advice only.
+ *
+ * The pairwise pass is quadratic in the elements handed in, so feed it the
+ * retained set only. `rawIdx[k]` is the element number to name for position k,
+ * letting a caller that already dropped elements still cite the numbering the
+ * model itself wrote.
  */
 export function nearDuplicateTextWarnings(rawEls: unknown[]): string[] {
+  return duplicateTextWarnings(
+    rawEls,
+    rawEls.map((_el, i) => i),
+  )
+}
+
+function duplicateTextWarnings(els: readonly unknown[], rawIdx: readonly number[]): string[] {
   const texts: { i: number; text: string; norm: string }[] = []
-  for (const [i, el] of rawEls.entries()) {
-    const text = rawElementText(el)
+  for (let k = 0; k < els.length; k++) {
+    const text = rawElementText(els[k])
     if (text === null) continue
     const norm = normalizeText(text)
-    if (norm.length >= DUP_MIN_CHARS) texts.push({ i, text, norm })
+    if (norm.length >= DUP_MIN_CHARS) texts.push({ i: rawIdx[k]!, text, norm })
   }
   const out: string[] = []
   for (let a = 0; a < texts.length; a++) {
@@ -555,6 +618,8 @@ export async function buildPagePptx(
             },
           }
         : {}),
+      ...(el.flipH ? { flipH: true } : {}),
+      ...(el.flipV ? { flipV: true } : {}),
       ...(el.paragraphs ? { paragraphs: toEngineParagraphs(el.paragraphs) } : {}),
       ...(el.paragraphs
         ? { bodyPr: { wrap: 'square', anchor: anchorOf(el.valign, 'ctr'), insetsEmu: zeroInsets } }

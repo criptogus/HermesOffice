@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { buildParseMap, type ParseMap } from '../src/renderer/document/parse-map'
 import { compileOps, type HtmlOp } from '../src/renderer/document/ops'
 import { applyPatches } from '../src/renderer/document/patch'
+import { buildProjection } from '../src/renderer/ai/redact'
 import {
   createHtmlSkillCore,
-  buildOutline,
   expandAttachmentRefs,
   findTruncatedDataUrl,
+  buildOutline,
   type HtmlDocAccess,
 } from '../src/renderer/ai/tools'
 import type { Brief } from '../src/renderer/document/brief'
@@ -87,7 +88,8 @@ describe('html skill tools', () => {
     const ctx = core.buildContext()
     expect(ctx).toContain('title: Report')
     expect(ctx).toMatch(/sid=\d+\s+h1#t\s+"Quarterly"/)
-    const outline = buildOutline(DOC, buildParseMap(DOC, 1), { depth: 4 })
+    const map = buildParseMap(DOC, 1)
+    const outline = buildOutline(buildProjection(DOC, map), map, { depth: 4 })
     expect(outline).toMatch(/L6-L9\s+sid=\d+\s+section\.kpis/)
     expect(outline).toContain('div.card  "Revenue"')
   })
@@ -383,7 +385,7 @@ describe('generation flow tools', () => {
     expect(writes).toBe(1)
     expect(r.output).toContain('extract')
     expect(spec?.page).toContain('<title>Report</title>')
-    expect(existing.text.replace(/\n<meta name="genoffice:brief"[^>]*>/, '')).toBe(DOC)
+    expect(existing.text.replace(/\n<meta name="hermesoffice:brief"[^>]*>/, '')).toBe(DOC)
   })
 
   it('write_document routes a content plan to the page writer', async () => {
@@ -422,8 +424,8 @@ describe('generation flow tools', () => {
     const r = await core.executeTool(call('plan_page', proposal))
     expect(r.mutated).toBe(true)
     expect(r.output).toContain('now pinned')
-    expect(doc.text).toMatch(/<head>\n<meta name="genoffice:brief"[^>]*><title>Report<\/title>/)
-    expect(doc.text.replace(/\n<meta name="genoffice:brief"[^>]*>/, '')).toBe(DOC)
+    expect(doc.text).toMatch(/<head>\n<meta name="hermesoffice:brief"[^>]*><title>Report<\/title>/)
+    expect(doc.text.replace(/\n<meta name="hermesoffice:brief"[^>]*>/, '')).toBe(DOC)
     const again = await core.executeTool(call('plan_page', proposal))
     expect(again.mutated).toBeFalsy()
     expect(again.output).toContain('already current')
@@ -451,7 +453,7 @@ describe('generation flow tools', () => {
     const r = await core.executeTool(call('plan_page', { mode: 'extract' }))
     expect(r.mutated).toBe(true)
     expect(doc.text).toContain('Quarterly (live)')
-    expect(doc.text).toMatch(/<meta name="genoffice:brief"/)
+    expect(doc.text).toMatch(/<meta name="hermesoffice:brief"/)
   })
 
   it('plan_page refuses to overwrite text the user typed while the brief card was open', async () => {
@@ -478,7 +480,7 @@ describe('generation flow tools', () => {
 
   it('context surfaces a pinned brief', () => {
     const html =
-      '<html><head><meta charset="utf-8"><meta name="genoffice:brief" content=\'{"core_hook":"Ship faster","style":{"tone":"technical","palette":{},"typography":{}},"sections":[{"title":"Why","brief":"x"}],"version":1}\'></head><body><p>x</p></body></html>'
+      '<html><head><meta charset="utf-8"><meta name="hermesoffice:brief" content=\'{"core_hook":"Ship faster","style":{"tone":"technical","palette":{},"typography":{}},"sections":[{"title":"Why","brief":"x"}],"version":1}\'></head><body><p>x</p></body></html>'
     const core = createHtmlSkillCore(fakeAccess(html).access)
     const ctx = core.buildContext()
     expect(ctx).toContain('## Brief')

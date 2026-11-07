@@ -1,5 +1,5 @@
-import { existsSync, lstatSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const args = process.argv.slice(2)
@@ -41,12 +41,7 @@ const files = new Set()
 
 function addNullSeparated(output) {
   for (const file of output.toString().split('\0')) {
-    if (
-      file &&
-      existsSync(join(repoRoot, file)) &&
-      !lstatSync(join(repoRoot, file)).isSymbolicLink()
-    )
-      files.add(file)
+    if (file && existsSync(join(repoRoot, file))) files.add(file)
   }
 }
 
@@ -83,10 +78,6 @@ if (changedFiles.length === 0) {
   process.exit(0)
 }
 
-// Prettier's own JS entry, run through the current node binary: the .bin shims
-// are a shell script on POSIX and a .cmd on Windows, and Node refuses to spawn a
-// .cmd without a shell (EINVAL since the CVE-2024-27980 fix), which broke this
-// check on Windows outright.
 const prettierEntry = join(repoRoot, 'node_modules', 'prettier', 'bin', 'prettier.cjs')
 const prettierMode = mode === '--write' ? '--write' : '--check'
 const result = spawnSync(
@@ -95,10 +86,6 @@ const result = spawnSync(
   {
     cwd: repoRoot,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      PATH: `${join(repoRoot, 'node_modules', '.bin')}${delimiter}${process.env.PATH}`,
-    },
   },
 )
 

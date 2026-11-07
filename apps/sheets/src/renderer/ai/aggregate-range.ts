@@ -13,7 +13,8 @@ import {
 import type { CellScalar } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import { isSheetRemoved, journalEntriesInRange } from '../edit-journal'
 import { createRangeAggregator, type RangeAggregate } from './aggregate'
-import type { WorkbookReadContext } from './workbook-readers'
+import { redactionsOf, type WorkbookReadContext } from './workbook-readers'
+import { countWithheldIn } from './redact'
 
 interface ConstantFill {
   readonly startRow: number
@@ -236,10 +237,19 @@ function filledAreaInRange(bands: readonly FillBand[], bounds: RangeBounds): num
   return area
 }
 
+export interface AggregateRangeOptions {
+  /**
+   * Leave out rows the file marks hidden (manual hide or a saved AutoFilter),
+   * read from the per-batch row properties so never-loaded windows count too.
+   */
+  skipFileHiddenRows?: boolean
+}
+
 export async function aggregateWorkbookRange(
   ctx: WorkbookReadContext,
   sheetIdArg: string | undefined,
   bounds: RangeBounds,
+  options: AggregateRangeOptions = {},
 ): Promise<{ ok: true; aggregate: RangeAggregate } | { ok: false; error: string }> {
   const aggregator = createRangeAggregator()
   const state = ctx.lazyWorkbookRef.current
@@ -260,6 +270,7 @@ export async function aggregateWorkbookRange(
       }
     }
     const worksheet = workbook?.getSheetBySheetId(sheet.id)
+    const redactions = redactionsOf(ctx)
     let counted = 0
     for (const [address, cell] of Object.entries(sheet.cells)) {
       const position = parseAddress(address)
@@ -269,6 +280,12 @@ export async function aggregateWorkbookRange(
         position.column < bounds.startColumn ||
         position.column > bounds.endColumn
       ) {
+        continue
+      }
+      if (redactions.labelAt(sheet.id, position.row, position.column) !== null) {
+        // Counted, never summed: see addWithheld in ./aggregate.
+        aggregator.addWithheld(1)
+        counted += 1
         continue
       }
       let value = cell.value
@@ -289,6 +306,7 @@ export async function aggregateWorkbookRange(
   }
   const sheetId = sheetIdArg ?? activeSheetId
   if (!sheetId) return { ok: false, error: 'No workbook is open.' }
+  const redactions = redactionsOf(ctx)
   if (isSheetRemoved(state.editJournal, sheetId)) {
     return { ok: false, error: `Unknown sheet: ${sheetId}` }
   }
@@ -358,25 +376,10 @@ export async function aggregateWorkbookRange(
     })
   }
 
-  const fillOverrideCounts = new Map<FillSegment, number>()
-  for (const entry of journalValues.values()) {
-    const segment = fillSegmentAt(fillBands, entry.row, entry.column)
-    if (segment) fillOverrideCounts.set(segment, (fillOverrideCounts.get(segment) ?? 0) + 1)
-  }
   let counted = 0
-  for (const band of fillBands) {
-    const rowCount = band.endRow - band.startRow + 1
-    for (const segment of band.segments) {
-      const repetitions =
-        rowCount * (segment.endColumn - segment.startColumn + 1) -
-        (fillOverrideCounts.get(segment) ?? 0)
-      aggregator.addRepeated(segment.value, repetitions)
-      counted += repetitions
-    }
-  }
-
   const fileEndRow = Math.min(clamped.endRow, sheetMeta.rowCount - 1)
   const fileEndColumn = Math.min(clamped.endColumn, sheetMeta.columnCount - 1)
+  const hiddenRows = new Set<number>()
   if (clamped.startRow <= fileEndRow && clamped.startColumn <= fileEndColumn) {
     const width = fileEndColumn - clamped.startColumn + 1
     const batchRows = Math.max(1, Math.floor(18_000 / width))
@@ -389,8 +392,13 @@ export async function aggregateWorkbookRange(
         endColumn: fileEndColumn,
       }
       // Fully overlaid chunks do not depend on the sidecar or its indexing
-      // progress. This is the common whole-column-fill path.
-      if (filledAreaInRange(fillBands, batchBounds) === rangeCellCount(batchBounds)) continue
+      // progress. This is the common whole-column-fill path. Skipping hidden
+      // rows still needs the batch's row properties, so that mode reads anyway.
+      if (
+        !options.skipFileHiddenRows &&
+        filledAreaInRange(fillBands, batchBounds) === rangeCellCount(batchBounds)
+      )
+        continue
       let result
       try {
         result = await window.desktopApi.readWorkbookRange({
@@ -410,15 +418,26 @@ export async function aggregateWorkbookRange(
           error: 'The range is still being indexed — retry after workbook indexing completes.',
         }
       }
+      if (options.skipFileHiddenRows) {
+        for (const row of result.rows ?? []) {
+          if (row.hidden && row.row >= startRow && row.row <= endRow) hiddenRows.add(row.row)
+        }
+      }
       for (const cell of result.cells) {
         if (
           cell.row < startRow ||
           cell.row > endRow ||
           cell.column < clamped.startColumn ||
           cell.column > fileEndColumn ||
+          hiddenRows.has(cell.row) ||
           journalValues.has(`${cell.row}:${cell.column}`) ||
           fillSegmentAt(fillBands, cell.row, cell.column)
         ) {
+          continue
+        }
+        if (redactions.labelAt(sheetId, cell.row, cell.column) !== null) {
+          aggregator.addWithheld(1)
+          counted += 1
           continue
         }
         aggregator.add(cell.value)
@@ -426,10 +445,55 @@ export async function aggregateWorkbookRange(
       }
     }
   }
-  for (const { value } of journalValues.values()) {
+  // Fills and journal values land after the reads so file-hidden rows are known.
+  const fillOverrideCounts = new Map<FillSegment, number>()
+  // overrides on withheld cells, separately: only those shrink the withheld share
+  const withheldOverrideCounts = new Map<FillSegment, number>()
+  for (const entry of journalValues.values()) {
+    if (hiddenRows.has(entry.row)) continue
+    const segment = fillSegmentAt(fillBands, entry.row, entry.column)
+    if (!segment) continue
+    fillOverrideCounts.set(segment, (fillOverrideCounts.get(segment) ?? 0) + 1)
+    if (redactions.labelAt(sheetId, entry.row, entry.column) !== null) {
+      withheldOverrideCounts.set(segment, (withheldOverrideCounts.get(segment) ?? 0) + 1)
+    }
+  }
+  for (const band of fillBands) {
+    let rowCount = band.endRow - band.startRow + 1
+    for (const row of hiddenRows) if (row >= band.startRow && row <= band.endRow) rowCount -= 1
+    for (const segment of band.segments) {
+      const repetitions =
+        rowCount * (segment.endColumn - segment.startColumn + 1) -
+        (fillOverrideCounts.get(segment) ?? 0)
+      // A fill band is one value repeated over a rectangle, so the withheld
+      // share is the area intersection rather than a per-cell lookup. The
+      // repetition count is what would otherwise add the reader's own value
+      // into the sum once per row — exactly the leak addWithheld exists to stop.
+      const withheldHere = Math.min(
+        repetitions,
+        countWithheldIn(redactions.marksFor(sheetId), {
+          startRow: Math.max(band.startRow, clamped.startRow),
+          endRow: Math.min(band.endRow, clamped.endRow),
+          startColumn: Math.max(segment.startColumn, clamped.startColumn),
+          endColumn: Math.min(segment.endColumn, clamped.endColumn),
+        }) - (withheldOverrideCounts.get(segment) ?? 0),
+      )
+      aggregator.addWithheld(Math.max(0, withheldHere))
+      aggregator.addRepeated(segment.value, repetitions - Math.max(0, withheldHere))
+      counted += repetitions
+    }
+  }
+  for (const { row, column, value } of journalValues.values()) {
+    if (hiddenRows.has(row)) continue
+    if (redactions.labelAt(sheetId, row, column) !== null) {
+      aggregator.addWithheld(1)
+      counted += 1
+      continue
+    }
     aggregator.add(value)
     counted += 1
   }
-  aggregator.addEmpty(rangeCellCount(clamped) - counted)
+  const hiddenCells = hiddenRows.size * (clamped.endColumn - clamped.startColumn + 1)
+  aggregator.addEmpty(rangeCellCount(clamped) - hiddenCells - counted)
   return { ok: true, aggregate: aggregator.finish(50) }
 }

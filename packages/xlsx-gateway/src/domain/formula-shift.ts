@@ -1,3 +1,4 @@
+import { MAX_GRID_COLUMNS, MAX_GRID_ROWS } from '../shared/grid-bounds'
 import { columnIndex, columnLabel } from './cell-address'
 import type { StructuralOperation } from './workbook-dsl'
 
@@ -60,10 +61,16 @@ function formatRef(part: RefPart): string {
   return `${part.colAbs}${columnLabel(part.col)}${part.rowAbs}${part.row + 1}`
 }
 
-function shiftRefPart(part: RefPart, spec: ShiftSpec): RefPart | null {
+/**
+ * Shifted reference. null means the ref fell inside a deleted region; undefined
+ * means the shift pushed it past the grid edge, which Excel rewrites to #REF!
+ * as surely (offsetRefPart has the mirror check for copy/fill).
+ */
+function shiftRefPart(part: RefPart, spec: ShiftSpec): RefPart | null | undefined {
   const value = spec.axis === 'row' ? part.row : part.col
   const shifted = shiftIndex(value, spec)
   if (shifted === null) return null
+  if (shifted >= (spec.axis === 'row' ? MAX_GRID_ROWS : MAX_GRID_COLUMNS)) return undefined
   return spec.axis === 'row' ? { ...part, row: shifted } : { ...part, col: shifted }
 }
 
@@ -79,7 +86,18 @@ function clampRefPart(part: RefPart, spec: ShiftSpec, side: 'start' | 'end'): Re
 // Quoted sheet names use Excel '' escaping (Bob''s for Bob's), mirroring the
 // save-path FORMULA_REFERENCE_PATTERN in gateway/xlsx-structure.ts.
 const REF_RE =
-  /(?<![A-Za-z0-9_.$!])(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.]+))!)?(\$?)([A-Z]{1,3})(\$?)([0-9]{1,7})(?::(\$?)([A-Z]{1,3})(\$?)([0-9]{1,7}))?(?![A-Za-z0-9(])/g
+  /(?<![A-Za-z0-9_.$!])(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.]+))!)?(\$?)([A-Z]{1,3})(\$?)([0-9]{1,7})(?::(\$?)([A-Z]{1,3})(\$?)([0-9]{1,7}))?(?![A-Za-z0-9(])/gi
+
+// Split a formula into the parts REF_RE may rewrite and the parts it must not
+// touch: string literals, and a structured reference's bracketed contents.
+// A column header is a NAME, not a cell — `Table1[Q1]`, `Table1[@Q1]` and
+// `Table1[ Q1 ]` all name the column Q1 and must survive an insert verbatim, as
+// must `[[#Headers],[Q1]]`. ONE capturing group around the whole alternation, so
+// every protected run lands at an odd index of a split and the existing
+// `index % 2` guard covers both kinds. One level of nesting covers [[...],[...]].
+// The lookbehind keeps external-workbook prefixes (`[1]Sheet1!A1`, `'[Book.xlsx]Sheet 1'!A1`)
+// out of the skip: they follow a quote or `=`/operator, never a table name.
+const REWRITE_SKIP_RE = /((?:"(?:[^"]|"")*")|(?:(?<=[A-Za-z0-9_.])\[(?:[^\][]|\[[^\][]*\])*\]))/
 
 function decodeQuotedSheetName(quoted: string): string {
   return quoted.replaceAll("''", "'")
@@ -96,10 +114,6 @@ export interface FormulaShiftResult {
  *        on the sheet the structural op targets (bare refs are rewritten)
  * @param opSheetName name of the op's target sheet (matches explicit prefixes)
  */
-/// Excel grid bounds — copy/fill references pushed past them become #REF!.
-const MAX_GRID_ROWS = 1_048_576
-const MAX_GRID_COLUMNS = 16_384
-
 function offsetRefPart(part: RefPart, rowDelta: number, columnDelta: number): RefPart | null {
   const row = part.rowAbs === '$' ? part.row : part.row + rowDelta
   const col = part.colAbs === '$' ? part.col : part.col + columnDelta
@@ -112,7 +126,7 @@ function offsetRefPart(part: RefPart, rowDelta: number, columnDelta: number): Re
 // The `:` in the lookbehind stops the second column of one span (or the end
 // cell of B2:D4) from starting a new match. Quoted names use '' escaping like REF_RE.
 const COLUMN_SPAN_RE =
-  /(?<![A-Za-z0-9_.$!:])(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.]+))!)?(\$?)([A-Z]{1,3}):(\$?)([A-Z]{1,3})(?![A-Za-z0-9($!:])/g
+  /(?<![A-Za-z0-9_.$!:])(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.]+))!)?(\$?)([A-Z]{1,3}):(\$?)([A-Z]{1,3})(?![A-Za-z0-9($!:])/gi
 
 function sheetPrefixApplies(
   quoted: string | undefined,
@@ -122,7 +136,8 @@ function sheetPrefixApplies(
 ): boolean {
   if (quoted === undefined && bare === undefined) return formulaSheetMatchesOp
   const prefixSheet = quoted !== undefined ? decodeQuotedSheetName(quoted) : bare
-  return prefixSheet === opSheetName
+  if (prefixSheet === undefined) return false
+  return prefixSheet.toLowerCase() === opSheetName.toLowerCase()
 }
 
 // Whole-row spans (2:4) — the row-axis mirror of COLUMN_SPAN_RE, same
@@ -140,7 +155,7 @@ const ROW_SPAN_RE =
  */
 export function offsetFormulaRefs(formula: string, rowDelta: number, columnDelta: number): string {
   if (rowDelta === 0 && columnDelta === 0) return formula
-  const segments = formula.split(/("(?:[^"]|"")*")/)
+  const segments = formula.split(REWRITE_SKIP_RE)
   const rewritten = segments.map((segment, index) => {
     if (index % 2 === 1) return segment
     let out = segment.replace(
@@ -179,7 +194,7 @@ export function offsetFormulaRefs(formula: string, rowDelta: number, columnDelta
         const prefix = quoted !== undefined ? `'${quoted}'!` : bare !== undefined ? `${bare}!` : ''
         // Returns the full component including its anchor ("$B" stays "$B").
         const shift = (abs: string, letters: string): string | null => {
-          if (abs === '$') return `$${letters}`
+          if (abs === '$') return `$${letters.toUpperCase()}`
           const shifted = columnIndex(letters) + columnDelta
           return shifted < 0 || shifted >= MAX_GRID_COLUMNS ? null : columnLabel(shifted)
         }
@@ -225,8 +240,9 @@ export function shiftFormulaRefs(
   let changed = false
   let hasRefError = false
 
-  // Split on string literals so refs inside "..." are never rewritten.
-  const segments = formula.split(/("(?:[^"]|"")*")/)
+  // Split on string literals and bracketed structured-reference contents so refs
+  // inside "..." and inside Table1[...] are never rewritten.
+  const segments = formula.split(REWRITE_SKIP_RE)
   const rewritten = segments.map((segment, index) => {
     if (index % 2 === 1) return segment
     let out = segment.replace(
@@ -270,6 +286,11 @@ export function shiftFormulaRefs(
         }
         let shiftedFirst = shiftRefPart(first, spec)
         let shiftedSecond = shiftRefPart(second, spec)
+        if (shiftedFirst === undefined || shiftedSecond === undefined) {
+          changed = true
+          hasRefError = true
+          return `${prefix}#REF!`
+        }
         if (!shiftedFirst && !shiftedSecond) {
           changed = true
           hasRefError = true
@@ -307,6 +328,11 @@ export function shiftFormulaRefs(
         const formatCol = (p: RefPart): string => `${p.colAbs}${columnLabel(p.col)}`
         let shiftedFirst = shiftRefPart(part(aAbs as string, aCol as string), spec)
         let shiftedSecond = shiftRefPart(part(bAbs as string, bCol as string), spec)
+        if (shiftedFirst === undefined || shiftedSecond === undefined) {
+          changed = true
+          hasRefError = true
+          return `${prefix}#REF!`
+        }
         if (!shiftedFirst && !shiftedSecond) {
           changed = true
           hasRefError = true
@@ -346,6 +372,11 @@ export function shiftFormulaRefs(
         const formatRow = (p: RefPart): string => `${p.rowAbs}${p.row + 1}`
         let shiftedFirst = shiftRefPart(part(aAbs as string, aRow as string), spec)
         let shiftedSecond = shiftRefPart(part(bAbs as string, bRow as string), spec)
+        if (shiftedFirst === undefined || shiftedSecond === undefined) {
+          changed = true
+          hasRefError = true
+          return `${prefix}#REF!`
+        }
         if (!shiftedFirst && !shiftedSecond) {
           changed = true
           hasRefError = true

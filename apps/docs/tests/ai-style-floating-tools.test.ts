@@ -6,6 +6,7 @@ import { pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { executeTool, type AiDocExtras } from '../src/renderer/ai/tools'
 import type { AiStyleInfo } from '../src/renderer/ai/style-ops'
 import { pictureNode, textBoxNode } from '../src/renderer/ai/floating-ops'
+import { MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT } from '../src/renderer/ai/ops'
 
 interface JsonNode {
   type: string
@@ -125,6 +126,10 @@ describe('define_style', () => {
           indentLeft: '1in',
           firstLineIndent: -18,
           align: 'justify',
+          tabs: [
+            { pos: '6.5in', align: 'right', leader: 'dot' },
+            { pos: 720, clear: true },
+          ],
         },
         run: { italic: true, color: '#1A73E8', fontSize: 11, fontFamily: 'Georgia' },
       },
@@ -141,6 +146,10 @@ describe('define_style', () => {
         indentLeftTwips: 1440,
         firstLineTwips: -360,
         align: 'justify',
+        tabStops: [
+          { pos: 9360, val: 'right', leader: 'dot' },
+          { pos: 720, val: 'clear' },
+        ],
       },
       rPr: { italic: true, color: '1A73E8', sizeHalfPoints: 22, font: 'Georgia' },
     })
@@ -529,5 +538,61 @@ describe('pictureNode', () => {
     expect(
       textBoxNode({ text: 'x', width: 10, height: 10, x: 0, y: 0, anchor: 'margin' }),
     ).toHaveProperty('error')
+  })
+
+  it('font sizes are bounded in setFont and textBoxNode', async () => {
+    const editor = createEditor([para('x')])
+    const { extras } = catalog()
+    try {
+      const bad = await run(
+        editor,
+        'apply_ops',
+        { ops: [{ op: 'setFont', target: { blockIndexes: [0] }, fontSize: 1e9 }] },
+        extras,
+      )
+      expect(bad.isError).toBe(true)
+      expect(String(bad.output)).toContain('fontSize')
+      const tiny = await run(
+        editor,
+        'apply_ops',
+        { ops: [{ op: 'setFont', target: { blockIndexes: [0] }, fontSize: 0.1 }] },
+        extras,
+      )
+      expect(tiny.isError).toBe(true)
+      const ok = await run(
+        editor,
+        'apply_ops',
+        { ops: [{ op: 'setFont', target: { blockIndexes: [0] }, fontSize: 18 }] },
+        extras,
+      )
+      expect(ok.isError).toBeUndefined()
+      const setFontSize = (fontSize: number) =>
+        run(
+          editor,
+          'apply_ops',
+          { ops: [{ op: 'setFont', target: { blockIndexes: [0] }, fontSize }] },
+          extras,
+        )
+      expect((await setFontSize(MAX_FONT_SIZE_PT)).isError).toBeUndefined()
+      expect((await setFontSize(MIN_FONT_SIZE_PT)).isError).toBeUndefined()
+      const over = await setFontSize(MAX_FONT_SIZE_PT + 1)
+      expect(over.isError).toBe(true)
+      expect(String(over.output)).toContain('1-1638pt')
+      expect((await setFontSize(0.5)).isError).toBe(true)
+    } finally {
+      editor.destroy()
+    }
+    expect(
+      textBoxNode({ text: 'x', width: 10, height: 10, x: 0, y: 0, fontSize: 1e9 }),
+    ).toHaveProperty('error')
+    expect(
+      textBoxNode({ text: 'x', width: 10, height: 10, x: 0, y: 0, fontSize: 1639 }),
+    ).toHaveProperty('error')
+    expect(
+      textBoxNode({ text: 'x', width: 10, height: 10, x: 0, y: 0, fontSize: 0.5 }),
+    ).toHaveProperty('error')
+    expect(
+      textBoxNode({ text: 'x', width: 10, height: 10, x: 0, y: 0, fontSize: 1638 }),
+    ).not.toHaveProperty('error')
   })
 })

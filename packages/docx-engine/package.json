@@ -20,14 +20,16 @@
   },
   "dependencies": {
     "@hermesoffice/pptx-engine": "*",
+    "@hermesoffice/zip-gate": "*",
     "fast-xml-parser": "^5.3.4",
     "jszip": "^3.10.1",
-    "utif2": "^4.1.0"
+    "utif2": "^4.1.0",
+    "@hermesoffice/agent-core": "*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

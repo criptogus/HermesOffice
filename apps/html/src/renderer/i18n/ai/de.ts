@@ -37,6 +37,8 @@ export const de = {
     'Netzwerkproblem: Der KI-Dienst ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut',
   aiNewChat: 'Neuer Chat',
   aiNoReply: '(keine Antwort)',
+  aiRegionError:
+    'Der Anbieter dieses Modells bedient Ihre aktuelle Region nicht — wählen Sie ein anderes Modell oder wechseln Sie das Netzwerk',
   aiOverloadedError: 'Der KI-Dienst ist derzeit überlastet — bitte gleich erneut versuchen',
   aiRegenerateTitle: 'Neu generieren',
   aiRetry: 'Erneut versuchen',
@@ -49,6 +51,10 @@ export const de = {
   aiTimeoutError: 'Zeitüberschreitung der KI-Antwort',
   aiToolWebSearch: 'Websuche',
   aiToolWebSearchDone: '„{query}" gesucht · {count} Treffer',
+  aiToolImageSearch: 'Bildersuche',
+  aiToolImageSearchDone: 'Bildersuche „{query}“ ({count} Bilder)',
+  aiToolGenImage: 'Bild generieren',
+  aiToolGenImageDone: 'KI-generiertes Bild eingefügt',
   aiTruncatedNote:
     '(Die Antwort wurde durch das Längenlimit abgeschnitten und ist möglicherweise unvollständig.)',
   aiTurnLimit: 'Schrittlimit pro Lauf erreicht — senden Sie eine weitere Anweisung.',
@@ -65,6 +71,7 @@ export const de = {
   aiClarifyDecideAnswer: '(entscheide für mich)',
   aiClarifyMulti: 'Mehrfachauswahl',
   aiClarifyNext: 'Weiter',
+  aiClarifyPrev: 'Zurück',
   aiClarifyOther: 'Sonstiges (eingeben)',
   aiClarifySelected: '{n} ausgewählt',
   aiClarifySkip: 'Umfrage überspringen',

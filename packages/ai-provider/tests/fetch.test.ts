@@ -18,16 +18,16 @@ describe('aiFetch', () => {
     vi.stubGlobal('fetch', fetchMock)
     await aiFetch('https://x/', { headers: { Authorization: 'Bearer k' } })
     const headers = sentHeaders(fetchMock)
-    expect(headers.get('user-agent')).toBe('GenOffice')
+    expect(headers.get('user-agent')).toBe('HermesOffice')
     expect(headers.get('authorization')).toBe('Bearer k')
   })
 
   it('lets the host refine the user agent and never overrides an explicit one', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('ok'))
     vi.stubGlobal('fetch', fetchMock)
-    setAiUserAgent('GenOffice/1.2.3')
+    setAiUserAgent('HermesOffice/1.2.3')
     await aiFetch('https://x/', {})
-    expect(sentHeaders(fetchMock).get('user-agent')).toBe('GenOffice/1.2.3')
+    expect(sentHeaders(fetchMock).get('user-agent')).toBe('HermesOffice/1.2.3')
 
     fetchMock.mockClear()
     await aiFetch('https://x/', { headers: { 'User-Agent': 'custom/9' } })
@@ -39,7 +39,7 @@ describe('aiFetch', () => {
     const rescue = vi.fn().mockResolvedValue(new Response('rescued'))
     setRescueFetch(rescue)
     await aiFetch('https://x/', {})
-    expect(sentHeaders(rescue).get('user-agent')).toBe('GenOffice')
+    expect(sentHeaders(rescue).get('user-agent')).toBe('HermesOffice')
   })
 
   it('returns the primary response without touching the rescue path', async () => {

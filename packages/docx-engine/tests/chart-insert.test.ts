@@ -5,6 +5,7 @@ import {
   buildChartWorkbookXlsxBase64,
   parseChartPartXml,
   parseDocx,
+  findChartWorkbookPath,
   patchChartPartXml,
   patchChartWorkbookXlsxBase64,
   saveDocx,
@@ -40,6 +41,22 @@ describe('buildChartPartXml', () => {
     const pie = buildChartPartXml({ ...SPEC, kind: 'pie', series: [SPEC.series[0]] })
     expect(pie).toContain('<c:pieChart>')
     expect(pie).not.toContain('<c:catAx>')
+  })
+})
+
+describe('chart relationship targets', () => {
+  it('resolves absolute percent-encoded workbook targets', async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ bodyXml: '<w:p/>' }))
+    zip.file(
+      'word/charts/_rels/chart1.xml.rels',
+      '<Relationships><Relationship Id="rId1" ' +
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" ' +
+        'Target="/word/embeddings/workbook%201.xlsx"/></Relationships>',
+    )
+    const bytes = await zip.generateAsync({ type: 'uint8array' })
+    expect(await findChartWorkbookPath(bytes, 'word/charts/chart1.xml')).toBe(
+      'word/embeddings/workbook 1.xlsx',
+    )
   })
 })
 

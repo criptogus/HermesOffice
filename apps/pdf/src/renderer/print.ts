@@ -1,4 +1,15 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import type { PrintJobOptions } from '../shared/ipc'
+
+/**
+ * Whether a named-printer job may spool the flushed PDF file itself. A
+ * password-protected document stays encrypted on disk, and CUPS' pdftopdf
+ * cannot open it, so those go through the raster path (pdf.js hands the
+ * decrypted pages to the print dialog instead).
+ */
+export function maySpoolOriginal(diskPassword: string | null): boolean {
+  return diskPassword === null
+}
 
 /** Baseline raster density (previous behavior — quality never drops below this). */
 const BASE_DPI = 150
@@ -12,6 +23,14 @@ const TARGET_DPI = 200
  * instead of pushing the renderer out of memory on long scanned PDFs.
  */
 const MAX_PRINT_PIXELS = 150_000_000
+
+/** How long to wait for the dialog to report back before giving up. Chromium
+    and Electron both fire `afterprint`, but a suppressed print (blocked popup,
+    kiosk policy, stubbed `window.print`) never does: unbounded, the promise
+    never settles, the print root keeps every rasterized data URL alive, and
+    the caller's busy flag stays set so no later print is accepted. Sized to
+    outlast a real dialog the user is still reading. */
+export const PRINT_DIALOG_TIMEOUT_MS = 300_000
 
 /**
  * Render scale for a document given each page's area at scale 1 (PDF points²):
@@ -38,7 +57,50 @@ export function printScaleForAreas(areas: number[]): number {
  * The 200 DPI pixel budget is computed over the selected pages only, so a
  * small range out of a huge document still prints at full target quality.
  */
-export async function printPdf(doc: PDFDocumentProxy, pages?: number[]): Promise<void> {
+/** Settles when the print dialog reports back, when `window.print` fails
+    outright, or when the wait exceeds the bound. Always detaches the listener
+    and the timer, so a wedged dialog cannot leak either. */
+function waitForPrintDialog(timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const detach = () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = null
+      window.removeEventListener('afterprint', onAfterPrint)
+    }
+    function onAfterPrint(): void {
+      detach()
+      resolve()
+    }
+    timer = setTimeout(() => {
+      detach()
+      reject(new Error('the print dialog never reported completion; released the rendered pages'))
+    }, timeoutMs)
+    window.addEventListener('afterprint', onAfterPrint)
+    try {
+      window.print()
+    } catch (err) {
+      detach()
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+  })
+}
+
+/** Keep every other page of a file-page list, Word's "odd pages / even pages" subset. */
+export function filterPageParity(pages: number[], parity: PageParity): number[] {
+  if (parity === 'all') return pages
+  return pages.filter((n) => n % 2 === (parity === 'odd' ? 1 : 0))
+}
+
+export type PageParity = 'all' | 'odd' | 'even'
+
+/** `job`: a chosen printer prints silently through the main process with its
+    copies/duplex options; omitted, the system print dialog takes over. */
+export async function printPdf(
+  doc: PDFDocumentProxy,
+  pages?: number[],
+  job?: PrintJobOptions,
+): Promise<void> {
   const root = document.createElement('div')
   root.className = 'pdf-print-root'
   const canvas = document.createElement('canvas')
@@ -50,16 +112,36 @@ export async function printPdf(doc: PDFDocumentProxy, pages?: number[]): Promise
           .filter((n) => Number.isInteger(n) && n >= 1 && n <= doc.numPages)
           .sort((a, b) => a - b)
       : Array.from({ length: doc.numPages }, (_x, i) => i + 1)
+  // A caller-supplied range that filters to nothing used to print an empty document:
+  // both loops no-op and window.print() runs against an empty root. Refuse instead.
+  if (pages && pages.length > 0 && targets.length === 0) {
+    throw new Error(
+      `none of the requested pages (${pages.join(', ')}) exist in this ${doc.numPages}-page document`,
+    )
+  }
   // First pass: measure each page at unit scale to budget the shared scale.
   // Stream one page at a time so no PDFPageProxy outlives its render — the
   // previous two-pass held all pages alive plus 2× viewports.
   const areas: number[] = []
+  // the document's own paper for the CUPS print route: the first target
+  // page's size in inches (printToPDF bakes its pages at it instead of
+  // Chromium's Letter default, which would rescale every sheet)
+  let firstPageSizeIn: { width: number; height: number } | undefined
   for (const n of targets) {
     const page = await doc.getPage(n)
     try {
       const unit = page.getViewport({ scale: 1 })
       const area = unit.width * unit.height
       areas.push(Number.isFinite(area) && area > 0 ? area : 0)
+      if (
+        firstPageSizeIn === undefined &&
+        Number.isFinite(unit.width) &&
+        unit.width > 0 &&
+        Number.isFinite(unit.height) &&
+        unit.height > 0
+      ) {
+        firstPageSizeIn = { width: unit.width / 72, height: unit.height / 72 }
+      }
     } finally {
       try {
         page.cleanup()
@@ -113,14 +195,15 @@ export async function printPdf(doc: PDFDocumentProxy, pages?: number[]): Promise
   document.body.appendChild(root)
   try {
     await Promise.all([...root.querySelectorAll('img')].map((img) => img.decode()))
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        window.removeEventListener('afterprint', done)
-        resolve()
-      }
-      window.addEventListener('afterprint', done)
-      window.print()
-    })
+    if (job) {
+      const r = await window.pdfApi.print({
+        ...job,
+        ...(firstPageSizeIn ? { pageSizeIn: firstPageSizeIn } : {}),
+      })
+      if (!r.ok && r.error) throw new Error(r.error)
+    } else {
+      await waitForPrintDialog(PRINT_DIALOG_TIMEOUT_MS)
+    }
   } finally {
     root.remove()
   }

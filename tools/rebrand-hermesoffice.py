@@ -27,11 +27,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # Pares (old, new) aplicados na ordem. A ordem importa: scoped packages primeiro
 # (mais específico), depois env vars, depois ids, depois texto.
 REPLACES = [
-    ("@hermesoffice/", "@hermesoffice/"),
+    ("@genoffice/", "@hermesoffice/"),
     ("GENOFFICE_", "HERMESOFFICE_"),
     ("com.genoffice.app", "com.hermesoffice.app"),
     ("GenOffice", "HermesOffice"),
-    ("hermesoffice", "hermesoffice"),
+    ("genoffice", "hermesoffice"),
 ]
 
 # Extensões de arquivo que participam do rebrand.

@@ -37,6 +37,8 @@ export const it = {
     'Problema di rete: impossibile raggiungere il servizio IA. Controlla la connessione e riprova',
   aiNewChat: 'Nuova chat',
   aiNoReply: '(nessuna risposta)',
+  aiRegionError:
+    'Il fornitore di questo modello non serve la tua regione attuale — scegli un altro modello o cambia rete',
   aiOverloadedError: 'Il servizio IA è momentaneamente sovraccarico — riprova tra poco',
   aiRegenerateTitle: 'Rigenera',
   aiRetry: 'Riprova',
@@ -49,6 +51,10 @@ export const it = {
   aiTimeoutError: 'Timeout della risposta IA',
   aiToolWebSearch: 'Ricerca web',
   aiToolWebSearchDone: 'Cercato "{query}" · {count} risultati',
+  aiToolImageSearch: 'Ricerca immagini',
+  aiToolImageSearchDone: 'Ricerca immagini "{query}" ({count} immagini)',
+  aiToolGenImage: 'Genera immagine',
+  aiToolGenImageDone: 'Immagine generata dall’IA inserita',
   aiTruncatedNote:
     '(La risposta è stata troncata dal limite di lunghezza e potrebbe essere incompleta.)',
   aiTurnLimit: "Raggiunto il limite di passaggi per esecuzione — invia un'altra istruzione.",
@@ -65,6 +71,7 @@ export const it = {
   aiClarifyDecideAnswer: '(decidi tu per me)',
   aiClarifyMulti: 'Scelta multipla',
   aiClarifyNext: 'Avanti',
+  aiClarifyPrev: 'Indietro',
   aiClarifyOther: 'Altro (da digitare)',
   aiClarifySelected: '{n} selezionati',
   aiClarifySkip: 'Salta sondaggio',

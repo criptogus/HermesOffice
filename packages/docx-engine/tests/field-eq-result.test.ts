@@ -202,4 +202,12 @@ describe('inline field result formatting', () => {
     expect(runs).toHaveLength(1)
     expect(runs[0]).toMatchObject({ text: 'Erika', italic: true })
   })
+
+  it('clamps a hostile array column count instead of hanging', () => {
+    const start = Date.now()
+    const eq = eqFieldToOmml('EQ \\a \\co9999999999 (a,b)')!
+    expect(Date.now() - start).toBeLessThan(5000)
+    expect(eq.omml).toContain('m:val="64"')
+    expect(eq.omml.match(/<m:mr>/g)).toHaveLength(1)
+  })
 })

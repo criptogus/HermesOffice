@@ -69,6 +69,30 @@ describe('span building', () => {
     expect(span!.charSpacingPt).toBeCloseTo(-0.4, 5)
   })
 
+  const scaledChars = (hscale: number) => {
+    const chars = []
+    let x = 72
+    for (const ch of '\u538b\u7f29\u6587\u672c') {
+      const c = mkChar(ch, x, { fontSize: 10, width: 9 })
+      c.hscale = hscale
+      chars.push(c)
+      x += 8.6
+    }
+    return chars
+  }
+
+  it('drops non-finite glyph scales instead of emitting invalid w:w', () => {
+    const [span] = spansOf(scaledChars(Infinity))
+    expect(span!.charScale).toBeUndefined()
+  })
+
+  it('keeps condensed and stretched scales inside the OOXML 1%..600% window', () => {
+    expect(spansOf(scaledChars(0.3))[0]!.charScale).toBeCloseTo(0.3, 5)
+    expect(spansOf(scaledChars(3))[0]!.charScale).toBeCloseTo(3, 5)
+    expect(spansOf(scaledChars(6.5))[0]!.charScale).toBeUndefined()
+    expect(spansOf(scaledChars(0.005))[0]!.charScale).toBeUndefined()
+  })
+
   it('drops negative tracking when word spaces render at normal width (P14 B: inflated /Widths)', () => {
     // PowerPoint-export pattern: every glyph's declared advance (loose box) is
     // ~0.18em wider than the TJ-laid advance, so pairwise "tracking" reads a
@@ -248,6 +272,40 @@ describe('span building', () => {
     }
     const [span] = spansOf(chars)
     expect(span!.charSpacingPt).toBeCloseTo(1.2, 5)
+  })
+
+  it('drops negative tracking on a space-less EA run whose pairs still advance fullwidth (hermesoffice#1890)', () => {
+    // Word-export DFKai-SB pattern: the declared /Widths are wider than
+    // anything the layout used — glyphs advance at the normal 1 em while the
+    // declared advance reads 1.34 em, so pairwise "tracking" reads a large
+    // negative constant although the run is not squeezed. There are no word
+    // spaces to probe (P14 B), so the fullwidth advance is the evidence.
+    const chars: PdfChar[] = []
+    let x = 100
+    const fontSize = 12
+    for (const ch of '\u5BE9\u67E5\u610F\u898B') {
+      const c = mkChar(ch, x, { fontSize, width: fontSize })
+      c.looseBox = { ...c.looseBox, x1: c.looseBox.x0 + fontSize * 1.34 }
+      chars.push(c)
+      x += fontSize // actual advance: fullwidth
+    }
+    const [span] = spansOf(chars)
+    expect(span!.text).toBe('\u5BE9\u67E5\u610F\u898B')
+    expect(span!.charSpacingPt).toBeUndefined()
+  })
+
+  it('keeps negative tracking on an EA run whose pairs genuinely advance narrower', () => {
+    // hard-compressed EA text: pairs advance 0.66 em — under the 0.9 em
+    // fullwidth bar, so the squeeze is real and must survive as w:spacing
+    const chars: PdfChar[] = []
+    let x = 100
+    const fontSize = 12
+    for (const ch of '\u5BE9\u67E5\u610F\u898B') {
+      chars.push(mkChar(ch, x, { fontSize, width: fontSize }))
+      x += fontSize * 0.66
+    }
+    const [span] = spansOf(chars)
+    expect(span!.charSpacingPt).toBeCloseTo(-fontSize * 0.34, 5)
   })
 
   it('a word gap never enters the tracking chain (inferred space resets it)', () => {

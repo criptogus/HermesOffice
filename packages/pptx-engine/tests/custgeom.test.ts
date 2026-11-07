@@ -127,6 +127,24 @@ describe('parseCustGeom', () => {
     expect(nums[nums.length - 1]).toBeCloseTo(1, 4)
   })
 
+  it('bounds multi-revolution arcTo expansion while preserving its endpoint', () => {
+    for (const [sweep, endpoint] of [
+      ['21600000000', '1 0.5'],
+      ['21605400000', '0.5 1'],
+    ] as const) {
+      const xml = spWrap(
+        `<a:custGeom><a:pathLst><a:path w="100" h="100">` +
+          `<a:moveTo><a:pt x="100" y="50"/></a:moveTo>` +
+          `<a:arcTo wR="50" hR="50" stAng="0" swAng="${sweep}"/>` +
+          `</a:path></a:pathLst></a:custGeom>`,
+      )
+      const path = parseCustGeom(xml, 914400, 914400)?.path
+      expect(path).toBeDefined()
+      expect(path!.match(/\bC\b/g)!.length).toBeLessThanOrEqual(8)
+      expect(path!.endsWith(endpoint)).toBe(true)
+    }
+  })
+
   it('fill="none"/stroke="0" bucketed separately, multiple paths concatenated', () => {
     const xml = spWrap(
       `<a:custGeom><a:pathLst>` +

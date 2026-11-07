@@ -10,7 +10,7 @@ import { xmllintAvailable } from '../../../tools/ooxml-validate/validate-pptx.mj
 // Exercise the real validator from a path with spaces even in a space-free CI checkout.
 describe.skipIf(!xmllintAvailable() && !process.env.CI)('schema validator paths', () => {
   it('validates a clean deck when the schema directory contains spaces', async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'genoffice schema path '))
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hermesoffice schema path '))
     try {
       const root = path.resolve(__dirname, '../../..')
       fs.cpSync(path.join(root, 'tools/ooxml-validate'), path.join(tmp, 'validator'), {

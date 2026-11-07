@@ -37,6 +37,8 @@ export const es = {
     'Problema de red: no se pudo conectar con el servicio de IA. Comprueba tu conexión e inténtalo de nuevo',
   aiNewChat: 'Nueva conversación',
   aiNoReply: '(sin respuesta)',
+  aiRegionError:
+    'El proveedor de este modelo no da servicio en tu región actual — elige otro modelo o cambia de red',
   aiOverloadedError:
     'El servicio de IA está saturado en este momento; inténtalo de nuevo en unos instantes',
   aiRegenerateTitle: 'Regenerar',
@@ -50,6 +52,10 @@ export const es = {
   aiTimeoutError: 'La respuesta de IA agotó el tiempo',
   aiToolWebSearch: 'Búsqueda web',
   aiToolWebSearchDone: 'Búsqueda de «{query}» · {count} resultados',
+  aiToolImageSearch: 'Búsqueda de imágenes',
+  aiToolImageSearchDone: 'Búsqueda de imágenes «{query}» ({count} imágenes)',
+  aiToolGenImage: 'Generar imagen',
+  aiToolGenImageDone: 'Imagen generada por IA insertada',
   aiTruncatedNote: '(La respuesta fue cortada por el límite de longitud y puede estar incompleta.)',
   aiTurnLimit:
     'Se alcanzó el límite de pasos por ejecución; envía otra instrucción para continuar.',
@@ -66,6 +72,7 @@ export const es = {
   aiClarifyDecideAnswer: '(decide por mí)',
   aiClarifyMulti: 'Selección múltiple',
   aiClarifyNext: 'Siguiente',
+  aiClarifyPrev: 'Anterior',
   aiClarifyOther: 'Otro (escríbelo)',
   aiClarifySelected: '{n} seleccionados',
   aiClarifySkip: 'Omitir encuesta',

@@ -2,6 +2,8 @@
 /// External targets live as TargetMode="External" relationships referenced by
 /// r:id; internal anchors use the `location` attribute and need no rel.
 
+import { escapeRegExp, nextFreeRelationshipId } from './xlsx-sheets'
+
 export { ensureRelationshipNamespace } from './xlsx-namespace'
 
 export class HyperlinkEditError extends Error {}
@@ -46,7 +48,12 @@ export function applyHyperlinkEdits(
   }
   const dropUnusedRel = (relId: string): void => {
     if (rels === null || relIdsInUse().has(relId)) return
-    const next = rels.replace(new RegExp(`<Relationship\\b[^>]*\\bId="${relId}"[^>]*/>`), '')
+    // Quote-agnostic like the id scan in xlsx-sheets.ts: a single-quoted
+    // r:id is document-controlled; unescaped it could match every relationship.
+    const next = rels.replace(
+      new RegExp(`<Relationship\\b[^>]*\\bId=["']${escapeRegExp(relId)}["'][^>]*/>`),
+      '',
+    )
     if (next !== rels) {
       rels = next
       relsChanged = true
@@ -57,15 +64,22 @@ export function applyHyperlinkEdits(
       rels = EMPTY_RELS
       relsChanged = true
     }
-    let maximum = 0
-    for (const id of rels.matchAll(/\bId="rId([0-9]+)"/g)) {
-      maximum = Math.max(maximum, Number(id[1]))
-    }
-    const relId = `rId${maximum + 1}`
+    const relId = nextFreeRelationshipId(rels)
     const element =
       `<Relationship Id="${relId}" Type="${HYPERLINK_REL_TYPE}" ` +
       `Target="${escapeXmlAttribute(target)}" TargetMode="External"/>`
-    rels = rels.replace('</Relationships>', () => `${element}</Relationships>`)
+    const close = rels.replace('</Relationships>', () => `${element}</Relationships>`)
+    if (close !== rels) {
+      rels = close
+    } else {
+      const emptyRoot = /<Relationships\b([^>]*)\/>/.exec(rels)
+      if (emptyRoot) {
+        rels = rels.replace(
+          emptyRoot[0],
+          `<Relationships${emptyRoot[1]}>${element}</Relationships>`,
+        )
+      }
+    }
     relsChanged = true
     return relId
   }

@@ -1,3 +1,4 @@
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -107,6 +108,29 @@ describe('table additions', () => {
     expect(worksheet).toContain('<tablePart r:id="rId2"/>')
   })
 
+  it('extends a <tableParts> that carries no count attribute', async () => {
+    // count is optional in CT_TableParts; the old opener regex required it, so
+    // the new part landed in a second, duplicate element.
+    const zip = await JSZip.loadAsync(await buildEditFixture())
+    const sheet = await zip.file('xl/worksheets/sheet1.xml')!.async('string')
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      sheet.replace(
+        '</worksheet>',
+        '<tableParts><tablePart r:id="rId9"/></tableParts></worksheet>',
+      ),
+    )
+    const plan = await planWith(
+      [tableAddition()],
+      await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
+    )
+
+    const worksheet = plan.replaced.get('xl/worksheets/sheet1.xml')
+    expect(worksheet).toContain('<tableParts count="2">')
+    expect(worksheet).toContain('<tablePart r:id="rId9"/><tablePart r:id="rId1"/></tableParts>')
+    expect(worksheet?.match(/<tableParts\b/g)).toHaveLength(1)
+  })
+
   it('rejects overlapping tables in the same save', async () => {
     await expect(
       planWith([
@@ -168,6 +192,28 @@ describe('table additions', () => {
         await buildStructureFixture(),
       ),
     ).rejects.toThrow(/overlaps merged cells/)
+  })
+
+  it('writes Table Design options: totals row, no filter button, column flags', async () => {
+    const plan = await planWith([
+      tableAddition({
+        area: { startRow: 0, startColumn: 0, endRow: 4, endColumn: 1 },
+        options: { totalsRow: true, filterButton: false, firstColumn: true, bandedColumns: true },
+      }),
+    ])
+    const tableXml = plan.added.get('xl/tables/table1.xml')
+    expect(tableXml).toContain('ref="A1:B5" totalsRowCount="1" totalsRowShown="1"')
+    expect(tableXml).not.toContain('<autoFilter')
+    expect(tableXml).toContain(
+      'showFirstColumn="1" showLastColumn="0" showRowStripes="1" showColumnStripes="1"',
+    )
+  })
+
+  it('writes a headerless table without a filter', async () => {
+    const plan = await planWith([tableAddition({ options: { headerRow: false } })])
+    const tableXml = plan.added.get('xl/tables/table1.xml')
+    expect(tableXml).toContain('headerRowCount="0"')
+    expect(tableXml).not.toContain('<autoFilter')
   })
 
   it('fails closed when the same save shifts rows on the table sheet', async () => {

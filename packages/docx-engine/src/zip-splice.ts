@@ -11,6 +11,7 @@ import {
   lazyMediaHashOf,
   lazyMediaPlaceholder,
 } from './lazy-media'
+import { DOCX_ZIP_LIMITS, assertDeclaredSizesWithinLimits, type ZipLimits } from './zip-load'
 
 export interface ZipEntry {
   name: string
@@ -71,7 +72,10 @@ function fileSource(fh: FileHandle, size: number): ByteSource {
   }
 }
 
-export async function readZipEntries(src: ByteSource): Promise<ZipEntry[]> {
+export async function readZipEntries(
+  src: ByteSource,
+  limits: ZipLimits = DOCX_ZIP_LIMITS,
+): Promise<ZipEntry[]> {
   const tailLen = Math.min(src.size, 22 + 0xffff)
   const tail = await src.read(src.size - tailLen, tailLen)
   let eocd = -1
@@ -134,12 +138,30 @@ export async function readZipEntries(src: ByteSource): Promise<ZipEntry[]> {
     })
     pos += 46 + nameLen + extraLen + commentLen
   }
+  // Same bounded-archive gate the normal parse path applies, run before a
+  // single entry is read: this reader backs every lazy-media open (openZipFile,
+  // slimDocx, lazyMediaHashesIn, materializeDocx), and it used to concatenate
+  // an unchecked archive — a central directory declaring excessive parts or
+  // expanded bytes was honoured wholesale. Directories carry no payload, so
+  // they are not counted, exactly as the JSZip-side gate counts them.
+  assertDeclaredSizesWithinLimits(
+    entries.filter((e) => !e.name.endsWith('/')).map((e) => ({ name: e.name, usize: e.usize })),
+    limits,
+  )
   // the local header's name/extra lengths may differ from the central copy
   for (const e of entries) {
     const local = await src.read(e.dataOffset, 30)
     if (local.length < 30 || local.readUInt32LE(0) !== SIG_LOCAL)
       throw new Error(`zip: corrupt local header for ${e.name}`)
     e.dataOffset += 30 + local.readUInt16LE(26) + local.readUInt16LE(28)
+    // csize is the archive's own word about itself; readers below allocate
+    // from it before touching the file, so a declared length past the end
+    // (or past int32 — fs.read aborts the process on one) must never reach them.
+    if (e.dataOffset > src.size || e.csize > src.size - e.dataOffset)
+      throw new Error(
+        `zip: entry ${e.name} declares ${e.csize} bytes at ${e.dataOffset}, ` +
+          `outside the ${src.size}-byte archive`,
+      )
   }
   return entries
 }
@@ -185,8 +207,8 @@ export function writeZip(entries: OutEntry[]): Buffer {
     local.writeUInt16LE(meta.time, 10)
     local.writeUInt16LE(meta.date, 12)
     local.writeUInt32LE(meta.crc, 14)
-    local.writeUInt32LE(meta.csize, 16)
-    local.writeUInt32LE(meta.usize, 20)
+    local.writeUInt32LE(meta.csize, 18)
+    local.writeUInt32LE(meta.usize, 22)
     local.writeUInt16LE(meta.nameBytes.length, 26)
     local.writeUInt16LE(0, 28)
     const central = Buffer.alloc(46)

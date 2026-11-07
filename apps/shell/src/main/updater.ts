@@ -2,17 +2,24 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { app, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, CancellationToken } from 'electron-updater'
+import { installResumeDownload } from './update-resume'
 import type { UpdateInfo } from 'electron-updater'
 import { createI18n, getUiLang, htmlLang } from '@hermesoffice/i18n'
-import { GITHUB_REPO_URL, safeExternalUrl } from '@hermesoffice/electron-utils'
 import type {
   UpdateChannel,
   UpdatePhase,
   UpdateUiState,
   UpdateUiStrings,
 } from '../shared/update-api'
-import { closeUpdateWindow, pushUpdateState, showUpdateWindow } from './update-window'
+import {
+  clearUpdateState,
+  closeUpdateWindow,
+  isUpdateWindowOpen,
+  pushUpdateState,
+  setUpdateParentWindow,
+  showUpdateWindow,
+} from './update-window'
 
 /**
  * Full-package auto-update over the generic provider (Azure CDN).
@@ -42,7 +49,7 @@ const tUpd = createI18n({
     updHeadline: '发现新版本',
     updDesc: '新版本包含性能改进与问题修复，建议立即更新。',
     updDownload: '立即更新',
-    updLater: '稍后再说',
+    updLater: '最小化',
     updInstall: '立即重启安装',
     updDownloading: '正在下载更新…',
     updFailed: '更新下载失败，请检查网络后重试。',
@@ -58,7 +65,7 @@ const tUpd = createI18n({
     updDesc:
       'This update includes performance improvements and bug fixes. We recommend updating now.',
     updDownload: 'Update Now',
-    updLater: 'Remind me later',
+    updLater: 'Minimize',
     updInstall: 'Restart & Install',
     updDownloading: 'Downloading update…',
     updFailed: 'Update download failed. Check your network and try again.',
@@ -69,13 +76,47 @@ const tUpd = createI18n({
     updCheckFailed: "Couldn't check for updates. Check your network and try again.",
     updOpenDownload: 'Open Download Page',
   },
+  vi: {
+    updTitle: 'Cập nhật phần mềm',
+    updHeadline: 'Đã có phiên bản mới',
+    updDesc:
+      'Bản cập nhật này bao gồm các cải tiến hiệu suất và sửa lỗi. Chúng tôi khuyên bạn nên cập nhật ngay bây giờ.',
+    updDownload: 'Cập nhật ngay',
+    updLater: 'Thu nhỏ',
+    updInstall: 'Khởi động lại & Cài đặt',
+    updDownloading: 'Đang tải xuống bản cập nhật…',
+    updFailed: 'Tải xuống bản cập nhật thất bại. Kiểm tra mạng của bạn và thử lại.',
+    updRetry: 'Thử lại',
+    updManual:
+      'Cập nhật tự động thất bại. Vui lòng lấy phiên bản mới nhất từ trang tải xuống và cài đặt thủ công.',
+    updUpToDate: 'Bạn đang sử dụng phiên bản mới nhất (phiên bản {version}).',
+    updCheckFailed: 'Không thể kiểm tra bản cập nhật. Kiểm tra mạng của bạn và thử lại.',
+    updOpenDownload: 'Mở trang tải xuống',
+  },
+  tr: {
+    updTitle: 'Yazılım Güncellemesi',
+    updHeadline: 'Yeni bir sürüm mevcut',
+    updDesc:
+      'Bu güncelleme performans iyileştirmeleri ve hata düzeltmeleri içerir. Şimdi güncellemenizi öneririz.',
+    updDownload: 'Şimdi Güncelle',
+    updLater: 'Simge Durumuna Küçült',
+    updInstall: 'Yeniden Başlat ve Yükle',
+    updDownloading: 'Güncelleme indiriliyor…',
+    updFailed: 'Güncelleme indirilemedi. Ağ bağlantınızı kontrol edip yeniden deneyin.',
+    updRetry: 'Yeniden Dene',
+    updManual:
+      'Otomatik güncelleme başarısız oldu. Lütfen en son sürümü indirme sayfasından alıp elle yükleyin.',
+    updUpToDate: 'Güncel sürümü kullanıyorsunuz (sürüm {version}).',
+    updCheckFailed: 'Güncellemeler denetlenemedi. Ağ bağlantınızı kontrol edip yeniden deneyin.',
+    updOpenDownload: 'İndirme Sayfasını Aç',
+  },
   ja: {
     updTitle: 'ソフトウェアアップデート',
     updHeadline: '新しいバージョンがあります',
     updDesc:
       'このアップデートにはパフォーマンス改善とバグ修正が含まれます。今すぐの更新をおすすめします。',
     updDownload: '今すぐ更新',
-    updLater: '後で通知',
+    updLater: '最小化',
     updInstall: '再起動してインストール',
     updDownloading: 'アップデートをダウンロード中…',
     updFailed: 'ダウンロードに失敗しました。ネットワークを確認して再試行してください。',
@@ -92,7 +133,7 @@ const tUpd = createI18n({
     updDesc:
       '이 업데이트에는 성능 개선과 버그 수정이 포함되어 있습니다. 지금 업데이트하는 것을 권장합니다.',
     updDownload: '지금 업데이트',
-    updLater: '나중에 알림',
+    updLater: '최소화',
     updInstall: '다시 시작 및 설치',
     updDownloading: '업데이트 다운로드 중…',
     updFailed: '업데이트 다운로드에 실패했습니다. 네트워크를 확인한 후 다시 시도하세요.',
@@ -109,7 +150,7 @@ const tUpd = createI18n({
     updDesc:
       'Cette mise à jour apporte des améliorations de performances et des corrections de bogues. Nous vous recommandons de mettre à jour maintenant.',
     updDownload: 'Mettre à jour',
-    updLater: 'Plus tard',
+    updLater: 'Réduire',
     updInstall: 'Redémarrer et installer',
     updDownloading: 'Téléchargement de la mise à jour…',
     updFailed: 'Échec du téléchargement. Vérifiez votre réseau et réessayez.',
@@ -127,7 +168,7 @@ const tUpd = createI18n({
     updDesc:
       'Dieses Update enthält Leistungsverbesserungen und Fehlerbehebungen. Wir empfehlen, jetzt zu aktualisieren.',
     updDownload: 'Jetzt aktualisieren',
-    updLater: 'Später erinnern',
+    updLater: 'Minimieren',
     updInstall: 'Neu starten und installieren',
     updDownloading: 'Update wird heruntergeladen…',
     updFailed:
@@ -146,7 +187,7 @@ const tUpd = createI18n({
     updDesc:
       'Esta actualización incluye mejoras de rendimiento y correcciones de errores. Recomendamos actualizar ahora.',
     updDownload: 'Actualizar ahora',
-    updLater: 'Recordar más tarde',
+    updLater: 'Minimizar',
     updInstall: 'Reiniciar e instalar',
     updDownloading: 'Descargando la actualización…',
     updFailed: 'Error al descargar. Compruebe su red e inténtelo de nuevo.',
@@ -162,7 +203,7 @@ const tUpd = createI18n({
     updHeadline: 'มีเวอร์ชันใหม่พร้อมใช้งาน',
     updDesc: 'การอัปเดตนี้มีการปรับปรุงประสิทธิภาพและแก้ไขข้อบกพร่อง แนะนำให้อัปเดตทันที',
     updDownload: 'อัปเดตเลย',
-    updLater: 'เตือนภายหลัง',
+    updLater: 'ย่อเก็บ',
     updInstall: 'รีสตาร์ทและติดตั้ง',
     updDownloading: 'กำลังดาวน์โหลดอัปเดต…',
     updFailed: 'ดาวน์โหลดไม่สำเร็จ โปรดตรวจสอบเครือข่ายแล้วลองอีกครั้ง',
@@ -179,7 +220,7 @@ const tUpd = createI18n({
     updDesc:
       'Pembaruan ini mencakup peningkatan kinerja dan perbaikan bug. Kami menyarankan untuk memperbarui sekarang.',
     updDownload: 'Perbarui Sekarang',
-    updLater: 'Ingatkan nanti',
+    updLater: 'Minimalkan',
     updInstall: 'Mulai Ulang & Pasang',
     updDownloading: 'Mengunduh pembaruan…',
     updFailed: 'Unduhan gagal. Periksa jaringan Anda dan coba lagi.',
@@ -196,7 +237,7 @@ const tUpd = createI18n({
     updDesc:
       'Это обновление содержит улучшения производительности и исправления ошибок. Рекомендуем обновиться сейчас.',
     updDownload: 'Обновить сейчас',
-    updLater: 'Напомнить позже',
+    updLater: 'Свернуть',
     updInstall: 'Перезапустить и установить',
     updDownloading: 'Загрузка обновления…',
     updFailed: 'Не удалось загрузить обновление. Проверьте сеть и повторите попытку.',
@@ -212,7 +253,7 @@ const tUpd = createI18n({
     updHeadline: 'يتوفر إصدار جديد',
     updDesc: 'يتضمن هذا التحديث تحسينات في الأداء وإصلاحات للأخطاء. نوصي بالتحديث الآن.',
     updDownload: 'التحديث الآن',
-    updLater: 'ذكّرني لاحقًا',
+    updLater: 'تصغير',
     updInstall: 'إعادة التشغيل والتثبيت',
     updDownloading: 'جارٍ تنزيل التحديث…',
     updFailed: 'فشل تنزيل التحديث. تحقق من الشبكة وحاول مرة أخرى.',
@@ -228,7 +269,7 @@ const tUpd = createI18n({
     updDesc:
       'Esta atualização inclui melhorias de desempenho e correções de erros. Recomendamos atualizar agora.',
     updDownload: 'Atualizar agora',
-    updLater: 'Lembrar mais tarde',
+    updLater: 'Minimizar',
     updInstall: 'Reiniciar e instalar',
     updDownloading: 'Baixando a atualização…',
     updFailed: 'Falha no download. Verifique sua rede e tente novamente.',
@@ -245,7 +286,7 @@ const tUpd = createI18n({
     updDesc:
       'Questo aggiornamento include miglioramenti delle prestazioni e correzioni di bug. Consigliamo di aggiornare subito.',
     updDownload: 'Aggiorna ora',
-    updLater: 'Ricordamelo più tardi',
+    updLater: 'Riduci a icona',
     updInstall: 'Riavvia e installa',
     updDownloading: "Download dell'aggiornamento…",
     updFailed: 'Download non riuscito. Controlla la rete e riprova.',
@@ -262,7 +303,7 @@ const tUpd = createI18n({
     updDesc:
       'Ta aktualizacja zawiera ulepszenia wydajności i poprawki błędów. Zalecamy aktualizację teraz.',
     updDownload: 'Aktualizuj teraz',
-    updLater: 'Przypomnij później',
+    updLater: 'Zminimalizuj',
     updInstall: 'Uruchom ponownie i zainstaluj',
     updDownloading: 'Pobieranie aktualizacji…',
     updFailed: 'Pobieranie nie powiodło się. Sprawdź sieć i spróbuj ponownie.',
@@ -279,7 +320,7 @@ const tUpd = createI18n({
     updDesc:
       'Tato aktualizace obsahuje vylepšení výkonu a opravy chyb. Doporučujeme aktualizovat hned.',
     updDownload: 'Aktualizovat nyní',
-    updLater: 'Připomenout později',
+    updLater: 'Minimalizovat',
     updInstall: 'Restartovat a nainstalovat',
     updDownloading: 'Stahování aktualizace…',
     updFailed: 'Stažení aktualizace se nezdařilo. Zkontrolujte síť a zkuste to znovu.',
@@ -296,7 +337,7 @@ const tUpd = createI18n({
     updDesc:
       'Deze update bevat prestatieverbeteringen en foutoplossingen. We raden aan nu bij te werken.',
     updDownload: 'Nu bijwerken',
-    updLater: 'Later herinneren',
+    updLater: 'Minimaliseren',
     updInstall: 'Opnieuw starten en installeren',
     updDownloading: 'Update wordt gedownload…',
     updFailed: 'Download mislukt. Controleer uw netwerk en probeer het opnieuw.',
@@ -314,7 +355,7 @@ const tUpd = createI18n({
     updDesc:
       'Kemas kini ini merangkumi penambahbaikan prestasi dan pembetulan pepijat. Kami syorkan kemas kini sekarang.',
     updDownload: 'Kemas Kini Sekarang',
-    updLater: 'Ingatkan kemudian',
+    updLater: 'Minimumkan',
     updInstall: 'Mula Semula & Pasang',
     updDownloading: 'Memuat turun kemas kini…',
     updFailed: 'Muat turun gagal. Semak rangkaian anda dan cuba lagi.',
@@ -330,7 +371,7 @@ const tUpd = createI18n({
     updHeadline: 'גרסה חדשה זמינה',
     updDesc: 'עדכון זה כולל שיפורי ביצועים ותיקוני באגים. מומלץ לעדכן עכשיו.',
     updDownload: 'עדכן עכשיו',
-    updLater: 'הזכר לי מאוחר יותר',
+    updLater: 'מזער',
     updInstall: 'הפעל מחדש והתקן',
     updDownloading: 'מוריד את העדכון…',
     updFailed: 'ההורדה נכשלה. בדוק את הרשת ונסה שוב.',
@@ -346,7 +387,7 @@ const tUpd = createI18n({
     updDesc:
       'इस अपडेट में प्रदर्शन सुधार और बग फ़िक्स शामिल हैं। हम अभी अपडेट करने की सलाह देते हैं।',
     updDownload: 'अभी अपडेट करें',
-    updLater: 'बाद में याद दिलाएँ',
+    updLater: 'छोटा करें',
     updInstall: 'पुनरारंभ करें और इंस्टॉल करें',
     updDownloading: 'अपडेट डाउनलोड हो रहा है…',
     updFailed: 'डाउनलोड विफल रहा। अपना नेटवर्क जाँचें और पुनः प्रयास करें।',
@@ -362,7 +403,7 @@ const tUpd = createI18n({
     updHeadline: '發現新版本',
     updDesc: '新版本包含效能改進與問題修復，建議立即更新。',
     updDownload: '立即更新',
-    updLater: '稍後再說',
+    updLater: '最小化',
     updInstall: '立即重新啟動安裝',
     updDownloading: '正在下載更新…',
     updFailed: '更新下載失敗，請檢查網路後重試。',
@@ -387,7 +428,7 @@ const MANUAL_FALLBACK_AFTER = 2
 // and signing track, so a stable/legacy-track user could land on the wrong
 // build. Preferred is the CDN installer derived from the user's own update
 // feed (see manualDownloadUrlFor), which matches channel, track, and arch.
-const DOWNLOAD_PAGE_URL = `${GITHUB_REPO_URL}/releases/latest`
+const DOWNLOAD_PAGE_URL = 'https://github.com/criptogus/HermesOffice/releases/latest'
 
 /// Trusted HTTPS base URL baked into resources/app-update.yml. Manual download
 /// links are always rebuilt from this base rather than trusting URLs supplied
@@ -446,10 +487,14 @@ function manualDownloadUrlFor(info: UpdateInfo): string | null {
 }
 
 let started = false
+// version the user declined this session — don't nag again until next launch
+let dismissedVersion: string | null = null
 // re-shows the HERMESOFFICE_FAKE_UPDATE window so the manual check is
 // exercisable in dev runs too
 let fakeShowAgain: (() => void) | null = null
 let manualCheckInFlight = false
+// set by initAutoUpdater; drops the download state of the channel being left
+let resetDownloadFlow: (() => void) | null = null
 
 // electron-updater feed name per user-facing channel. The platform suffix is
 // appended by electron-updater itself: 'beta' resolves to beta.yml on
@@ -459,6 +504,12 @@ const CHANNEL_FEED: Record<UpdateChannel, string> = { stable: 'latest', beta: 'b
 // true once the packaged-run updater is configured; channel switches before
 // that (or in dev runs) must not touch electron-updater
 let updaterActive = false
+
+// The check in flight is quiet when a background timer started it: the package
+// then downloads in the background and the app installs it when it quits
+// (upstream#2389). A check the user asked for — the Help entry, the About
+// dialog button, a channel switch — opens the update card instead.
+let quietCheck = false
 
 function log(...args: unknown[]): void {
   console.log('[updater]', ...args)
@@ -494,6 +545,9 @@ export function initialState(version: string): UpdateUiState {
 
 export function applyUpdateChannel(channel: UpdateChannel): void {
   if (!updaterActive) return
+  resetDownloadFlow?.()
+  // the user asked for this channel: it gets the card, not a quiet download
+  quietCheck = false
   autoUpdater.channel = CHANNEL_FEED[channel]
   // the channel setter unconditionally flips allowDowngrade to true; force it
   // back off since a beta user switching to stable must not downgrade
@@ -527,12 +581,12 @@ export async function checkForUpdatesNow(): Promise<void> {
         defaultId: 0,
         cancelId: 0,
       })
-      if (response === 1) {
-        const target = safeExternalUrl(DOWNLOAD_PAGE_URL)
-        if (target) void shell.openExternal(target)
-      }
+      if (response === 1) void shell.openExternal(DOWNLOAD_PAGE_URL)
       return
     }
+    dismissedVersion = null
+    // the user asked for it: the card, not a quiet download
+    quietCheck = false
     let result
     try {
       result = await autoUpdater.checkForUpdates()
@@ -566,8 +620,7 @@ export async function checkForUpdatesNow(): Promise<void> {
 }
 
 /** Manual-check outcomes for transports without their own result UI (the
- * source/GitHub-main updater): "you're current" and "couldn't reach the
- * feed" dialogs, same strings the CDN path uses. */
+ * source updater has no feed dialogs, same strings the CDN path uses). */
 export async function showManualCheckUpToDate(): Promise<void> {
   const lang = getUiLang()
   await dialog.showMessageBox({
@@ -595,9 +648,15 @@ export async function showManualCheckFailed(): Promise<void> {
 export function initAutoUpdater(
   getWindow: () => BrowserWindow | null,
   initialChannel: UpdateChannel = 'stable',
+  /** Settings › "Check for updates automatically"; read at every background check (upstream#2127) */
+  autoCheckEnabled: () => boolean = () => true,
+  /** Settings › "Install updates silently" (off by default): a background check
+   *  downloads the package quietly and installs it on quit instead of opening the card */
+  silentInstallEnabled: () => boolean = () => false,
 ): void {
   if (started) return
   started = true
+  setUpdateParentWindow(getWindow)
 
   // dev preview of the update window with a simulated download
   if (!app.isPackaged && process.env.HERMESOFFICE_FAKE_UPDATE) {
@@ -621,11 +680,12 @@ export function initAutoUpdater(
   // back off since a beta user switching to stable must not downgrade
   autoUpdater.allowDowngrade = false
   autoUpdater.autoDownload = false
-  // Downloading is not consent to install: "later" must also survive app quit.
-  autoUpdater.autoInstallOnAppQuit = false
+  // if the user picked "later" after download, install on normal quit
+  autoUpdater.autoInstallOnAppQuit = true
   // full-package policy: never attempt blockmap differential downloads
   // (CI does not publish .blockmap files)
   autoUpdater.disableDifferentialDownload = true
+  installResumeDownload(autoUpdater as unknown as Parameters<typeof installResumeDownload>[0])
 
   let latestSeenVersion: string | null = null
   // CDN installer link for latestSeenVersion (channel/track/arch-correct);
@@ -642,6 +702,10 @@ export function initAutoUpdater(
   // "Update Now" over a download that is running or already finished
   let phase: UpdatePhase = 'available'
   let percent = 0
+  // the running download's token plus a generation stamp, so a channel switch
+  // can cancel the request and its late rejection cannot fail the next one
+  let downloadToken: CancellationToken | null = null
+  let downloadGen = 0
 
   const setPhase = (patch: { phase: UpdatePhase; percent?: number }): void => {
     phase = patch.phase
@@ -656,27 +720,55 @@ export function initAutoUpdater(
     setPhase({ phase: failedAttempts >= MANUAL_FALLBACK_AFTER ? 'manual' : 'error' })
   }
 
+  // electron-updater cannot discard a finished download, so a package from
+  // the previous channel is made stale instead: it is never installed (not on
+  // quit, not via the window) and the next channel's update-available starts
+  // the flow over from 'available'
+  resetDownloadFlow = () => {
+    if (latestSeenVersion === null) return
+    log('channel switch: dropping', latestSeenVersion, 'in phase', phase)
+    autoUpdater.autoInstallOnAppQuit = false
+    downloadToken?.cancel()
+    downloadToken = null
+    downloadGen += 1
+    latestSeenVersion = null
+    manualDownloadUrl = null
+    failedAttempts = 0
+    downloadInFlight = false
+    phase = 'available'
+    percent = 0
+    clearUpdateState()
+  }
+
+  /** Download the version on offer. The card's "Update Now" button and the
+   *  quiet background download share this path. */
+  const startDownload = (): void => {
+    if (downloadInFlight || phase === 'downloaded') return
+    downloadInFlight = true
+    setPhase({ phase: 'downloading', percent: 0 })
+    const gen = ++downloadGen
+    downloadToken = new CancellationToken()
+    autoUpdater.downloadUpdate(downloadToken).catch((err) => {
+      if (gen !== downloadGen) return
+      log('download failed:', err?.message ?? err)
+      failDownload()
+    })
+  }
+
   const actions = {
-    onDownload: () => {
-      if (phase === 'downloading' || phase === 'downloaded') return
-      downloadInFlight = true
-      setPhase({ phase: 'downloading', percent: 0 })
-      autoUpdater.downloadUpdate().catch((err) => {
-        log('download failed:', err?.message ?? err)
-        failDownload()
-      })
-    },
+    onDownload: startDownload,
     onInstall: () => {
       closeUpdateWindow()
+      if (latestSeenVersion === null) return
       // let the window fully close before tearing the app down
       setImmediate(() => autoUpdater.quitAndInstall(true, true))
     },
     onLater: () => {
+      dismissedVersion = latestSeenVersion
       closeUpdateWindow()
     },
     onOpenDownload: () => {
-      const target = safeExternalUrl(manualDownloadUrl ?? DOWNLOAD_PAGE_URL)
-      if (target) void shell.openExternal(target)
+      void shell.openExternal(manualDownloadUrl ?? DOWNLOAD_PAGE_URL)
     },
   }
 
@@ -688,17 +780,20 @@ export function initAutoUpdater(
   })
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
-    // Only an explicit check may interrupt the user with an update offer.
-    // Background checks must not open or change the active update window.
-    if (!manualCheckInFlight) return
+    if (info.version === dismissedVersion) return
     const sameVersionRecheck = info.version === latestSeenVersion
     // progress/downloaded/error events carry no version, so a newer release
     // landing while the previous one is downloading or already downloaded
-    // stays out until the user installs it; it must not hijack the open window
+    // stays out until that flow ends (it installs on quit and the next launch
+    // picks up the newer one); it must not hijack the open window
     if (!sameVersionRecheck && (downloadInFlight || phase === 'downloaded')) {
       log('update available:', info.version, 'ignored while', latestSeenVersion, 'is', phase)
-      const version = latestSeenVersion ?? info.version
-      showUpdateWindow(getWindow(), { ...initialState(version), phase, percent }, actions)
+      // an explicit check still owes feedback: bring back the flow in progress
+      // (a background recheck stays quiet)
+      if (manualCheckInFlight && !isUpdateWindowOpen()) {
+        const version = latestSeenVersion ?? info.version
+        showUpdateWindow(getWindow(), { ...initialState(version), phase, percent }, actions)
+      }
       return
     }
     if (!sameVersionRecheck) {
@@ -709,22 +804,43 @@ export function initAutoUpdater(
     latestSeenVersion = info.version
     manualDownloadUrl = manualDownloadUrlFor(info)
     log('update available:', info.version)
-    // Reuse and focus the existing window, preserving progress and retry state.
+    if (quietCheck && silentInstallEnabled()) {
+      // quiet path: no card, the package downloads in the background and the
+      // app installs it when it quits (upstream#2389)
+      startDownload()
+      return
+    }
+    // a periodic recheck resolving to the version the open dialog already
+    // shows must not reset its phase to 'available' — that would wipe an
+    // in-progress download or a terminal 'manual' fallback back to the
+    // "Update Now" offer
+    if (sameVersionRecheck && isUpdateWindowOpen()) return
     showUpdateWindow(getWindow(), { ...initialState(info.version), phase, percent }, actions)
   })
 
   autoUpdater.on('download-progress', (progress) => {
+    if (!downloadInFlight) return
     setPhase({ phase: 'downloading', percent: progress.percent })
   })
 
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    if (info.version !== latestSeenVersion) {
+      log('downloaded:', info.version, 'ignored (stale after channel switch)')
+      return
+    }
     log('downloaded:', info.version)
+    autoUpdater.autoInstallOnAppQuit = true
     downloadInFlight = false
     failedAttempts = 0
     setPhase({ phase: 'downloaded', percent: 100 })
   })
 
   const check = (): void => {
+    // turned off: only an explicit check (Help › Check for Updates…, a channel switch) asks the feed
+    if (!autoCheckEnabled()) return
+    // a background check is quiet: the package downloads in the background and
+    // the app installs it when it quits (upstream#2389)
+    quietCheck = true
     autoUpdater.checkForUpdates().catch((err) => log('check failed:', err?.message ?? err))
   }
   setTimeout(check, FIRST_CHECK_DELAY_MS)

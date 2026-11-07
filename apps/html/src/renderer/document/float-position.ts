@@ -21,14 +21,28 @@ export interface FloatLayout {
 const GAP = 6
 const EDGE = 4
 
+/** Frame-supplied numbers can be NaN/Infinity from a compromised preview frame. */
+function finite(n: unknown, fallback: number): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : fallback
+}
+
 /** floating toolbar anchored just above the selected element (frame coordinates → stage coordinates) */
 export function floatPosition(rect: ElementRect, layout: FloatLayout): FloatPosition {
-  const z = layout.zoom / 100
-  const maxLeft = Math.max(EDGE, layout.stageWidth - layout.barWidth - EDGE)
-  const left = Math.min(maxLeft, Math.max(EDGE, layout.offsetX + rect.x * z))
-  const above = layout.offsetY + rect.y * z - layout.barHeight - GAP
+  const rx = finite(rect.x, 0)
+  const ry = finite(rect.y, 0)
+  const rh = finite(rect.height, 0)
+  const zoom = finite(layout.zoom, 100)
+  const offsetX = finite(layout.offsetX, 0)
+  const offsetY = finite(layout.offsetY, 0)
+  const stageWidth = finite(layout.stageWidth, 800)
+  const barWidth = finite(layout.barWidth, 200)
+  const barHeight = finite(layout.barHeight, 40)
+  const z = zoom / 100
+  const maxLeft = Math.max(EDGE, stageWidth - barWidth - EDGE)
+  const left = Math.min(maxLeft, Math.max(EDGE, offsetX + rx * z))
+  const above = offsetY + ry * z - barHeight - GAP
   if (above >= EDGE) return { left, top: above, below: false }
-  return { left, top: layout.offsetY + (rect.y + rect.height) * z + GAP, below: true }
+  return { left, top: offsetY + (ry + rh) * z + GAP, below: true }
 }
 
 /** `a: b; c: d` → declarations for a set_style op (invalid pieces dropped) */

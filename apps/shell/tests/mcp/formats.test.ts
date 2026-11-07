@@ -16,9 +16,42 @@ import {
 
 describe('format registry', () => {
   it('mirrors the shell open routing for the mcp-driven families', () => {
-    expect(formatFamily('docx').editorOpen).toEqual(['docx'])
-    expect(formatFamily('xlsx').editorOpen).toEqual(['xlsx', 'xlsm', 'xls', 'csv'])
-    expect(formatFamily('pptx').editorOpen).toEqual(['pptx'])
+    expect(formatFamily('docx').editorOpen).toEqual([
+      'docx',
+      'odt',
+      'ott',
+      'doc',
+      'dot',
+      'hwpx',
+      'hwp',
+    ])
+    expect(formatFamily('xlsx').editorOpen).toEqual([
+      'xlsx',
+      'xlsm',
+      'xls',
+      'csv',
+      'tsv',
+      'ods',
+      'ots',
+    ])
+    expect(formatFamily('pptx').editorOpen).toEqual(['pptx', 'odp', 'otp'])
+  })
+
+  it('keeps the converted-copy formats open-only: they convert on open and never save as the source', () => {
+    // the xlsx family converts .tsv/.ods to .xlsx; docx/pptx take .odt/.odp and
+    // legacy Word .doc/.dot the same way
+    for (const [family, exts] of [
+      ['xlsx', ['tsv', 'ods', 'ots']],
+      ['docx', ['odt', 'ott', 'doc', 'dot', 'hwpx', 'hwp']],
+      ['pptx', ['odp', 'otp']],
+    ] as const) {
+      const entry = formatFamily(family)
+      for (const ext of exts) {
+        expect(entry.editorOpen).toContain(ext)
+        expect(entry.editorSave).not.toContain(ext)
+        expect(entry.mcp?.save).not.toContain(ext)
+      }
+    }
   })
 
   it('keeps the editor-only families (md/html) without an mcp block', () => {
@@ -90,7 +123,7 @@ describe('capabilityReport', () => {
     const report = capabilityReport()
     expect(report.map((r) => r.family)).toEqual(['docx', 'xlsx', 'pptx', 'md', 'html', 'pdf'])
     const docx = report.find((r) => r.family === 'docx')!
-    expect(docx.editor.open).toEqual(['docx'])
+    expect(docx.editor.open).toEqual(['docx', 'odt', 'ott', 'doc', 'dot', 'hwpx', 'hwp'])
     expect(docx.editor.export).toEqual(['pdf'])
     expect(docx.mcp).toEqual({ generate: 'docx', save: ['docx'], read: 'docx' })
     // editor-only family carries no mcp key

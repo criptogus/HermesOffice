@@ -6,7 +6,8 @@
  */
 import { analyzePage, PAGE_CONFIDENCE_MIN } from './analyze'
 import { classifyPages } from './analyze/canvas'
-import { detectFurniture, type FurnitureHf } from './analyze/furniture'
+import { detectFurniture, type FurnitureHf, type FurnitureResult } from './analyze/furniture'
+import type { ListSeq } from './analyze/lists'
 import {
   extractPage,
   PdfLoadError,
@@ -104,16 +105,17 @@ const GRAPHICS_GUARD_EMIT_SHARE = 0.35
 const GUARD_WHITE_MIN = 0xf2
 
 function isNearWhiteHex(hex: string): boolean {
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false
+  const v = (hex ?? '').trim()
+  if (!/^[0-9a-fA-F]{6}$/.test(v)) return false
   return (
-    parseInt(hex.slice(0, 2), 16) >= GUARD_WHITE_MIN &&
-    parseInt(hex.slice(2, 4), 16) >= GUARD_WHITE_MIN &&
-    parseInt(hex.slice(4, 6), 16) >= GUARD_WHITE_MIN
+    parseInt(v.slice(0, 2), 16) >= GUARD_WHITE_MIN &&
+    parseInt(v.slice(2, 4), 16) >= GUARD_WHITE_MIN &&
+    parseInt(v.slice(4, 6), 16) >= GUARD_WHITE_MIN
   )
 }
 
 /** authored visible-ink boxes: chars, images, and non-white opaque path fills */
-function authoredInkBoxes(extracted: ExtractedPage): Rect[] {
+export function authoredInkBoxes(extracted: ExtractedPage): Rect[] {
   const boxes: Rect[] = []
   for (const c of extracted.chars) {
     if (!c.isGenerated && !c.invisible && c.text.trim() !== '') boxes.push(c.box)
@@ -125,14 +127,20 @@ function authoredInkBoxes(extracted: ExtractedPage): Rect[] {
     if (!p.filled || (p.fillAlpha ?? 255) < 128 || isNearWhiteHex(p.fillColor)) continue
     for (const sub of p.subpaths) {
       if (sub.points.length < 3) continue
-      const xs = sub.points.map((pt) => pt.x)
-      const ys = sub.points.map((pt) => pt.y)
-      boxes.push({
-        x0: Math.min(...xs),
-        y0: Math.min(...ys),
-        x1: Math.max(...xs),
-        y1: Math.max(...ys),
-      })
+      // a single path can carry 100k+ points (maps, CAD, chart exports);
+      // Math.min(...points) would spread them as arguments and throw past
+      // the engine's argument-count limit
+      let x0 = Infinity
+      let y0 = Infinity
+      let x1 = -Infinity
+      let y1 = -Infinity
+      for (const pt of sub.points) {
+        if (pt.x < x0) x0 = pt.x
+        if (pt.x > x1) x1 = pt.x
+        if (pt.y < y0) y0 = pt.y
+        if (pt.y > y1) y1 = pt.y
+      }
+      boxes.push({ x0, y0, x1, y1 })
     }
   }
   return boxes
@@ -226,7 +234,7 @@ const stitchableText = (b: PageBlock | undefined): TextBlock | null =>
     : null
 
 const lineFontSizePt = (line: TextBlock['lines'][number]): number =>
-  Math.max(...line.spans.map((s) => s.fontSize), 1)
+  line.spans.reduce((max, span) => Math.max(max, span.fontSize), 1)
 
 const lineWidth = (line: TextBlock['lines'][number]): number => line.box.x1 - line.box.x0
 
@@ -250,10 +258,9 @@ export function stitchCrossPageParagraphs(pages: IrPage[]): void {
     // only near-full pages carry overflow risk worth trading the break for
     const tops = prev.blocks.map((b) => b.box.y1)
     const bottoms = prev.blocks.map((b) => b.box.y0)
-    if (
-      prev.heightPt <= 0 ||
-      (Math.max(...tops) - Math.min(...bottoms)) / prev.heightPt < STITCH_PREV_FILL_MIN
-    ) {
+    const top = tops.reduce((max, value) => Math.max(max, value), Number.NEGATIVE_INFINITY)
+    const bottom = bottoms.reduce((min, value) => Math.min(min, value), Number.POSITIVE_INFINITY)
+    if (prev.heightPt <= 0 || (top - bottom) / prev.heightPt < STITCH_PREV_FILL_MIN) {
       continue
     }
     const tailLine = tail.lines[tail.lines.length - 1]!
@@ -262,7 +269,7 @@ export function stitchCrossPageParagraphs(pages: IrPage[]): void {
     const sizeRatio = fontSize / lineFontSizePt(headLine)
     if (sizeRatio > STITCH_SIZE_TOL || sizeRatio < 1 / STITCH_SIZE_TOL) continue
     // the tail line must look unfinished: as wide as the paragraph's widest line
-    const widest = Math.max(...tail.lines.map(lineWidth))
+    const widest = tail.lines.reduce((max, line) => Math.max(max, lineWidth(line)), 0)
     if (lineWidth(tailLine) < STITCH_TAIL_FULL_RATIO * widest) continue
     // the continuation starts flush with the tail paragraph's left edge
     if (Math.abs(tail.box.x0 - head.box.x0) > STITCH_LEFT_TOL_EMS * fontSize) continue
@@ -317,18 +324,22 @@ export function extractIrDocument(pdf: Uint8Array, opts: ConvertOptions): IrDocu
 
       // P6: the source document renders its headers/footers/page numbers onto
       // every page — detected across pages and dropped (first occurrence kept)
-      // so they do not repeat through the rebuilt body text
-      const furniture = detectFurniture(
-        extractedPages.map((p) => ({
-          index: p.index,
-          heightPt: p.heightPt,
-          chars: p.chars,
-          skip: p.scanned || p.degraded,
-        })),
-        // cell-data: repeated lines with no header/footer seat keep every
-        // occurrence — deleting data breaks the xlsx promise
-        { keepUnemitted: opts.cellData === true },
-      )
+      // so they do not repeat through the rebuilt body text. Absolute layout
+      // has no body flow: each slide is its page, so a repeated line stays on
+      // every slide.
+      const furniture: FurnitureResult = opts.absoluteLayout
+        ? { drop: extractedPages.map(() => new Set()), droppedLines: 0, hf: [] }
+        : detectFurniture(
+            extractedPages.map((p) => ({
+              index: p.index,
+              heightPt: p.heightPt,
+              chars: p.chars,
+              skip: p.scanned || p.degraded,
+            })),
+            // cell-data: repeated lines with no header/footer seat keep every
+            // occurrence — deleting data breaks the xlsx promise
+            { keepUnemitted: opts.cellData === true },
+          )
       if (furniture.droppedLines > 0) {
         warnings.push(
           `headers/footers: ${furniture.droppedLines} repeated line(s) detected across pages and deduplicated`,
@@ -336,11 +347,18 @@ export function extractIrDocument(pdf: Uint8Array, opts: ConvertOptions): IrDocu
       }
       furnitureHf = furniture.hf
 
+      // one ordered-list run state for the whole document: a list split by a
+      // page break keeps its numbering when the run continues on the next page
+      const listSeq: ListSeq = { next: 0 }
+
       for (let i = 0; i < total; i++) {
         const extracted = extractedPages[i]!
         const dropSet = furniture.drop[i]!
         if (dropSet.size > 0) extracted.chars = extracted.chars.filter((c) => !dropSet.has(c))
-        let page = analyzePage(extracted, { absoluteLayout: opts.absoluteLayout === true })
+        let page = analyzePage(extracted, {
+          absoluteLayout: opts.absoluteLayout === true,
+          listSeq,
+        })
         let graphicsUnderlay = false
 
         // scanned page + an OCR engine: try to recover editable text; every
@@ -351,7 +369,7 @@ export function extractIrDocument(pdf: Uint8Array, opts: ConvertOptions): IrDocu
         if (page.scanned && opts.ocr) {
           const hiRender =
             renderPageByIndexPng(m, doc, i, Math.max(opts.renderScale ?? 2, 3)) ?? undefined
-          const recovered = tryOcrScannedPage(extracted, opts.ocr, hiRender)
+          const recovered = tryOcrScannedPage(extracted, opts.ocr, hiRender, listSeq)
           if (recovered) {
             page = recovered.page
             ocrConfidence = recovered.confidence
@@ -516,9 +534,10 @@ export function extractIrDocument(pdf: Uint8Array, opts: ConvertOptions): IrDocu
       // by design — document priors only lower the page gate, borderline pages
       // stay flow.
       classifyPages(irPages, readDocMetadata(m, doc))
-      // cell-data (xlsx) promises page ↔ sheet: stitching would move a page's
-      // continuation paragraph onto the previous sheet and leave its own empty
-      if (!opts.cellData) stitchCrossPageParagraphs(irPages)
+      // cell-data (xlsx) and absolute layout (pptx) promise page ↔ sheet/slide:
+      // stitching would move a page's continuation paragraph onto the previous
+      // one and leave its own empty
+      if (!opts.cellData && !opts.absoluteLayout) stitchCrossPageParagraphs(irPages)
     },
     opts.password,
   )

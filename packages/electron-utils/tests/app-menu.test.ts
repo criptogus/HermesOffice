@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
   },
   app: {
     getVersion: () => '1.2.3',
+    getName: () => 'HermesOffice',
   },
   dialog: {
     showMessageBox: electronMock.showMessageBox,
@@ -24,10 +25,13 @@ vi.mock('electron', () => ({
 import {
   aboutMenuItem,
   appMenuLabels,
+  appMenuTemplate,
   checkUpdatesMenuItem,
   editMenuTemplate,
   helpMenuTemplate,
+  setSettingsInvoker,
   setUpdateCheckInvoker,
+  settingsMenuItem,
   viewMenuTemplate,
   windowMenuTemplate,
   type AppMenuLabels,
@@ -53,6 +57,8 @@ const LANGS = [
   'ms',
   'he',
   'hi',
+  'vi',
+  'tr',
   'zh-TW',
 ] as const
 
@@ -64,6 +70,7 @@ const submenuOf = (tpl: { submenu?: unknown }): Item[] => tpl.submenu as Item[]
 beforeEach(() => {
   vi.clearAllMocks()
   setUpdateCheckInvoker(null)
+  setSettingsInvoker(null)
 })
 
 describe('appMenuLabels', () => {
@@ -75,14 +82,19 @@ describe('appMenuLabels', () => {
     }
   })
 
+  it('carries the AI naming label', () => {
+    expect(en.nameWithAi).toBe('Name with AI…')
+    expect(appMenuLabels('zh').nameWithAi).toBe('\u7528 AI \u547d\u540d\u2026')
+  })
+
   it('falls back to English for unknown languages', () => {
     expect(appMenuLabels('xx')).toEqual(en)
   })
 
   it('merges the context-menu clipboard labels', () => {
     const zh = appMenuLabels('zh')
-    expect(zh.copy).toBe('复制')
-    expect(zh.selectAll).toBe('全选')
+    expect(zh.copy).toBe('\u590d\u5236')
+    expect(zh.selectAll).toBe('\u5168\u9009')
   })
 })
 
@@ -107,8 +119,8 @@ describe('windowMenuTemplate', () => {
 
   it('localizes the Windows submenu', () => {
     const items = submenuOf(windowMenuTemplate('win32', appMenuLabels('zh')))
-    expect(items[0]!.label).toBe('最小化')
-    expect(items[2]!.label).toBe('关闭窗口')
+    expect(items[0]!.label).toBe('\u6700\u5c0f\u5316')
+    expect(items[2]!.label).toBe('\u5173\u95ed\u7a97\u53e3')
   })
 })
 
@@ -158,6 +170,19 @@ describe('viewMenuTemplate', () => {
     expect(item.role).toBeUndefined()
     expect(typeof item.click).toBe('function')
     expect(item.accelerator).toBe(process.platform === 'darwin' ? 'Alt+Command+I' : 'Ctrl+Shift+I')
+  })
+
+  it('drops the dev and page-zoom groups on request, keeping fullscreen', () => {
+    const tpl = viewMenuTemplate(en, { devItems: false, pageZoom: false })
+    expect(submenuOf(tpl).map((i) => i.role ?? i.type)).toEqual(['togglefullscreen'])
+    const devOnly = viewMenuTemplate(en, { pageZoom: false })
+    expect(submenuOf(devOnly).map((i) => i.role ?? i.type ?? i.label)).toEqual([
+      'reload',
+      'forceReload',
+      'Developer Tools',
+      'separator',
+      'togglefullscreen',
+    ])
   })
 
   it('closes detached DevTools when they have focus', async () => {
@@ -227,6 +252,80 @@ describe('checkUpdatesMenuItem / manual update check wiring', () => {
   it('About dialog copy button still copies name + version', async () => {
     electronMock.showMessageBox.mockResolvedValue({ response: 1 })
     await (aboutMenuItem(en) as { click: () => Promise<void> }).click()
-    expect(electronMock.writeText).toHaveBeenCalledWith('GenOffice 1.2.3')
+    expect(electronMock.writeText).toHaveBeenCalledWith('HermesOffice 1.2.3')
+  })
+})
+
+describe('settingsMenuItem', () => {
+  it('carries the Settings label and the ⌘, accelerator', () => {
+    const item = settingsMenuItem(en) as Item & { click: () => void }
+    expect(item.label).toBe('Settings…')
+    expect(item.accelerator).toBe('CmdOrCtrl+,')
+  })
+
+  it('routes the click to the registered action', () => {
+    const invoke = vi.fn()
+    setSettingsInvoker(invoke)
+    ;(settingsMenuItem(en) as { click: () => void }).click()
+    expect(invoke).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the app own preferences when nothing is registered', () => {
+    const fallback = vi.fn()
+    ;(settingsMenuItem(en, fallback) as { click: () => void }).click()
+    expect(fallback).toHaveBeenCalledOnce()
+  })
+
+  it('prefers the registered action over the fallback', () => {
+    const invoke = vi.fn()
+    const fallback = vi.fn()
+    setSettingsInvoker(invoke)
+    ;(settingsMenuItem(en, fallback) as { click: () => void }).click()
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('no-ops without an action, and does not throw', () => {
+    expect(() => (settingsMenuItem(en) as { click: () => void }).click()).not.toThrow()
+  })
+
+  it('is localized', () => {
+    expect((settingsMenuItem(appMenuLabels('zh')) as Item).label).toBe('\u8bbe\u7f6e…')
+  })
+})
+
+describe('appMenuTemplate', () => {
+  it('puts the Settings entry right after About on macOS', () => {
+    const tpl = appMenuTemplate('darwin', en, { extra: [settingsMenuItem(en)] })!
+    const items = submenuOf(tpl)
+    expect(items[0]!.role).toBe('about')
+    expect(items[1]!.label).toBe(en.settings)
+    expect(items[1]!.accelerator).toBe('CmdOrCtrl+,')
+  })
+
+  it('keeps the native macOS roles around it', () => {
+    const tpl = appMenuTemplate('darwin', en, { extra: [settingsMenuItem(en)] })!
+    expect(submenuOf(tpl).map((i) => i.role ?? i.type)).toEqual([
+      'about',
+      undefined,
+      'separator',
+      'services',
+      'separator',
+      'hide',
+      'hideOthers',
+      'unhide',
+      'separator',
+      'quit',
+    ])
+  })
+
+  it('always carries a label — Electron rejects an item with neither label, role nor type', () => {
+    expect(appMenuTemplate('darwin', en)!.label).toBeTruthy()
+    expect(appMenuTemplate('darwin', en, { appLabel: 'Other' })!.label).toBe('Other')
+  })
+
+  it('has no application menu off macOS', () => {
+    expect(appMenuTemplate('win32', en)).toBeUndefined()
+    expect(appMenuTemplate('linux', en)).toBeUndefined()
   })
 })

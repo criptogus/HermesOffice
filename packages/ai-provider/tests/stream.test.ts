@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentToolCall } from '@hermesoffice/agent-core'
+import type { AgentMessage, AgentToolCall } from '@hermesoffice/agent-core'
 import { AiCreditsError, sseLines, streamForProvider } from '../src/stream'
-import { jsonBodyInsteadOfSse } from '../src/protocols/shared'
+import {
+  MAX_RESPONSE_BODY_BYTES,
+  jsonBodyInsteadOfSse,
+  parseToolInput,
+  sseDataEvents,
+} from '../src/protocols/shared'
 import { jsonResponse, okResponse, sseStream } from './test-utils'
 
 afterEach(() => {
@@ -72,9 +77,139 @@ describe('sseLines', () => {
   })
 })
 
+describe('sseDataEvents', () => {
+  const collect = async (text: string): Promise<string[]> => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text))
+        controller.close()
+      },
+    })
+    const payloads: string[] = []
+    for await (const ev of sseDataEvents(body)) payloads.push(ev.raw)
+    return payloads
+  }
+
+  it('dispatches every event when the server separates them with a single newline', async () => {
+    expect(await collect('data: {"a":1}\ndata: {"b":2}\ndata: [DONE]\n')).toEqual([
+      '{"a":1}',
+      '{"b":2}',
+      '[DONE]',
+    ])
+  })
+
+  it('dispatches every event when the server separates them with a blank line', async () => {
+    expect(await collect('data: {"a":1}\n\ndata: {"b":2}\n\n')).toEqual(['{"a":1}', '{"b":2}'])
+  })
+
+  it('joins a JSON body that one event split across data: lines', async () => {
+    const [payload] = await collect('data: {"a":\ndata: 1}\n\n')
+    expect(payload).toBe('{"a":\n1}')
+    expect(JSON.parse(payload ?? '')).toEqual({ a: 1 })
+  })
+
+  it('emits a keep-alive after a split body on its own, on a newline-only stream', async () => {
+    expect(await collect('data: {"a":\ndata: 1}\ndata: ping\ndata: {"b":2}\n')).toEqual([
+      '{"a":\n1}',
+      'ping',
+      '{"b":2}',
+    ])
+  })
+
+  it('carries the parsed body and leaves it undefined for non-JSON payloads', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode('data: {"a":\ndata: 1}\n\ndata: ping\ndata: [DONE]\n'),
+        )
+        controller.close()
+      },
+    })
+    const events = []
+    for await (const ev of sseDataEvents(body)) events.push(ev)
+    expect(events).toEqual([
+      { raw: '{"a":\n1}', json: { a: 1 } },
+      { raw: 'ping', json: undefined },
+      { raw: '[DONE]', json: undefined },
+    ])
+  })
+
+  it('joins a split body even when the stream has no blank line at all', async () => {
+    expect(await collect('data: {"a":\ndata: 1}')).toEqual(['{"a":\n1}'])
+  })
+
+  it('delivers a terminator that never gets a trailing blank line', async () => {
+    expect(await collect('data: {"a":1}\ndata: [DONE]')).toEqual(['{"a":1}', '[DONE]'])
+  })
+
+  // Server keeps the socket open after [DONE]; the consumer must be able to break out.
+  it('hands [DONE] to a consumer that breaks on it, on an open stream', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"a":1}\ndata: [DONE]\n'))
+      },
+    })
+    const seen: string[] = []
+    for await (const ev of sseDataEvents(body)) {
+      seen.push(ev.raw)
+      if (ev.raw === '[DONE]') break
+    }
+    expect(seen).toEqual(['{"a":1}', '[DONE]'])
+  })
+
+  it('does not glue a non-JSON keep-alive onto the terminator', async () => {
+    expect(await collect('data: ping\ndata: [DONE]\n')).toEqual(['ping', '[DONE]'])
+  })
+})
+
+describe('non-SSE response body cap', () => {
+  it.each([
+    ['anthropic', { apiKey: 'k', model: 'm' }],
+    ['gemini', { apiKey: 'k', model: 'm' }],
+    ['openai', { apiKey: 'k', model: 'm' }],
+  ] as const)('caps oversized JSON for %s', async (provider, config) => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_RESPONSE_BODY_BYTES + 1))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(new Response(body, { headers: { 'content-type': 'application/json' } })),
+    )
+    const { cb } = collector()
+    await expect(streamForProvider(provider, config, 'sys', [], [], 100, cb)).rejects.toThrow(
+      /Response body exceeded/,
+    )
+    expect(cancelled).toBe(true)
+  })
+})
+
 describe('streamForProvider: temperature policy', () => {
   const okTurn = () =>
     okResponse(sseStream(['data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}']))
+
+  it('deepseek: sends the listed V4.1 Flash name under the vendor wire id', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
+    vi.stubGlobal('fetch', fetchMock)
+    await streamForProvider(
+      'deepseek',
+      { apiKey: 'k', model: 'deep-seek-v4.1-flash' },
+      'sys',
+      [],
+      [],
+      100,
+      collector().cb,
+    )
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.model).toBe('deepseek-flash')
+  })
 
   it('omits temperature for fixed-sampling endpoints (Kimi) and keeps 0.3 elsewhere', async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
@@ -104,14 +239,14 @@ describe('streamForProvider: temperature policy', () => {
     expect(bodies[1].temperature).toBe(0.3)
   })
 
-  // issue genspark-ai/genoffice#147: every model in the OpenAI BYOK dropdown is GPT-5.x,
+  // issue genspark-ai/hermesoffice#147: every model in the OpenAI BYOK dropdown is GPT-5.x,
   // and api.openai.com 400s `max_tokens` for that family
   it('caps OpenAI via max_completion_tokens and other vendors via max_tokens', async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okTurn()))
     vi.stubGlobal('fetch', fetchMock)
     await streamForProvider(
       'openai',
-      { apiKey: 'k', model: 'gpt-5.6-luna' },
+      { apiKey: 'k', model: 'gpt-5.2' },
       'sys',
       [],
       [],
@@ -195,6 +330,7 @@ describe('streamForProvider: empty SSE streams surface as errors', () => {
       'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"do_thing"}}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
       'data: {"type":"content_block_stop","index":0}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { toolCalls, cb } = collector()
@@ -211,6 +347,53 @@ describe('streamForProvider: empty SSE streams surface as errors', () => {
   })
 })
 
+describe('streamForProvider: terminal framing', () => {
+  it.each([
+    [
+      'anthropic',
+      'claude-sonnet-5',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+      /Claude stream ended before a stop_reason/,
+    ],
+    [
+      'gemini',
+      'gemini-2.5-flash',
+      'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}',
+      /Gemini stream ended before a finishReason/,
+    ],
+    [
+      'openai',
+      'gpt-4.1-mini',
+      'data: {"choices":[{"delta":{"content":"partial"}}]}',
+      /model stream ended before a finish_reason or \[DONE\] marker/,
+    ],
+  ] as const)(
+    '%s rejects partial text without terminal framing',
+    async (provider, model, line, error) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(sseStream([line]))))
+      await expect(
+        streamForProvider(provider, { apiKey: 'k', model }, 'sys', [], [], 100, collector().cb),
+      ).rejects.toThrow(error)
+    },
+  )
+
+  it('treats reasoning-only output as emitted when checking terminal framing', async () => {
+    const body = sseStream(['data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}'])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    await expect(
+      streamForProvider(
+        'openai',
+        { apiKey: 'k', model: 'gpt-4.1-mini' },
+        'sys',
+        [],
+        [],
+        100,
+        collector().cb,
+      ),
+    ).rejects.toThrow(/model stream ended before a finish_reason or \[DONE\] marker/)
+  })
+})
+
 describe('streamForProvider: anthropic', () => {
   it('emits text deltas and a completed tool call', async () => {
     const body = sseStream([
@@ -220,6 +403,7 @@ describe('streamForProvider: anthropic', () => {
       'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"1}"}}',
       'data: {"type":"content_block_stop","index":1}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -309,6 +493,7 @@ describe('streamForProvider: anthropic', () => {
       'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"gen"}}',
       `data: ${partial}`,
       'data: {"type":"content_block_stop","index":1}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { toolCalls, cb } = collector()
@@ -329,6 +514,7 @@ describe('streamForProvider: anthropic', () => {
       `data: ${partial}`,
       'data: {"type":"content_block_stop","index":1}',
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"after"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -367,6 +553,22 @@ describe('streamForProvider: anthropic', () => {
     expect(toolCalls).toHaveLength(1)
     expect(toolCalls[0]!.truncated).toBe(true)
     expect(toolCalls[0]!.inputError).toBeDefined()
+  })
+
+  it('emits a tool call the stream cut off before content_block_stop (max_tokens)', async () => {
+    // no content_block_stop for the tool block: the token limit hit mid-arguments,
+    // so the call used to be dropped and the turn reported as an empty success
+    const body = sseStream([
+      'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"gen"}}',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"html\\": \\"<p>very lo"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}',
+    ])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    const { toolCalls, stopReasons, cb } = collector()
+    await streamForProvider('anthropic', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, cb)
+    expect(stopReasons).toEqual(['max_tokens'])
+    expect(toolCalls).toHaveLength(1)
+    expect(toolCalls[0]).toMatchObject({ id: 't1', name: 'gen', truncated: true })
   })
 
   it('throws on a non-ok HTTP response', async () => {
@@ -465,7 +667,7 @@ describe('streamForProvider: anthropic', () => {
 
   it('never sends an empty assistant content array when history has edits-only replies', async () => {
     // Prior empty terminal turns would map to content:[] and break follow-ups
-    // on Anthropic (genoffice#12 / #22 class of multi-turn failures).
+    // on Anthropic (hermesoffice#12 / #22 class of multi-turn failures).
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
@@ -516,7 +718,7 @@ describe('streamForProvider: gemini', () => {
   it('emits text and a whole (non-partial) function call', async () => {
     const body = sseStream([
       'data: {"candidates":[{"content":{"parts":[{"text":"hi there"}]}}]}',
-      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"set_cell","args":{"a1":"42"}}}]}}]}',
+      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"set_cell","args":{"a1":"42"}}}]},"finishReason":"STOP"}]}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, toolCalls, cb } = collector()
@@ -532,6 +734,128 @@ describe('streamForProvider: gemini', () => {
     expect(deltas.join('')).toBe('hi there')
     expect(toolCalls).toHaveLength(1)
     expect(toolCalls[0]).toMatchObject({ name: 'set_cell', input: { a1: '42' } })
+  })
+
+  it('flags array functionCall args as inputError (hermesoffice#1106)', async () => {
+    const body = sseStream([
+      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"set_cell","args":[1,2]}}]},"finishReason":"STOP"}]}',
+    ])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    const { toolCalls, cb } = collector()
+    await streamForProvider(
+      'gemini',
+      { apiKey: 'k', model: 'gemini-2.5-flash' },
+      'sys',
+      [],
+      [],
+      100,
+      cb,
+    )
+    expect(toolCalls).toHaveLength(1)
+    expect(toolCalls[0]!.input).toEqual({})
+    expect(toolCalls[0]!.inputError).toMatch(/must be a JSON object/)
+  })
+
+  it('captures the thoughtSignature issued with a function call (SSE and JSON body)', async () => {
+    const part = '{"functionCall":{"name":"write_document","args":{}},"thoughtSignature":"c2ln"}'
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          okResponse(
+            sseStream([
+              `data: {"candidates":[{"content":{"parts":[${part}]},"finishReason":"STOP"}]}`,
+            ]),
+          ),
+        ),
+    )
+    const sse = collector()
+    await streamForProvider('gemini', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, sse.cb)
+    expect(sse.toolCalls[0]).toMatchObject({ name: 'write_document', signature: 'c2ln' })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ functionCall: { name: 'f', args: {} }, thought_signature: 'c25ha2U=' }],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ),
+    )
+    const json = collector()
+    await streamForProvider('gemini', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, json.cb)
+    expect(json.toolCalls[0]).toMatchObject({ name: 'f', signature: 'c25ha2U=' })
+  })
+
+  it('echoes signatures back on history function calls; an unsigned first call gets the bypass sentinel', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        okResponse(
+          sseStream([
+            'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}',
+          ]),
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const history: AgentMessage[] = [
+      { role: 'user', text: 'go' },
+      {
+        role: 'assistant',
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'signed', input: {}, signature: 'c2ln' },
+          { id: 'b', name: 'parallel', input: {} },
+        ],
+      },
+      {
+        role: 'tool',
+        results: [
+          { id: 'a', name: 'signed', output: '1' },
+          { id: 'b', name: 'parallel', output: '2' },
+        ],
+      },
+      { role: 'assistant', text: '', toolCalls: [{ id: 'c', name: 'legacy', input: {} }] },
+      { role: 'tool', results: [{ id: 'c', name: 'legacy', output: '3' }] },
+    ]
+    const { cb } = collector()
+    await streamForProvider('gemini', { apiKey: 'k', model: 'm' }, 'sys', history, [], 100, cb)
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.contents[1].parts).toEqual([
+      { functionCall: { name: 'signed', args: {} }, thoughtSignature: 'c2ln' },
+      { functionCall: { name: 'parallel', args: {} } },
+    ])
+    expect(body.contents[3].parts).toEqual([
+      {
+        functionCall: { name: 'legacy', args: {} },
+        thoughtSignature: 'skip_thought_signature_validator',
+      },
+    ])
+  })
+
+  it('aborts when a turn starts more tool calls than the count cap', async () => {
+    const calls = Array.from(
+      { length: 101 },
+      (_, index) =>
+        `data: ${JSON.stringify({
+          candidates: [
+            { content: { parts: [{ functionCall: { name: 'do_thing', args: { index } } }] } },
+          ],
+        })}`,
+    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(sseStream(calls))))
+    const { toolCalls, cb } = collector()
+    await expect(
+      streamForProvider('gemini', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, cb),
+    ).rejects.toThrow(/Too many streamed tool calls/)
+    expect(toolCalls).toHaveLength(100)
   })
 
   it('throws when the prompt is blocked instead of finishing an empty turn', async () => {
@@ -622,6 +946,34 @@ describe('streamForProvider: gemini', () => {
 })
 
 describe('streamForProvider: openai-compatible', () => {
+  it('flattens a content array into text (streamed and JSON body)', async () => {
+    const parts = [
+      { type: 'text', text: 'Here is ' },
+      { type: 'text', text: 'the change.' },
+    ]
+    const body = sseStream([
+      `data: {"choices":[{"delta":{"content":${JSON.stringify(parts)}}}]}`,
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+      'data: [DONE]',
+    ])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    const streamed = collector()
+    await streamForProvider('openai', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, streamed.cb)
+    expect(streamed.deltas.join('')).toBe('Here is the change.')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          choices: [{ message: { content: parts }, finish_reason: 'stop' }],
+        }),
+      ),
+    )
+    const complete = collector()
+    await streamForProvider('openai', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, complete.cb)
+    expect(complete.deltas.join('')).toBe('Here is the change.')
+  })
+
   it('reassembles fragmented tool call arguments and flushes on finish_reason', async () => {
     const body = sseStream([
       'data: {"choices":[{"delta":{"content":"partial "}}]}',
@@ -643,6 +995,28 @@ describe('streamForProvider: openai-compatible', () => {
     )
     expect(deltas.join('')).toBe('partial ')
     expect(toolCalls).toEqual([{ id: 'c1', name: 'replace', input: { x: 1 } }])
+  })
+
+  it('turns non-object tool arguments into inputError instead of executing them (hermesoffice#1106)', async () => {
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"replace","arguments":"null"}}]}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      'data: [DONE]',
+    ])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
+    const { toolCalls, cb } = collector()
+    await streamForProvider(
+      'openai',
+      { apiKey: 'k', model: 'gpt-4.1-mini' },
+      'sys',
+      [],
+      [],
+      100,
+      cb,
+    )
+    expect(toolCalls).toHaveLength(1)
+    expect(toolCalls[0]!.input).toEqual({})
+    expect(toolCalls[0]!.inputError).toMatch(/must be a JSON object/)
   })
 
   it('aborts when streamed tool arguments exceed the per-tool buffer limit', async () => {
@@ -905,7 +1279,7 @@ describe('streamForProvider: openai-compatible', () => {
     )
   })
 
-  it('keeps deepseek in non-thinking mode so a tool-calling loop is not rejected', async () => {
+  it('lets deepseek think: no override, and tool turns echo stored reasoning', async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse(sseStream(['data: [DONE]'])))
     vi.stubGlobal('fetch', fetchMock)
     const { cb } = collector()
@@ -913,15 +1287,30 @@ describe('streamForProvider: openai-compatible', () => {
       'deepseek',
       { apiKey: 'k', model: 'deepseek-v4-pro' },
       'sys',
-      [{ role: 'user', text: 'hi' }],
+      [
+        { role: 'user', text: 'hi' },
+        {
+          role: 'assistant',
+          text: '',
+          reasoning: 'the user greeted me',
+          toolCalls: [{ id: 't1', name: 'edit', input: {} }],
+        },
+        { role: 'user', text: 'go on' },
+      ],
       [{ name: 'edit', description: 'edit', inputSchema: { type: 'object' } }],
       100,
       cb,
     ).catch(() => {})
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as {
       thinking?: { type?: string }
+      messages?: Array<{ role: string; reasoning_content?: string }>
     }
-    expect(body.thinking).toEqual({ type: 'disabled' })
+    // thinking is the vendor default; the request must not pin it off
+    expect(body.thinking).toBeUndefined()
+    // deepseek sits on the echo list: stored reasoning rides back on the
+    // assistant message
+    const assistant = body.messages?.find((m) => m.role === 'assistant')
+    expect(assistant?.reasoning_content).toBe('the user greeted me')
   })
 
   it('uses the configured base URL for the custom provider', async () => {
@@ -1223,6 +1612,75 @@ describe('streamForProvider: 200 + non-stream JSON instead of SSE', () => {
     expect(deltas.join('')).toBe('The service is under maintenance until 06:00 UTC.')
   })
 
+  it('anthropic route: a JSON body over the per-turn tool-call budget stops at the same cap as SSE', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        json({
+          type: 'message',
+          content: Array.from({ length: 150 }, (_, i) => ({
+            type: 'tool_use',
+            id: `t${i}`,
+            name: 'do_thing',
+            input: { index: i },
+          })),
+          stop_reason: 'tool_use',
+        }),
+      ),
+    )
+    const { toolCalls, cb } = collector()
+    await expect(
+      streamForProvider('anthropic', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, cb),
+    ).rejects.toThrow(/Too many streamed tool calls/)
+    expect(toolCalls).toHaveLength(0)
+  })
+
+  it('gemini route: a JSON body over the per-turn tool-call budget stops at the same cap as SSE', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        json(
+          Array.from({ length: 150 }, (_, i) => ({
+            candidates: [
+              { content: { parts: [{ functionCall: { name: 'do_thing', args: { index: i } } }] } },
+            ],
+          })),
+        ),
+      ),
+    )
+    const { toolCalls, cb } = collector()
+    await expect(
+      streamForProvider('gemini', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, cb),
+    ).rejects.toThrow(/Too many streamed tool calls/)
+    expect(toolCalls).toHaveLength(100)
+  })
+
+  it('openai route: a JSON body over the per-turn tool-call budget stops at the same cap as SSE', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        json({
+          choices: [
+            {
+              message: {
+                tool_calls: Array.from({ length: 150 }, (_, i) => ({
+                  id: `c${i}`,
+                  function: { name: 'do_thing', arguments: `{"index":${i}}` },
+                })),
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        }),
+      ),
+    )
+    const { toolCalls, cb } = collector()
+    await expect(
+      streamForProvider('openai', { apiKey: 'k', model: 'm' }, 'sys', [], [], 100, cb),
+    ).rejects.toThrow(/Too many streamed tool calls/)
+    expect(toolCalls).toHaveLength(0)
+  })
+
   it('an unextractable body throws with a body summary', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1250,6 +1708,7 @@ describe('streamForProvider: 200 + non-stream JSON instead of SSE', () => {
   it('a missing Content-Type is still treated as a stream', async () => {
     const body = sseStream([
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { deltas, cb } = collector()
@@ -1372,9 +1831,10 @@ describe('streamForProvider: a connection dropped mid tool arguments is not an e
     expect(toolCalls).toEqual([])
   })
 
-  it('openai-compatible: complete arguments without a finish reason still flush as a tool call', async () => {
+  it('openai-compatible: complete arguments with [DONE] still flush as a tool call', async () => {
     const body = sseStream([
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"ping","arguments":"{\\"a\\":1}"}}]}}]}',
+      'data: [DONE]',
     ])
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(body)))
     const { cb, toolCalls } = collector()
@@ -1408,5 +1868,17 @@ describe('jsonBodyInsteadOfSse', () => {
       headers: { 'content-type': 'text/event-stream' },
     })
     await expect(jsonBodyInsteadOfSse(sse)).resolves.toBeNull()
+  })
+})
+
+describe('parseToolInput', () => {
+  it('rejects non-object JSON through the inputError channel (hermesoffice#1106)', () => {
+    for (const raw of ['null', '[]', '42', '"x"', 'true']) {
+      const r = parseToolInput(raw)
+      expect(r.input).toEqual({})
+      expect(r.error).toMatch(/must be a JSON object/)
+    }
+    expect(parseToolInput('{"a":1}')).toEqual({ input: { a: 1 } })
+    expect(parseToolInput('')).toEqual({ input: {} })
   })
 })

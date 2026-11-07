@@ -1,6 +1,14 @@
-  function markForScreenshotSlices(el, maxSliceHeight = 700) {
-    const base = markForScreenshot(el);
+  function markForScreenshotSlices(el, maxSliceHeight = DEFAULT_SCREENSHOT_SLICE_HEIGHT) {
     const rect = el.getBoundingClientRect();
+    if (
+      !Number.isFinite(rect.left) ||
+      !Number.isFinite(rect.top) ||
+      !Number.isFinite(rect.width) ||
+      rect.width <= 0
+    ) return [];
+    const sliceCount = boundedScreenshotSliceCount(rect.height, maxSliceHeight);
+    if (sliceCount === 0) return [];
+    const base = markForScreenshot(el);
     // Decorative absolutes bleeding past the element box (half-out hero
     // circles) get flat-cut by an element-width clip: extend to overhanging
     // descendants still touching the element band, capped so parked
@@ -23,7 +31,7 @@
     }
     const clipX = Math.max(0, Math.round(paintLeft));
     const clipWidth = Math.round(paintRight) - clipX;
-    const sliceCount = Math.ceil(rect.height / maxSliceHeight);
+    if (!Number.isFinite(clipWidth) || clipWidth <= 0) return [];
     return Array.from({ length: sliceCount }, (_, index) => {
       const sliceHeight = Math.min(maxSliceHeight, rect.height - index * maxSliceHeight);
       return {

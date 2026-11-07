@@ -1,12 +1,23 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { createI18n, htmlLang, type Lang, type Params } from '@hermesoffice/i18n'
+import { createI18n, htmlDir, htmlLang, type Lang, type Params } from '@hermesoffice/i18n'
 import { strings } from './strings'
 
 const translate = createI18n(strings)
 
 export type StringKey = keyof typeof strings.zh
 export type TFunc = (key: StringKey, params?: Params) => string
+
+/**
+ * Explicit-language translator, for callers that must not follow `moduleLang`:
+ * a Univer locale pack is built for one language at a time and has to stay on
+ * that language even while the app-level module language is elsewhere — the
+ * runtime boots with the English pack whatever the app language is.
+ */
+export const translateFor =
+  (lang: Lang): TFunc =>
+  (key, params) =>
+    translate(lang, key, params)
 
 // mirror for non-React modules (edit-journal, lazy-plan, AI tools …);
 // set before first render and on every language switch
@@ -17,6 +28,8 @@ export const setModuleLang = (lang: Lang): void => {
 }
 /** module-level translator — components should prefer useI18n().t so they re-render on switch */
 export const t: TFunc = (key, params) => translate(moduleLang, key, params)
+export const tFor = (lang: Lang, key: StringKey, params?: Params): string =>
+  translate(lang, key, params)
 
 const AI_LANG_DIRECTIVES: Record<Lang, string> = {
   zh: '\n\n用与用户消息相同的语言回复；无法判断用户消息的语言时，用简体中文回复。',
@@ -39,6 +52,8 @@ const AI_LANG_DIRECTIVES: Record<Lang, string> = {
   he: '\n\nהשב באותה שפה של הודעת המשתמש; אם לא ניתן לקבוע אותה, השב בעברית.',
   hi: '\n\nउपयोगकर्ता के संदेश की भाषा में ही उत्तर दें; यदि भाषा निर्धारित न हो सके, तो हिंदी में उत्तर दें।',
   'zh-TW': '\n\n用與使用者訊息相同的語言回覆；無法判斷使用者訊息的語言時，用繁體中文回覆。',
+  vi: '\n\nTrả lời bằng ngôn ngữ của tin nhắn người dùng; nếu không xác định được, hãy trả lời bằng tiếng Việt.',
+  tr: '\n\nKullanıcının mesajıyla aynı dilde yanıt ver; dil belirlenemiyorsa Türkçe yanıt ver.',
 }
 
 /** appended to the agent system prompt: replies follow the user's message language, falling back to the UI language */
@@ -68,6 +83,8 @@ export const DATE_LOCALES: Record<Lang, string> = {
   he: 'he-IL',
   hi: 'hi-IN',
   'zh-TW': 'zh-TW',
+  vi: 'vi-VN',
+  tr: 'tr-TR',
 }
 
 const LocaleContext = createContext<Lang>('zh')
@@ -79,6 +96,7 @@ export function LocaleProvider({ initial, children }: { initial: Lang; children:
       window.desktopApi.onLanguageChanged((next) => {
         setModuleLang(next)
         document.documentElement.lang = htmlLang(next)
+        document.documentElement.dir = htmlDir(next)
         setLang(next)
       }),
     [],

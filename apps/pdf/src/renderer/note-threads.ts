@@ -41,6 +41,16 @@ export interface NoteThreadItem {
 export const savedNoteKey = (objNum: number): string => `S${objNum}`
 export const pendingNoteKey = (id: string): string => `P${id}`
 
+/**
+ * Days in `month` (0-based) of `year`, leap years included. setUTCFullYear rather
+ * than Date.UTC, which would fold years 0-99 into the 1900s.
+ */
+const daysInMonth = (year: number, month: number): number => {
+  const d = new Date(0)
+  d.setUTCFullYear(year, month + 1, 0)
+  return d.getUTCDate()
+}
+
 /** PDF date string (D:YYYYMMDDHHmmSS±hh'mm') → epoch ms; null when unparseable */
 export function parsePdfDate(s: string | null | undefined): number | null {
   if (!s) return null
@@ -56,7 +66,15 @@ export function parsePdfDate(s: string | null | undefined): number | null {
   const hour = Number(h ?? '0')
   const min = Number(mi ?? '0')
   const sec = Number(se ?? '0')
-  if (month < 0 || month > 11 || day < 1 || day > 31 || hour > 23 || min > 59 || sec > 59)
+  if (
+    month < 0 ||
+    month > 11 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour > 23 ||
+    min > 59 ||
+    sec > 59
+  )
     return null
   let ms = Date.UTC(year, month, day, hour, min, sec)
   if (tzSign === '+' || tzSign === '-') {
@@ -156,14 +174,19 @@ export function buildNoteThreads(
     }
   }
   // Cycle guard: attached items unreachable from any root are promoted to roots,
-  // detaching them from their (cyclic) parent so no item appears twice
+  // detaching them from their (cyclic) parent so no item appears twice.
+  // Explicit stack: a deep /IRT chain must not ride the renderer's call stack.
   const reachable = new Set<string>()
-  const visit = (item: NoteThreadItem) => {
-    if (reachable.has(item.key)) return
-    reachable.add(item.key)
-    for (const r of item.replies) visit(r)
+  const sweep = (seeds: readonly NoteThreadItem[]): void => {
+    const stack = [...seeds]
+    while (stack.length) {
+      const item = stack.pop()!
+      if (reachable.has(item.key)) continue
+      reachable.add(item.key)
+      for (const r of item.replies) stack.push(r)
+    }
   }
-  for (const r of roots) visit(r)
+  sweep(roots)
   for (const objNum of attached) {
     const item = savedItems.get(objNum)!
     if (reachable.has(item.key)) continue
@@ -171,7 +194,7 @@ export function buildNoteThreads(
       if (other !== item) other.replies = other.replies.filter((r) => r !== item)
     }
     roots.push(item)
-    visit(item)
+    sweep([item])
   }
 
   const pendingItems = new Map<string, NoteThreadItem>()
@@ -199,11 +222,14 @@ export function buildNoteThreads(
     else roots.push(item)
   }
 
-  const sortReplies = (item: NoteThreadItem) => {
+  // Explicit stack, matching the old recursion: every node is visited once and
+  // each reply list is sorted in place, so sibling order stays as sorted.
+  const sortStack: NoteThreadItem[] = [...roots]
+  while (sortStack.length) {
+    const item = sortStack.pop()!
     item.replies.sort(byTime)
-    for (const r of item.replies) sortReplies(r)
+    for (const r of item.replies) sortStack.push(r)
   }
-  for (const r of roots) sortReplies(r)
   return roots
 }
 
@@ -236,11 +262,16 @@ export function visibleNoteThreads(
 /** DFS flatten of a thread (root first), with the depth of each item */
 export function flattenThread(root: NoteThreadItem): { item: NoteThreadItem; depth: number }[] {
   const out: { item: NoteThreadItem; depth: number }[] = []
-  const walk = (item: NoteThreadItem, depth: number) => {
-    out.push({ item, depth })
-    for (const r of item.replies) walk(r, depth + 1)
+  // Explicit stack, pushing replies in reverse so they pop in document order.
+  const stack: { item: NoteThreadItem; depth: number }[] = [{ item: root, depth: 0 }]
+  while (stack.length) {
+    const node = stack.pop()!
+    out.push(node)
+    const depth = node.depth + 1
+    for (let i = node.item.replies.length - 1; i >= 0; i--) {
+      stack.push({ item: node.item.replies[i]!, depth })
+    }
   }
-  walk(root, 0)
   return out
 }
 

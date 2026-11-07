@@ -47,7 +47,7 @@ it('renders dialog with aria-label and toggle buttons with aria-pressed', () => 
 
   const dialog = host.querySelector('[role="dialog"]')!
   expect(dialog).not.toBeNull()
-  expect(dialog.getAttribute('aria-label')).toBe(altText)
+  expect(dialog.getAttribute('aria-label')).toBe('Image viewer')
 
   const fitBtn = host.querySelector('button[aria-label="Fit to window"]')!
   expect(fitBtn).not.toBeNull()
@@ -77,5 +77,5 @@ it('falls back to fitToWindow label when alt text is empty or missing', () => {
   })
 
   const dialog = host.querySelector('[role="dialog"]')!
-  expect(dialog.getAttribute('aria-label')).toBe(defaultLabels.fitToWindow)
+  expect(dialog.getAttribute('aria-label')).toBe('Image viewer')
 })

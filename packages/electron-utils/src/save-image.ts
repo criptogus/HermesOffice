@@ -4,6 +4,7 @@
 import { writeFile } from 'node:fs/promises'
 import type { BrowserWindow } from 'electron'
 import { showSaveDialogWithMemory } from './dialog-memory'
+import { MAX_REMOTE_IMAGE_BYTES, readBodyCapped } from './remote-image'
 
 const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -44,27 +45,53 @@ export function suggestImageFileName(url: string, mime: string | null | undefine
   return `image.${EXT_BY_MIME[key] ?? 'png'}`
 }
 
+/** Same byte budget as remote image downloads, checked on the encoded text before allocating. */
+const MAX_DATA_URL_PAYLOAD_CHARS = Math.ceil((MAX_REMOTE_IMAGE_BYTES * 4) / 3)
+
 export function decodeDataUrl(url: string): { bytes: Buffer; mime: string | null } | null {
-  const m = /^data:([^;,]*)((?:;[^,]*)*),([\s\S]*)$/i.exec(url)
+  // The parameter run is `;`-prefixed and its body excludes `;`, so each
+  // iteration has exactly one possible length. With `;[^,]*` instead, one
+  // iteration could swallow several parameters or several could cover one, and
+  // a URL with no comma made the engine try every split - exponential, so a
+  // ~100-character data: URL in a document froze the main process when the user
+  // chose "Save image".
+  const m = /^data:([^;,]*)((?:;[^;,]*)*),([\s\S]*)$/i.exec(url)
   if (!m) return null
   const mime = m[1] || null
   const payload = m[3] ?? ''
-  const bytes = /;base64/i.test(m[2] ?? '')
-    ? Buffer.from(payload, 'base64')
-    : Buffer.from(decodeURIComponent(payload), 'utf8')
+  if (payload.length > MAX_DATA_URL_PAYLOAD_CHARS) return null
+  const isBase64 = (m[2] ?? '').split(';').some((param) => param.toLowerCase() === 'base64')
+  // A stray `%` in a non-base64 payload (an unencoded SVG or text URL copied
+  // from the web, for example) makes decodeURIComponent throw a URIError.
+  // This function's contract is `null` for malformed URLs - the caller turns
+  // that into "malformed or oversized data URL" - so trap the throw here
+  // instead of leaking "URIError: URI malformed" through every caller.
+  let decodedPayload = payload
+  if (!isBase64) {
+    try {
+      decodedPayload = decodeURIComponent(payload)
+    } catch {
+      return null
+    }
+  }
+  const bytes = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodedPayload, 'utf8')
+  if (bytes.length > MAX_REMOTE_IMAGE_BYTES) return null
   return { bytes, mime }
 }
 
 async function fetchImageBytes(url: string): Promise<{ bytes: Buffer; mime: string | null }> {
   if (/^data:/i.test(url)) {
     const decoded = decodeDataUrl(url)
-    if (!decoded) throw new Error('malformed data URL')
+    if (!decoded) throw new Error('malformed or oversized data URL')
     return decoded
   }
   const { net } = await import('electron')
   const res = await net.fetch(url)
   if (!res.ok) throw new Error(`fetch failed: HTTP ${res.status}`)
-  return { bytes: Buffer.from(await res.arrayBuffer()), mime: res.headers.get('content-type') }
+  return {
+    bytes: Buffer.from(await readBodyCapped(res, MAX_REMOTE_IMAGE_BYTES)),
+    mime: res.headers.get('content-type'),
+  }
 }
 
 export async function saveImageFromUrl(

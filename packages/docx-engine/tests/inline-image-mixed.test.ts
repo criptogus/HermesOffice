@@ -4,7 +4,7 @@
  * classification used to drop every text run in the paragraph.
  */
 import { describe, expect, it } from 'vitest'
-import { generateParagraphXml, parseDocx, type GenerateContext } from '../src/index'
+import { generateParagraphXml, parseDocx, saveDocx, type GenerateContext } from '../src/index'
 import { buildDocx, IMAGE_PARAGRAPH_XML } from './helpers/build-docx'
 
 const INLINE_IMAGE_RUN =
@@ -35,6 +35,18 @@ describe('text + inline image mixed paragraphs', () => {
     const doc = await parseDocx(await buildDocx({ bodyXml, withImage: true }))
     expect(doc.blocks[0].type).toBe('image')
     expect(doc.blocks[0].format?.pageBreakBefore).toBe(true)
+  })
+
+  it('preserves a single-quoted leading page break on a protected image through save', async () => {
+    const bodyXml = `<w:p><w:r><w:br w:type='page'/></w:r>${INLINE_IMAGE_RUN}</w:p>`
+    const doc = await parseDocx(await buildDocx({ bodyXml, withImage: true }))
+    const block = doc.blocks[0]
+    expect(block.type).toBe('image')
+    expect(block.format?.pageBreakBefore).toBe(true)
+
+    const saved = await saveDocx(doc, [{ kind: 'original', docxIndex: block.docxIndex! }])
+    const reopened = await parseDocx(saved)
+    expect(reopened.blocks[0].format?.pageBreakBefore).toBe(true)
   })
 
   it('matches breaks with extra attributes or another attribute order', async () => {
@@ -148,5 +160,15 @@ describe('rotated run pictures', () => {
     expect(image.rotDeg).toBe(90)
     expect(image.flipH).toBe(true)
     expect(image.flipV).toBeUndefined()
+  })
+})
+
+describe('picture-only paragraph with a trailing page break', () => {
+  it('keeps the break as a pageBreak display under the image', async () => {
+    const bodyXml = `<w:p>${INLINE_IMAGE_RUN}<w:r><w:br w:type="page"/></w:r></w:p>`
+    const doc = await parseDocx(await buildDocx({ bodyXml, withImage: true }))
+    expect(doc.blocks[0].type).toBe('image')
+    expect(doc.blocks[0].format?.pageBreakBefore).toBeUndefined()
+    expect(doc.blocks[0].fieldDisplay).toEqual({ kind: 'pageBreak' })
   })
 })

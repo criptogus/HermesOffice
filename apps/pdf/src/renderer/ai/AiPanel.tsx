@@ -1,17 +1,36 @@
-import { HermesMark as OfficeMark } from '@hermesoffice/ui'
-import { aiPanelWidthAtPointer, AiPanelSideButton } from '@hermesoffice/ui'
+import {
+  aiPanelWidthAtPointer,
+  AiPanelSideButton,
+  AiModelPicker,
+  type AiModelPickerBridge,
+  HermesMark as OfficeMark,
+} from '@hermesoffice/ui'
+import {
+  AI_PANEL_WIDTH_DEFAULT,
+  clampAiPanelWidth,
+  loadAiPanelWidth,
+  saveAiPanelWidth,
+} from '@hermesoffice/ui'
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react'
-import { AgentLoop } from '@hermesoffice/agent-core'
+import { AgentLoop, withAttachedSkills } from '@hermesoffice/agent-core'
 import { imageGenerationAvailable, type AiSettings } from '@hermesoffice/ai-provider/browser'
 import {
   AiComposer,
+  AiQueueStrip,
+  AI_QUEUE_LABELS,
   AiScopeQuote,
+  AiSkillChips,
+  AiSkillsMenu,
   AiTypingIndicator,
+  AiUsageChip,
+  addTokenUsage,
+  useChatRunQueue,
   type AiScopeQuoteData,
+  type AiTokenUsageView,
 } from '@hermesoffice/ui'
 import { aiLangDirective, t as tGlobal, useI18n } from '../i18n/locale'
-import { Markdown } from '@hermesoffice/ui'
+import { createFileNav, Markdown } from '@hermesoffice/ui'
 import sendEnterOn from '../assets/send-enter-on.png'
 import sendEnterOff from '../assets/send-enter-off.png'
 import sendStop from '../assets/send-stop.png'
@@ -30,24 +49,6 @@ function countWords(text: string): number {
 }
 
 const PANEL_WIDTH_KEY = 'pdf-ai-panel-width'
-const PANEL_WIDTH_DEFAULT = 360
-const PANEL_WIDTH_MIN = 280
-
-function clampPanelWidth(w: number): number {
-  // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
-  // shell lays it out), so never let the ceiling drop below the minimum
-  const max = Math.max(PANEL_WIDTH_MIN, Math.min(720, Math.round(window.innerWidth * 0.6)))
-  return Math.min(Math.max(w, PANEL_WIDTH_MIN), max)
-}
-
-function loadPanelWidth(): number {
-  const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-  // static bounds only — clamping against the window here would bake a
-  // transiently small viewport into the restored preference
-  return Number.isFinite(saved) && saved > 0
-    ? Math.min(Math.max(saved, PANEL_WIDTH_MIN), 720)
-    : PANEL_WIDTH_DEFAULT
-}
 
 interface ToolActivity {
   name: string
@@ -66,6 +67,10 @@ interface ChatEntry {
   tools?: ToolActivity[]
   /** the passage this user message targeted, frozen at send */
   scope?: AiScopeQuoteData
+  /** skills the user attached to this message from the composer menu */
+  skills?: string[]
+  /** tokens the provider billed for this reply, summed across its turns (absent when unreported) */
+  usage?: AiTokenUsageView
 }
 
 /** longest selection excerpt echoed on a user bubble */
@@ -76,6 +81,14 @@ type Phase = 'thinking' | 'replying' | 'working'
 interface PendingConfirm {
   req: FileOpConfirm
   settle: (ok: boolean) => void
+}
+
+const MODEL_BRIDGE: AiModelPickerBridge = {
+  getSettings: () => window.pdfApi.getAiSettings(),
+  setSettings: (settings) => window.pdfApi.setAiSettings(settings),
+  onSettingsChanged: (handler) => window.pdfApi.onAiSettingsChanged(handler),
+  gskLoggedIn: () => window.pdfApi.gskStatus().then((s) => !!s?.loggedIn),
+  openModelSettings: () => window.pdfApi.openAiModelSettings().catch(() => {}),
 }
 
 export function AiPanel({
@@ -100,7 +113,20 @@ export function AiPanel({
   const { lang, t } = useI18n()
   const [chat, setChat] = useState<ChatEntry[]>([])
   const [prompt, setPrompt] = useState('')
+  const [attachedSkills, setAttachedSkills] = useState<string[]>([])
+  const attachedSkillsRef = useRef(attachedSkills)
+  attachedSkillsRef.current = attachedSkills
   const [busy, setBusy] = useState(false)
+  /** messages queued while a reply runs; the pump re-runs them through send on settle */
+  const msgQueue = useChatRunQueue<void>({
+    busy,
+    submit: (text) => {
+      const loop = loopRef.current
+      if (!loop || loop.busy) return false
+      send(text, null)
+      return true
+    },
+  })
   const [phase, setPhase] = useState<Phase>('thinking')
   /** the scope chip's expandable preview of the selected text */
   const [scopePreviewOpen, setScopePreviewOpen] = useState(false)
@@ -108,7 +134,6 @@ export function AiPanel({
   const stickToBottomRef = useRef(true)
 
   // ── Chat-history persistence (r142): same shared store Docs/Sheets use ──
-  const sessionReadyRef = useRef<Promise<unknown> | undefined>(undefined)
   const chatIdsRef = useRef<{ projectId: string; chatId: string } | null>(null)
   /** current turn's streamed text; completed turns collect into runTextsRef */
   const segTextRef = useRef('')
@@ -116,6 +141,10 @@ export function AiPanel({
       assistant rows would break restore() on strict-alternation providers) */
   const runTextsRef = useRef<string[]>([])
   const runToolsRef = useRef<ToolActivity[]>([])
+  /** tokens billed so far in the in-flight run (summed across turns) */
+  const runUsageRef = useRef<AiTokenUsageView | undefined>(undefined)
+  /** tokens billed across the panel's session (the composer chip) */
+  const [sessionUsage, setSessionUsage] = useState<AiTokenUsageView | undefined>(undefined)
   const chatStore = () =>
     (
       window as Window & {
@@ -197,9 +226,8 @@ export function AiPanel({
     const store = chatStore()
     if (!store) return
     const tempChatId = `unsaved-${Date.now()}`
-    const pendingChat = store.resolveChat({ filePath: filePath || null, tempChatId })
-    sessionReadyRef.current = pendingChat
-    void pendingChat
+    void store
+      .resolveChat({ filePath: filePath || null, tempChatId })
       .then((ids) => {
         chatIdsRef.current = ids
         return store.loadChat({ projectId: ids.projectId, chatId: ids.chatId, limit: 200 })
@@ -245,8 +273,8 @@ export function AiPanel({
   // preferred = the user's chosen width (the only value persisted); panelWidth =
   // what fits the current window. Deriving the display width from the preference
   // means a transiently small window never permanently shrinks the panel.
-  const preferredWidthRef = useRef(loadPanelWidth())
-  const [panelWidth, setPanelWidth] = useState(() => clampPanelWidth(preferredWidthRef.current))
+  const preferredWidthRef = useRef(loadAiPanelWidth(PANEL_WIDTH_KEY) ?? AI_PANEL_WIDTH_DEFAULT)
+  const [panelWidth, setPanelWidth] = useState(() => clampAiPanelWidth(preferredWidthRef.current))
   const [resizing, setResizing] = useState(false)
   const asideRef = useRef<HTMLElement>(null)
 
@@ -362,6 +390,8 @@ export function AiPanel({
       moveTextBlock: (idx, block, d) => apiRef.current.moveTextBlock(idx, block, d),
       insertText: (input) => apiRef.current.insertText(input),
       addFormMark: (idx, kind, rect) => apiRef.current.addFormMark(idx, kind, rect),
+      formWidgets: (idx) => apiRef.current.formWidgets(idx),
+      pageBoxes: (idx) => apiRef.current.pageBoxes(idx),
       textInserts: () => apiRef.current.textInserts(),
       updateTextInsert: (id, edit) => apiRef.current.updateTextInsert(id, edit),
       moveTextInsert: (id, origin) => apiRef.current.moveTextInsert(id, origin),
@@ -390,9 +420,6 @@ export function AiPanel({
       transport: createElectronTransport(() => settingsRef.current!),
       skill: createPdfSkill(deps),
       systemSuffix: () => aiLangDirective(langRef.current),
-      // Fork: stable per-document session id → X-Hermes-Session-Id keeps ONE gateway session per PDF
-      waitForSession: () => sessionReadyRef.current ?? Promise.resolve(),
-      sessionId: () => chatIdsRef.current?.chatId,
       events: {
         onText: (text) => {
           setPhase('replying')
@@ -426,6 +453,11 @@ export function AiPanel({
           segTextRef.current = ''
           patchLast({ streaming: false })
           setChat((prev) => [...prev, { role: 'assistant', text: '', streaming: true }])
+        },
+        onUsage: (usage) => {
+          runUsageRef.current = addTokenUsage(runUsageRef.current, usage)
+          setSessionUsage((prev) => addTokenUsage(prev, usage))
+          patchLast({ usage: runUsageRef.current })
         },
         onDone: ({ text, cancelled, turnLimit, truncated }) => {
           const base = turnLimit
@@ -491,7 +523,12 @@ export function AiPanel({
   }
 
   /** retryScope: null = a retry that had no scope; undefined = capture the live selection */
-  const send = (text: string, retryScope?: AiScopeQuoteData | null): void => {
+  const send = (
+    text: string,
+    retryScope?: AiScopeQuoteData | null,
+    /** only the composer's own send takes the attached skills along */
+    attachSkills = false,
+  ): void => {
     const instruction = text.trim()
     const loop = loopRef.current
     if (!instruction || !loop || loop.busy) return
@@ -501,9 +538,18 @@ export function AiPanel({
     segTextRef.current = ''
     runTextsRef.current = []
     runToolsRef.current = []
+    runUsageRef.current = undefined
+    // skills ride with this one message only: the chips clear like a draft does
+    const sentSkills = attachSkills ? attachedSkillsRef.current : []
+    if (sentSkills.length > 0) setAttachedSkills([])
     setChat((prev) => [
       ...prev,
-      { role: 'user', text: instruction, ...(scope ? { scope } : {}) },
+      {
+        role: 'user',
+        text: instruction,
+        ...(sentSkills.length > 0 ? { skills: sentSkills } : {}),
+        ...(scope ? { scope } : {}),
+      },
       { role: 'assistant', text: '', streaming: true },
     ])
     setPrompt('')
@@ -513,7 +559,7 @@ export function AiPanel({
     void (async () => {
       try {
         settingsRef.current = await window.pdfApi.getAiSettings()
-        await loop.run(instruction)
+        await loop.run(await withSkillBodies(instruction, sentSkills))
       } catch (err) {
         patchLast({
           streaming: false,
@@ -525,7 +571,43 @@ export function AiPanel({
     })()
   }
 
-  const stop = (): void => loopRef.current?.cancel()
+  const stop = (): void => {
+    msgQueue.hold()
+    loopRef.current?.cancel()
+  }
+
+  /** the attached skills' full text in front of the request; a skill that vanished is skipped */
+  const withSkillBodies = async (instruction: string, names: readonly string[]) => {
+    if (names.length === 0) return instruction
+    const bodies = await Promise.all(
+      names.map(async (name) => {
+        try {
+          return { name, body: await window.pdfApi.skillText(name) }
+        } catch {
+          return null
+        }
+      }),
+    )
+    return withAttachedSkills(
+      instruction,
+      bodies.filter((b): b is { name: string; body: string } => b !== null),
+    )
+  }
+
+  const listSkillsForMenu = async () =>
+    (await window.pdfApi.skillsList()).map(({ name, description }) => ({ name, description }))
+  const toggleSkill = (name: string) =>
+    setAttachedSkills((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    )
+
+  /** Enter while a reply runs: the draft joins the queue above the composer */
+  const enqueueDraft = () => {
+    const text = prompt.trim()
+    if (!text) return
+    msgQueue.enqueue(text, undefined)
+    setPrompt('')
+  }
 
   // One-click AI actions from the ribbon / Ask popover; while a run is active the
   // preset lands in the composer instead of being dropped silently (markdown parity)
@@ -539,7 +621,7 @@ export function AiPanel({
   // Re-derive the display width on window resize (max is 60% of the window);
   // growing the window back restores the preferred width
   useEffect(() => {
-    const onResize = (): void => setPanelWidth(clampPanelWidth(preferredWidthRef.current))
+    const onResize = (): void => setPanelWidth(clampAiPanelWidth(preferredWidthRef.current))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -555,7 +637,7 @@ export function AiPanel({
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent): void => {
-      const w = clampPanelWidth(aiPanelWidthAtPointer(ev.clientX))
+      const w = clampAiPanelWidth(aiPanelWidthAtPointer(ev.clientX))
       preferredWidthRef.current = w
       setPanelWidth(w)
     }
@@ -571,7 +653,7 @@ export function AiPanel({
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       setResizing(false)
-      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(preferredWidthRef.current)))
+      saveAiPanelWidth(PANEL_WIDTH_KEY, preferredWidthRef.current)
     }
     resizeCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
@@ -615,6 +697,10 @@ export function AiPanel({
       if (page !== null) apiRef.current.gotoPage(page)
     },
   }
+  // [name](filenav:///abs/path) citations open the cited file in its own app
+  const fileNav = createFileNav((path) => {
+    void window.pdfApi.openSourcePath(path)
+  })
 
   return (
     <aside
@@ -633,7 +719,7 @@ export function AiPanel({
       <header className="ai-panel-header">
         <span className="ai-panel-title">
           <HermesMark size={22} />
-          Hermes
+          Genspark
         </span>
         <div className="ai-panel-header-actions">
           <AiPanelSideButton
@@ -646,8 +732,10 @@ export function AiPanel({
               onClick={() => {
                 stop()
                 loopRef.current?.reset()
+                msgQueue.clear()
                 setBusy(false)
                 setChat([])
+                setAttachedSkills([])
               }}
               data-tip={t('aiNewChat')}
               aria-label={t('aiNewChat')}
@@ -698,6 +786,7 @@ export function AiPanel({
             return (
               <div key={i} className="ai-msg ai-msg-user">
                 {entry.scope && <AiScopeQuote scope={entry.scope} />}
+                {entry.skills && <AiSkillChips lang={lang} names={entry.skills} />}
                 <span dir="auto">{entry.text}</span>
                 {entry.undelivered && (
                   <div className="ai-msg-undelivered">
@@ -723,9 +812,14 @@ export function AiPanel({
               className={`ai-msg ai-msg-assistant${entry.isError ? ' ai-msg-error' : ''}`}
             >
               {hasTools && <ToolChipList tools={entry.tools!} />}
+              {entry.usage && (
+                <div className="ai-message-usage">
+                  <AiUsageChip usage={entry.usage} lang={lang} />
+                </div>
+              )}
               {entry.text && (
                 <div dir="auto">
-                  <Markdown text={entry.text} nav={pdfNav} />
+                  <Markdown text={entry.text} navs={[pdfNav, fileNav]} />
                 </div>
               )}
             </div>
@@ -763,54 +857,73 @@ export function AiPanel({
 
       <div className="ai-composer">
         <AiComposer
+          queueStrip={
+            <AiQueueStrip
+              items={msgQueue.queued}
+              labels={AI_QUEUE_LABELS[lang]}
+              onUpdate={msgQueue.update}
+              onRemove={msgQueue.remove}
+              onClear={msgQueue.clear}
+              paused={msgQueue.paused}
+              onTogglePause={msgQueue.togglePaused}
+              onMove={msgQueue.move}
+            />
+          }
+          onQueue={enqueueDraft}
+          queuePlaceholder={AI_QUEUE_LABELS[lang].queuePlaceholder}
           value={prompt}
           busy={busy}
           header={
-            hasScopeSelection && (
-              <div className="ai-scope-row">
-                <span className="ai-scope-hint">
-                  <button
-                    className="ai-scope-label"
-                    onClick={() => setScopePreviewOpen((v) => !v)}
-                    aria-expanded={scopePreviewOpen}
-                    data-tip={t('aiScopeSelectionTip')}
-                  >
-                    {t('aiScopeSelection', {
-                      page:
-                        scopeSel!.lastPage > scopeSel!.page
-                          ? `${scopeSel!.page}-${scopeSel!.lastPage}`
-                          : scopeSel!.page,
-                      words: countWords(scopeSel!.text),
-                    })}
-                  </button>
-                  <button
-                    className="ai-scope-clear"
-                    onClick={() => {
-                      setScopePreviewOpen(false)
-                      onClearSelection?.()
-                    }}
-                    data-tip={t('aiScopeClearTitle')}
-                    aria-label={t('aiScopeClearTitle')}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden>
-                      <path
-                        d="M4 4l8 8M12 4l-8 8"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </span>
-                {scopePreviewOpen && (
-                  <div className="ai-scope-preview">
-                    {scopeSel!.text.length > 400
-                      ? `${scopeSel!.text.slice(0, 400)}…`
-                      : scopeSel!.text}
+            (hasScopeSelection || attachedSkills.length > 0) && (
+              <>
+                <AiSkillChips lang={lang} names={attachedSkills} onRemove={toggleSkill} />
+                {hasScopeSelection && (
+                  <div className="ai-scope-row">
+                    <span className="ai-scope-hint">
+                      <button
+                        className="ai-scope-label"
+                        onClick={() => setScopePreviewOpen((v) => !v)}
+                        aria-expanded={scopePreviewOpen}
+                        data-tip={t('aiScopeSelectionTip')}
+                      >
+                        {t('aiScopeSelection', {
+                          page:
+                            scopeSel!.lastPage > scopeSel!.page
+                              ? `${scopeSel!.page}-${scopeSel!.lastPage}`
+                              : scopeSel!.page,
+                          words: countWords(scopeSel!.text),
+                        })}
+                      </button>
+                      <button
+                        className="ai-scope-clear"
+                        onClick={() => {
+                          setScopePreviewOpen(false)
+                          onClearSelection?.()
+                        }}
+                        data-tip={t('aiScopeClearTitle')}
+                        aria-label={t('aiScopeClearTitle')}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden>
+                          <path
+                            d="M4 4l8 8M12 4l-8 8"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </span>
+                    {scopePreviewOpen && (
+                      <div className="ai-scope-preview">
+                        {scopeSel!.text.length > 400
+                          ? `${scopeSel!.text.slice(0, 400)}…`
+                          : scopeSel!.text}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+              </>
             )
           }
           placeholder={t('aiComposerPlaceholder')}
@@ -819,11 +932,24 @@ export function AiPanel({
           sendLabel={t('aiSend')}
           stopLabel={t('aiStop')}
           iconOnly
+          footerStart={
+            <>
+              <AiModelPicker bridge={MODEL_BRIDGE} lang={lang} />
+              {sessionUsage && <AiUsageChip usage={sessionUsage} session lang={lang} />}
+              <AiSkillsMenu
+                lang={lang}
+                listSkills={listSkillsForMenu}
+                selected={attachedSkills}
+                onToggle={toggleSkill}
+                onManage={() => void window.pdfApi.openSkillsSettings?.().catch(() => {})}
+              />
+            </>
+          }
           sendIconEnabled={<img src={sendEnterOn} alt="" aria-hidden />}
           sendIconDisabled={<img src={sendEnterOff} alt="" aria-hidden />}
           stopIcon={<img src={sendStop} alt="" aria-hidden />}
           onChange={setPrompt}
-          onSend={() => send(prompt)}
+          onSend={() => send(prompt, undefined, true)}
           onStop={stop}
         />
       </div>
@@ -1014,7 +1140,6 @@ function IconCollapse(): ReactElement {
   )
 }
 
-/** Shared monochrome HermesOffice identity. */
 export function HermesMark({ size = 18 }: { size?: number }): React.JSX.Element {
   return <OfficeMark size={size} />
 }
