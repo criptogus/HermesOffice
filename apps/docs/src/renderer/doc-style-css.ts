@@ -184,6 +184,7 @@ export function docBodyEaFont(parsed: ParsedDocFull): string | undefined {
 /** StyleDisplay.font is EA-first: a name shared with fontAscii is a Latin-only
  *  declaration, unless the shared name is itself a CJK face (Meiryo in every slot). */
 function styleDeclaresEaFace(d: { font?: string; fontAscii?: string }): boolean {
+  // inline-rules: allow
   return !!d.font && (d.font !== d.fontAscii || isEaLayoutFace(d.font))
 }
 
@@ -602,6 +603,7 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     const standIn =
       !!baseEa &&
       !aliasFace &&
+      // inline-rules: allow
       isCjkFontName(baseEa) &&
       (isBundledFont(baseEa) || !isFontAvailable(baseEa))
     const eaFace = aliasFace ? baseEa : eaFaceForGridStrut(textCtx)
@@ -995,6 +997,7 @@ export function docStyleCss(parsed: ParsedDocFull): string {
           `--doc-line-factor-cjk:${cjkDeclaredLineFactor(d.font) ?? lineHeightFactor(d.font)}`,
         )
         if (isKoreanLayoutFace(d.font)) decls.push(`--doc-line-factor-kr:${krLineFactor(d.font)}`)
+        // inline-rules: allow
       } else if (d.eaSlotEmpty && isCjkFontName(d.font) && !isKoreanFontName(d.font)) {
         // hangul the themeFontLang face cannot draw takes Word's fallback face height
         decls.push(`--doc-line-factor-kr:${krLineFactor(d.font)}`)

@@ -714,6 +714,7 @@ class TabLayoutView {
       const box = fixed ? ' doc-tab-fixed' : ''
       const wrap = t.wrap ? ' doc-tab-wrap' : ''
       decos.push(
+        // inline-rules: allow
         Decoration.inline(
           t.pos,
           t.pos + 1,

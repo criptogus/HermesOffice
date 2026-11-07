@@ -9,6 +9,7 @@ import { touchedTopLevelBlocks } from './touched-blocks'
 // Decorations keep the text/runs intact, including undo, copying and DOCX export.
 // Halfwidth kana/hangul/symbols share the East Asian face but count as
 // single-byte text for the balanced character grid (Word probe 2026-10-22).
+// inline-rules: allow
 const halfwidthForm = /[\uff61-\uffdc\uffe8-\uffee]/u
 
 const EAST_ASIAN_CLASS = 'doc-east-asian-font'
@@ -49,6 +50,7 @@ function decorationsIn(doc: PmNode, from: number, to: number): Decoration[] {
     if (!node.isText) return
     for (const seg of eastAsianSegments(node.text!)) {
       ranges.push(
+        // inline-rules: allow
         Decoration.inline(pos + seg.index, pos + seg.index + seg.text.length, {
           class: classFor(seg.text),
           style: FONT_STYLE,

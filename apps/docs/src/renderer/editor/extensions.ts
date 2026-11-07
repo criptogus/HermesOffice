@@ -1766,6 +1766,7 @@ function pushLineFactorDecos(
   // keeps the paragraph strut (and shared enclosing marks) off that line
   for (const off of leadingSizedBreaks(node)) {
     decos.push(
+      // inline-rules: allow
       Decoration.inline(pos + 1 + off, pos + 2 + off, { nodeName: 'span', class: 'doc-br-line' }),
     )
   }
@@ -2112,6 +2113,7 @@ function strayRunSpecs(run: Run): DomSpec[] {
   const specs = runSpanSpecs(run)
   const family = run.fontAscii ?? run.font
   if (!family || !run.text || specs[0]?.[0] !== 'span') return specs
+  // inline-rules: allow
   const factor = isEaLayoutFace(family)
     ? (cjkDeclaredLineFactor(family) ?? lineHeightFactor(family))
     : lineHeightFactor(family)
