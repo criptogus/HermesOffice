@@ -20,6 +20,7 @@ export const SHEET_OP_GROUPS: Record<string, readonly string[]> = {
     'clear_range',
     'fill_range',
     'copy_range',
+    'move_range',
     'find_replace',
     'sort_range',
     'convert_to_values',
@@ -78,7 +79,8 @@ const GROUP_SUMMARIES: Record<string, string> = {
 }
 
 const NOTES: Record<string, string> = {
-  set_cell: 'a string value starting with "=" is written as a formula',
+  set_cell:
+    'a string value starting with "=" is written as a formula; type: "text" keeps such a string as literal cell text',
   set_range: 'start is the top-left cell; range, when given instead, must match the values grid',
   format_range:
     'null clears a property; colors are #RRGGBB or theme slots ("accent1", "accent1+40%", "dk2-25%", {theme, tint}) that follow the workbook theme; fill = {pattern, fg, bg?} or {gradient: {angle?, stops}}; border type none removes all borders',
@@ -96,6 +98,8 @@ const NOTES: Record<string, string> = {
     'sourceRange first row = field names; the output is written as cells at targetCell (must be empty) plus a native pivot Excel can refresh; targetSheet must already exist in the file; not in a batch with sheet or row/column ops',
   add_sparkline:
     'one sparkline per row of dataRange (at most 200 rows per op), in the column right of it unless targetCell; type line|column|stacked',
+  move_range:
+    'cut → paste as one op: copies source (values and formulas) to target, then clears the source cells; sourceSheet for another sheet; source and target must not overlap',
   convert_to_values:
     'replaces the formulas in range with the values the workbook engine computes; cells that evaluate to an error keep their formula',
   set_col_width: 'px',
@@ -126,7 +130,9 @@ const FOOTER = [
   'sheet added or renamed earlier in the batch is addressed by its new name. Rules, links, notes, filters and',
   'visuals must come after any row/column op of their sheet; defined-name ops cannot share a batch with sheet',
   'or row/column ops. Formulas written by a batch are evaluated by the workbook engine and stored',
-  'with their results; functions the engine lacks are left for Excel to compute on open (warning formulas_not_cached).',
+  'with their results; functions the engine lacks are left for Excel to compute on open (warning formulas_not_cached),',
+  'and a formula the engine cannot parse is reported separately (warning formula_errors) so a bad reference is not',
+  'mistaken for a missing function.',
 ]
 
 function opSchemas(): Map<string, JsonSchema> {

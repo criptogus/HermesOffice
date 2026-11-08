@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gzipSync } from 'node:zlib'
-import { scanMetafileFonts } from '../src/main/metafile-fonts'
+import { MAX_METAFILE_GUNZIP_BYTES, scanMetafileFonts } from '../src/main/metafile-fonts'
 
 function u32(v: number): number[] {
   return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff]
@@ -110,5 +110,10 @@ describe('scanMetafileFonts', () => {
 
   it('returns nothing for non-metafile bytes', () => {
     expect(scanMetafileFonts(new Uint8Array(64))).toEqual([])
+  })
+
+  it('refuses gzip bombs instead of exhausting memory', () => {
+    const bomb = new Uint8Array(gzipSync(Buffer.alloc(MAX_METAFILE_GUNZIP_BYTES + 1)))
+    expect(scanMetafileFonts(bomb)).toEqual([])
   })
 })

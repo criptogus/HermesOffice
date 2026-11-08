@@ -9,15 +9,12 @@ import {
   type ControlReply,
   type ControlRequest,
 } from './control-protocol'
-import { hermesofficeUserDataDir } from './gui'
+import { hermesofficeUserDataDirs } from './gui'
 import { CliError, EXIT, type ErrorReason } from './result'
 
 /** The running shell's control endpoint, or null when no live shell published one. */
 export function controlEndpoint(env: NodeJS.ProcessEnv): ControlEndpoint | null {
-  const dirs = env.HERMESOFFICE_USER_DATA
-    ? [env.HERMESOFFICE_USER_DATA]
-    : [hermesofficeUserDataDir(env), `${hermesofficeUserDataDir(env)} Dev`]
-  for (const dir of dirs) {
+  for (const dir of hermesofficeUserDataDirs(env)) {
     const file = join(dir, CONTROL_FILE)
     if (!existsSync(file)) continue
     try {

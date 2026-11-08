@@ -45,6 +45,19 @@ describe('parseChartXml', () => {
     expect(m.valAxis?.labelSizePt).toBe(12)
   })
 
+  /**
+   * sz="auto" is a legal attribute value that parseInt turns into NaN, and a
+   * NaN labelSizePt is not nullish: the render layer's
+   * `valAxis?.labelSizePt ?? default` takes the NaN and the value axis label
+   * gutter collapses.
+   */
+  it('ignores a non-numeric axis label size instead of storing NaN', () => {
+    const m = parseChartXml(LINE_CHART.replace('sz="1200"', 'sz="auto"'))!
+    expect(m.valAxis?.labelSizePt).toBeUndefined()
+    // the rest of the axis text properties still parse
+    expect(m.valAxis?.labelColor).toBe('#666666')
+  })
+
   it('parses clustered bar chart with fill color and gapWidth', () => {
     const m = parseChartXml(BAR_CHART)!
     expect(m.kind).toBe('bar')
@@ -54,6 +67,29 @@ describe('parseChartXml', () => {
     expect(m.series[0]!.color).toBe('#629BF8')
     expect(m.series[0]!.values).toEqual([30.5, 35])
     expect(m.legendPos).toBeUndefined()
+  })
+
+  it('gapWidth: a valid value is kept, a malformed one falls back to 150 (never NaN)', () => {
+    const withGap = (gap: string) =>
+      parseChartXml(BAR_CHART.replace('<c:gapWidth val="28"/>', gap))!
+
+    // Valid: parsed through untouched
+    expect(withGap('<c:gapWidth val="28"/>').gapWidthPct).toBe(28)
+    expect(withGap('<c:gapWidth val="0"/>').gapWidthPct).toBe(0)
+
+    // Malformed: parseInt yields NaN, which must never reach the chart geometry
+    // (it would be rounded on write-back and make every bar disappear)
+    for (const bad of [
+      '<c:gapWidth val="abc"/>',
+      '<c:gapWidth val=""/>',
+      '<c:gapWidth val="  "/>',
+      '<c:gapWidth/>',
+      '',
+    ]) {
+      const gapWidthPct = withGap(bad).gapWidthPct
+      expect(gapWidthPct).toBe(150)
+      expect(Number.isFinite(gapWidthPct)).toBe(true)
+    }
   })
 
   it('returns null for chart space without recognizable plot', () => {
@@ -191,6 +227,21 @@ describe('parseChartXml', () => {
     expect(m.valAxis?.gridColor).toBe('#E6E6E6')
   })
 
+  it('drops non-finite chart axis bounds instead of poisoning scale math', () => {
+    const HOSTILE = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
+<c:scatterChart><c:scatterStyle val="lineMarker"/>
+<c:ser><c:idx val="0"/>
+  <c:xVal><c:numRef><c:f>x</c:f><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:xVal>
+  <c:yVal><c:numRef><c:f>y</c:f><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:yVal>
+</c:ser></c:scatterChart>
+<c:valAx><c:axPos val="b"/><c:scaling><c:min val="Infinity"/><c:max val="NaN"/></c:scaling></c:valAx>
+</c:plotArea></c:chart></c:chartSpace>`
+    const m = parseChartXml(HOSTILE)!
+    expect(m.catAxis?.min).toBeUndefined()
+    expect(m.catAxis?.max).toBeUndefined()
+    expect(m.series[0]!.values).toEqual([2])
+  })
+
   it('parses radar chart: radarStyle + categories', () => {
     const RADAR = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
 <c:radarChart><c:radarStyle val="filled"/>
@@ -206,6 +257,34 @@ describe('parseChartXml', () => {
     expect(m.categories).toEqual(['Listen', 'Speak', 'Read', 'Write'])
     expect(m.series[0]!.color).toBe('#ED7D31')
     expect(m.series[0]!.values).toEqual([3, 4, 5, 2])
+  })
+
+  it('caps hostile ptCount and ignores sparse out-of-range idx', () => {
+    const HOSTILE = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
+<c:barChart><c:barDir val="col"/>
+<c:ser><c:idx val="0"/>
+  <c:cat><c:strRef><c:f>x</c:f><c:strCache><c:ptCount val="1000000000"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="999999999"><c:v>Z</c:v></c:pt></c:strCache></c:strRef></c:cat>
+  <c:val><c:numRef><c:f>y</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser></c:barChart>
+</c:plotArea></c:chart></c:chartSpace>`
+    const start = Date.now()
+    const m = parseChartXml(HOSTILE)!
+    expect(Date.now() - start).toBeLessThan(10000)
+    expect(m.categories?.length).toBeLessThanOrEqual(1_048_576)
+    expect(m.categories?.[0]).toBe('A')
+    expect(m.series[0]!.values).toEqual([1, 2])
+  })
+
+  it('ignores per-point overrides outside the series point count', () => {
+    const xml = `<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea>
+<c:pieChart><c:ser><c:idx val="0"/>
+  <c:dPt><c:idx val="0"/><c:spPr><a:solidFill><a:srgbClr val="AA0000"/></a:solidFill></c:spPr></c:dPt>
+  <c:dPt><c:idx val="20000000"/><c:spPr><a:solidFill><a:srgbClr val="0000AA"/></a:solidFill></c:spPr><c:explosion val="10"/></c:dPt>
+  <c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`
+    const s = parseChartXml(xml)!.series[0]!
+    expect(s.pointColors).toEqual(['#AA0000'])
+    expect(s.pointExplosionPct).toBeUndefined()
   })
 
   it('parses bar+line combo: both plots kept, series tagged with plotKind', () => {
@@ -328,6 +407,21 @@ describe('buildChartSpaceXml comboBarLine (generate → parse round-trip)', () =
   })
 })
 
+describe('buildChartSpaceXml spreadsheet column references', () => {
+  it('uses base-26 columns after Z', () => {
+    const xml = buildChartSpaceXml({
+      kind: 'line',
+      categories: ['x'],
+      series: Array.from({ length: 27 }, (_, i) => ({ name: `S${i}`, values: [i] })),
+      offset: { x: 0, y: 0, cx: 100, cy: 100 },
+    })
+    expect(xml).toContain('Sheet1!$AA$1')
+    expect(xml).toContain('Sheet1!$AA$2:$AA$2')
+    expect(xml).toContain('Sheet1!$AB$1')
+    expect(xml).not.toMatch(/Sheet1!\$[[\\]/)
+  })
+})
+
 describe('buildChartSpaceXml style options (generate → parse round-trip)', () => {
   const BASE = {
     kind: 'bar' as const,
@@ -363,6 +457,25 @@ describe('buildChartSpaceXml style options (generate → parse round-trip)', () 
     expect(m.catAxis?.title).toBe('Quarter')
     expect(m.valAxis?.title).toBe('Sales (100M)')
     expect(m.gapWidthPct).toBe(80)
+  })
+
+  it('an empty axis <c:title> (no c:tx) reads as the "Axis Title" placeholder', () => {
+    const xml = buildChartSpaceXml({ ...BASE, valAxisTitle: 'Sales' }).replace(
+      /(<c:valAx>.*?<c:title>)<c:tx>.*?<\/c:tx>/s,
+      '$1',
+    )
+    expect(xml).toContain('<c:title>')
+    const m = parseChartXml(xml)!
+    expect(m.valAxis?.title).toBe('Axis Title')
+    expect(m.catAxis?.title).toBeUndefined()
+  })
+
+  it('a cell-linked axis title (c:tx/c:strRef) keeps its cached text', () => {
+    const xml = buildChartSpaceXml({ ...BASE, valAxisTitle: 'Sales' }).replace(
+      /(<c:valAx>.*?<c:title>)<c:tx>.*?<\/c:tx>/s,
+      '$1<c:tx><c:strRef><c:f>Sheet1!$$A$$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Linked</c:v></c:pt></c:strCache></c:strRef></c:tx>',
+    )
+    expect(parseChartXml(xml)!.valAxis?.title).toBe('Linked')
   })
 
   it('legendPos none writes no c:legend', () => {
@@ -1117,5 +1230,355 @@ describe('legacy <c:style> dark row + literal data + automatic markers', () => {
   it('no plot-level marker (or val=0): series without a symbol draw no markers', () => {
     expect(parseChartXml(wrap('', SER(0), ''))!.series[0]!.marker).toBe(false)
     expect(parseChartXml(wrap('', SER(0), '<c:marker val="0"/>'))!.series[0]!.marker).toBe(false)
+  })
+})
+
+describe('per-point picture fills (c:dPt blipFill)', () => {
+  it('resolve through the injected fill resolver instead of falling back to the series color', () => {
+    const BAR = `<?xml version="1.0"?><c:chartSpace xmlns:c="c" xmlns:a="a" xmlns:r="r"><c:chart><c:plotArea><c:layout/>
+<c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:order val="0"/>
+  <c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>
+  <c:dPt><c:idx val="1"/><c:spPr><a:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></a:blipFill></c:spPr></c:dPt>
+  <c:cat><c:strRef><c:f>x</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat>
+  <c:val><c:numRef><c:f>y</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>`
+    const image = {
+      type: 'image' as const,
+      mediaRef: 'ppt/media/image9.png',
+      mode: 'stretch' as const,
+    }
+    const m = parseChartXml(BAR, undefined, (spPr: any) =>
+      spPr?.['a:blipFill'] ? image : undefined,
+    )!
+    expect(m.series[0]!.pointFills?.[1]).toEqual(image)
+    expect(m.series[0]!.pointFills?.[0]).toBeUndefined()
+    expect(m.series[0]!.pointColors).toBeUndefined()
+  })
+})
+
+describe('chart text font, tick label position and per-point label overrides', () => {
+  const wrap = (body: string) =>
+    `<?xml version="1.0"?><c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea><c:layout/>${body}</c:plotArea></c:chart></c:chartSpace>`
+  const bar = (extra: string, axExtra = '', plotExtra = '') =>
+    wrap(
+      `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>
+      <c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>S</c:v></c:pt></c:strCache></c:strRef></c:tx>${extra}
+      <c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat>
+      <c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>24</c:v></c:pt><c:pt idx="1"><c:v>-19</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>
+      ${plotExtra}<c:axId val="1"/><c:axId val="2"/></c:barChart>
+      <c:catAx><c:axId val="1"/><c:axPos val="b"/>${axExtra}<c:crossAx val="2"/></c:catAx>
+      <c:valAx><c:axId val="2"/><c:axPos val="l"/><c:crossAx val="1"/></c:valAx>`,
+    )
+
+  it('takes the axis txPr typeface as the chart font when chartSpace has none', () => {
+    const m = parseChartXml(
+      bar(
+        '',
+        '<c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1000"><a:latin typeface="Arial"/></a:defRPr></a:pPr></a:p></c:txPr>',
+      ),
+    )!
+    expect(m.fontFamily).toBe('Arial')
+    expect(m.catAxis?.labelSizePt).toBe(10)
+  })
+
+  it('leaves fontFamily unset without any typeface (render layer keeps Calibri)', () => {
+    expect(parseChartXml(bar(''))!.fontFamily).toBeUndefined()
+  })
+
+  it('reads tickLblPos low/high; none still hides the labels', () => {
+    expect(parseChartXml(bar('', '<c:tickLblPos val="low"/>'))!.catAxis?.tickLblPos).toBe('low')
+    expect(parseChartXml(bar('', '<c:tickLblPos val="high"/>'))!.catAxis?.tickLblPos).toBe('high')
+    const none = parseChartXml(bar('', '<c:tickLblPos val="none"/>'))!.catAxis
+    expect(none?.tickLblHidden).toBe(true)
+    expect(none?.tickLblPos).toBeUndefined()
+  })
+
+  it('reads data-label rotation, cap="all" and letter spacing from c:dLbls txPr', () => {
+    const m = parseChartXml(
+      bar(`<c:dLbls><c:txPr><a:bodyPr rot="-5400000" vert="horz"/><a:lstStyle/>
+        <a:p><a:pPr><a:defRPr sz="1800" cap="all" spc="120"/></a:pPr></a:p></c:txPr>
+        <c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbls>`),
+    )!
+    expect(m.dataLabelRotDeg).toBe(-90)
+    expect(m.dataLabelCaps).toBe(true)
+    expect(m.dataLabelSpcPt).toBeCloseTo(1.2, 5)
+    const plain = parseChartXml(
+      bar(`<c:dLbls><c:txPr><a:bodyPr rot="-60000000"/><a:p><a:pPr><a:defRPr spc="0"/></a:pPr></a:p></c:txPr>
+        <c:showVal val="1"/></c:dLbls>`),
+    )!
+    expect(plain.dataLabelRotDeg).toBeUndefined()
+    expect(plain.dataLabelCaps).toBeUndefined()
+    expect(plain.dataLabelSpcPt).toBeUndefined()
+  })
+
+  it('a series dLbls showing only values inherits cap/spc from the plot-level block', () => {
+    const m = parseChartXml(
+      bar(
+        `<c:dLbls><c:showVal val="1"/></c:dLbls>`,
+        '',
+        `<c:dLbls><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr cap="all" spc="120"/></a:pPr></a:p></c:txPr><c:showVal val="1"/></c:dLbls>`,
+      ),
+    )!
+    expect(m.dataLabels).toBe(true)
+    expect(m.dataLabelCaps).toBe(true)
+    expect(m.dataLabelSpcPt).toBeCloseTo(1.2, 5)
+  })
+
+  it('a blank title paragraph stays an empty line; an all-blank title is dropped', () => {
+    const title = (paras: string) =>
+      parseChartXml(
+        bar('').replace(
+          '<c:plotArea>',
+          `<c:title><c:tx><c:rich>${paras}</c:rich></c:tx></c:title><c:plotArea>`,
+        ),
+      )!.title
+    const blank = '<a:p><a:endParaRPr lang="en-US"/></a:p>'
+    const run = (t: string) => `<a:p><a:r><a:t>${t}</a:t></a:r></a:p>`
+    expect(title(run('A') + blank + run('B'))).toBe('A\n\nB')
+    expect(title(blank)).toBeUndefined()
+  })
+
+  it('reads cap="all" and spc on the category axis labels and the title', () => {
+    const m = parseChartXml(
+      bar(
+        '',
+        `<c:txPr><a:bodyPr rot="-60000000"/><a:p><a:pPr><a:defRPr sz="1800" cap="all" spc="120"/></a:pPr></a:p></c:txPr>`,
+      ).replace(
+        '<c:plotArea>',
+        `<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="2160" b="1" cap="all" spc="120"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>Output</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:plotArea>`,
+      ),
+    )!
+    expect(m.catAxis?.labelCaps).toBe(true)
+    expect(m.catAxis?.labelSpcPt).toBeCloseTo(1.2, 5)
+    expect(m.title).toBe('Output')
+    expect(m.titleCaps).toBe(true)
+    expect(m.titleSpcPt).toBeCloseTo(1.2, 5)
+  })
+
+  it('per-point c:dLbl flags, size and color override the series block', () => {
+    const m = parseChartXml(
+      bar(`<c:dLbls>
+        <c:dLbl><c:idx val="1"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1000"><a:solidFill><a:srgbClr val="F7F2EA"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr>
+          <c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbl>
+        <c:dLbl><c:idx val="0"/><c:delete val="1"/></c:dLbl>
+        <c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1800"/></a:pPr></a:p></c:txPr>
+        <c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="1"/></c:dLbls>`),
+    )!
+    expect(m.dataLabelCatName).toBe(true)
+    expect(m.dataLabelPt).toBe(18)
+    expect(m.series[0]!.dLblOverrides).toEqual([
+      { idx: 1, val: true, cat: false, ser: false, pct: false, sizePt: 10, color: '#F7F2EA' },
+      { idx: 0, hidden: true },
+    ])
+  })
+
+  it('a point-level dLbl turns labels on for a series whose block shows nothing', () => {
+    const m = parseChartXml(
+      bar(`<c:dLbls><c:dLbl><c:idx val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbl>
+        <c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbls>`),
+    )!
+    expect(m.series[0]!.dataLabels).toBe(true)
+    expect(m.series[0]!.dLblOnlyPoints).toBe(true)
+  })
+
+  it('a series block that already shows values keeps its other points labelled', () => {
+    const m = parseChartXml(
+      bar(`<c:dLbls><c:dLbl><c:idx val="0"/><c:delete val="1"/></c:dLbl>
+        <c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbls>`),
+    )!
+    expect(m.series[0]!.dataLabels).toBe(true)
+    expect(m.series[0]!.dLblOnlyPoints).toBeUndefined()
+  })
+
+  it('a series block showing only category names is not treated as points-only', () => {
+    const m = parseChartXml(
+      bar(`<c:dLbls><c:dLbl><c:idx val="0"/><c:showVal val="1"/><c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbl>
+        <c:showVal val="0"/><c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="0"/></c:dLbls>`),
+    )!
+    expect(m.series[0]!.dataLabels).toBe(true)
+    expect(m.series[0]!.dLblOnlyPoints).toBeUndefined()
+  })
+
+  it('the axis typeface outranks the title face when chartSpace names none', () => {
+    const m = parseChartXml(
+      wrap(
+        `<c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:order val="0"/>
+        <c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>
+        <c:axId val="1"/><c:axId val="2"/></c:barChart>
+        <c:catAx><c:axId val="1"/><c:axPos val="b"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr><a:latin typeface="Arial"/></a:defRPr></a:pPr></a:p></c:txPr><c:crossAx val="2"/></c:catAx>
+        <c:valAx><c:axId val="2"/><c:axPos val="l"/><c:crossAx val="1"/></c:valAx>`,
+      ).replace(
+        '<c:plotArea>',
+        '<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:rPr><a:latin typeface="Georgia"/></a:rPr><a:t>T</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea>',
+      ),
+    )!
+    expect(m.fontFamily).toBe('Arial')
+  })
+})
+
+it('chart title weight falls back from a bare run rPr to the paragraph default (b="0" stays regular)', () => {
+  const xml = `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1400" b="0" i="1"><a:solidFill><a:srgbClr val="595959"/></a:solidFill></a:defRPr></a:pPr><a:r><a:rPr lang="en-IN"/><a:t>Last</a:t></a:r><a:r><a:rPr lang="en-IN" baseline="0"/><a:t> 6 months</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:crossAx val="1"/></c:valAx></c:plotArea></c:chart></c:chartSpace>`
+  const m = parseChartXml(xml, undefined as never)!
+  expect(m.title).toBe('Last 6 months')
+  expect(m.titleBold).toBe(false)
+  expect(m.titleItalic).toBe(true)
+  expect(m.titleColor?.toUpperCase()).toBe('#595959')
+})
+
+it('reads a logarithmic value axis base from c:scaling', () => {
+  const xml = `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:lineChart><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>9</c:v></c:pt><c:pt idx="1"><c:v>960</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:lineChart>
+<c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:crossAx val="2"/></c:catAx>
+<c:valAx><c:axId val="2"/><c:scaling><c:logBase val="10"/><c:orientation val="minMax"/><c:max val="10000"/><c:min val="1"/></c:scaling><c:axPos val="l"/><c:crossAx val="1"/></c:valAx>
+</c:plotArea></c:chart></c:chartSpace>`
+  const m = parseChartXml(xml, undefined as never)!
+  expect(m.valAxis?.logBase).toBe(10)
+  expect(m.valAxis?.min).toBe(1)
+  expect(m.valAxis?.max).toBe(10000)
+})
+
+it('drops logarithmic bases outside the OOXML range', () => {
+  const withBase = (base: string) =>
+    parseChartXml(
+      LINE_CHART.replace(
+        '<c:scaling><c:orientation val="minMax"/></c:scaling>',
+        `<c:scaling><c:logBase val="${base}"/><c:orientation val="minMax"/></c:scaling>`,
+      ),
+    )!
+  expect(withBase('1.999').valAxis?.logBase).toBeUndefined()
+  expect(withBase('2').valAxis?.logBase).toBe(2)
+  expect(withBase('1000').valAxis?.logBase).toBe(1000)
+  expect(withBase('1001').valAxis?.logBase).toBeUndefined()
+  expect(withBase('1000000000').valAxis?.logBase).toBeUndefined()
+})
+
+describe('date axis chronological order', () => {
+  const chartXml = (orientation: string, serials: number[]) => {
+    const pts = (vals: Array<number | string>) =>
+      vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('')
+    return `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:order val="0"/>
+<c:dPt><c:idx val="0"/><c:spPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></c:spPr></c:dPt>
+<c:cat><c:numRef><c:numCache><c:formatCode>mmm\\-yy</c:formatCode><c:ptCount val="${serials.length}"/>${pts(serials)}</c:numCache></c:numRef></c:cat>
+<c:val><c:numRef><c:numCache><c:ptCount val="${serials.length}"/>${pts([10, 20, 30])}</c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>
+<c:dateAx><c:axId val="1"/><c:scaling><c:orientation val="${orientation}"/></c:scaling><c:crossAx val="2"/></c:dateAx>
+<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:crossAx val="1"/></c:valAx>
+</c:plotArea></c:chart></c:chartSpace>`
+  }
+
+  it('sorts descending sheet dates ascending and moves the values and point overrides with them', () => {
+    // 46174 = Jun-26, 46143 = May-26, 46113 = Apr-26 (sheet order newest first)
+    const m = parseChartXml(chartXml('maxMin', [46174, 46143, 46113]), undefined as never)!
+    expect(m.categories).toEqual(['Apr-26', 'May-26', 'Jun-26'])
+    expect(m.series[0]!.values).toEqual([30, 20, 10])
+    // the red point was Jun-26 (sheet index 0) and stays on Jun-26
+    expect(m.series[0]!.pointColors?.[2]).toBe('#FF0000')
+    expect(m.series[0]!.pointColors?.[0]).toBeUndefined()
+    expect(m.catAxis?.reversed).toBe(true)
+  })
+
+  it('keeps date-axis sorting bounded when a point override has a huge index', () => {
+    const xml = chartXml('maxMin', [46174, 46143, 46113]).replace(
+      '</c:dPt>',
+      '</c:dPt><c:dPt><c:idx val="20000000"/><c:spPr><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></c:spPr></c:dPt>',
+    )
+    const m = parseChartXml(xml)!
+    expect(m.series[0]!.pointColors).toHaveLength(3)
+    expect(m.series[0]!.pointColors?.[2]).toBe('#FF0000')
+  })
+
+  it('reorders a series shorter than the categories by point index', () => {
+    const xml = chartXml('maxMin', [46174, 46143, 46113]).replace(
+      /<c:val>.*?<\/c:val>/s,
+      '<c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt></c:numCache></c:numRef></c:val>',
+    )
+    const m = parseChartXml(xml, undefined as never)!
+    // Jun (10) and May (20) keep their dates; Apr has no point
+    expect(m.series[0]!.values).toEqual([null, 20, 10])
+  })
+
+  it('leaves ascending dates and text categories untouched', () => {
+    const m = parseChartXml(chartXml('minMax', [46113, 46143, 46174]), undefined as never)!
+    expect(m.categories).toEqual(['Apr-26', 'May-26', 'Jun-26'])
+    expect(m.series[0]!.values).toEqual([10, 20, 30])
+  })
+
+  it('moves value-from-cells labels with their points', () => {
+    const dlbls = `<c:dLbls><c:extLst><c:ext uri="{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" xmlns:c15="http://schemas.microsoft.com/office/drawing/2012/chart"><c15:showDataLabelsRange val="1"/></c:ext></c:extLst></c:dLbls>`
+    const dlblRange = `<c:extLst><c:ext uri="{02D57815-91ED-43cb-92C2-25804820EDAC}" xmlns:c15="http://schemas.microsoft.com/office/drawing/2012/chart"><c15:datalabelsRange><c15:dlblRangeCache><c:pt idx="0"><c:v>Jun cell</c:v></c:pt><c:pt idx="1"><c:v>May cell</c:v></c:pt><c:pt idx="2"><c:v>Apr cell</c:v></c:pt></c15:dlblRangeCache></c15:datalabelsRange></c:ext></c:extLst>`
+    const xml = chartXml('maxMin', [46174, 46143, 46113])
+      .replace('<c:cat>', `${dlbls}<c:cat>`)
+      .replace('</c:val>', `</c:val>${dlblRange}`)
+    const m = parseChartXml(xml, undefined as never)!
+    // sheet order Jun/May/Apr carries labels Jun/May/Apr: the plot reads Apr/May/Jun
+    expect(m.series[0]!.pointLabels).toEqual(['Apr cell', 'May cell', 'Jun cell'])
+  })
+})
+
+describe('series-level data-label format and box', () => {
+  const xml = `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/>
+<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>A</c:v></c:pt></c:strCache></c:strRef></c:tx>
+<c:dLbls><c:dLbl><c:idx val="1"/><c:spPr><a:solidFill><a:srgbClr val="FFFF00"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbl>
+<c:numFmt formatCode="#,##0_);[Red]\\(#,##0\\)" sourceLinked="0"/><c:spPr><a:solidFill><a:srgbClr val="F2F2F2"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>
+<c:cat><c:strRef><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>x</c:v></c:pt><c:pt idx="1"><c:v>y</c:v></c:pt></c:strCache></c:strRef></c:cat>
+<c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>50.6</c:v></c:pt><c:pt idx="1"><c:v>38.9</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>
+<c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:tx><c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>
+<c:axId val="1"/><c:axId val="2"/></c:barChart>
+<c:catAx><c:axId val="1"/><c:scaling><c:orientation val="maxMin"/></c:scaling><c:crossAx val="2"/></c:catAx>
+<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:crossAx val="1"/></c:valAx>
+</c:plotArea><c:legend><c:legendPos val="b"/></c:legend></c:chart></c:chartSpace>`
+  const m = parseChartXml(xml, undefined as never)!
+
+  it('keeps the series numFmt and the series/point label box colors', () => {
+    const s = m.series[0]!
+    expect(s.dataLabelFmt).toContain('#,##0')
+    expect(s.dataLabelFill?.toUpperCase()).toBe('#F2F2F2')
+    expect(s.dataLabelBorder?.toUpperCase()).toBe('#808080')
+    // the point outline is an explicit a:noFill: null clears the series stroke
+    expect(s.dLblOverrides?.[0]).toMatchObject({ idx: 1, fill: '#FFFF00', border: null })
+  })
+
+  it('horizontal bars on a maxMin category axis list the legend in document order', () => {
+    expect(m.legendOrder).toBeUndefined()
+  })
+})
+
+describe('parseChartXml: data table and value cache format', () => {
+  const xml = `<?xml version="1.0"?><c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:plotArea><c:layout/>
+<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>
+<c:ser><c:idx val="0"/>
+  <c:cat><c:strRef><c:f>x</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat>
+  <c:val><c:numRef><c:f>y</c:f><c:numCache><c:formatCode>0.0%</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>0.6</c:v></c:pt></c:numCache></c:numRef></c:val>
+</c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>
+<c:catAx><c:axId val="1"/><c:crossAx val="2"/></c:catAx>
+<c:valAx><c:axId val="2"/><c:numFmt formatCode="0.0%" sourceLinked="1"/><c:crossAx val="1"/></c:valAx>
+<c:dTable><c:showHorzBorder val="1"/><c:showVertBorder val="0"/><c:showOutline val="1"/><c:showKeys val="1"/>
+  <c:spPr><a:ln><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr>
+  <c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1197"><a:solidFill><a:srgbClr val="595959"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr>
+</c:dTable>
+</c:plotArea></c:chart></c:chartSpace>`
+
+  it('reads c:dTable flags, text style and border color', () => {
+    const m = parseChartXml(xml)!
+    expect(m.dataTable).toEqual({
+      showKeys: true,
+      horzBorder: true,
+      vertBorder: false,
+      outline: true,
+      sizePt: 11.97,
+      textColor: '#595959',
+      lineColor: '#D9D9D9',
+    })
+  })
+
+  it('keeps the value cache formatCode on the series', () => {
+    const m = parseChartXml(xml)!
+    expect(m.series[0]!.valFmt).toBe('0.0%')
+    expect(
+      parseChartXml(
+        xml.replace('<c:formatCode>0.0%</c:formatCode>', '<c:formatCode>General</c:formatCode>'),
+      )!.series[0]!.valFmt,
+    ).toBeUndefined()
+    expect(
+      parseChartXml(xml.replace(/<c:dTable>[\s\S]*<\/c:dTable>/, ''))!.dataTable,
+    ).toBeUndefined()
   })
 })

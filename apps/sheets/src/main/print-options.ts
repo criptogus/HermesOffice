@@ -1,8 +1,8 @@
 import type { WebContentsPrintOptions } from 'electron'
 import type { WorkbookExportPdfRequest } from '../shared/desktop-api'
 
-const MICRONS_PER_INCH = 25_400
-const CSS_PX_PER_INCH = 96
+export const MICRONS_PER_INCH = 25_400
+export const CSS_PX_PER_INCH = 96
 
 /// webContents.print options matching what printToPDF gets for the same
 /// request: print() wants custom sizes in microns, margins in CSS pixels and
@@ -10,7 +10,10 @@ const CSS_PX_PER_INCH = 96
 export function printOptionsFor(request: WorkbookExportPdfRequest): WebContentsPrintOptions {
   const { margins, pageSize } = request
   return {
-    silent: false,
+    silent: request.deviceName !== undefined,
+    ...(request.deviceName === undefined ? {} : { deviceName: request.deviceName }),
+    ...(request.copies === undefined ? {} : { copies: request.copies }),
+    ...(request.collate === undefined ? {} : { collate: request.collate }),
     printBackground: true,
     landscape: request.landscape,
     pageSize:

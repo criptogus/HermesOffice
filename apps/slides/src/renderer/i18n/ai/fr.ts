@@ -112,6 +112,8 @@ export const fr = {
   aiErrUnknown: 'Erreur inconnue',
   aiErrStreamTimeout:
     "Délai de la requête IA dépassé : aucune réponse du réseau, l'exécution a été interrompue. Vérifiez votre connexion et réessayez",
+  aiErrRegion:
+    'Le fournisseur de ce modèle ne dessert pas votre région actuelle — choisissez un autre modèle ou changez de réseau',
   aiErrOverloaded: "Le service d'IA est actuellement surchargé — réessayez dans un instant",
   aiErrNetwork:
     'Problème réseau : impossible de joindre le service IA. Vérifiez votre connexion et réessayez',
@@ -136,6 +138,7 @@ export const fr = {
   aiClarifyOther: 'Autre (à saisir)',
   aiClarifySkip: 'Ignorer le questionnaire',
   aiClarifyNext: 'Suivant',
+  aiClarifyPrev: 'Précédent',
   aiClarifySubmit: 'Générer',
   aiSumReadAttachment: 'Lecture de la pièce jointe',
   aiSumReadAttachmentName: 'Lecture de la pièce jointe {name}',

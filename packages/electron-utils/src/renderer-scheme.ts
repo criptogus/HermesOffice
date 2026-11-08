@@ -1,8 +1,8 @@
 import type { CustomScheme } from 'electron'
 import { resolve, sep } from 'node:path'
 
-/** Origin the built renderers are served from (`genoffice-app://<module>/index.html`). */
-export const RENDERER_SCHEME = 'genoffice-app'
+/** Origin the built renderers are served from (`hermesoffice-app://<module>/index.html`). */
+export const RENDERER_SCHEME = 'hermesoffice-app'
 
 /** Chromium persists V8 code caches only for http(s) and for privileged custom
  * schemes; a file:// renderer recompiled its whole bundle on every open. */
@@ -21,7 +21,7 @@ export const RENDERER_SCHEME_PRIVILEGE: CustomScheme = {
 /** docs' lazily served pictures (packages/docx-engine/src/lazy-media.ts); a
  * secure page may only load pictures from another secure scheme */
 export const DOCX_MEDIA_SCHEME_PRIVILEGE: CustomScheme = {
-  scheme: 'genoffice-docx-media',
+  scheme: 'hermesoffice-docx-media',
   privileges: {
     standard: true,
     secure: true,
@@ -31,14 +31,25 @@ export const DOCX_MEDIA_SCHEME_PRIVILEGE: CustomScheme = {
   },
 }
 
-export type RendererHost = 'docs' | 'sheets' | 'slides' | 'pdf' | 'markdown' | 'html'
+/** Slides serves archive pictures outside structured-clone IPC payloads. */
+export const SLIDE_MEDIA_SCHEME_PRIVILEGE: CustomScheme = {
+  scheme: 'hermesoffice-slide-media',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    stream: true,
+  },
+}
 
-/** Dev server URL when one is configured, otherwise the module's scheme URL; the
- * query is appended either way so a dev URL that already carries params stays valid. */
-/** Max renderer query entries and value chars: prevents MB URLs from IPC. */
+export type RendererHost = 'docs' | 'sheets' | 'slides' | 'pdf' | 'markdown' | 'html' | 'help'
+
 export const MAX_RENDERER_QUERY_ENTRIES = 20
 export const MAX_RENDERER_QUERY_CHARS = 4_000
 
+/** Dev server URL when one is configured, otherwise the module's scheme URL; the
+ * query is appended either way so a dev URL that already carries params stays valid. */
 export function rendererUrl(
   devUrl: string | undefined,
   host: RendererHost,

@@ -13,11 +13,16 @@ import {
   setSlideNotes,
 } from '../src/index'
 import { relsPathFor, resolveTarget } from '../src/zip'
+import { unescapeXml } from '../src/notes'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fx = (name: string) => readFileSync(join(here, 'fixtures', name))
 
 describe('speaker notes', () => {
+  it('preserves invalid numeric references in imported note text', () => {
+    expect(unescapeXml('a&#x110000;b&#55296;c&#x1F600;')).toBe('a&#x110000;b&#55296;c😀')
+  })
+
   it('creates notesSlide (and notesMaster) on a blank deck and survives save → reopen', async () => {
     const opened = await openPptx(await createBlankPptx())
     expect(getSlideNotes(opened.archive, opened.deck.slides[0]!.path)).toBe('')

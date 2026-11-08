@@ -1,10 +1,14 @@
 import type { Editor } from '@tiptap/core'
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
-import type { ChartDisplay, CommentInfo, NewChart } from '@hermesoffice/docx-engine'
+import type { ChartDisplay, CommentInfo, NewChart, NoteInfo } from '@hermesoffice/docx-engine'
+import type { ToolDisplay } from '@hermesoffice/agent-core'
 import type { AgentToolCall, AgentToolDef, CreateDocumentType } from '../../shared/ipc'
 import { t } from '../i18n/locale'
+import { MIND_MAP_LIMITS, MIND_MAP_TOOL, parseMindMapTree } from '@hermesoffice/agent-core/mind-map'
 import { executeOps, opNames } from './ops'
 import { clipExcerpt, repliesOf, resolveCommentAnchor } from './comment-ops'
+import { redactTextBetween } from './redact-view'
+import { insertPictureAtSelection } from '../editor/insert-picture'
 import {
   PAGE_SETUP_TOOL,
   SECTION_BREAK_TOOL,
@@ -41,9 +45,11 @@ import {
   describePending,
   listRevisionEntries,
   validateSelector,
+  type StoryRevisionAccess,
 } from './revision-ops'
 import {
   buildNotesContext,
+  editNoteText,
   insertNoteRef,
   noteInsertPos,
   removeNoteRefs,
@@ -65,6 +71,8 @@ import {
   isBlankDocument,
   isTrackedDeleted,
   parseHtmlFragment,
+  resolveImageRefs,
+  countInlineImages,
   parseInlineFragment,
   replaceBlockRange,
   replaceInlineRange,
@@ -116,7 +124,11 @@ export const AGENT_TOOLS: AgentToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        html: { type: 'string', description: 'restricted HTML fragment to insert' },
+        html: {
+          type: 'string',
+          description:
+            'restricted HTML fragment to insert; <span data-tab></span> is a tab character (literal tabs collapse to spaces)',
+        },
         afterBlockIndex: {
           type: 'integer',
           description:
@@ -166,7 +178,11 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       properties: {
         startBlockIndex: { type: 'integer', description: 'start block index (0-based, inclusive)' },
         endBlockIndex: { type: 'integer', description: 'end block index (inclusive)' },
-        html: { type: 'string', description: 'replacement restricted HTML fragment' },
+        html: {
+          type: 'string',
+          description:
+            'replacement restricted HTML fragment; <span data-tab></span> is a tab character',
+        },
       },
       required: ['startBlockIndex', 'endBlockIndex', 'html'],
     },
@@ -357,6 +373,26 @@ export const AGENT_TOOLS: AgentToolDef[] = [
         id: { type: 'string', description: 'note id from read_notes' },
       },
       required: ['kind', 'id'],
+    },
+  },
+  {
+    name: 'edit_note',
+    description:
+      'Change the text of an existing footnote or endnote in place (findReplace inside the note): the note keeps its id, reference mark and formatting. Use for a typo or a citation fix instead of delete_note + insert_footnote.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['footnote', 'endnote'],
+          description: 'omit when the id is unambiguous across footnotes and endnotes',
+        },
+        id: { type: 'string', description: 'note id from read_notes' },
+        find: { type: 'string', description: 'exact text inside the note to replace' },
+        replace: { type: 'string', description: 'replacement text ("" deletes the match)' },
+        matchCase: { type: 'boolean', description: 'defaults to true' },
+      },
+      required: ['id', 'find', 'replace'],
     },
   },
   {
@@ -617,6 +653,7 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       required: ['title', 'content'],
     },
   },
+  MIND_MAP_TOOL,
 ]
 
 /**
@@ -639,6 +676,10 @@ export interface AiHeaderFooterAccess {
 export interface AiDocExtras {
   styles?: AiStyleAccess
   watermark?: AiWatermarkAccess
+  /** protection (read-only or enforced tracked changes) forbids accepting / rejecting revisions */
+  revisionsLocked?: boolean
+  /** tracked changes in notes, header / footer parts and textboxes */
+  storyRevisions?: StoryRevisionAccess
 }
 
 export interface AiCommentsAccess {
@@ -678,6 +719,8 @@ export interface ToolExecution {
   mutated: boolean
   /** short human-readable label for the chat activity chip */
   summary: string
+  /** UI-only side channel (never enters the LLM context) */
+  display?: ToolDisplay
 }
 
 const fail = (summary: string, output: string): ToolExecution => ({
@@ -1025,7 +1068,11 @@ async function setPictureWatermark(
     ? { base64: url.slice(url.indexOf(',') + 1) }
     : await window.desktop.fetchImage(url)
   if (signal?.aborted) return fail(summary, 'stopped by the user; the watermark was not set')
-  if (!fetched) return fail(summary, 'download failed (the image may not be accessible)')
+  if (!fetched)
+    return fail(
+      summary,
+      'download failed (the image host refused or the link expired); do not retry this URL — pick a different result from the image search or search again',
+    )
   const mime = sniffImageMime(fetched.base64)
   if (!mime) return fail(summary, 'unsupported image format (only png/jpg/gif can be embedded)')
   let natural: { width: number; height: number }
@@ -1072,7 +1119,11 @@ async function insertPicture(
     ? { base64: url.slice(url.indexOf(',') + 1) }
     : await window.desktop.fetchImage(url)
   if (signal?.aborted) return fail(summary, 'stopped by the user; the picture was not inserted')
-  if (!fetched) return fail(summary, 'download failed (the image may not be accessible)')
+  if (!fetched)
+    return fail(
+      summary,
+      'download failed (the image host refused or the link expired); do not retry this URL — pick a different result from the image search or search again',
+    )
   const mime = sniffImageMime(fetched.base64)
   if (!mime) return fail(summary, 'unsupported image format (only png/jpg/gif can be embedded)')
   let natural: { width: number; height: number }
@@ -1117,7 +1168,11 @@ async function insertImageFromUrl(
   // never write after the user hit stop (the download may resolve long after the abort)
   if (signal?.aborted)
     return fail(labels.failLabel, 'stopped by the user; the image was not inserted')
-  if (!fetched) return fail(labels.failLabel, 'download failed (the image may not be accessible)')
+  if (!fetched)
+    return fail(
+      labels.failLabel,
+      'download failed (the image host refused or the link expired); do not retry this URL — pick a different result from the image search or search again',
+    )
   const mime = sniffImageMime(fetched.base64)
   if (!mime) {
     return fail(
@@ -1137,22 +1192,14 @@ async function insertImageFromUrl(
     // freshness baseline stale, so only our own insertion may mark the doc
     // seen. Checked right before the write — there is no async gap after.
     const userEditedDuringFetch = editedExternally(editor)
-    editor
-      .chain()
-      .focus()
-      .insertContent({
-        type: 'docProtected',
-        attrs: {
-          docxIndex: null,
-          blockType: 'image',
-          label: labels.blockLabel,
-          imageDataUrl: dataUrl,
-          imageWidthPx: w,
-          imageHeightPx: h,
-          genImage: { base64: fetched.base64, mime, widthPx: w, heightPx: h },
-        },
-      })
-      .run()
+    insertPictureAtSelection(editor, {
+      dataUrl,
+      base64: fetched.base64,
+      mime,
+      widthPx: w,
+      heightPx: h,
+      label: labels.blockLabel,
+    })
     if (!userEditedDuringFetch) markDocSeen(editor)
     return {
       output: `Inserted the image (${w}×${h}px).`,
@@ -1196,6 +1243,7 @@ export function executeTool(
     call.name === 'insert_image' ||
     call.name === 'insert_picture' ||
     call.name === 'generate_image' ||
+    call.name === 'analyze_media' ||
     call.name === 'create_document'
   ) {
     return executeAsyncTool(editor, call, signal)
@@ -1270,6 +1318,7 @@ async function writeDocument(
       return fail(t('aiSumWriteDocumentFailed'), e instanceof Error ? e.message : String(e))
     nodes = parseHtmlFragment(rendered, numIds)
   }
+  nodes = resolveImageRefs(editor, nodes).nodes
   if (nodes.length === 0)
     return fail(
       t('aiSumWriteDocumentFailed'),
@@ -1321,6 +1370,26 @@ function executeSyncTool(
         summary: t('aiSumReadDocContext'),
       }
 
+    case 'generate_mindmap': {
+      const summary = t('aiSumMindMap')
+      const parsed = parseMindMapTree(call.input, editor.state.doc.childCount)
+      if (!parsed.ok) return fail(summary, parsed.error)
+      const focus = typeof call.input.focus === 'string' ? call.input.focus.trim() : ''
+      const trimmedNote = parsed.trimmed
+        ? ` (trimmed to the ${MIND_MAP_LIMITS.maxNodes}-node / depth-${MIND_MAP_LIMITS.maxDepth} limit)`
+        : ''
+      return {
+        output:
+          `Mind map rendered as an interactive card in the chat: ${parsed.nodeCount} nodes, depth ${parsed.depth}` +
+          `${focus ? `, focused on "${focus.slice(0, MIND_MAP_LIMITS.maxFocusChars)}"` : ''}${trimmedNote}. ` +
+          'The user can expand branches, click a node to ask about it, jump to the cited block, or export the map. ' +
+          'Do not repeat the map content; reply with one short sentence.',
+        mutated: false,
+        summary,
+        display: { kind: 'mindmap', tree: parsed.tree },
+      }
+    }
+
     case 'read_blocks': {
       const range = validRange(editor, call.input.startBlockIndex, call.input.endBlockIndex)
       if (!range) return fail(t('aiSumReadBlocks'), rangeError(editor))
@@ -1367,6 +1436,7 @@ function executeSyncTool(
       } catch (e) {
         return fail(t('aiSumInsertContent'), e instanceof Error ? e.message : String(e))
       }
+      nodes = resolveImageRefs(editor, nodes).nodes
       if (nodes.length === 0)
         return fail(t('aiSumInsertContent'), 'html did not parse into any content blocks')
       const count = editor.state.doc.childCount
@@ -1405,11 +1475,24 @@ function executeSyncTool(
       } catch (e) {
         return fail(t('aiSumReplaceContent'), e instanceof Error ? e.message : String(e))
       }
+      const resolved = resolveImageRefs(editor, nodes)
+      nodes = resolved.nodes
       if (nodes.length === 0)
         return fail(t('aiSumReplaceContent'), 'html did not parse into any content blocks')
+      const had = countInlineImages(editor, range.start, range.end)
+      const keptInRange = new Set(
+        resolved.kept
+          .filter((k) => k.block >= range.start && k.block <= range.end)
+          .map((k) => `${k.block}.${k.index}`),
+      ).size
+      const lost = had - keptInRange
       replaceBlockRange(editor, range.start, range.end, nodes, track)
+      const pictureNote =
+        lost > 0
+          ? ` ${lost} picture(s) that were in the replaced range are not in the new content and have been deleted${track ? ' (as a tracked change the user can reject)' : ' (the user can undo this)'}; tell the user if that was not intended. To keep pictures, include their <img src="doc:B.I"> tags from read_blocks in the new HTML.`
+          : ''
       return {
-        output: `Replaced blocks ${range.start}-${range.end} with ${nodes.length} block(s); the new blocks kept the replaced blocks' formatting. Block indexes have changed; use get_document_context if needed.`,
+        output: `Replaced blocks ${range.start}-${range.end} with ${nodes.length} block(s); the new blocks kept the replaced blocks' formatting.${pictureNote} Block indexes have changed; use get_document_context if needed.`,
         mutated: true,
         summary: t('aiSumReplacedBlocks', { start: range.start, end: range.end }),
       }
@@ -1441,11 +1524,13 @@ function executeSyncTool(
       } catch (e) {
         return fail(t('aiSumReplaceSelection'), e instanceof Error ? e.message : String(e))
       }
+      inline = resolveImageRefs(editor, inline).nodes
       if (inline.length === 0) {
         return fail(t('aiSumReplaceSelection'), 'html did not parse into any text')
       }
       const schema = editor.schema
-      const fragmentStyled = inline.some((n) => (n.marks ?? []).length > 0)
+      // a carried-over picture's own marks are not the model restyling the selection
+      const fragmentStyled = inline.some((n) => n.type === 'text' && (n.marks ?? []).length > 0)
       const anchor = $from.parent.childAfter($from.parentOffset).node
       const inherited = (anchor?.marks ?? []).filter(
         (m) =>
@@ -1459,7 +1544,9 @@ function executeSyncTool(
         return schema.text(n.text ?? '', marks)
       })
       const blockIndex = $from.index(0)
-      const oldText = doc.textBetween(range.from, range.to, ' ', ' ')
+      // the echo quotes what was replaced back to the model, so a selection
+      // covering a withheld span would undo the withholding right here
+      const oldText = redactTextBetween(editor.getJSON(), range.from, range.to, ' ')
       replaceInlineRange(editor, range.from, range.to, nodes, track)
       const newText = nodes.map((n) => n.textContent).join('')
       return {
@@ -1622,7 +1709,7 @@ function executeSyncTool(
 
     case 'read_revisions':
       return {
-        output: buildRevisionsContext(editor),
+        output: buildRevisionsContext(editor, extras?.storyRevisions?.list()),
         mutated: false,
         summary: t('aiSumReadRevisions'),
       }
@@ -1631,11 +1718,16 @@ function executeSyncTool(
     case 'reject_changes': {
       const mode = call.name === 'accept_changes' ? 'accept' : 'reject'
       const summary = t(mode === 'accept' ? 'aiSumAcceptChanges' : 'aiSumRejectChanges')
+      if (extras?.revisionsLocked)
+        return fail(
+          summary,
+          'document protection enforces tracked changes (or read-only editing): revisions cannot be accepted or rejected until the protection is removed',
+        )
       const sel = validateSelector(call.input)
       if ('error' in sel) return fail(summary, sel.error)
-      const r = applyRevisionSelection(editor, sel, mode)
+      const r = applyRevisionSelection(editor, sel, mode, extras?.storyRevisions)
       if ('error' in r) return fail(summary, r.error)
-      const left = listRevisionEntries(editor.state.doc)
+      const left = listRevisionEntries(editor.state.doc, extras?.storyRevisions?.list())
       const verb = mode === 'accept' ? 'Accepted' : 'Rejected'
       return {
         output: `${verb} ${r.entries.length} tracked change(s) (${r.entries.map((e) => e.id).join(', ')}). ${left.length ? `Still ${describePending(left)}.` : 'No tracked changes remain.'}`,
@@ -1750,6 +1842,43 @@ function executeSyncTool(
       }
     }
 
+    case 'edit_note': {
+      const summary = t('aiSumEditNote')
+      if (!notes) return fail(summary, 'footnotes and endnotes are not available here')
+      const id = String(call.input.id ?? '').trim()
+      if (!id) return fail(summary, 'id must not be empty')
+      const kinds: NoteKind[] =
+        call.input.kind === undefined || call.input.kind === null
+          ? ['footnote', 'endnote']
+          : call.input.kind === 'footnote' || call.input.kind === 'endnote'
+            ? [call.input.kind]
+            : []
+      if (kinds.length === 0) return fail(summary, 'kind must be "footnote" or "endnote"')
+      const found = kinds
+        .map((kind) => ({ kind, note: notes.list(kind).find((n) => n.id === id) }))
+        .filter((hit): hit is { kind: NoteKind; note: NoteInfo } => hit.note !== undefined)
+      if (found.length === 0)
+        return fail(summary, `no note with id ${id}; call read_notes for the current ids`)
+      if (found.length > 1)
+        return fail(summary, `both a footnote and an endnote have id ${id}; pass kind`)
+      const { kind, note } = found[0]!
+      const find = typeof call.input.find === 'string' ? call.input.find : ''
+      if (!find) return fail(summary, 'find must not be empty')
+      const replace = call.input.replace == null ? '' : String(call.input.replace)
+      const edited = editNoteText(note, find, replace, call.input.matchCase !== false)
+      if (edited.count === 0)
+        return fail(
+          summary,
+          `${kind} ${id} does not contain "${clipExcerpt(find)}"; the note was left as is`,
+        )
+      notes.replace(kind, id, edited.note)
+      return {
+        output: `Edited ${kind} ${id}: ${edited.count} occurrence${edited.count === 1 ? '' : 's'} of "${clipExcerpt(find)}" replaced.`,
+        mutated: true,
+        summary,
+      }
+    }
+
     case 'read_notes': {
       const summary = t('aiSumReadNotes')
       if (!notes) return fail(summary, 'footnotes and endnotes are not available here')
@@ -1831,7 +1960,10 @@ function executeSyncTool(
         return fail(summaryOf(), 'view must be "default", "first" or "even"')
       }
       if (typeof call.input.text !== 'string') return fail(summaryOf(), 'text must be a string')
-      const text = call.input.text
+      // a doubly escaped newline arrives as the two characters backslash-n; a footer must not show it literally
+      const text = call.input.text.includes('\n')
+        ? call.input.text
+        : call.input.text.replace(/\\n/g, '\n')
       if (text.length > 2000) {
         return fail(summaryOf(), 'text is too long for a header/footer (2000 characters max)')
       }

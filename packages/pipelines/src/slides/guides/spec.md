@@ -1,19 +1,19 @@
-# Deck spec for `genoffice create --type pptx --spec`
+# Deck spec for `hermesoffice create --type pptx --spec`
 
-The designed-deck path (`genoffice guide slides design`) keeps one page per file:
+The designed-deck path (`hermesoffice guide slides design`) keeps one page per file:
 
 ```
 deck/pages/01.json   { "title": "The 40% squeeze", "type": "cover", "layout": "cover_typography_hero", "background": "#0E1A2B", "elements": [ ... ] }
 deck/pages/02.json   { "title": "Where the margin went", "type": "content", "layout": "three_column_cards", "background": "#FFFFFF", "elements": [ ... ] }
 ```
 
-`title`, `type` and `layout` echo the page's outline entry; the builder ignores them, the checks compare them. `genoffice slides check deck/pages/01.json` builds and audits one file, then checks it against `outline.json` and `style.md` (looked up beside the file and one folder up, or `--outline <file>`): file `NN.json` is outline entry `pages[N-1]`; an echoed field that disagrees or placeholder copy exits 1, a missing title or a planned photo without an image is a warning, and colors the style sheet does not name are listed in `detail.style.offPalette`. `genoffice create --type pptx --spec deck/pages [--outline deck/outline.json] --out deck.pptx` takes every `*.json` in the folder in name order (`01`, `02`, … `10`), one slide each, runs the same checks on every file and refuses to build when the page count differs from the outline or a page disagrees with its entry. `genoffice slides replace deck.pptx --slide n --spec deck/pages/NN.json` rebuilds slide n from its file after checking it against entry n.
+`title`, `type` and `layout` echo the page's outline entry; the builder ignores them, the checks compare them. `hermesoffice slides check deck/pages/01.json` builds and audits one file, then checks it against `outline.json` and `style.md` (looked up beside the file and one folder up, or `--outline <file>`): file `NN.json` is outline entry `pages[N-1]`; an echoed field that disagrees or placeholder copy exits 1, a missing title or a planned photo without an image is a warning, and colors the style sheet does not name are listed in `detail.style.offPalette`. `hermesoffice create --type pptx --spec deck/pages [--outline deck/outline.json] --out deck.pptx` takes every `*.json` in the folder in name order (`01`, `02`, … `10`), one slide each, runs the same checks on every file and refuses to build when the page count differs from the outline or a page disagrees with its entry. `hermesoffice slides replace deck.pptx --slide n --spec deck/pages/NN.json` rebuilds slide n from its file after checking it against entry n.
 
 `--spec` also accepts one file holding the whole deck, `{ "pages": [ {...}, {...} ] }`, a bare array of pages, or a single page object. Up to 60 pages. Every page becomes one 16:9 slide; the canvas is **1280 × 720 px**, origin top-left, all `x` `y` `w` `h` integers in px. Elements paint in array order (first = bottom). Colors are `#RRGGBB` or `#RRGGBBAA` (`AA` alpha, `00` transparent).
 
 ## Outline
 
-`deck/outline.json` is the plan the pages are written from; `genoffice slides check` validates it:
+`deck/outline.json` is the plan the pages are written from; `hermesoffice slides check` validates it:
 
 ```json
 {
@@ -61,7 +61,7 @@ deck/pages/02.json   { "title": "Where the margin went", "type": "content", "lay
 }
 ```
 
-`shape` is one of `rect`, `roundRect`, `ellipse`, `triangle`, `rightArrow`, `leftArrow`, `upArrow`, `downArrow`, `chevron`, `diamond`, `parallelogram`, `trapezoid`, `hexagon`, `pentagon`, `pie`, `donut`, `star5`, `heart`, `cloud`, `line`, `lineArrow`. `line` and `lineArrow` draw the diagonal of their box from top-left to bottom-right and need a `stroke`; a horizontal rule is a box with `h: 1`. A shape needs a `fill` or a `stroke` (or both). `paragraphs` is optional label text, vertically centered unless `valign` says otherwise.
+`shape` is one of `rect`, `roundRect`, `ellipse`, `triangle`, `rightArrow`, `leftArrow`, `upArrow`, `downArrow`, `chevron`, `diamond`, `parallelogram`, `trapezoid`, `hexagon`, `pentagon`, `pie`, `donut`, `star5`, `heart`, `cloud`, `line`, `lineArrow`. `line` and `lineArrow` draw the diagonal of their box from top-left to bottom-right and need a `stroke`; add `"flipV": true` to draw it from bottom-left to top-right instead, or `"flipH": true` to mirror it horizontally; a horizontal rule is a box with `h: 1`. The two flags mirror any shape — a `rightArrow` with `"flipH": true` points left. A shape needs a `fill` or a `stroke` (or both). `paragraphs` is optional label text, vertically centered unless `valign` says otherwise.
 
 **Text**
 
@@ -101,7 +101,7 @@ Run fields: `text` (required), `sizePt` (6 to 160), `bold`, `italic`, `color`, `
 { "type": "image", "url": "./assets/hero.jpg", "x": 660, "y": 80, "w": 540, "h": 560 }
 ```
 
-`url` is a local file path (absolute, or relative to the current directory and then to the spec file's folder), a `data:` URL, or an `http(s)` URL that genoffice downloads. The image is center-cropped to fill its box (object-fit: cover), so give the box roughly the picture's aspect ratio: a box that keeps less than half of the picture (a portrait product shot in a flat strip) lands but is reported as a warning. Up to 8 images per page. An image that cannot be read is dropped and listed in `detail.imageFailures`.
+`url` is a local file path (absolute, or relative to the current directory and then to the spec file's folder), a `data:` URL, or an `http(s)` URL that hermesoffice downloads. The image is center-cropped to fill its box (object-fit: cover), so give the box roughly the picture's aspect ratio: a box that keeps less than half of the picture (a portrait product shot in a flat strip) lands but is reported as a warning. Up to 8 images per page. An image that cannot be read is dropped and listed in `detail.imageFailures`.
 
 ## Validation
 
@@ -109,4 +109,4 @@ Elements missing numeric geometry, lying fully outside the canvas, or of an unkn
 
 ## After building
 
-Elements get durable ids (`e_*`) and slides `s_<n>`; `genoffice slides read deck.pptx --json` lists them for follow-up `genoffice slides apply` ops. `genoffice slides audit` reports out-of-bounds, text overflow and overlap per slide with the same ids; `genoffice slides render` writes one PNG per slide for visual review; `genoffice slides replace --slide n --spec <page.json>` swaps one slide for a rebuilt page (its element ids are new).
+Elements get durable ids (`e_*`) and slides `s_<n>`; `hermesoffice slides read deck.pptx --json` lists them for follow-up `hermesoffice slides apply` ops. `hermesoffice slides audit` reports out-of-bounds, text overflow and overlap per slide with the same ids; `hermesoffice slides render` writes one PNG per slide for visual review; `hermesoffice slides replace --slide n --spec <page.json>` swaps one slide for a rebuilt page (its element ids are new).

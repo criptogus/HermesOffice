@@ -7,6 +7,7 @@
  * This module only handles reading and metadata.
  */
 import JSZip from 'jszip'
+import { assertZipInflatesWithinLimits } from '@hermesoffice/zip-gate'
 import { createHash } from 'node:crypto'
 import { XMLParser } from 'fast-xml-parser'
 import type { SlideSize } from './types'
@@ -62,7 +63,6 @@ export function assertZipWithinLimits(zip: JSZip): void {
 
 export class PackageArchive {
   private constructor(
-    private readonly zip: JSZip,
     /** Original bytes of every entry, keyed by path inside the zip */
     readonly entries: Map<string, Uint8Array>,
     readonly originalHash: string,
@@ -70,6 +70,10 @@ export class PackageArchive {
 
   static async open(bytes: Uint8Array): Promise<PackageArchive> {
     const originalHash = createHash('sha256').update(bytes).digest('hex')
+    // The declared-size pass below is advisory; this metered gate is the one
+    // that holds when a part lies about its size (GH #759, measured at
+    // 1.2 GB of RSS from a 1.1 MB deck).
+    await assertZipInflatesWithinLimits(bytes, PPTX_ZIP_LIMITS)
     const zip = await JSZip.loadAsync(bytes)
     assertZipWithinLimits(zip)
     const entries = new Map<string, Uint8Array>()
@@ -79,7 +83,10 @@ export class PackageArchive {
       if (file.dir) continue
       entries.set(name, await file.async('uint8array'))
     }
-    return new PackageArchive(zip, entries, originalHash)
+    // The JSZip object is not kept: it pins the caller's compressed bytes (a second copy of
+    // every part next to the inflated entries) and nothing reads it after this point — saves
+    // rebuild the package from `entries`.
+    return new PackageArchive(entries, originalHash)
   }
 
   has(path: string): boolean {
@@ -258,10 +265,20 @@ export function relsPathFor(partPath: string): string {
  * something like '../slideLayouts/slideLayout1.xml'.
  */
 export function resolveTarget(basePart: string, target: string): string {
-  if (target.startsWith('/')) return target.slice(1)
-  const baseDir = basePart.slice(0, basePart.lastIndexOf('/'))
-  const parts = baseDir.split('/').filter(Boolean)
-  for (const seg of target.split('/')) {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(target)) return ''
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(target)
+  } catch {
+    return ''
+  }
+  const baseSlash = basePart.lastIndexOf('/')
+  // Test the root anchor after normalizing: a backslash-led target is rooted too.
+  const normalized = decoded.replace(/\\/g, '/')
+  const parts = normalized.startsWith('/')
+    ? []
+    : (baseSlash >= 0 ? basePart.slice(0, baseSlash) : '').split('/').filter(Boolean)
+  for (const seg of normalized.split('/')) {
     if (seg === '.' || seg === '') continue
     if (seg === '..') parts.pop()
     else parts.push(seg)

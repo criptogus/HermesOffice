@@ -10,6 +10,8 @@ import React, { useLayoutEffect, useRef, useState, useSyncExternalStore } from '
 import type Konva from 'konva'
 import { Group, Rect, Ellipse, Text, Line, Arrow, Image as KImage, Path } from 'react-konva'
 import type {
+  BevelEdge,
+  CellBevelRender,
   RenderNode,
   ShapeRenderNode,
   PictureRenderNode,
@@ -20,6 +22,7 @@ import type {
   ArrowEndRender,
   RenderReflection,
 } from '@hermesoffice/pptx-render'
+import { extrusionFrontFace } from '@hermesoffice/pptx-render'
 import {
   featheredImage,
   featheredShapeCanvas,
@@ -45,12 +48,15 @@ import {
   normalizeColor,
   boxPivotProps,
   centerFillProps,
+  connectorHeadColor,
+  connectorStrokeProps,
   subscribeFontsEpoch,
   getFontsEpoch,
 } from './konva-adapter'
 import { ChartBody } from './ChartBody'
 import { needsTextFrameHitArea } from './text-hit-area'
 import { warpGlyphs, measureGlyph } from './text-warp'
+import { CANVAS_COLORS } from './canvas-colors'
 
 export interface NodeBodyProps {
   node: RenderNode
@@ -262,6 +268,7 @@ export const NodeBody = React.memo(function NodeBody({
           {'stroke' in strokeProps && outline({ ...strokeProps, fillEnabled: false })}
           {picShadowOv && !picShadowOv.under ? picShadowImg : null}
           {pic.media && <MediaBadge kind={pic.media} w={box.w} h={box.h} />}
+          {pic.redact && <RedactFrame label={pic.redact} w={box.w} h={box.h} />}
         </>
       )
     }
@@ -283,6 +290,7 @@ export const NodeBody = React.memo(function NodeBody({
         {image}
         {picShadowOv && !picShadowOv.under ? picShadowImg : null}
         {pic.media && <MediaBadge kind={pic.media} w={box.w} h={box.h} />}
+        {pic.redact && <RedactFrame label={pic.redact} w={box.w} h={box.h} />}
       </>
     )
   }
@@ -309,16 +317,19 @@ export const NodeBody = React.memo(function NodeBody({
               : layoutGlyphs(cell.text)
           return (
             <React.Fragment key={i}>
+              {/* Bevel bands tile the outer ring, so the face keeps to the inner rect and a
+                  translucent fill never composites twice */}
               <Rect
-                x={cell.x}
-                y={cell.y}
-                width={cell.w}
-                height={cell.h}
+                x={cell.x + (cell.bevel?.widthPx ?? 0)}
+                y={cell.y + (cell.bevel?.widthPx ?? 0)}
+                width={cell.w - 2 * (cell.bevel?.widthPx ?? 0)}
+                height={cell.h - 2 * (cell.bevel?.widthPx ?? 0)}
                 {...fillToKonva(cell.fill, cell.w, cell.h, images, {
                   x: box.x + cell.x,
                   y: box.y + cell.y,
                 })}
               />
+              {cell.bevel && <CellBevelBands cell={cell} bevel={cell.bevel} />}
               {cell.borders?.t && (
                 <Line
                   points={[cell.x, cell.y, cell.x + cell.w, cell.y]}
@@ -371,7 +382,7 @@ export const NodeBody = React.memo(function NodeBody({
                   rotation={g.rotation ?? 0}
                   letterSpacing={g.letterSpacing ?? 0}
                   fill={g.fill}
-                  direction={g.direction ?? 'inherit'}
+                  direction={g.direction ?? 'ltr'}
                   {...(g.stroke
                     ? { stroke: g.stroke, strokeWidth: g.strokeWidth, fillAfterStrokeEnabled: true }
                     : {})}
@@ -443,8 +454,9 @@ export const NodeBody = React.memo(function NodeBody({
 
   // Connector/straight line: polyline (flip already baked into points), with optional arrow endpoints
   if (shape.line) {
-    const color = strokeProps.stroke ?? normalizeColor('#000000')
-    const sw = strokeProps.strokeWidth ?? 1
+    const lineStroke = connectorStrokeProps(strokeProps)
+    const color = connectorHeadColor(strokeProps)
+    const sw = lineStroke.strokeWidth ?? 1
     const { headEnd, tailEnd, bezier } = shape.line
 
     // Curved connector: draw the bezier with an SVG Path
@@ -462,8 +474,7 @@ export const NodeBody = React.memo(function NodeBody({
         <>
           <Path
             data={d}
-            stroke={color}
-            strokeWidth={sw}
+            {...lineStroke}
             hitStrokeWidth={Math.max(sw, 12)}
             fill="transparent"
             lineCap="round"
@@ -490,8 +501,7 @@ export const NodeBody = React.memo(function NodeBody({
         {useKonvaArrow ? (
           <Arrow
             points={shape.line.points}
-            stroke={color}
-            strokeWidth={sw}
+            {...lineStroke}
             hitStrokeWidth={Math.max(sw, 12)}
             {...(strokeProps.dash ? { dash: strokeProps.dash } : {})}
             fill={color}
@@ -518,8 +528,7 @@ export const NodeBody = React.memo(function NodeBody({
         ) : (
           <Line
             points={shape.line.points}
-            stroke={color}
-            strokeWidth={sw}
+            {...lineStroke}
             hitStrokeWidth={Math.max(sw, 12)}
             {...(strokeProps.dash ? { dash: strokeProps.dash } : {})}
             lineCap="round"
@@ -539,9 +548,18 @@ export const NodeBody = React.memo(function NodeBody({
 
   let geom: React.ReactNode
   if (shape.extrusion) {
-    // scene3d/sp3d extrusion: pre-projected shaded faces in painter order replace the flat geometry
+    // scene3d/sp3d extrusion: pre-projected shaded faces in painter order replace the flat
+    // geometry; the shadow/glow is cast by the silhouette underneath them
+    const front = extrusionFrontFace(shape.extrusion.faces)
     geom = (
       <>
+        {shape.extrusion.shadowPath && front && 'shadowColor' in shadowProps && (
+          <Path
+            data={shape.extrusion.shadowPath}
+            {...(front.front ? fillProps : { fill: normalizeColor(front.color) })}
+            {...shadowProps}
+          />
+        )}
         {shape.extrusion.faces.map((f, i) => (
           <Path
             key={i}
@@ -688,7 +706,7 @@ export const NodeBody = React.memo(function NodeBody({
   // Inner/perspective shadows draw as an offscreen overlay (canvas shadow props can't express them)
   let shapeShadowUnder: React.ReactNode = null
   let shapeShadowOver: React.ReactNode = null
-  if (isOverlayShadow(shape.shadow) && !shape.extrusion && !shape.line) {
+  if (isOverlayShadow(shape.shadow) && (!shape.extrusion || shape.extrusion.flat) && !shape.line) {
     const sg: ShadowGeom =
       shape.fillPathData || shape.pathData
         ? { kind: 'path', data: (shape.fillPathData ?? shape.pathData)! }
@@ -810,7 +828,7 @@ export const NodeBody = React.memo(function NodeBody({
                   ? normalizeColor(shadeHex(shape.text.extrusion.color, 0.35))
                   : g.fill
               }
-              direction={g.direction ?? 'inherit'}
+              direction={g.direction ?? 'ltr'}
               {...(g.fillPriority && !shape.text?.extrusion
                 ? {
                     fillPriority: g.fillPriority,
@@ -1129,6 +1147,57 @@ function MediaBadge({ kind, w, h }: { kind: 'video' | 'audio'; w: number; h: num
 }
 
 /**
+ * A shape withheld from the model: a dashed frame plus the reader's own label in the
+ * corner. Drawn the way MediaBadge is — a `listening={false}` group over the node — so
+ * it rides along in thumbnails and group children without a second code path, and
+ * without covering the picture: the reader still has to see what they chose to hide.
+ */
+function RedactFrame({ label, w, h }: { label: string; w: number; h: number }) {
+  const pad = 2
+  const fontSize = Math.max(9, Math.min(13, Math.min(w, h) * 0.12))
+  const chipH = fontSize * 1.9
+  // The label is the reader's own, so it is shown as they wrote it (capped: a long one
+  // would swallow the picture it is standing on)
+  const text = `{{${label.length > 22 ? `${label.slice(0, 22)}…` : label}}}`
+  return (
+    <Group listening={false}>
+      <Rect
+        x={-pad}
+        y={-pad}
+        width={w + pad * 2}
+        height={h + pad * 2}
+        stroke={CANVAS_COLORS.redactFrame.stroke}
+        strokeWidth={1.5}
+        dash={[6, 4]}
+        cornerRadius={3}
+        listening={false}
+      />
+      <Rect
+        x={0}
+        y={0}
+        width={Math.min(w, fontSize * 0.62 * text.length + 8)}
+        height={chipH}
+        fill={CANVAS_COLORS.redactFrame.chip}
+        cornerRadius={3}
+        listening={false}
+      />
+      <Text
+        text={text}
+        x={4}
+        y={chipH / 2}
+        width={w - 8}
+        height={fontSize}
+        align="left"
+        fontSize={fontSize}
+        fill={CANVAS_COLORS.redactFrame.label}
+        ellipsis
+        listening={false}
+      />
+    </Group>
+  )
+}
+
+/**
  * Statically positioned node: container (position/rotation/flip) + NodeBody.
  * Rotation and flip pivot on the box center (boxPivotProps), matching OOXML.
  */
@@ -1150,3 +1219,62 @@ export const StaticNode = React.memo(function StaticNode({
     </Group>
   )
 })
+
+/** Four mitred bevel bands of a cell3D table cell, each a linear gradient from the outer edge
+    inward. They stay listening: the face rect is inset under them, so the ring is the cell's
+    pointer target there. */
+function CellBevelBands({
+  cell,
+  bevel,
+}: {
+  cell: { x: number; y: number; w: number; h: number }
+  bevel: CellBevelRender
+}) {
+  const { x, y, w, h } = cell
+  const b = bevel.widthPx
+  const bands: Array<{
+    key: BevelEdge
+    points: number[]
+    from: { x: number; y: number }
+    to: { x: number; y: number }
+  }> = [
+    {
+      key: 't',
+      points: [x, y, x + w, y, x + w - b, y + b, x + b, y + b],
+      from: { x, y },
+      to: { x, y: y + b },
+    },
+    {
+      key: 'r',
+      points: [x + w, y, x + w, y + h, x + w - b, y + h - b, x + w - b, y + b],
+      from: { x: x + w, y },
+      to: { x: x + w - b, y },
+    },
+    {
+      key: 'b',
+      points: [x, y + h, x + w, y + h, x + w - b, y + h - b, x + b, y + h - b],
+      from: { x, y: y + h },
+      to: { x, y: y + h - b },
+    },
+    {
+      key: 'l',
+      points: [x, y, x, y + h, x + b, y + h - b, x + b, y + b],
+      from: { x, y },
+      to: { x: x + b, y },
+    },
+  ]
+  return (
+    <>
+      {bands.map((band) => (
+        <Line
+          key={band.key}
+          points={band.points}
+          closed
+          fillLinearGradientStartPoint={band.from}
+          fillLinearGradientEndPoint={band.to}
+          fillLinearGradientColorStops={bevel.edges[band.key].flatMap((s) => [s.pos, s.color])}
+        />
+      ))}
+    </>
+  )
+}

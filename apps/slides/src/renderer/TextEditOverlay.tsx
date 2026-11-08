@@ -12,7 +12,11 @@ import type { EditParagraph, EditRun, LinkTargetOp } from '../shared/ipc'
 import { decodeLinkTarget, encodeLinkTarget } from '../shared/run-link'
 import { displayFontFamily, konvaBaselineDrop } from './konva-adapter'
 import { ZOOM_PREVIEW_EVENT } from './zoom-preview'
-import { FONT_SIZES } from './components/ribbon-shared'
+import {
+  applyFontSizeStep,
+  DEFAULT_FONT_SIZE_PT,
+  type FontSizeStep,
+} from '@hermesoffice/pptx-ops/font-size'
 import { bulletRunText } from './bullet-presets'
 
 interface Props {
@@ -24,16 +28,23 @@ interface Props {
   /** Tab/Shift+Tab (for table cell editing): commit current content and jump to the next/previous cell.
    * paragraphs=null means content unchanged (the host may skip committing and only jump). */
   onTabNav?: (paragraphs: EditParagraph[] | null, dir: 1 | -1) => void
+  /** Ctrl+Enter (PowerPoint for Windows): commit and move to the next placeholder; the host
+   * only passes it on non-mac platforms, where Ctrl+Enter falls back to a plain commit. */
+  onNextPlaceholder?: (paragraphs: EditParagraph[] | null) => void
   /** Viewport coordinates of the double-click: select the word there when entering editing; defaults to caret at end */
   caretPoint?: EditCaret
   /** Entered by typing directly on a selected shape: select all, then replace the whole content with that character */
   replaceWith?: string
+  /** Open with the whole text selected (F2, WordArt placeholder) */
+  selectAll?: boolean
   /** ⌘/Ctrl+click on a linked run follows the link (slide jump / external url) */
   onFollowLink?: (target: LinkTargetOp) => void
   /** Edit-frame color (matches the canvas selection chrome: white on dark slide backgrounds) */
   frameColor?: string
   /** Canvas CSS zoom: the outline divides by it to keep a constant on-screen weight */
   zoom?: number
+  /** Right-click inside the text: open the text context menu (the edit session stays alive) */
+  onContextMenu?: (x: number, y: number, collapsed: boolean) => void
   /** Left press on the frame around the text (not on a line box) commits the edit and hands the press over as a shape drag */
   onFrameDrag?: (ev: MouseEvent) => void
 }
@@ -484,9 +495,15 @@ export function populateEditorDom(
           if (run.link) span.setAttribute('href', run.link)
           if (run.bold) span.style.fontWeight = 'bold'
           if (run.italic) span.style.fontStyle = 'italic'
-          const deco = [run.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(
-            Boolean,
-          )
+          // A withheld run is underlined whether or not the model underlines it: the mark's only
+          // visible half, and the engine's save paths rewrite `u` from the model, so a run the
+          // model does not underline would come back unmarked-looking (and, once committed that
+          // way, unreadable). The attribute is what extraction reads the mark back from.
+          if (run.redact) span.dataset.redact = run.redact
+          const deco = [
+            run.underline || run.redact ? 'underline' : '',
+            run.strike ? 'line-through' : '',
+          ].filter(Boolean)
           if (deco.length) span.style.textDecoration = deco.join(' ')
           else if (run.link) span.style.textDecoration = 'none' // suppress the UA <a> underline
           // Super/subscript: the initial DOM must restore it (otherwise extraction sends explicit 0/false and wipes the original format)
@@ -519,6 +536,11 @@ export function populateEditorDom(
         if (!run.rtl && !vertical && !natural) {
           fragment.style.display = 'inline-block'
           fragment.style.width = `${run.widthPx}px`
+          // The UA sheet gives contentEditable overflow-wrap: break-word, and a fixed-width
+          // cell is its own wrapping container: a token the browser draws 1px wider than the
+          // engine measured ("APP" in a variable-weight CJK face) folded inside its cell into
+          // stacked letters. Cells never wrap; overflow spills right like the canvas.
+          fragment.style.whiteSpace = 'pre'
         }
         // Keep the browser editor visually aligned with the canvas renderer. This is display-only:
         // extraction intentionally preserves the source run's PPT letter spacing through srcRun.
@@ -553,6 +575,7 @@ export function releaseEditorLayoutConstraints(root: HTMLElement): void {
   root.querySelectorAll<HTMLElement>('[data-layout-fragment]').forEach((fragment) => {
     fragment.style.display = ''
     fragment.style.width = ''
+    fragment.style.whiteSpace = ''
   })
 }
 
@@ -561,6 +584,7 @@ function releaseFragment(el: Element | null | undefined): void {
   if (!(el instanceof HTMLElement) || el.dataset.layoutFragment !== 'true') return
   el.style.display = ''
   el.style.width = ''
+  el.style.whiteSpace = ''
 }
 
 /** Nearest enclosing layout fragment of a DOM point (bounded by the editor root). */
@@ -619,12 +643,15 @@ export function TextEditOverlay({
   onCommit,
   onCancel,
   onTabNav,
+  onNextPlaceholder,
   caretPoint,
   replaceWith,
+  selectAll,
   onFollowLink,
   frameColor = '#232425',
   zoom = 1,
   onFrameDrag,
+  onContextMenu,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
@@ -665,6 +692,10 @@ export function TextEditOverlay({
   // visual height, so the edit box isn't inflated; on commit extractParagraphs divides by norm back to model pt
   const norm = scale * (node.text?.fontScale ?? 1) || 1
   const wrap = node.text?.wrap !== false
+  // spAutoFit boxes follow their content live (the commit writes the same size back into the
+  // model): a nowrap body grows in width, a wrapping one in height — PowerPoint's click-to-type box
+  const growH = node.text?.autofit === 'resize'
+  const growW = growH && !wrap
   // bodyPr vert: edit in a CSS vertical writing mode matching the canvas engine —
   // eaVert: vertical-rl/mixed (CJK upright, Latin rotated, columns right→left);
   // wordArtVert: vertical-lr/upright (every glyph upright, stacked, columns left→right);
@@ -707,13 +738,13 @@ export function TextEditOverlay({
     initialRef.current = JSON.stringify(extractParagraphs(div, norm))
     div.focus()
     const sel = window.getSelection()
-    if (sel && replaceWith) {
-      // Type-to-replace: select all, then replace the whole content with the first typed character
+    if (sel && (replaceWith || selectAll)) {
+      // Select all; type-to-replace then swaps the whole content for the first typed character
       const range = document.createRange()
       range.selectNodeContents(div)
       sel.removeAllRanges()
       sel.addRange(range)
-      document.execCommand('insertText', false, replaceWith)
+      if (replaceWith) document.execCommand('insertText', false, replaceWith)
       return
     }
     if (sel) {
@@ -737,7 +768,7 @@ export function TextEditOverlay({
         sel.addRange(range)
       }
     }
-  }, [node, norm, caretPoint, replaceWith])
+  }, [node, norm, caretPoint, replaceWith, selectAll])
 
   const commit = () => {
     savedSel = null
@@ -746,6 +777,14 @@ export function TextEditOverlay({
     const paras = extractParagraphs(div, norm)
     if (JSON.stringify(paras) === initialRef.current) return onCancel()
     onCommit(paras)
+  }
+
+  /** Current content for a navigate-away hand-off; null when unchanged so the host can skip the commit */
+  const changedParagraphs = (): EditParagraph[] | null | undefined => {
+    const div = ref.current
+    if (!div) return undefined
+    const paras = extractParagraphs(div, norm)
+    return JSON.stringify(paras) === initialRef.current ? null : paras
   }
 
   // Targeted layout release (native listeners: React's onBeforeInput synthetic event does
@@ -788,7 +827,7 @@ export function TextEditOverlay({
   return (
     // Outer layer = the whole text box (the edit-frame border is drawn here);
     // inner contentEditable edits in place with a transparent background (the canvas already hides this node's text), flex implements the vertical anchor.
-    // Height fixed to the shape box: overflowing content shows past it, the edit box doesn't grow with content;
+    // Height fixed to the shape box (unless spAutoFit grows it): overflowing content shows past it;
     // border uses outline (takes no layout space) so the inner usable size matches canvas layout exactly
     <div
       ref={frameRef}
@@ -796,8 +835,10 @@ export function TextEditOverlay({
         position: 'absolute',
         left: box.x,
         top: box.y,
-        width: box.w,
-        height: box.h,
+        width: growW && !vertText ? 'max-content' : box.w,
+        minWidth: growW && !vertText ? box.w : undefined,
+        height: growH && !vertText ? 'auto' : box.h,
+        minHeight: growH && !vertText ? box.h : undefined,
         // Rotation only — the canvas counter-flips text in flipped shapes (NodeBody), so the editor must not mirror
         transform: `rotate(${box.rotationDeg ?? 0}deg)`,
         transformOrigin: 'center center',
@@ -840,6 +881,13 @@ export function TextEditOverlay({
           if (to?.closest('[data-keep-edit]')) return
           commit()
         }}
+        onContextMenu={(e) => {
+          if (!onContextMenu) return
+          e.preventDefault()
+          e.stopPropagation()
+          saveEditSelection()
+          onContextMenu(e.clientX, e.clientY, window.getSelection()?.isCollapsed ?? true)
+        }}
         onClick={(e) => {
           // ⌘/Ctrl+click follows a run link (plain clicks keep editing, matching PowerPoint)
           if (!(e.metaKey || e.ctrlKey) || !onFollowLink) return
@@ -851,11 +899,15 @@ export function TextEditOverlay({
           }
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            // Esc = commit the text and return to shape-selected state (input not lost);
+          if (e.key === 'Escape' || e.key === 'F2') {
+            // Esc / F2 = commit the text and return to shape-selected state (input not lost);
             // when unchanged, commit internally goes through onCancel and produces no history step
             e.preventDefault()
             commit()
+          } else if (e.key === 'Enter' && e.ctrlKey && onNextPlaceholder) {
+            e.preventDefault()
+            const paras = changedParagraphs()
+            if (paras !== undefined) onNextPlaceholder(paras)
           } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault()
             commit()
@@ -863,12 +915,8 @@ export function TextEditOverlay({
             // Table cells: Tab commits and jumps to the next cell / Shift+Tab previous;
             // block the default focus move (otherwise blur falsely triggers commit-and-exit)
             e.preventDefault()
-            const div = ref.current
-            if (div) {
-              const paras = extractParagraphs(div, norm)
-              const changed = JSON.stringify(paras) !== initialRef.current
-              onTabNav(changed ? paras : null, e.shiftKey ? -1 : 1)
-            }
+            const paras = changedParagraphs()
+            if (paras !== undefined) onTabNav(paras, e.shiftKey ? -1 : 1)
           } else if (e.key === 'Tab') {
             // Multi-level lists: Tab/⇧Tab adjust the caret paragraph's indent level (lvl written on commit;
             // editing only shows a marginLeft visual hint, real indentation is laid out by the canvas per master styles)
@@ -914,8 +962,10 @@ export function TextEditOverlay({
           width: wrap ? Math.max(box.w, 40 + insets.l + insets.r) : 'max-content',
           // nowrap keeps max-content growth for overflow, but never below the box width:
           // a narrower block would defeat per-paragraph text-align (centered titles would
-          // visually snap left on entering edit) — the canvas centers within the box
-          minWidth: wrap ? undefined : Math.max(box.w, 40 + insets.l + insets.r),
+          // visually snap left on entering edit) — the canvas centers within the box.
+          // A growing box takes the box width alone: the 40px floor would inflate the
+          // 19px click-to-type box and snap back on commit
+          minWidth: wrap ? undefined : growW ? box.w : Math.max(box.w, 40 + insets.l + insets.r),
           // Only an empty body needs a synthetic height (so typing matches the canvas line
           // height); inflating a laid-out body distorts the flex vertical anchor — a
           // middle-anchored single line with tight spacing sat a few px too high in edit
@@ -970,7 +1020,9 @@ function cssAlign(v: string): EditParagraph['align'] | undefined {
   return undefined
 }
 
-/** Whether adjacent runs share source and format (mergeable losslessly). When both srcRun are undefined, merge newly typed text by format. */
+/** Whether adjacent runs share source and format (mergeable losslessly). When both srcRun are undefined, merge newly typed text by format.
+ * The mark is part of the format: a withheld run and its unmarked neighbour share srcRun and every
+ * visual attribute, so without this term they would merge and the words would silently come back. */
 function sameRunFormat(a: EditRun, b: EditRun): boolean {
   return (
     a.srcRun === b.srcRun &&
@@ -982,6 +1034,7 @@ function sameRunFormat(a: EditRun, b: EditRun): boolean {
     a.fontSize === b.fontSize &&
     a.fontFamily === b.fontFamily &&
     a.color === b.color &&
+    (a.redact ?? null) === (b.redact ?? null) &&
     (a.link ? encodeLinkTarget(a.link) : '') === (b.link ? encodeLinkTarget(b.link) : '')
   )
 }
@@ -1066,6 +1119,10 @@ export function extractParagraphs(root: HTMLElement, norm: number): EditParagrap
           ...(inherited.fontFamily ? { fontFamily: inherited.fontFamily } : {}),
           ...(inherited.color ? { color: inherited.color } : {}),
           ...(inherited.srcRun != null ? { srcRun: inherited.srcRun } : {}),
+          // explicit null = not withheld (the DOM is authoritative here, exactly as for `link`):
+          // absent would mean "keep whatever the model had", so a run whose mark the reader just
+          // cleared in the editor could never actually lose it
+          redact: inherited.redact ?? null,
           link: inherited.link ?? null, // explicit null = no link (the DOM is authoritative here)
         })
       }
@@ -1128,6 +1185,11 @@ export function extractParagraphs(root: HTMLElement, norm: number): EditParagrap
     const next: Partial<EditRun> = { ...inherited }
     const sr = el.dataset ? parseInt(el.dataset.srcRun ?? '', 10) : NaN
     if (!Number.isNaN(sr)) next.srcRun = sr
+    // The withholding mark rides on the run span, read back off the element the same way
+    // bold/colour/underline are. Inherited like them, so a wrapper inside a run container
+    // (what applySelectionRedaction creates) marks the text under it without touching srcRun.
+    const redactLabel = el.dataset?.redact
+    if (redactLabel) next.redact = redactLabel
     if (el.tagName === 'A') {
       const link = decodeLinkTarget(el.getAttribute('href'))
       if (link) next.link = link
@@ -1259,6 +1321,134 @@ export function applySelectionLink(target: LinkTargetOp | null): boolean {
   if (target) document.execCommand('createLink', false, encodeLinkTarget(target))
   else document.execCommand('unlink')
   return true
+}
+
+// ── Withholding a selection from the model ────────────────────────────────
+//
+// The mark is not an op of its own on this side: a text element has no runs
+// the op surface can address, so the span is marked in the editor DOM and the
+// overlay's ordinary commit carries it (EditRun.redact → slides:edit-text →
+// applyEditParagraphs). That is also why the commit is left to the existing
+// handler — pressing away from the editor is what has always saved an edit.
+//
+// Two things must hold together, or the mark silently does nothing:
+//   - the words stay. A mark is a label over the reader's own text, never a
+//     replacement for it, so nothing here removes or rewrites a character.
+//   - the run is underlined. The engine rewrites `u` from the model on save, so
+//     a mark that went in without an underline would reopen invisible.
+
+/** Nearest element carrying the withholding mark around a node (bounded by the editor root). */
+function redactAround(node: Node | null): HTMLElement | null {
+  const el = node instanceof HTMLElement ? node : node?.parentElement
+  const holder = el?.closest('[data-redact]')
+  const root = el?.closest('[contenteditable="true"]')
+  return holder instanceof HTMLElement && root?.contains(holder) ? holder : null
+}
+
+/**
+ * The label the editor selection is already withheld under, or null when it is not
+ * withheld (nearest marked span at the selection start; the saved ribbon-handoff
+ * selection is consulted when focus has already left the editor). For echo-back, and
+ * so the menu item can offer to stop withholding instead of asking again.
+ */
+export function selectionRedaction(): string | null {
+  const sel = window.getSelection()
+  const node = sel?.rangeCount ? sel.getRangeAt(0).startContainer : savedSel?.range.startContainer
+  return redactAround(node ?? null)?.dataset.redact ?? null
+}
+
+/** The editor root a range lives in, or null when it is not inside one. */
+function editorRootOf(range: Range): HTMLElement | null {
+  const startEl =
+    range.startContainer instanceof HTMLElement
+      ? range.startContainer
+      : range.startContainer.parentElement
+  return startEl?.closest('[contenteditable="true"]') ?? null
+}
+
+/**
+ * Wrap the selected characters in a span carrying the label. The wrapper goes
+ * *inside* whatever run container already held the text, so `srcRun` still traces
+ * back to the model run and a selection covering a whole run produces one run, not
+ * two. Only a selection that lands mid-run splits a text node, and that split is the
+ * same one a partial bold already makes.
+ */
+function markRange(range: Range, label: string): boolean {
+  const root = editorRootOf(range)
+  if (!root) return false
+  // Collected before any mutation: splitting a text node invalidates a live walker.
+  const texts: Text[] = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const text = n as Text
+    if (!text.data.length) continue
+    if (text === range.startContainer || text === range.endContainer) continue
+    if (range.intersectsNode(text)) texts.push(text)
+  }
+  for (const endpoint of [range.startContainer, range.endContainer]) {
+    if (endpoint instanceof Text && endpoint.data.length && range.intersectsNode(endpoint)) {
+      texts.push(endpoint)
+    }
+  }
+  if (!texts.length) return false
+  for (const text of texts) {
+    const from = text === range.startContainer ? range.startOffset : 0
+    const to = text === range.endContainer ? range.endOffset : text.data.length
+    if (to <= from) continue
+    // Split the tail off first, then the head: the surviving node is exactly [from, to)
+    if (to < text.data.length) text.splitText(to)
+    let target = text
+    if (from > 0) target = target.splitText(from)
+    const span = document.createElement('span')
+    span.dataset.redact = label
+    span.style.textDecoration = 'underline'
+    target.parentNode?.insertBefore(span, target)
+    span.appendChild(target)
+  }
+  return true
+}
+
+/**
+ * Stop withholding everything the selection covers. A span this session created is
+ * unwrapped, taking its underline with it; a run container the editor itself populated
+ * keeps its trace and loses just the mark and the underline the mark forced.
+ */
+function unmarkRange(range: Range): boolean {
+  const root = editorRootOf(range)
+  if (!root) return false
+  const marked = Array.from(root.querySelectorAll<HTMLElement>('[data-redact]'))
+  let hit = false
+  for (const el of marked) {
+    if (!range.intersectsNode(el)) continue
+    hit = true
+    if (el.dataset.runContainer === 'true') {
+      delete el.dataset.redact
+      const rest = (el.style.textDecoration || '')
+        .split(/\s+/)
+        .filter((token) => token && token !== 'underline')
+      el.style.textDecoration = rest.join(' ')
+      continue
+    }
+    const parent = el.parentNode
+    if (!parent) continue
+    while (el.firstChild) parent.insertBefore(el.firstChild, el)
+    parent.removeChild(el)
+  }
+  return hit
+}
+
+/**
+ * Withhold (or stop withholding) the editor selection, restoring the saved selection
+ * first — the dialog took focus. `label` null clears. Returns false when there is no
+ * usable selection, so the caller can leave the edit session alone.
+ */
+export function applySelectionRedaction(label: string | null): boolean {
+  if (!restoreEditSelection()) return false
+  const sel = window.getSelection()
+  if (!sel?.rangeCount) return false
+  const range = sel.getRangeAt(0)
+  if (range.collapsed) return false
+  return label === null ? unmarkRange(range) : markRange(range, label)
 }
 
 /**
@@ -1483,10 +1673,10 @@ export function liveAlign(): 'left' | 'center' | 'right' | 'justify' | null | un
 /**
  * Font size increase/decrease while editing: execCommand('fontSize', 7) wraps the selection as a
  * placeholder, then <font size="7"> is replaced with a span whose size steps along the PowerPoint
- * ladder from the original px (inherited from the parent computed style) — extractParagraphs
- * reads back style.fontSize.
+ * ladder (or by one point) from the original px (inherited from the parent computed style) —
+ * extractParagraphs reads back style.fontSize.
  */
-export function resizeSelectionFont(dir: 1 | -1): void {
+export function resizeSelectionFont(dir: 1 | -1, mode: FontSizeStep['mode'] = 'ladder'): void {
   const root = document.activeElement
   if (!(root instanceof HTMLElement) || !root.isContentEditable) return
   const norm = parseFloat(root.dataset.norm ?? '') || 1
@@ -1524,8 +1714,10 @@ export function resizeSelectionFont(dir: 1 | -1): void {
         break
       }
     }
-    basePx ??= parseFloat(window.getComputedStyle(font.parentElement ?? root).fontSize) || 18
-    const pt = stepFontSizePt(pxToPt(basePx, norm), dir)
+    basePx ??=
+      parseFloat(window.getComputedStyle(font.parentElement ?? root).fontSize) ||
+      (DEFAULT_FONT_SIZE_PT * 96) / 72
+    const pt = applyFontSizeStep(pxToPt(basePx, norm), { dir, mode })
     const span = document.createElement('span')
     span.style.fontSize = `${(pt * 96 * norm) / 72}px`
     while (font.firstChild) span.appendChild(font.firstChild)
@@ -1536,15 +1728,6 @@ export function resizeSelectionFont(dir: 1 | -1): void {
     spans.push(span)
   })
   reselectSpans(spans)
-}
-
-/** Next/previous ladder size; beyond the ladder ±10pt, clamped to 8~400 */
-function stepFontSizePt(cur: number, dir: 1 | -1): number {
-  const max = FONT_SIZES[FONT_SIZES.length - 1]!
-  if (dir > 0) return cur >= max ? Math.min(400, cur + 10) : FONT_SIZES.find((s) => s > cur)!
-  if (cur > max) return Math.max(max, cur - 10)
-  for (let i = FONT_SIZES.length - 1; i >= 0; i--) if (FONT_SIZES[i]! < cur) return FONT_SIZES[i]!
-  return FONT_SIZES[0]!
 }
 
 /** replaceWith kills the live selection — re-select the new spans so the highlight and repeated grow/shrink clicks survive */

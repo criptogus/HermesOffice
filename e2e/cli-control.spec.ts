@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
 /**
- * The genoffice CLI's control channel (`open --slide/--el`, `selection`):
+ * The hermesoffice CLI's control channel (`open --slide/--el`, `selection`):
  * the shell publishes userData/control.json, a token-checked local socket
  * takes one request per connection and relays it to the tab's renderer.
  * This drives the socket the way packages/cli/src/control.ts does.

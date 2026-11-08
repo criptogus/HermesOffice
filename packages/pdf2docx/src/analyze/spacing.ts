@@ -50,11 +50,14 @@ export function applySpacingChain(sections: readonly PageSection[]): string[] {
           gap = prevSectionBottom - block.box.y1
         }
         if (gap === null) continue
+        // Raw PDF box numbers can be non-finite: Infinity passes `>=`
+        // checks and would emit w:before="Infinity". Skip those gaps.
+        if (!Number.isFinite(gap)) continue
         if (gap < -NEG_TOL_PT) {
           warnings.push(`overlapping blocks: negative gap ${gap.toFixed(1)}pt clamped to 0`)
           gap = 0
         }
-        if (gap >= EMIT_MIN_PT) block.spacingBeforePt = gap
+        if (gap >= EMIT_MIN_PT) block.spacingBeforePt = Math.min(gap, 1584)
       }
     }
     prevSectionBottom = section.box.y0

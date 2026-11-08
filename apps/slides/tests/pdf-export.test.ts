@@ -19,7 +19,7 @@ afterEach(async () => {
 })
 
 async function outputPath(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'genoffice-slides-pdf-test-'))
+  const root = await mkdtemp(join(tmpdir(), 'hermesoffice-slides-pdf-test-'))
   roots.push(root)
   return join(root, 'export.pdf')
 }
@@ -53,6 +53,7 @@ class TestPdfWindow implements PdfExportWindow {
   tempDirectoryExistedAtDestroy: boolean | null = null
   shouldFailLoad = false
   shouldFailPrint = false
+  shouldHangSettle = false
   executedScript: string | null = null
   executedWithUserGesture: boolean | undefined
   printOptions: Electron.PrintToPDFOptions | null = null
@@ -67,6 +68,9 @@ class TestPdfWindow implements PdfExportWindow {
     executeJavaScript: async (script: string, userGesture?: boolean): Promise<void> => {
       this.executedScript = script
       this.executedWithUserGesture = userGesture
+      // a renderer whose fonts/bitmaps never settle: the promise must not
+      // keep the export alive past the watchdog
+      if (this.shouldHangSettle) return new Promise<void>(() => {})
     },
     printToPDF: async (options: Electron.PrintToPDFOptions): Promise<Buffer> => {
       this.printOptions = options
@@ -95,7 +99,7 @@ describe('slides PDF export', () => {
     expect(decodedSecondPng.height).toBeGreaterThan(0)
 
     const result = await exportSlidesPdf({
-      pngsBase64: [firstPng, secondPng],
+      pages: [{ png: firstPng }, { png: secondPng }],
       widthPx: 1600,
       heightPx: 900,
       filePath,
@@ -105,12 +109,14 @@ describe('slides PDF export', () => {
 
     expect(result).toEqual({ ok: true, path: filePath })
     expect(basename(win.loadedPath!)).toBe('slides.html')
-    expect(basename(dirname(win.loadedPath!))).toMatch(/^genoffice-slides-pdf-/)
+    expect(basename(dirname(win.loadedPath!))).toMatch(/^hermesoffice-slides-pdf-/)
     expect(win.loadedHtml).toContain(`data:image/png;base64,${firstPng}`)
     expect(win.loadedHtml.length).toBeGreaterThan(chromiumDataUrlLimit)
     expect(win.loadedHtml.endsWith(`${secondPng}"></div></body></html>`)).toBe(true)
     expect(win.loadedHtml).toContain('@page { size: 13.333in 7.5in; margin: 0; }')
     expect(win.executedScript).toContain('document.fonts.ready')
+    // vector pages carry their bitmaps as SVG <image>, outside document.images
+    expect(win.executedScript).toContain("querySelectorAll('svg image')")
     expect(win.executedWithUserGesture).toBe(true)
     expect(win.printOptions).toEqual({
       landscape: false,
@@ -131,7 +137,7 @@ describe('slides PDF export', () => {
     win.shouldFailLoad = true
 
     const result = await exportSlidesPdf({
-      pngsBase64: ['png'],
+      pages: [{ png: 'png' }],
       widthPx: 4,
       heightPx: 3,
       filePath: await outputPath(),
@@ -150,7 +156,7 @@ describe('slides PDF export', () => {
     win.shouldFailPrint = true
 
     const result = await exportSlidesPdf({
-      pngsBase64: ['png'],
+      pages: [{ png: 'png' }],
       widthPx: 4,
       heightPx: 3,
       filePath: await outputPath(),
@@ -167,7 +173,7 @@ describe('slides PDF export', () => {
   it('overlays hyperlink rects as anchors so printToPDF emits link annotations', async () => {
     const win = new TestPdfWindow()
     const result = await exportSlidesPdf({
-      pngsBase64: ['png1', 'png2'],
+      pages: [{ png: 'png1' }, { png: 'png2' }],
       widthPx: 1600,
       heightPx: 900,
       filePath: await outputPath(),
@@ -198,10 +204,55 @@ describe('slides PDF export', () => {
     expect(win.loadedHtml).not.toContain('NaN')
   })
 
+  it('inlines SVG pages as-is and scopes the font CSS to the head', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540"><text x="1" y="2">Hi</text></svg>'
+    const html = buildPdfExportHtml(
+      [{ svg }, { png: 'png' }],
+      13.333,
+      7.5,
+      undefined,
+      "@font-face{font-family:'Carlito';src:url(data:font/ttf;base64,AAAA)}</style><script>1</script>",
+    )
+    expect(html).toContain(`<div class="page" id="pg1">${svg}</div>`)
+    expect(html).toContain('<div class="page" id="pg2"><img src="data:image/png;base64,png"></div>')
+    expect(html).toContain("@font-face{font-family:'Carlito'")
+    // a stray </style> in the CSS cannot break out of the style block
+    expect(html).not.toContain('</style><script>')
+    expect(html.match(/<\/style>/g)).toHaveLength(1)
+    expect(html).toContain('.page img, .page > svg { display: block; width: 100%; height: 100%; }')
+  })
+
   it('emits no anchors when the export carries no links', () => {
-    const html = buildPdfExportHtml(['png'], 13.333, 7.5)
+    const html = buildPdfExportHtml([{ png: 'png' }], 13.333, 7.5)
     expect(html).toContain('<div class="page" id="pg1">')
     expect(html).not.toContain('<a ')
+  })
+
+  // regression: a hung renderer used to leave the export promise unsettled
+  // forever — spinning button, leaked hidden window and temp dir per retry.
+  it('fails the export and cleans up when the renderer never settles', async () => {
+    const win = new TestPdfWindow()
+    win.shouldHangSettle = true
+    const filePath = await outputPath()
+
+    const result = await exportSlidesPdf({
+      pages: [{ png: 'png' }],
+      widthPx: 1600,
+      heightPx: 900,
+      filePath,
+      createWindow: () => win,
+      openExportedPdf: () => {},
+      timeoutMs: 50,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('slides PDF export timed out after 50ms')
+    // the finally block still ran: window destroyed, temp dir removed
+    expect(win.destroyed).toBe(true)
+    expect(win.tempDirectoryExistedAtDestroy).toBe(true)
+    expect(existsSync(dirname(win.loadedPath!))).toBe(false)
+    expect(existsSync(filePath)).toBe(false)
   })
 
   it('keeps real capture dimensions exact and falls back for degenerate ones', async () => {
@@ -223,7 +274,7 @@ describe('slides PDF export', () => {
 
     const win = new TestPdfWindow()
     const result = await exportSlidesPdf({
-      pngsBase64: ['png'],
+      pages: [{ png: 'png' }],
       widthPx: 0,
       heightPx: 0,
       filePath: await outputPath(),

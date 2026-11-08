@@ -1,5 +1,6 @@
 /** Insert tab of the slides ribbon. Extracted from Ribbon.tsx. */
 import type { InsertKind } from '../../shared/ipc'
+import { platformShortcuts } from '@hermesoffice/i18n'
 import { WORDART_PRESETS, wordArtStrokePx } from '@hermesoffice/ui'
 import {
   CHART_GALLERY,
@@ -44,10 +45,18 @@ import {
   type RibbonTabCtx,
 } from './ribbon-shared'
 
+/** The New Slide screentip shows the platform's real chord: ⇧⌘N on mac, Ctrl+M elsewhere. */
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+
+const ZOOM_LABEL = {
+  summary: 'ribbonZoomSummary',
+  section: 'ribbonZoomSection',
+  slide: 'ribbonZoomSlide',
+} as const
+
 export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
   const {
     closePanels,
-    currentSlide,
     editing,
     hasDoc,
     hasSelection,
@@ -55,7 +64,6 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
     layoutSize,
     onAddSlide,
     onAddSlideWithLayout,
-    onInsert,
     onPickShape,
     onInsertChart,
     onInsertField,
@@ -66,14 +74,14 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
     onInsertSmartArt,
     onInsertTable,
     onInsertWordArt,
-    onInsertZoom,
+    onOpenZoom,
+    hasSections,
     onNewComment,
     onOpenEquation,
     onOpenHeaderFooter,
     onOpenLink,
     onToggleScreenRecord,
     recording,
-    slideCount,
     dropBig,
     iconColor,
     layoutOpen,
@@ -96,7 +104,8 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
             className="rb-big rb-split"
             disabled={!hasDoc}
             onClick={onAddSlide}
-            data-tip={t('ribbonNewSlideTip')}
+            data-tip={platformShortcuts(t('ribbonNewSlideTip'))}
+            data-tip-kbd={IS_MAC ? '⇧⌘N' : 'Ctrl+M'}
           >
             <span className="rb-big-icon">
               <span className="rb-split-main">
@@ -370,18 +379,17 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
           <IconZoomJump size={BIG} />,
           t('ribbonZoomJump'),
           t('ribbonZoomJumpTip'),
-          <div className="rb-menu rb-menu-scroll">
-            {Array.from({ length: slideCount }, (_, i) => (
+          <div className="rb-menu">
+            {(['summary', 'section', 'slide'] as const).map((mode) => (
               <button
-                key={i}
-                disabled={i === currentSlide}
+                key={mode}
+                disabled={mode === 'section' && !hasSections}
                 onClick={() => {
                   setInsertDrop(null)
-                  onInsertZoom(i)
+                  onOpenZoom(mode)
                 }}
               >
-                {t('ribbonZoomJumpItem', { n: i + 1 })}
-                {i === currentSlide ? t('ribbonCurrentSlideSuffix') : ''}
+                {t(ZOOM_LABEL[mode])}
               </button>
             ))}
           </div>,
@@ -406,7 +414,7 @@ export function RibbonInsertTab({ rb }: { rb: RibbonTabCtx }) {
         <button
           className="rb-big"
           disabled={!hasDoc}
-          onClick={() => onInsert('textbox')}
+          onClick={() => onPickShape('textbox')}
           data-tip={t('ribbonInsertTextBoxTip')}
         >
           <span className="rb-big-icon">

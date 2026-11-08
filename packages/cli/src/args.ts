@@ -1,3 +1,5 @@
+import { CliError, EXIT } from './result'
+
 export interface ParsedArgs {
   positionals: string[]
   flags: Record<string, string | true>
@@ -30,7 +32,18 @@ export function parseArgs(
     }
     const eq = arg.indexOf('=')
     if (eq !== -1) {
-      flags[arg.slice(2, eq)] = arg.slice(eq + 1)
+      const key = arg.slice(2, eq)
+      const value = arg.slice(eq + 1)
+      // --force=false used to store 'false', which flagBool read as present
+      if (booleans.has(key)) {
+        throw new CliError(
+          EXIT.usage,
+          `--${key} is a boolean flag; use --${key}, not --${key}=<value>`,
+          undefined,
+          { reason: 'invalid_argument' },
+        )
+      }
+      flags[key] = value
       continue
     }
     const key = arg.slice(2)

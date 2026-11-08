@@ -124,8 +124,10 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px 28px 24px;
+  padding: 0 28px 24px;
   overflow-y: auto;
+  /* height of the sticky title row, so focus/scroll-into-view lands below it */
+  scroll-padding-top: 49px;
 }
 
 /* the pane scrolls, so rows must keep their natural height: .set-field's
@@ -136,11 +138,44 @@
 }
 
 .set-pane-title {
-  margin: 0 0 18px;
+  margin: 8px 0 18px;
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.2;
+}
+
+/* title row pinned to the top of the scrolling pane so the test/save actions
+   and their result pill stay in view however long the form is */
+.set-pane-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 -28px 12px;
+  padding: 8px 28px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.set-pane-head .set-pane-title {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.set-pane-actions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.set-pane-actions .set-ai-status {
+  margin-right: 0;
 }
 
 .set-field {
@@ -506,12 +541,42 @@
   color: var(--text-tertiary, var(--text-secondary));
 }
 
+/* multi-line variant for header / model-declaration blobs; same chrome as .set-input */
+.set-input-multiline {
+  flex-shrink: 0;
+  width: 46%;
+  min-width: 200px;
+  min-height: 56px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--surface);
+  resize: vertical;
+}
+
+.set-input-multiline:focus {
+  outline: none;
+  border-color: var(--accent, var(--text-primary));
+}
+
+.set-input-multiline::placeholder {
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.set-input-multiline.set-input-invalid {
+  border-color: var(--danger, var(--accent, var(--text-primary)));
+}
+
 .set-ai-note {
   padding: 8px 0 2px;
   line-height: 1.5;
 }
 
-/* footer feedback pill: spinner while testing, green on success/saved, red on failure */
+/* feedback pill: spinner while testing, green on success/saved, red on failure */
 .set-ai-status {
   display: inline-flex;
   align-items: center;
@@ -569,6 +634,23 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+
+.set-pane-subhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 0 4px;
+}
+
+.set-pane-subhead .set-pane-subtitle {
+  margin: 0;
+}
+
+.set-pane-subhead .set-ai-status {
+  margin-right: 0;
+  padding: 2px 8px 2px 6px;
+  font-size: 12px;
 }
 
 /* ── Integrations pane ── */
@@ -643,6 +725,14 @@
   padding: 4px 0 8px;
 }
 
+.set-intg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
 .set-intg-warn {
   padding: 0 0 8px;
   color: var(--danger);
@@ -705,6 +795,89 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* a group of skill rows under one heading */
+.set-intg-list {
+  margin-top: 10px;
+}
+
+.set-intg-list + .set-intg-list {
+  margin-top: 18px;
+}
+
+.set-intg-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  margin: 8px 0 4px;
+  border-radius: 10px;
+  background: var(--checkbox-bg);
+}
+
+.set-intg-tab {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.set-intg-sections {
+  margin: 0;
+}
+
+.set-intg-seg {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.set-intg-seg:hover {
+  color: var(--text);
+}
+
+.set-intg-seg.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-pill);
+}
+
+.set-intg-skill .set-field {
+  min-height: 0;
+  padding: 10px 0 0;
+}
+
+.set-intg-skill .set-intg-details {
+  margin: 4px 0 10px;
+}
+
+.set-intg-skill .set-intg-details > summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.set-intg-tab:hover {
+  color: var(--text);
+}
+
+.set-intg-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-pill);
 }
 
 .set-intg-mcp-http {
@@ -813,4 +986,181 @@
 
 .set-intg-path {
   text-align: left;
+}
+
+/* Settings → About: the one-click update entry next to the version row */
+.set-update-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.set-update-btn:hover,
+.set-update-btn:focus-visible {
+  filter: brightness(0.95);
+}
+
+.set-ai-endpoint-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.set-ai-endpoint-row .set-dd {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── custom endpoint profile pane ── */
+
+.set-ai-profile-field,
+.set-ai-profile-blob {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.set-ai-profile-field .set-field-text,
+.set-ai-profile-blob .set-field-text {
+  flex: initial;
+}
+
+.set-ai-profile-blob .set-input-multiline {
+  width: 100%;
+  min-width: 0;
+}
+
+.set-ai-profile-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.set-ai-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.set-ai-profile-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.set-ai-profile-tri {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.set-ai-profile-tri-btn {
+  padding: 4px 10px;
+  border: none;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.set-ai-profile-tri-btn + .set-ai-profile-tri-btn {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.set-ai-profile-tri-btn:hover {
+  background: var(--hover);
+}
+
+.set-ai-profile-tri-btn.is-active {
+  background: var(--accent-soft, var(--hover));
+  color: var(--text-primary);
+}
+
+/* The shell supports a 720px window; leave room for translated labels and
+   endpoint actions when the settings sidebar consumes most of that width. */
+@media (max-width: 900px) {
+  .set-pane-ai-model {
+    scroll-padding-top: 100px;
+  }
+
+  .set-pane-ai-model .set-pane-head,
+  .set-pane-ai-model .set-pane-actions {
+    flex-wrap: wrap;
+  }
+
+  .set-pane-ai-model .set-pane-actions {
+    flex-basis: 100%;
+  }
+
+  .set-pane-ai-model .set-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .set-pane-ai-model .set-field-text {
+    flex: initial;
+  }
+
+  .set-pane-ai-model .set-field-label {
+    flex-shrink: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .set-pane-ai-model .set-input,
+  .set-pane-ai-model .set-input-multiline {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .set-pane-ai-model .set-num-input {
+    width: 64px;
+    align-self: flex-end;
+  }
+
+  .set-pane-ai-model .set-dd {
+    align-self: flex-end;
+    max-width: 100%;
+  }
+
+  .set-pane-ai-model .set-ai-endpoint-row {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .set-pane-ai-model .set-ai-endpoint-row .set-dd {
+    flex: 1 1 100%;
+  }
+}
+
+.set-intg-state {
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+}
+
+.set-intg-legacy {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.set-intg-legacy-item {
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  overflow-wrap: anywhere;
 }

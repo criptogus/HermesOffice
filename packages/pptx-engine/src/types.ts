@@ -185,6 +185,23 @@ export interface TextRun {
   strikeStyle?: string
   /** Original rPr carried an explicit u="none" — an override of inherited underline the rebuild path must re-emit */
   underlineExplicitNone?: boolean
+  /**
+   * Withheld from the model: `label` is the only part a model ever sees, in
+   * place of this run's words. The words themselves stay in the document and in
+   * the file — a run is a mark over real text, never a replacement for it.
+   *
+   * It is stored on the model rather than left to ride along in the XML because
+   * two save paths discard anything they do not model: the structural rebuild
+   * (`rebuildTxBody`, taken when the run count changes) regenerates `<a:rPr>`
+   * from scratch, and the patch path rewrites `u`/`b`/`i`/`sz` from the model.
+   * Verified against this engine, not assumed: an `<a:extLst>` left in the
+   * original `<a:rPr>` survives an in-place text patch but is lost on rebuild.
+   *
+   * `underline` is the visible half and is NOT free: the patch path writes
+   * `u="none"` for a run whose model does not carry it, so applying a
+   * redaction must also set `underline` or the mark becomes invisible.
+   */
+  redact?: string
   /** Original rPr carried strike="noStrike" (see underlineExplicitNone) */
   strikeExplicitNone?: boolean
   /** Explicit cap attribute verbatim (incl. "none"); `cap` below holds the resolved display value, which may be inherited */
@@ -303,6 +320,12 @@ export interface Paragraph {
   alignSrc?: string
   /** Paragraph base direction (a:pPr rtl): true = RTL base, false = explicit LTR base, absent = inferred from the first strong character */
   rtl?: boolean
+  /** Effective East Asian hanging-punctuation switch (own pPr, else lstStyle/master level); absent = PowerPoint default, on */
+  hangingPunct?: boolean
+  /** <a:pPr latinLnBrk="1"> ("allow Latin text to wrap in the middle of a word"): Hangul words then break per syllable like CJK; absent = word wrap */
+  latinLnBrk?: boolean
+  /** <a:pPr eaLnBrk="0"> switches off East Asian line-break rules (kinsoku: no closing mark at a line start, no opening bracket at a line end) */
+  eaLnBrk?: boolean
   /** Indent level (bullet level) */
   level?: number
   /** Line spacing (%, 100 = single) or absolute (pt, via lineExact) */
@@ -371,6 +394,9 @@ export interface Paragraph {
     indent?: boolean
     tabLst?: boolean
     defTabSz?: boolean
+    hangingPunct?: boolean
+    latinLnBrk?: boolean
+    eaLnBrk?: boolean
   }
 }
 
@@ -449,6 +475,15 @@ interface ElementBase {
   transform: Transform
   /** Editor dirty flag: when true, save must regenerate OOXML; otherwise originalXml passes through */
   dirty?: boolean
+  /**
+   * Text-moved flag: a traced paragraph/run landed at a different index than its
+   * source (reorder, split or insert), so the in-place run patch would inherit the
+   * attributes of the old run now sitting at that position. Set by setText and
+   * consumed by patchTextElementXml, which rebuilds the txBody instead; it stays
+   * set until the element is reparsed/materialized (a rebuild cannot clear it while
+   * the moved text still occupies a foreign position).
+   */
+  textMoved?: boolean
   /** Geometry dirty flag: when true, save patches <a:xfrm> in place (orthogonal to text patches) */
   dirtyTransform?: boolean
   /** Fill dirty flag: when true, save patches the spPr fill node in place */
@@ -470,6 +505,21 @@ interface ElementBase {
    * state can be restored on reopen.
    */
   descr?: string
+  /**
+   * Withheld from the model, at element granularity. Only a picture can carry
+   * one: images, video and audio have no words to redact, so the point is that
+   * the model is not handed a reference it could fetch.
+   *
+   * Shape-level rather than run-level, because a picture is atomic — there is
+   * no run inside it to mark. `media.target` is the reason this is not merely
+   * cosmetic: for video and audio it can be an **external URL** (`r:link` of
+   * `videoFile`/`audioFile`), so emitting it hands the model a link it can
+   * replay, signed or not.
+   *
+   * The label is what the model sees. The `target`, the duration and the
+   * dimensions must not be.
+   */
+  redact?: string
   /**
    * <p:cNvPr id>: matching key between group children and slices of the group's
    * originalXml (for in-group editing). parseGroup iterates children grouped by
@@ -521,6 +571,8 @@ export interface Scene3D {
   extrusionColor?: ResolvedColor
   /** <a:sp3d prstMaterial> (legacyWireframe renders edges only) */
   material?: string
+  /** <a:sp3d><a:bevelT>: front-face bevel (width/height EMU, ST_BevelPresetType; defaults 76200/circle) */
+  bevelTop?: { wEmu: number; hEmu: number; preset: string }
 }
 
 export interface TextElement extends ElementBase {
@@ -531,6 +583,8 @@ export interface TextElement extends ElementBase {
   adjust?: Record<string, number>
   /** Custom geometry (mutually exclusive with presetGeometry) */
   customGeometry?: CustomGeometry
+  /** spPr carried neither a:prstGeom nor a:custGeom (non-placeholder): PowerPoint draws only the text */
+  noGeometry?: true
   fill?: Fill
   /** <p:sp useBgFill="1">: painted with the slide's effective background fill (fill is only a fallback) */
   useBgFill?: boolean
@@ -555,6 +609,8 @@ export interface PictureElement extends ElementBase {
   dataUrl?: string
   /** Source crop <a:srcRect>: fraction cropped from each edge (0..1) */
   srcRect?: { l: number; t: number; r: number; b: number }
+  /** <a:tile> fill mode: the bitmap repeats across the frame instead of stretching to it */
+  tile?: true
   /** Whole-image opacity <a:blip><a:alphaModFix amt> (0..1, 1 = opaque; default 1) */
   opacity?: number
   /** Soft edges <a:softEdge rad> (EMU feather radius) */
@@ -564,6 +620,11 @@ export interface PictureElement extends ElementBase {
    * frame; target is the media file's zip path or an external URL (external).
    */
   media?: { kind: 'video' | 'audio'; target?: string; external?: boolean }
+  /**
+   * A 3D model (mc:AlternateContent: am3d:model3d in the Choice, this picture in the Fallback):
+   * the .glb zip path and am3d:rot in 60,000ths of a degree.
+   */
+  model3d?: { target?: string; rot: { ax: number; ay: number; az: number } }
   /** Picture outline geometry <a:prstGeom> (ellipse avatars/rounded-corner frames etc. from picture styles; rect omitted) */
   presetGeometry?: string
   adjust?: Record<string, number>
@@ -626,6 +687,8 @@ export interface TableCell {
   /** Cell fill (explicit tcPr fill; table-style inheritance not yet supported) */
   fill?: Fill
   borders?: TableCellBorders
+  /** <a:tcPr><a:cell3D>: bevelled cell (width EMU from a:bevel@w, default 76200) */
+  bevel?: { widthEmu: number; preset?: string; lightDir?: string }
   /** Horizontal merge span in columns (gridSpan, default 1) */
   gridSpan?: number
   /** Vertical merge span in rows (rowSpan, default 1) */
@@ -665,6 +728,8 @@ export interface ChartElement extends ElementBase {
   type: 'chart'
   /** Parsed chart data model (see chart.ts) */
   chart: import('./chart').ChartModel
+  /** c:userShapes text/shape overlays, already in slide coordinates; render-only (never saved back) */
+  userShapes?: TextElement[]
 }
 
 export type SlideElement =

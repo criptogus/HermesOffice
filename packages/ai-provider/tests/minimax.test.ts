@@ -156,6 +156,7 @@ describe('MiniMax request boundary', () => {
           ],
           temperature: 0.3,
           stream: true,
+          stream_options: { include_usage: true },
         })
         expect(cb.onDelta).toHaveBeenCalledWith('done')
       },

@@ -3,6 +3,7 @@ import { findSnippet } from '../src/renderer/document/match'
 import { buildParseMap } from '../src/renderer/document/parse-map'
 import { compileOps, type HtmlOp } from '../src/renderer/document/ops'
 import { applyPatches } from '../src/renderer/document/patch'
+import { PAGE_MAX_CHARS } from '../src/renderer/ai/page-writer'
 
 const DOC = `<!doctype html>
 <html>
@@ -73,6 +74,32 @@ describe('findSnippet ladder', () => {
     expect(r.ok).toBe(false)
     if (!r.ok && r.kind === 'not_found') expect(r.nearest?.similarity).toBeGreaterThan(0.6)
   })
+
+  it('canonicalises a max-size entity-free document in bounded time', () => {
+    // A `str_replace` with no sid searches the whole document, and rungs 0-2
+    // miss whenever only the canonical fold separates the snippet from the
+    // source — so the canonical rung scans a full PAGE_MAX_CHARS haystack on the
+    // renderer thread. It must stay linear: entity-free text is the common case,
+    // and the quadratic version froze the editor for ~40s on this input.
+    const line = '  <p>Some ordinary paragraph text with no entities at all.</p>\n'
+    const document = `${'<!doctype html>\n<html><body>\n<section>\n'.repeat(1)}${line.repeat(
+      Math.ceil(PAGE_MAX_CHARS / line.length),
+    )}<div id="target">alpha  beta</div>\n</body></html>\n`
+    expect(document.length).toBeGreaterThan(PAGE_MAX_CHARS)
+
+    const started = performance.now()
+    const r = findSnippet(document, '<div id="target">alpha beta</div>')
+    const elapsed = performance.now() - started
+
+    // The snippet differs only by a whitespace run, so the canonical rung is
+    // the one that has to resolve it over the whole document.
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.rung).toBe(3)
+    // Bound: ~60x the ~30ms this costs, so a loaded machine cannot flake it,
+    // while the quadratic regression (~40s) fails on the clock rather than on
+    // the suite timeout.
+    expect(elapsed).toBeLessThan(2000)
+  }, 60_000)
 })
 
 describe('compileOps', () => {
@@ -157,6 +184,33 @@ describe('compileOps', () => {
       unstyled,
     ).next
     expect(removed).toContain('<section>')
+  })
+  it('set_attr matches the complete attribute name rather than a prefix', () => {
+    const doc = '<a hreflang=en href=/old>x</a>'
+    const { next, compiled } = run(
+      [{ op: 'set_attr', sid: sidOf(doc, 'a'), name: 'href', value: '/new' }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<a hreflang=en href="/new">x</a>')
+  })
+  it('set_attr ignores attribute-like text inside another quoted value', () => {
+    const doc = '<a title="keep href=/wrong" HREF="/old">x</a>'
+    const { next, compiled } = run(
+      [{ op: 'set_attr', sid: sidOf(doc, 'a'), name: 'href', value: '/new' }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<a title="keep href=/wrong" HREF="/new">x</a>')
+  })
+  it('set_style ignores style-like text inside another quoted value', () => {
+    const doc = '<div title="keep style=color:red" style="color: red">x</div>'
+    const { next, compiled } = run(
+      [{ op: 'set_style', sid: sidOf(doc, 'div'), styles: { color: 'blue' } }],
+      doc,
+    )
+    expect(compiled.errors).toEqual([])
+    expect(next).toBe('<div title="keep style=color:red" style="color: blue">x</div>')
   })
   it('set_attr escapes ampersands in single-quoted attributes', () => {
     const doc = `<html><body><div title='x'>hi</div></body></html>`
@@ -248,6 +302,19 @@ describe('structural ops', () => {
         .errors[0]?.kind,
     ).toBe('bad_args')
   })
+  it('counts an astral numeric character reference as two UTF-16 units', async () => {
+    const { decodedToRaw } = await import('../src/renderer/document/ops')
+    const decodedA = '\u{1F600}abc'.indexOf('a')
+    expect(decodedToRaw('\u{1F600}abc', decodedA)).toBe(2)
+    expect(decodedToRaw('&#x1F600;abc', decodedA)).toBe(9)
+    expect(decodedToRaw('&#128512;abc', decodedA)).toBe(9)
+    expect(decodedToRaw('&#x41;bc', 1)).toBe(6)
+    const E = '<p>&#x1F600;abc</p>'
+    const p = sidOf(E, 'p')
+    expect(
+      run([{ op: 'wrap_text', sid: p, index: 0, start: 2, end: 5, tag: 'strong' }], E).next,
+    ).toBe('<p>&#x1F600;<strong>abc</strong></p>')
+  })
   it('wrap_text maps decoded (DOM) offsets across entities', async () => {
     const { decodedToRaw } = await import('../src/renderer/document/ops')
     const raw = 'A &amp; B&nbsp;C'
@@ -276,7 +343,7 @@ describe('structural ops', () => {
 })
 
 describe('preview instrumentation', () => {
-  it('adds data-sid to every mapped start tag and appends the inspector before </body>', async () => {
+  it('adds data-gx-sid to every mapped start tag and appends the inspector before </body>', async () => {
     const { instrumentForPreview } = await import('../src/renderer/preview/instrument')
     const src = '<html><body><p class="a">x</p><img src="i.png"/><br></body></html>'
     const map = buildParseMap(src, 1)
@@ -285,13 +352,43 @@ describe('preview instrumentation', () => {
     const p = map.elements.find((e) => e.tag === 'p')!
     const img = map.elements.find((e) => e.tag === 'img')!
     const br = map.elements.find((e) => e.tag === 'br')!
-    expect(out).toContain(`<p class="a" data-sid="${p.sid}">`)
-    expect(out).toContain(`<img src="i.png" data-sid="${img.sid}"/>`)
-    expect(out).toContain(`<br data-sid="${br.sid}">`)
+    expect(out).toContain(`<p class="a" data-gx-sid="${p.sid}">`)
+    expect(out).toContain(`<img src="i.png" data-gx-sid="${img.sid}"/>`)
+    expect(out).toContain(`<br data-gx-sid="${br.sid}">`)
     expect(out).toMatch(/<script data-gx-inspector>console\.log\(1\)<\/script><\/body>/)
     // a fragment without </body> still gets the script
     expect(instrumentForPreview('<p>x</p>', buildParseMap('<p>x</p>', 1), 's')).toMatch(
       /<\/p><script data-gx-inspector>s<\/script>$/,
     )
+  })
+
+  it('keeps authored data-sid separate from instrumentation', async () => {
+    const { instrumentForPreview } = await import('../src/renderer/preview/instrument')
+    const src = '<p data-sid="999">x</p>'
+    const map = buildParseMap(src, 1)
+    const out = instrumentForPreview(src, map, 'inspector')
+    const sid = map.elements.find((e) => e.tag === 'p')!.sid
+    expect(out).toContain(`data-sid="999" data-gx-sid="${sid}"`)
+    expect(out).not.toContain(`data-sid="${sid}"`)
+  })
+
+  it('replaces authored instrumentation SIDs in the parsed DOM', async () => {
+    const { instrumentForPreview } = await import('../src/renderer/preview/instrument')
+    const src =
+      '<p data-sid="kept" DATA-GX-SID="999>" data-gx-sid=888>one</p><div title="data-gx-sid=&quot;777&quot;">two</div>'
+    const map = buildParseMap(src, 1)
+    const out = instrumentForPreview(src, map, 'inspector')
+    const dom = new DOMParser().parseFromString(out, 'text/html')
+    const p = dom.querySelector('p')!
+    const div = dom.querySelector('div')!
+    const pSid = map.elements.find((entry) => entry.tag === 'p')!.sid
+    const divSid = map.elements.find((entry) => entry.tag === 'div')!.sid
+    expect(p.getAttribute('data-sid')).toBe('kept')
+    expect(p.getAttribute('data-gx-sid')).toBe(String(pSid))
+    expect([...p.attributes].filter((attribute) => attribute.name === 'data-gx-sid')).toHaveLength(
+      1,
+    )
+    expect(div.getAttribute('title')).toBe('data-gx-sid="777"')
+    expect(div.getAttribute('data-gx-sid')).toBe(String(divSid))
   })
 })

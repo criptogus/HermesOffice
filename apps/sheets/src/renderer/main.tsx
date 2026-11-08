@@ -1,9 +1,13 @@
 import ReactDOM from 'react-dom/client'
-import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { htmlDir, htmlLang, type Lang } from '@hermesoffice/i18n'
 import { applyAiPanelPrefs, installScreenTips } from '@hermesoffice/ui'
 
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/ai-model-picker.css'
+import '@hermesoffice/ui/ai-queue-strip.css'
+import '@hermesoffice/ui/ai-usage.css'
+import '@hermesoffice/ui/ai-skills.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
 import '@hermesoffice/ui/ribbon-collapse.css'
@@ -13,9 +17,13 @@ import '@hermesoffice/ui/ai-scope-quote.css'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import { App } from './App'
-import { installCanvasFontFallback, registerCellFontAliases } from './cell-font-fallback'
+import {
+  installCanvasFontFallback,
+  registerTextDingbatsFace,
+  untilCellFontsLoaded,
+} from './cell-font-fallback'
 import { LocaleProvider, setModuleLang } from './i18n/locale'
-import type { UiTheme } from '../shared/desktop-api'
+import type { DocTheme, UiTheme } from '../shared/desktop-api'
 import './styles.css'
 
 if (import.meta.hot) {
@@ -38,47 +46,60 @@ function applyTheme(theme: UiTheme): void {
   else document.documentElement.setAttribute('data-theme', theme)
 }
 
+function applyDocumentTheme(theme: DocTheme): void {
+  // data-doc-theme drives the canvas/paper (hermesoffice#1811); absent means 'follow' the UI theme
+  if (theme === 'follow') document.documentElement.removeAttribute('data-doc-theme')
+  else document.documentElement.setAttribute('data-doc-theme', theme)
+}
+
 // Canvas fillText never triggers @font-face downloads, so the bundled Carlito
 // faces (Calibri/Aptos aliases in styles.css) must be loaded before Univer's
 // first skeleton — MDW, wrap points, and #### overflow all measure with them.
+// The Office-font aliases load with each workbook (openLazyWorkbook).
 async function loadCellFonts(): Promise<void> {
-  const loads: Promise<unknown>[] = [registerCellFontAliases()]
+  const loads: Promise<unknown>[] = [registerTextDingbatsFace()]
   for (const variant of ['', 'bold ', 'italic ', 'italic bold ']) {
     for (const family of ['Calibri', 'Aptos', "'Aptos Narrow'", 'Carlito']) {
       loads.push(document.fonts?.load?.(`${variant}16px ${family}`)?.catch(() => {}) ?? [])
     }
   }
-  // Local assets resolve in milliseconds; the timeout only guards a broken
-  // bundle from blanking the app.
-  await Promise.race([Promise.all(loads), new Promise((resolve) => setTimeout(resolve, 3000))])
+  await untilCellFontsLoaded(Promise.all(loads))
 }
 
 async function bootstrap(): Promise<void> {
   let lang: Lang = 'zh'
   let theme: UiTheme = 'system'
+  let docTheme: DocTheme = 'follow'
   try {
     // per-promise catch: standalone runs have no app:get-theme handler, and
     // that rejection must not drop a resolved language
-    ;[lang, theme] = await Promise.all([
+    ;[lang, theme, docTheme] = await Promise.all([
       window.desktopApi.getLanguage().catch(() => 'zh' as const),
       window.desktopApi.getTheme().catch(() => 'system' as const),
+      window.desktopApi.getDocumentTheme?.().catch(() => 'follow' as const),
     ])
   } catch {
     /* dev renderer without the preload bridge */
   }
   setModuleLang(lang)
   document.documentElement.lang = htmlLang(lang)
+  document.documentElement.dir = htmlDir(lang)
   applyTheme(theme)
+  applyDocumentTheme(docTheme ?? 'follow')
   await loadCellFonts()
+  // A spare view can receive a file while its renderer is still booting.
+  // Check the queued path before the first React paint so it never looks Ready.
+  const queuedWorkbookAtBoot = await window.desktopApi?.hasQueuedWorkbook?.().catch(() => false)
   window.desktopApi?.onThemeChanged(applyTheme)
-  void window.desktopApi
+  window.desktopApi?.onDocumentThemeChanged?.(applyDocumentTheme)
+  await window.desktopApi
     ?.getAiPanelPrefs?.()
     .then(applyAiPanelPrefs)
     .catch(() => {})
   window.desktopApi?.onAiPanelPrefsChanged?.(applyAiPanelPrefs)
   ReactDOM.createRoot(root!).render(
     <LocaleProvider initial={lang}>
-      <App />
+      <App queuedWorkbookAtBoot={queuedWorkbookAtBoot === true} />
     </LocaleProvider>,
   )
 }

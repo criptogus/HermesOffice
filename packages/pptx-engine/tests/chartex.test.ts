@@ -56,4 +56,17 @@ describe('parseChartExXml', () => {
   it('unsupported layoutId returns null', () => {
     expect(parseChartExXml(FUNNEL.replace('layoutId="funnel"', 'layoutId="waterfall"'))).toBeNull()
   })
+
+  it('caps hostile ptCount and ignores negative idx', () => {
+    const hostile = FUNNEL.replace(
+      '<cx:lvl ptCount="3"><cx:pt idx="0">C1</cx:pt><cx:pt idx="1">C2</cx:pt><cx:pt idx="2">C3</cx:pt></cx:lvl>',
+      '<cx:lvl ptCount="50000000"><cx:pt idx="0">C1</cx:pt><cx:pt idx="-1">NEG</cx:pt></cx:lvl>',
+    )
+    const start = Date.now()
+    const m = parseChartExXml(hostile)!
+    expect(Date.now() - start).toBeLessThan(10000)
+    expect(m.categories?.length).toBeLessThanOrEqual(10000)
+    expect(m.categories?.[0]).toBe('C1')
+    expect((m as { categories?: string[] }).categories).not.toContain('NEG')
+  })
 })

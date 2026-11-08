@@ -52,13 +52,20 @@ export interface PivotGroupValue {
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30)
 const DAY_MS = 86_400_000
 
+/// Excel's 1900 system counts a phantom 1900-02-29, so serials below 60 sit one
+/// day early on the 1899-12-30 epoch; 60 is the phantom day itself.
+const EXCEL_PHANTOM_LEAP_SERIAL = 60
+
 /// Parses a cell date: numbers as Excel serial dates, strings in YYYY-MM-DD /
 /// YYYY/M/D read digits directly (avoiding Date.parse timezone ambiguity), and
 /// everything else goes to Date.parse.
 export function parseDateParts(value: string | number): { year: number; month: number } | null {
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || value < 0 || value > 2_958_465) return null
-    const date = new Date(EXCEL_EPOCH_UTC + Math.floor(value) * DAY_MS)
+    const serial = Math.floor(value)
+    if (serial === EXCEL_PHANTOM_LEAP_SERIAL) return { year: 1900, month: 2 }
+    const shift = serial < EXCEL_PHANTOM_LEAP_SERIAL ? 1 : 0
+    const date = new Date(EXCEL_EPOCH_UTC + (serial + shift) * DAY_MS)
     return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
   }
   const direct = /^\s*(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?/.exec(value)
@@ -110,12 +117,22 @@ export function groupValue(
   if (!Number.isFinite(numeric)) return { label: String(value), sort: null }
   const start = grouping.rangeStart ?? 0
   const step = grouping.rangeStep
-  const bucketStart = start + Math.floor((numeric - start) / step) * step
+  const bucketStart =
+    start +
+    rangeBucketIndex((numeric - start) / step, (Math.abs(numeric) + Math.abs(start)) / step) * step
   // Labels are half-open intervals [bucketStart, bucketStart+step).
   return {
     label: `${formatBoundary(bucketStart)}-${formatBoundary(bucketStart + step)}`,
     sort: bucketStart,
   }
+}
+
+// The rounding error lives in `numeric - start`, so the tolerance has to
+// scale with the operands' magnitude, not with the quotient.
+function rangeBucketIndex(quotient: number, magnitude: number): number {
+  const nearest = Math.round(quotient)
+  if (Math.abs(quotient - nearest) <= magnitude * 4 * Number.EPSILON) return nearest
+  return Math.floor(quotient)
 }
 
 /// Label only (hot function on the recompute path).

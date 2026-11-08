@@ -106,11 +106,13 @@ export const ru = {
   aiTooManyImages:
     'В одном сообщении можно отправить не более {max} изображений; лишние были пропущены',
   aiErrStopped: 'Остановлено',
-  aiErrTimeout: 'Превышено время ожидания ({ms}ms)',
+  aiErrTimeout: 'Превышено время ожидания ({ms} мс)',
   aiErrEmptyOutput: 'Пустой вывод',
   aiErrUnknown: 'Неизвестная ошибка',
   aiErrStreamTimeout:
     'Тайм-аут запроса ИИ: сеть не отвечает, выполнение остановлено. Проверьте подключение и повторите попытку',
+  aiErrRegion:
+    'Поставщик этой модели не обслуживает ваш текущий регион — выберите другую модель или смените сеть',
   aiErrOverloaded: 'Сервис ИИ сейчас перегружен — повторите попытку чуть позже',
   aiErrNetwork:
     'Проблема с сетью: не удалось подключиться к сервису ИИ. Проверьте подключение и повторите попытку',
@@ -135,6 +137,7 @@ export const ru = {
   aiClarifyOther: 'Другое (впишите свой вариант)',
   aiClarifySkip: 'Пропустить опрос',
   aiClarifyNext: 'Далее',
+  aiClarifyPrev: 'Назад',
   aiClarifySubmit: 'Сгенерировать',
   aiSumReadAttachment: 'Чтение вложения',
   aiSumReadAttachmentName: 'Чтение вложения {name}',
@@ -213,7 +216,7 @@ export const ru = {
   aiSumReplaceImage: 'Изображение заменено на слайде {n}',
   aiSumClarifySkipped: 'Пользователь пропустил опрос',
   aiSumClarifyDone: 'Ответы на опрос собраны',
-  aiSumPlan: 'Спланировано страниц: {count} | Core Hook: {hook}',
+  aiSumPlan: 'Спланировано страниц: {count} | Ключевая идея: {hook}',
   aiSumHtmlAppend: 'Добавлено HTML-страниц: {count} (всего {total})',
   aiSumHtmlGenerate: 'Создано страниц из HTML: {count}',
   aiSumRegen: 'Слайд {n} переделан',

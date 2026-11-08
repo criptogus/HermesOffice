@@ -1,0 +1,13 @@
+{
+  "source": "packages/docx-engine/tests/fixtures/truths/render-hf-numeric-style-size/probe.docx",
+  "paragraphs": 2,
+  "hashes": ["7eefb77974a47a04", "5956646719ed45ee"],
+  "cellParagraphs": 0,
+  "cellHashes": [],
+  "boxParagraphs": 0,
+  "boxHashes": [],
+  "hfParagraphs": 2,
+  "hfHashes": ["c6eccc26099d3b41", "c6eccc26099d3b41"],
+  "noteParagraphs": 0,
+  "noteHashes": []
+}

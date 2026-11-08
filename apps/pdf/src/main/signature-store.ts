@@ -23,6 +23,8 @@ export function isSignatureData(value: unknown): value is SignatureData {
         (p) =>
           Array.isArray(p) &&
           p.length >= 4 &&
+          // an odd-length path pairs a coordinate with undefined and writes NaN into the InkList
+          p.length % 2 === 0 &&
           p.every((n) => typeof n === 'number' && Number.isFinite(n)),
       )
     )

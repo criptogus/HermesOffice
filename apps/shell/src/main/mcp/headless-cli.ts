@@ -1,10 +1,10 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cliErrorMessage, type CliRunOutcome, type CliRunner } from './cli-runner'
+import { cliErrorMessage, type CliJsonOk, type CliRunOutcome, type CliRunner } from './cli-runner'
 
 /**
- * Thin helpers that turn an MCP tool's arguments into a `genoffice` CLI
+ * Thin helpers that turn an MCP tool's arguments into a `hermesoffice` CLI
  * invocation. The headless MCP tools are a client of the CLI, not a second
  * implementation of the engines: input that arrives inline (markdown, a row
  * matrix, an ops array) is staged to a temp file, the CLI writes the output,
@@ -13,7 +13,7 @@ import { cliErrorMessage, type CliRunOutcome, type CliRunner } from './cli-runne
 
 /** run `fn` with a scratch directory that is always removed afterwards */
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'genoffice-mcp-'))
+  const dir = await mkdtemp(join(tmpdir(), 'hermesoffice-mcp-'))
   try {
     return await fn(dir)
   } finally {
@@ -104,4 +104,86 @@ export async function readDocxTextViaCli(runner: CliRunner, path: string): Promi
     .map((item) => String(item.text ?? ''))
     .join('\n')
     .replace(/\n+$/, '')
+}
+
+/**
+ * `docs read <path> --properties`: the document's core, app and custom
+ * properties as the CLI reports them. Read-only, so no output resolution.
+ */
+export async function readDocxPropertiesViaCli(
+  runner: CliRunner,
+  path: string,
+): Promise<Record<string, unknown>> {
+  const outcome = await runner.run(['docs', 'read', path, '--properties'])
+  if (!outcome.ok || !outcome.json || outcome.json.status !== 'ok') {
+    throw new Error(cliErrorMessage(outcome))
+  }
+  const properties = outcome.json.detail?.properties
+  if (typeof properties !== 'object' || properties === null) {
+    throw new Error('docs read returned no properties detail')
+  }
+  return properties as Record<string, unknown>
+}
+
+/**
+ * `merge <template> --data <staged json> --out <target> [--force] [--strict]`:
+ * fill one record of `{{key}}` placeholders and write the result. The data
+ * object is staged to a temp file — inline JSON on argv would run into
+ * Windows' command-line length limit for real merge payloads.
+ */
+export async function mergeTemplateViaCli(
+  runner: CliRunner,
+  opts: {
+    templatePath: string
+    data: Record<string, unknown>
+    out: string
+    overwrite?: boolean
+    strict?: boolean
+  },
+): Promise<CliJsonOk> {
+  return withTempDir(async (dir) => {
+    const dataPath = await stage(dir, 'data.json', JSON.stringify(opts.data))
+    const args = [
+      'merge',
+      opts.templatePath,
+      '--data',
+      dataPath,
+      '--out',
+      opts.out,
+      ...(opts.overwrite ? ['--force'] : []),
+      ...(opts.strict ? ['--strict'] : []),
+    ]
+    const outcome = await runner.run(args)
+    if (!outcome.ok || !outcome.json || outcome.json.status !== 'ok') {
+      throw new Error(cliErrorMessage(outcome))
+    }
+    return outcome.json
+  })
+}
+
+/**
+ * `sheet links <path>`: list, refresh (`--update`) or break (`--break`, 1-based
+ * indices) a workbook's external links. Mutations default to writing in place
+ * and honour `--out`/`--force` — the CLI routes them through the same
+ * output/allow-list/open-in-HermesOffice guards `sheet apply` uses.
+ */
+export async function sheetLinksViaCli(
+  runner: CliRunner,
+  opts: {
+    path: string
+    update?: boolean
+    break?: number[]
+    out?: string
+    overwrite?: boolean
+  },
+): Promise<CliJsonOk> {
+  const args = ['sheet', 'links', opts.path]
+  if (opts.break !== undefined) args.push('--break', opts.break.join(','))
+  else if (opts.update) args.push('--update')
+  if (opts.out !== undefined) args.push('--out', opts.out, ...(opts.overwrite ? ['--force'] : []))
+  const outcome = await runner.run(args)
+  if (!outcome.ok || !outcome.json || outcome.json.status !== 'ok') {
+    throw new Error(cliErrorMessage(outcome))
+  }
+  return outcome.json
 }

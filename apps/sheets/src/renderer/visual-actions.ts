@@ -38,7 +38,7 @@ import {
   updateVisualAdd,
 } from './edit-journal'
 import { t } from './i18n/locale'
-import { findPivotAtSelection, type PivotActionContext } from './pivot-actions'
+import { filePivotAtSelection, type PivotActionContext } from './pivot-actions'
 import {
   fitPictureFrame,
   pictureFileProblem,
@@ -301,8 +301,9 @@ export async function handleInsertChart(
 
 /// PivotChart: creates a chart from the output area of the pivot under the
 /// cursor. series/cat reference output-area cells, so the chart follows the
-/// references after refresh write-back (chartSpace pivotSource wiring: see the
-/// TODO in pivot-chart).
+/// references after refresh write-back, and the visual carries the pivot
+/// table's part path so the save writes chartSpace <c:pivotSource> — Excel
+/// then recognizes the chart as a PivotChart (field buttons, layout sync).
 export async function handleInsertPivotChart(
   ctx: VisualActionContext,
   chartKind: string,
@@ -317,15 +318,8 @@ export async function handleInsertPivotChart(
   const workbook = runtime.univerAPI.getActiveWorkbook()
   const worksheet = workbook?.getActiveSheet()
   if (!workbook || !worksheet) return
-  const found = findPivotAtSelection(ctx.pivotContext())
-  if (!found) {
-    ctx.setMessage(t('appCursorNotInPivot'))
-    return
-  }
-  if (!found.definition) {
-    ctx.setMessage(t('appPivotDefNotLoaded'))
-    return
-  }
+  const found = filePivotAtSelection(ctx.pivotContext())
+  if (!found) return
   if (isSheetRemoved(state.editJournal, found.sheetId)) return
   const bounds = parseRange(found.pivot.outputRef)
   let outputValues: (string | number | boolean | null | undefined)[][]
@@ -376,6 +370,9 @@ export async function handleInsertPivotChart(
         ? { barDirection: chartKind === 'bar' ? 'bar' : 'col' }
         : {}),
       title: chartData.title,
+      // Binds the saved chart to the pivot's table part; the gateway resolves
+      // the pivotTableDefinition name and writes <c:pivotSource> from it.
+      pivotTablePath: found.pivot.path,
       series: chartData.series.map((series) => ({
         name: series.name,
         categories: [...series.categories],

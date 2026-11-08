@@ -124,6 +124,27 @@ fn is_numeric_ref(node: &Node<'_, '_>) -> bool {
     node.descendants().any(|child| child.has_tag_name("numRef"))
 }
 
+/// Every `c:f` reference in a chart part, so the source-format lookup can be
+/// warmed in one worksheet pass instead of one prefix scan per reference.
+pub(crate) fn chart_formula_references(
+    archive: &mut ZipArchive<File>,
+    chart_path: &str,
+) -> Vec<String> {
+    let Ok(xml) = read_xml(archive, chart_path) else {
+        return Vec::new();
+    };
+    let Ok(document) = parse_document(&xml, chart_path) else {
+        return Vec::new();
+    };
+    document
+        .descendants()
+        .filter(|node| node.is_element() && node.has_tag_name("f"))
+        .filter_map(|node| node.text())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 /// Font shorthand of a node's c:txPr//a:defRPr: size, bold, solid fill.
 pub(crate) fn text_style(parent: Node<'_, '_>, colors: &ColorContext) -> Option<ChartTitleStyle> {
     let def = direct_child(parent, "txPr")?

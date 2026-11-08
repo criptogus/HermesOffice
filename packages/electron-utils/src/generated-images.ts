@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const GENERATED_IMAGE_DIR = join(tmpdir(), 'genoffice-ai-images')
+export const GENERATED_IMAGE_DIR = join(tmpdir(), 'hermesoffice-ai-images')
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -29,6 +29,12 @@ const FILE_NAME_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|gif|webp)$/
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/** Single-image byte budget: BYOK bytes land in tmpdir, so the cache stays bounded. */
+export const MAX_GENERATED_IMAGE_BYTES = 25 * 1024 * 1024
+
+/** MIME label budget: overlong labels fall back to png instead of reaching file names. */
+const MAX_MIME_LENGTH = 128
 
 /** Best-effort sweep of yesterday's images; the directory is a cache, not a document store */
 function pruneOld(now = Date.now()): void {
@@ -50,7 +56,14 @@ function pruneOld(now = Date.now()): void {
 }
 
 export function storeGeneratedImage(bytes: Uint8Array, mime: string): string {
-  const ext = EXT_BY_MIME[mime.toLowerCase()] ?? 'png'
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+    throw new Error('generated image bytes must be a non-empty buffer')
+  }
+  if (bytes.length > MAX_GENERATED_IMAGE_BYTES) {
+    throw new Error(`generated image too large (limit ${MAX_GENERATED_IMAGE_BYTES} bytes)`)
+  }
+  const label = typeof mime === 'string' && mime.length <= MAX_MIME_LENGTH ? mime : ''
+  const ext = EXT_BY_MIME[label.toLowerCase()] ?? 'png'
   mkdirSync(GENERATED_IMAGE_DIR, { recursive: true })
   pruneOld()
   const path = join(GENERATED_IMAGE_DIR, `${randomUUID()}.${ext}`)

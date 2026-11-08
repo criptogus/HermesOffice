@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCli, type RunOptions } from '../src/cli'
@@ -29,16 +29,42 @@ export function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'hermesoffice-test-'))
 }
 
-/** A valid one-page PDF with real Helvetica text; enough for page counting and conversion. */
-export function writeMinimalPdf(path: string, text = 'Hello hermesoffice'): string {
-  const content = `BT /F1 24 Tf 72 700 Td (${text}) Tj ET`
+/** A stand-in for the HermesOffice binary (HERMESOFFICE_APP_BIN): copies a prepared PDF to --out and prints the envelope. */
+export function fakeApp(dir: string, pdf: string): string {
+  const fake = join(dir, 'fake-hermesoffice.sh')
+  writeFileSync(
+    fake,
+    `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "--out" ]; then out="$2"; fi; if [ "$1" = "--to" ]; then to="$2"; fi; shift; done\n[ "$to" = "pdf" ] || exit 9\ncp "${pdf}" "$out"\necho '{"status":"ok","summary":"exported"}'\n`,
+  )
+  chmodSync(fake, 0o755)
+  return fake
+}
+
+/** A valid PDF with real Helvetica text, one page per entry; enough for page counting, text reading and conversion. */
+export function writeMinimalPdf(
+  path: string,
+  text: string | string[] = 'Hello hermesoffice',
+  info: { title?: string; author?: string } = {},
+): string {
+  const texts = Array.isArray(text) ? text : [text]
+  const kids = texts.map((_, i) => `${4 + 2 * i} 0 R`).join(' ')
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Pages /Kids [${kids}] /Count ${texts.length} >>`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ]
+  texts.forEach((t, i) => {
+    const content = `BT /F1 24 Tf 72 700 Td (${t}) Tj ET`
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${5 + 2 * i} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`,
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    )
+  })
+  const entries = Object.entries(info).map(
+    ([k, v]) => `/${k[0]!.toUpperCase()}${k.slice(1)} (${v})`,
+  )
+  if (entries.length) objects.push(`<< ${entries.join(' ')} >>`)
+  const infoRef = entries.length ? ` /Info ${objects.length} 0 R` : ''
   let body = '%PDF-1.4\n'
   const offsets: number[] = []
   objects.forEach((obj, i) => {
@@ -48,7 +74,7 @@ export function writeMinimalPdf(path: string, text = 'Hello hermesoffice'): stri
   const xref = body.length
   body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
   for (const off of offsets) body += `${String(off).padStart(10, '0')} 00000 n \n`
-  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${infoRef} >>\nstartxref\n${xref}\n%%EOF\n`
   writeFileSync(path, body, 'latin1')
   return path
 }

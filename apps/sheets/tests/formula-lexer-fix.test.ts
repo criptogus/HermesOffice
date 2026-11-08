@@ -197,4 +197,17 @@ describe('newlines inside string literals', () => {
     expect(guardLiteralNewlines("='it\n''s'!A1")).toBe("='it\n''s'!A1")
     expect(guardLiteralNewlines('="\uFDD1\n"')).toBe('="\uFDD1\n"')
   })
+
+  it('still recognises the guard on a second consecutive guarded formula', () => {
+    // GUARD_PATTERN is a module-level /g regex, and .test() leaves lastIndex
+    // past the match. The first guarded formula therefore moved the scan offset
+    // and the second one started beyond its own guard character, so it missed
+    // it and was rewritten - the corruption the guard exists to prevent.
+    const first = '="\uFDD1\n"'
+    const second = '=A1&"\uFDD0\n"'
+    expect(guardLiteralNewlines(first)).toBe(first)
+    // every later call must be unaffected, not just the first
+    expect(guardLiteralNewlines(second)).toBe(second)
+    expect(guardLiteralNewlines(second)).toBe(second)
+  })
 })

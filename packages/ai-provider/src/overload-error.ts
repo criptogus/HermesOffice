@@ -24,8 +24,18 @@ const OVERLOADED_PATTERN = new RegExp(
 // misreport them as a transient capacity problem.
 const CREDITS_PATTERN = /credit|pricing/i
 
+// "credits per minute exceeded" is a rate limit; only the exhausted/insufficient wording is billing.
+const CREDITS_EXHAUSTED_PATTERN =
+  /(credits?[^\n]{0,40}(exhausted|insufficient)|(exhausted|insufficient)[^\n]{0,40}credits?)/i
+
+// A bare 429/503/529 status marker makes it transient even when credits are named.
+const HTTP_STATUS_PATTERN = /\bHTTP (429|503|529)\b/i
+
 function matches(text: string): boolean {
-  return OVERLOADED_PATTERN.test(text) && !CREDITS_PATTERN.test(text)
+  if (!OVERLOADED_PATTERN.test(text)) return false
+  if (CREDITS_EXHAUSTED_PATTERN.test(text)) return false
+  if (CREDITS_PATTERN.test(text) && !HTTP_STATUS_PATTERN.test(text)) return false
+  return true
 }
 
 /**

@@ -5,7 +5,7 @@ import type { Op } from '@hermesoffice/pptx-ops'
  *
  * Pure functions over data — no DOM, no Electron, no filesystem. The ops use
  * the canonical `@hermesoffice/pptx-ops` vocabulary and are handed to the
- * `genoffice` CLI (`create --type pptx --ops`), which builds and saves the deck
+ * `hermesoffice` CLI (`create --type pptx --ops`), which builds and saves the deck
  * through the same engine the app uses — so this module carries only the
  * ergonomic outline→ops adapter, not any deck-building code.
  *

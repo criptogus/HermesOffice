@@ -5,7 +5,7 @@
  * series painted the wrong blue without this).
  */
 import { describe, it, expect } from 'vitest'
-import { parseTheme, themeWithOverride } from '../src/theme'
+import { parseClrMap, parseTheme, resolveSchemeColor, themeWithOverride } from '../src/theme'
 
 const BASE = parseTheme(
   `<a:theme><a:themeElements><a:clrScheme name="b">` +
@@ -52,5 +52,22 @@ describe('themeWithOverride', () => {
 
   it('a malformed override leaves the base theme untouched', () => {
     expect(themeWithOverride(BASE, '<a:nope/>')).toEqual(BASE)
+  })
+})
+
+describe('parseClrMap', () => {
+  const theme = { ...BASE, colors: { dk1: '#000000', lt1: '#FFFFFF' } }
+
+  it('reads a single-quoted clrMap so scheme colours keep their own axis', () => {
+    // bg1='dk1' inverts the standard bg1->lt1 mapping, so the two must disagree
+    const map = parseClrMap(`<p:clrMap bg1='dk1' tx1="lt1"/>`)
+    expect(map).toEqual({ bg1: 'dk1', tx1: 'lt1' })
+    expect(resolveSchemeColor('bg1', { ...theme, clrMap: map })).toBe('#000000')
+    expect(resolveSchemeColor('tx1', { ...theme, clrMap: map })).toBe('#FFFFFF')
+  })
+
+  it('honours a single-quoted slide overrideClrMapping over the master map', () => {
+    const map = parseClrMap(`<p:clrMap bg1="lt1"/>`, undefined, `<a:overrideClrMapping bg1='dk1'/>`)
+    expect(map).toEqual({ bg1: 'dk1' })
   })
 })

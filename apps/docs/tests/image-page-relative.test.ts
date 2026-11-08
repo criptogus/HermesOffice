@@ -47,7 +47,9 @@ describe('run-level anchors (paragraph with text)', () => {
     const img = editor.view.dom.querySelector<HTMLElement>('img.doc-inline-img--behind')!
     const style = img.getAttribute('style')!
     // 1417320 EMU = 148.8px from the page top; the page margin comes off in CSS
-    expect(style).toContain('translate(0.0px, calc(148.8px - var(--doc-margin-top,0px)))')
+    expect(style).toContain(
+      'translate(calc(0.0px - var(--anchor-ind,0px)), calc(148.8px - var(--doc-margin-top,0px)))',
+    )
     expect(img.dataset.pageRelV).toBe('1')
     expect(img.dataset.pageRelFrom).toBe('page')
     editor.destroy()
@@ -56,16 +58,20 @@ describe('run-level anchors (paragraph with text)', () => {
   it('margin-relative offsets already are content-area coordinates', async () => {
     const editor = await open(`<w:p>${anchor('margin', '<wp:wrapNone/>', '0')}${TEXT}</w:p>`)
     const img = editor.view.dom.querySelector<HTMLElement>('img.doc-inline-img')!
-    expect(img.getAttribute('style')).toContain('translate(0.0px, 148.8px)')
+    expect(img.getAttribute('style')).toContain(
+      'translate(calc(0.0px - var(--anchor-ind,0px)), 148.8px)',
+    )
     expect(img.dataset.pageRelV).toBe('1')
     expect(img.dataset.pageRelFrom).toBeUndefined()
     editor.destroy()
   })
 
-  it('paragraph-relative overlays keep the plain offset and no re-pin marker', async () => {
+  it('paragraph-relative overlays measure from above the spacing-before and carry no re-pin marker', async () => {
     const editor = await open(`<w:p>${anchor('paragraph', '<wp:wrapNone/>', '0')}${TEXT}</w:p>`)
     const img = editor.view.dom.querySelector<HTMLElement>('img.doc-inline-img')!
-    expect(img.getAttribute('style')).toContain('translate(0.0px, 148.8px)')
+    expect(img.getAttribute('style')).toContain(
+      'translate(calc(0.0px - var(--anchor-ind,0px)), calc(148.8px - var(--anchor-before,0px)))',
+    )
     expect(img.dataset.pageRelV).toBeUndefined()
     editor.destroy()
   })

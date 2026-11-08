@@ -4,6 +4,7 @@
  * click / Escape / scroll. Picking a preset swaps the shape's geometry only.
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEscOverlay } from '../esc-overlay'
 import { isLineDrawKind } from '../draw-shape'
 import { SHAPE_GALLERY } from '../insert-presets'
 import { ShapePreview } from './gallery-previews'
@@ -27,12 +28,21 @@ interface Props {
 }
 
 /** Shared gallery body used by both the canvas context menu and Shape Tools ribbon. */
-export function ShapeGalleryContent({ onPick }: Pick<Props, 'onPick'>) {
+export function ShapeGalleryContent({
+  onPick,
+  includeLines = false,
+}: Pick<Props, 'onPick'> & { includeLines?: boolean }) {
+  // Both gallery shapes keep a live `group` getter (the title follows the UI
+  // language); normalize to a title + shapes pair at render time so every read
+  // re-evaluates it.
+  const gallery = includeLines
+    ? SHAPE_GALLERY
+    : CHANGE_SHAPE_GALLERY.map(({ group, shapes }) => ({ group: group.group, shapes }))
   return (
     <div className="rb-shape-gallery">
-      {CHANGE_SHAPE_GALLERY.map(({ group, shapes }, index) => (
+      {gallery.map(({ group, shapes }, index) => (
         <div key={index}>
-          <div className="rb-drop-title">{group.group}</div>
+          <div className="rb-drop-title">{group}</div>
           <div className="rb-shape-grid">
             {shapes.map((s) => (
               <button
@@ -54,6 +64,7 @@ export function ShapeGalleryContent({ onPick }: Pick<Props, 'onPick'>) {
 }
 
 export function ShapeGalleryPopover({ x, y, onPick, onClose }: Props) {
+  useEscOverlay(true)
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
 

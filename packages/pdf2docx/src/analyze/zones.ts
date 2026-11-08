@@ -14,7 +14,7 @@
  * rule, no zone — gutters without ink stay the column detector's business.
  */
 import type { Rect } from '../geometry'
-import { intersectArea, rectUnion } from '../geometry'
+import { intersectArea, maxOf, minOf, rectUnion } from '../geometry'
 import type { PageShapes, Stroke, TableBlock, TableCellBlock, TextBlock } from '../ir'
 import { analyzeChars } from './chars'
 import type { LineUnit } from './units'
@@ -133,16 +133,21 @@ export function buildStackCell(
     dir: 'ltr' as const,
   }))
   const cell: TableCellBlock = { box, gridSpan: 1, blocks }
-  const contentH = Math.max(...units.map((u) => u.box.y1)) - Math.min(...units.map((u) => u.box.y0))
+  const contentH = maxOf(units.map((u) => u.box.y1)) - minOf(units.map((u) => u.box.y0))
   if ((opts.allowVAlignCenter ?? true) && contentH < ZONE_VALIGN_CENTER_MAX_FILL * zoneHeight) {
     cell.vAlign = 'center'
   }
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i]!
     const gap = i === 0 ? (cell.vAlign ? 0 : box.y1 - b.box.y1) : blocks[i - 1]!.box.y0 - b.box.y1
-    if (gap >= ZONE_CELL_GAP_MIN_PT) b.spacingBeforePt = gap
+    // Raw PDF boxes can be non-finite: gate the gap like the spacing chain does.
+    if (Number.isFinite(gap) && gap >= ZONE_CELL_GAP_MIN_PT) {
+      b.spacingBeforePt = Math.min(gap, 1584)
+    }
     const inset = b.box.x0 - box.x0
-    if (inset >= ZONE_CELL_INSET_MIN_PT) b.firstLineIndentPt = inset
+    if (Number.isFinite(inset) && inset >= ZONE_CELL_INSET_MIN_PT) {
+      b.firstLineIndentPt = Math.min(inset, 1584)
+    }
   }
   return cell
 }
@@ -208,8 +213,8 @@ export function detectRuleSeparatedZones(
     // the stacks must overlap vertically — a rule between stacked (not
     // side-by-side) content is somebody else's decoration
     const extentOf = (side: LineUnit[]): { lo: number; hi: number } => ({
-      lo: Math.min(...side.map((u) => u.box.y0)),
-      hi: Math.max(...side.map((u) => u.box.y1)),
+      lo: minOf(side.map((u) => u.box.y0)),
+      hi: maxOf(side.map((u) => u.box.y1)),
     })
     const le = extentOf(left)
     const re = extentOf(right)

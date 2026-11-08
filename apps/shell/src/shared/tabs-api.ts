@@ -1,7 +1,7 @@
-export type TabKind = 'home' | 'docs' | 'sheets' | 'slides' | 'pdf' | 'markdown' | 'html'
+export type TabKind = 'home' | 'docs' | 'sheets' | 'slides' | 'pdf' | 'markdown' | 'html' | 'help'
 
-/** a tab that holds a document — every kind except the Home screen */
-export type DocumentTabKind = Exclude<TabKind, 'home'>
+/** a tab that holds a document — every kind except the Home screen and the in-app manual */
+export type DocumentTabKind = Exclude<TabKind, 'home' | 'help'>
 
 /** one open tab in the top tab strip; Home is always id 'home' and not closable */
 export interface TabSummary {
@@ -12,6 +12,10 @@ export interface TabSummary {
   active: boolean
   /** absolute path behind the tab; absent while the document is untitled */
   filePath?: string
+  /** renderer released to free memory; reopens its file when shown */
+  dormant?: boolean
+  /** excluded from sleeping (tab context menu) */
+  pinned?: boolean
 }
 
 /**
@@ -46,6 +50,38 @@ export interface TabsApi {
    */
   showNewMenu(x: number, y: number): Promise<void>
   /**
+   * pop up the native per-tab context menu (Open in New Window / Close) at
+   * (x, y) in window CSS coordinates. Native for the same reason as showMenu.
+   */
+  showTabMenu(id: string, x: number, y: number): Promise<void>
+  /** detach a document tab into its own window ("Open in New Window") */
+  detach(id: string): Promise<void>
+  /**
+   * Tear a tab off mid-drag: the tab leaves the strip and its live view lands
+   * in a new window placed so that (screenX, screenY) — the pointer — sits in
+   * the window's title bar. The window is shown without taking focus so the
+   * shell keeps receiving the held pointer's moves. False when the tab cannot
+   * be torn off (Home, Present tabs, a tab mid close-prompt).
+   */
+  tearOff(id: string, screenX: number, screenY: number): Promise<boolean>
+  /** move the torn-off window to follow the still-held pointer */
+  dragTornWindow(screenX: number, screenY: number): void
+  /**
+   * the held pointer came back over the strip: put the torn-off tab back at
+   * `index` (Home stays pinned at 0) and end the tear-off
+   */
+  dockTornWindow(index: number): Promise<void>
+  /** the pointer was released: the torn-off window becomes a normal detached window */
+  endTornDrag(): Promise<void>
+  /**
+   * A detached window is being dragged natively over the strip (or left it:
+   * null). `x` is in window CSS coordinates; the strip draws an insertion
+   * indicator there and answers with reportDockIndex.
+   */
+  onDockPreview(handler: (preview: { x: number } | null) => void): () => void
+  /** the insertion slot the strip computed for the last dock preview */
+  reportDockIndex(index: number): void
+  /**
    * pop up the application menu (File / Edit / View …) at (x, y). Windows and
    * Linux hide the native menu bar under the tab strip; macOS keeps the
    * system menu bar and never shows the button.
@@ -65,6 +101,8 @@ export interface TabsApi {
    * triggers; the shell's own popovers subscribe so a title-bar drag — which
    * produces no DOM event — still dismisses them */
   onChromePressed(handler: () => void): () => void
+  /** subscribe to main process requesting inline rename of a tab */
+  onStartRename?(handler: (id: string) => void): () => void
 }
 
 export const TABS_CHANNELS = {
@@ -73,8 +111,17 @@ export const TABS_CHANNELS = {
   close: 'tabs:close',
   showMenu: 'tabs:show-menu',
   showNewMenu: 'tabs:show-new-menu',
+  showTabMenu: 'tabs:show-tab-menu',
+  detach: 'tabs:detach',
+  tearOff: 'tabs:tear-off',
+  dragTornWindow: 'tabs:drag-torn-window',
+  dockTornWindow: 'tabs:dock-torn-window',
+  endTornDrag: 'tabs:end-torn-drag',
+  dockPreview: 'tabs:dock-preview',
+  dockIndex: 'tabs:dock-index',
   showAppMenu: 'tabs:show-app-menu',
   reorder: 'tabs:reorder',
   changed: 'tabs:changed',
   chromePressed: 'tabs:chrome-pressed',
+  startRename: 'tabs:start-rename',
 } as const

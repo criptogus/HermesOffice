@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { syncAnchorBands, syncFloatShifts } from '../src/renderer/editor/pagination-gaps'
+import type { PageCut } from '../src/renderer/pagination-cuts'
 
 const rectOf = (top: number, height: number) =>
   ({ top, bottom: top + height, height, width: 100, left: 0, right: 100 }) as DOMRect
@@ -47,6 +48,100 @@ describe('syncAnchorBands', () => {
     expect(w2.style.minHeight).toBe('100px')
   })
 
+  it('drops a pushed anchor line below every band, not into a row gap', () => {
+    const pm = document.createElement('div')
+    // one paragraph holding a whole page of photo rows: the gaps between the
+    // rows are not slots for the next paragraph (Word resumes below them all)
+    const w1 = wrapperOf('28:163 185:735 754:907')
+    const w2 = wrapperOf('0:100')
+    pm.append(w1, w2)
+    syncAnchorBands(pm, 1)
+    expect(w1.style.minHeight).toBe('907px')
+    expect(w2.style.minHeight).toBe('100px')
+  })
+
+  it("clears a lone wrapper's own drop once it joins a run", () => {
+    const pm = document.createElement('div')
+    const w1 = wrapperOf('0:100')
+    pm.append(w1)
+    syncAnchorBands(pm, 1)
+    const strut = w1.querySelector<HTMLElement>('.doc-anchor-strut')!
+    expect(strut.style.paddingTop).toBe('100px')
+    pm.append(wrapperOf('0:50'))
+    syncAnchorBands(pm, 1)
+    expect(strut.style.paddingTop).toBe('')
+  })
+
+  it('drops the anchor line below its own band when the band cuts into it', () => {
+    const pm = document.createElement('div')
+    // a 1.5pt rule 8pt into a 20px line (converter divider paragraphs)
+    const w1 = wrapperOf('11:13')
+    pm.append(w1)
+    syncAnchorBands(pm, 1)
+    expect(w1.style.minHeight).toBe('13px')
+    expect(w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('13px')
+    // idempotent: the padding is not part of the line on the next pass
+    const strut = w1.querySelector<HTMLElement>('.doc-anchor-strut')!
+    strut.getBoundingClientRect = () => rectOf(0, 33)
+    syncAnchorBands(pm, 1)
+    expect(strut.style.paddingTop).toBe('13px')
+  })
+
+  it('keeps the anchor line above a band that starts below it', () => {
+    const pm = document.createElement('div')
+    const w1 = wrapperOf('25:27')
+    const w2 = wrapperOf('-5:-3')
+    pm.append(w1)
+    syncAnchorBands(pm, 1)
+    expect(w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('')
+    pm.append(w2)
+    syncAnchorBands(pm, 1)
+    expect(w2.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('')
+  })
+
+  it('tests the band against the text box only in Word 2013+ layout', () => {
+    // 1.5x line: the text box is the top two thirds; a band in the extra
+    // leading below it pushes in Word 2010 layout but not in Word 2013+
+    const w1 = wrapperOf('22:24', 30)
+    w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.setProperty('--doc-line-mult', '1.5')
+    const pm = document.createElement('div')
+    pm.append(w1)
+    syncAnchorBands(pm, 1, true)
+    expect(w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('')
+    syncAnchorBands(pm, 1, false)
+    expect(w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('24px')
+  })
+
+  it('reads a style-level line multiple through the computed style', () => {
+    const sheet = document.createElement('style')
+    sheet.textContent = '[data-style="Divider"] { --doc-line-mult: 1.5 }'
+    const w1 = wrapperOf('22:24', 30)
+    const strut = w1.querySelector<HTMLElement>('.doc-anchor-strut')!
+    strut.dataset.style = 'Divider'
+    const pm = document.createElement('div')
+    pm.append(w1)
+    document.head.append(sheet)
+    document.body.append(pm)
+    try {
+      syncAnchorBands(pm, 1, true)
+      expect(strut.style.paddingTop).toBe('')
+      syncAnchorBands(pm, 1, false)
+      expect(strut.style.paddingTop).toBe('24px')
+    } finally {
+      sheet.remove()
+      pm.remove()
+    }
+  })
+
+  it('leaves side-room bands alone', () => {
+    const pm = document.createElement('div')
+    const w1 = wrapperOf('0:100')
+    w1.dataset.bandBeside = '1'
+    pm.append(w1)
+    syncAnchorBands(pm, 1)
+    expect(w1.querySelector<HTMLElement>('.doc-anchor-strut')!.style.paddingTop).toBe('')
+  })
+
   it('restores a single wrapper to its own band after a run dissolves', () => {
     const pm = document.createElement('div')
     const w1 = wrapperOf('0:300')
@@ -79,5 +174,129 @@ describe('syncFloatShifts with in-table gaps', () => {
     // the in-table gap height so it does not resolve one page too high
     syncFloatShifts(pm, [{ el: box, top: 250 }], 0, 1)
     expect(box.style.getPropertyValue('--page-float-dy')).toBe('100.0px')
+  })
+})
+
+describe('syncAnchorBands lifts the next anchor picture into the band', () => {
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, right: left + width, bottom: top + height }) as DOMRect
+  /** wrapper of three behind-text photos: a side-by-side pair from 4px and a third at 402px on the left */
+  const gridWrapper = (): HTMLElement => {
+    const el = document.createElement('div')
+    el.className = 'doc-protected doc-protected-textboxes doc-protected-floating'
+    el.dataset.band = '777'
+    el.dataset.bands = '402:777 4:378 4:378'
+    el.style.minHeight = '777px'
+    el.getBoundingClientRect = () => rect(0, 0, 717, 777)
+    const strut = document.createElement('div')
+    strut.className = 'doc-anchor-strut'
+    strut.getBoundingClientRect = () => rect(0, 0, 717, 15)
+    el.appendChild(strut)
+    for (const [x, y, h] of [
+      [0, 402, 375],
+      [369, 4, 374],
+      [0, 4, 374],
+    ]) {
+      const box = document.createElement('div')
+      box.className = 'doc-textbox'
+      box.getBoundingClientRect = () => rect(x, y, 350, h)
+      el.appendChild(box)
+    }
+    return el
+  }
+  const floatImage = (): HTMLElement => {
+    const el = document.createElement('div')
+    el.className = 'doc-protected img-wrap-tight-right'
+    el.style.marginTop = '3.3px'
+    return el
+  }
+
+  it('hangs the picture one line below where the previous anchor line lands', () => {
+    const pm = document.createElement('div')
+    const w = gridWrapper()
+    const f = floatImage()
+    pm.append(w, f)
+    syncAnchorBands(pm, 1)
+    // the wrapper's line is blocked on both sides until 378, lands at 390 (26 x 15);
+    // the next paragraph starts at 405: margin 3.3 - (777 - 405)
+    expect(f.style.marginTop).toBe('-368.7px')
+    expect(f.dataset.anchorLiftBase).toBe('3.3')
+    syncAnchorBands(pm, 1)
+    expect(f.style.marginTop).toBe('-368.7px')
+  })
+
+  it('leaves a picture whose anchor line falls below the band alone', () => {
+    const pm = document.createElement('div')
+    const w = gridWrapper()
+    w.dataset.band = '380'
+    w.style.minHeight = '380px'
+    const f = floatImage()
+    pm.append(w, f)
+    syncAnchorBands(pm, 1)
+    expect(f.style.marginTop).toBe('3.3px')
+  })
+})
+
+describe('syncFloatShifts keeps a flow box on its anchor page', () => {
+  const rectOf2 = (top: number, height: number) =>
+    ({ top, height, bottom: top + height, left: 0, right: 100, width: 100 }) as DOMRect
+  const gap = {
+    kind: 'page' as const,
+    heightPx: 400,
+    marginBottomPx: 0,
+    marginTopPx: 0,
+    marginLeftPx: 0,
+    pullUpPx: 0,
+    repeatHeaderPx: 0,
+    flowTopPx: 30,
+  }
+  // cover paragraph (0..30) ends in a section break: page 1 keeps 770 px of
+  // blank body below it, page 2 starts at virtual 30
+  const cuts = [
+    { start: 0, end: 30, padPx: 770, gapOffsetPx: 0, flowOffsetPx: 0 },
+    { start: 30, end: 830, padPx: 0, gap, gapOffsetPx: 400, flowOffsetPx: 400 },
+  ] as unknown as PageCut[]
+  const setup = (boxTop: number) => {
+    const pm = document.createElement('div')
+    pm.getBoundingClientRect = () => rectOf2(0, 2000)
+    const wrap = document.createElement('div')
+    wrap.className = 'doc-protected doc-protected-floating'
+    const box = document.createElement('div')
+    box.className = 'doc-textbox'
+    box.getBoundingClientRect = () => rectOf2(boxTop, 100)
+    wrap.appendChild(box)
+    pm.append(wrap)
+    return { pm, box }
+  }
+
+  it('a title box offset past the section break stays on the cover page', () => {
+    const { pm, box } = setup(458)
+    syncFloatShifts(pm, [{ el: box, top: 458, height: 100, anchorTop: 0 }], 0, 1, 0, {
+      cuts,
+      carries: [],
+    })
+    expect(box.style.getPropertyValue('--page-float-dy')).toBe('')
+  })
+
+  it('a box the anchor page cannot hold still walks to its virtual page', () => {
+    const { pm, box } = setup(900)
+    syncFloatShifts(pm, [{ el: box, top: 900, height: 100, anchorTop: 0 }], 0, 1, 0, {
+      cuts,
+      carries: [],
+    })
+    expect(box.style.getPropertyValue('--page-float-dy')).toBe('400.0px')
+  })
+
+  it('a wrapNone box never leaves its anchor page', () => {
+    const { pm, box } = setup(900)
+    syncFloatShifts(
+      pm,
+      [{ el: box, top: 900, height: 100, anchorTop: 0, noSpill: true }],
+      0,
+      1,
+      0,
+      { cuts, carries: [] },
+    )
+    expect(box.style.getPropertyValue('--page-float-dy')).toBe('')
   })
 })

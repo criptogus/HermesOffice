@@ -8,6 +8,10 @@ import { t } from '../i18n/locale'
 import type { ElementEntry, ParseMap } from '../document/parse-map'
 import type { HtmlOp, OpError } from '../document/ops'
 import { lineOf } from '../document/match'
+import { insertOp } from '../document/insert-presets'
+import type { ImageSearchResult } from '../../shared/ipc'
+import { buildProjection, type RedactionProjection } from './redact'
+import { redactGuardForOps } from './redact-guard'
 import {
   briefPinEdit,
   briefSummary,
@@ -175,17 +179,22 @@ const OUTLINE_SKIP = new Set([
   'noscript',
 ])
 
-function textPreview(text: string, e: ElementEntry): string {
-  const inner = text
-    .slice(e.inner[0], e.inner[1])
+function textPreview(proj: RedactionProjection, e: ElementEntry): string {
+  const inner = proj
+    .projectRange(e.inner[0], e.inner[1])
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   return inner.length > PREVIEW_CHARS ? `${inner.slice(0, PREVIEW_CHARS)}…` : inner
 }
 
-function attrsPreview(text: string, e: ElementEntry): string {
-  const tag = text.slice(e.startTag[0], e.startTag[1])
+/**
+ * A start tag with its withheld attribute values already replaced — `src` and
+ * `href` are exactly where a key or a signed URL tends to live, and the outline
+ * prints them.
+ */
+function attrsPreview(proj: RedactionProjection, e: ElementEntry): string {
+  const tag = proj.projectRange(e.startTag[0], e.startTag[1])
   const id = /\sid\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]
   const cls = /\sclass\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]
   const src = /\s(?:src|href)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]
@@ -197,8 +206,14 @@ function attrsPreview(text: string, e: ElementEntry): string {
   return parts.join('')
 }
 
+/**
+ * The projection is required rather than optional on purpose: a call site that
+ * forgot it would print the reader's secrets into the outline, and nothing in
+ * the type would say so. Line numbers are the *view's*, because that is the text
+ * the model is shown and the numbering it will read.
+ */
 export function buildOutline(
-  text: string,
+  proj: RedactionProjection,
   map: ParseMap,
   opts: { depth?: number; fromSid?: number; maxLines?: number } = {},
 ): string {
@@ -223,13 +238,13 @@ export function buildOutline(
       skipped++
       continue
     }
-    const l1 = lineOf(text, e.range[0])
-    const l2 = lineOf(text, Math.max(e.range[0], e.range[1] - 1))
+    const l1 = lineOf(proj.view, proj.toViewOffset(e.range[0]))
+    const l2 = lineOf(proj.view, proj.toViewOffset(Math.max(e.range[0], e.range[1] - 1)))
     const where = l1 === l2 ? `L${l1}` : `L${l1}-L${l2}`
     const indent = '  '.repeat(Math.max(0, rel - 1))
-    const preview = OUTLINE_SKIP.has(e.tag) ? '' : textPreview(text, e)
+    const preview = OUTLINE_SKIP.has(e.tag) ? '' : textPreview(proj, e)
     lines.push(
-      `${where.padEnd(11)} sid=${String(e.sid).padEnd(4)} ${indent}${e.tag}${attrsPreview(text, e)}${preview ? `  "${preview}"` : ''}`,
+      `${where.padEnd(11)} sid=${String(e.sid).padEnd(4)} ${indent}${e.tag}${attrsPreview(proj, e)}${preview ? `  "${preview}"` : ''}`,
     )
   }
   if (skipped > 0)
@@ -394,6 +409,39 @@ export const AGENT_TOOLS: AgentToolDef[] = [
       },
     },
   },
+  {
+    name: 'search_images',
+    description:
+      'Search the web for images. Returns a list of image URLs with titles and sizes; after picking one, place it with apply_ops (an <img> whose src is the imageUrl). For illustration/diagram-style art that search cannot find, or when the user asks you to generate/draw a picture, use generate_image instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'image search keywords (English works better)' },
+        maxResults: { type: 'integer', description: 'maximum number of results, default 8' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'generate_image',
+    description:
+      'Generate an illustration with AI from a text prompt and insert it into the page (after the selected element, else at the end of <body>). For illustration/diagram-style art that search_images cannot find, or when the user asks to generate/draw a picture.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'detailed English description of the image to generate',
+        },
+        aspectRatio: {
+          type: 'string',
+          description: 'e.g. "1:1", "16:9", "4:3"; omit for the default',
+        },
+        alt: { type: 'string', description: 'alt text describing the image' },
+      },
+      required: ['prompt'],
+    },
+  },
 ]
 
 const STALE_MESSAGE =
@@ -548,6 +596,86 @@ export async function expandAttachmentRefs(
   return { ops: expanded, errors }
 }
 
+/** attribute-value escaping for tool-authored markup (same set insert-presets escapes) */
+function escAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+}
+
+/** magic-byte sniff: the fetch handler's content-type mapping defaults unknown
+ *  types to jpeg, which would store webp/svg bytes under a lying extension */
+function sniffImageExt(base64: string): 'png' | 'jpg' | 'gif' | null {
+  let head: string
+  try {
+    head = atob(base64.slice(0, 12))
+  } catch {
+    return null
+  }
+  if (head.startsWith('\x89PNG')) return 'png'
+  if (head.startsWith('GIF8')) return 'gif'
+  if (head.charCodeAt(0) === 0xff && head.charCodeAt(1) === 0xd8) return 'jpg'
+  return null
+}
+
+/**
+ * Where an AI-sourced image lands in the document — the same chain the
+ * attachment:// expansion uses: assets/ next to a saved document, an inline
+ * data URL when the document has no saved location yet, the hot-linked URL
+ * itself when the host refused the download (the preview loads remote images).
+ */
+async function persistImageSrc(
+  url: string,
+): Promise<{ src: string; where: 'assets' | 'inline' | 'remote' }> {
+  try {
+    const fetched = await window.htmlApi.fetchImage(url)
+    if (fetched) {
+      const ext = sniffImageExt(fetched.base64)
+      if (ext) {
+        const rel = await window.htmlApi.saveImage({ base64: fetched.base64, ext })
+        if (rel) return { src: rel, where: 'assets' }
+      }
+      return { src: `data:${fetched.mime};base64,${fetched.base64}`, where: 'inline' }
+    }
+  } catch {
+    // fall through to the hot-linked URL
+  }
+  return { src: url, where: 'remote' }
+}
+
+/**
+ * search_images (read-only): the same main-process image search as
+ * docs/sheets/slides (Serper etc. with DuckDuckGo fallback). A backend failure
+ * must not read as an empty gallery — the model would fabricate image choices.
+ */
+async function executeImageSearch(call: AgentToolCall): Promise<ToolExecution> {
+  const summary = t('aiToolImageSearch')
+  const query = String(call.input.query ?? '').trim()
+  if (!query) return { output: 'query must not be empty', isError: true, summary }
+  const r: ImageSearchResult = await window.htmlApi.imageSearch(
+    query,
+    Number(call.input.maxResults) || 8,
+  )
+  if (r.method === 'error') {
+    return {
+      output: `image search failed (service error, not an empty result — you may retry): ${r.error ?? 'unknown error'}`,
+      isError: true,
+      summary,
+    }
+  }
+  const lines = r.images.map(
+    (im, i) =>
+      `${i + 1}. ${im.title || '(untitled)'} [${im.width ?? '?'}x${im.height ?? '?'}]\n   ${im.imageUrl}`,
+  )
+  return {
+    output: lines.join('\n') || '(no images)',
+    mutated: false,
+    summary: t('aiToolImageSearchDone', { query, count: r.images.length }),
+  }
+}
+
+/** hidden from the tool list while no image provider is reachable (see createHtmlSkill) */
+export const IMAGE_GEN_OFF_NOTE =
+  '\n\nNote: generate_image is currently unavailable (no image provider: signed out of Genspark or cloud tools off, and no media API key in Settings). Do not call or promise it; use search_images for imagery.'
+
 export function createHtmlSkillCore(access: HtmlDocAccess): {
   buildContext(): string
   executeTool(call: AgentToolCall, signal?: AbortSignal): ToolExecution | Promise<ToolExecution>
@@ -602,39 +730,103 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
     return true
   }
 
+  /** generate_image: one AI illustration, landed like the attachment pipeline does (see persistImageSrc) */
+  const generateImage = async (call: AgentToolCall): Promise<ToolExecution> => {
+    const summary = t('aiToolGenImage')
+    const prompt = String(call.input.prompt ?? '').trim()
+    if (!prompt) return { output: 'prompt must not be empty', isError: true, summary }
+    const aspectRatio = String(call.input.aspectRatio ?? '').trim()
+    const generated = await window.htmlApi.aiGenerateImage({
+      prompt,
+      ...(aspectRatio ? { aspectRatio } : {}),
+    })
+    // never write after the user hit stop (generation may resolve long after the abort)
+    if (currentSignal?.aborted)
+      return { output: 'stopped by the user; the image was not inserted', isError: true, summary }
+    if (!generated.url)
+      return { output: generated.error ?? 'image generation failed', isError: true, summary }
+    const { src, where } = await persistImageSrc(generated.url)
+    if (currentSignal?.aborted)
+      return { output: 'stopped by the user; the image was not inserted', isError: true, summary }
+    // the generation + download can take long: user edits made meanwhile must
+    // keep the freshness baseline stale, so only our own insertion marks it seen
+    if (stale()) return { output: STALE_MESSAGE, isError: true, summary }
+    const alt = String(call.input.alt ?? '').trim()
+    const img = `<img src="${escAttr(src)}"${alt ? ` alt="${escAttr(alt)}"` : ''} style="max-width: 100%;">`
+    const selectedSid = access.getSelectedSid()
+    const op = insertOp(
+      access.getMap(),
+      selectedSid !== null ? access.getMap().bySid.get(selectedSid) : undefined,
+      img,
+    )
+    if (!op)
+      return {
+        output: 'the document has no element to anchor an image to',
+        isError: true,
+        summary,
+      }
+    const result = access.applyOps([op], 'generate_image')
+    if (!result.ok)
+      return {
+        output: result.errors.map((e) => `${e.kind.toUpperCase()}: ${e.message}`).join('\n'),
+        isError: true,
+        summary,
+      }
+    markSeen()
+    const at = lineOf(access.getText(), result.ranges[0]![0])
+    const landed =
+      where === 'assets'
+        ? `saved as ${src}`
+        : where === 'inline'
+          ? 'inlined as a data URL because the document has no saved location yet'
+          : `hot-linked (${src}); the host may expire it`
+    return {
+      output: `Inserted the image at L${at} (${landed}). Document is now version ${access.getVersion()}.`,
+      mutated: true,
+      summary: t('aiToolGenImageDone'),
+    }
+  }
+
   return {
     buildContext() {
       markSeen()
       const text = access.getText()
       const map = access.getMap()
+      // one projection per read, shared by every surface below: the file
+      // preview, the outline, and the selected element
+      const proj = buildProjection(text, map)
+      const view = proj.view
       const path = access.getFilePath()
-      const title = /<title[^>]*>([^<]*)<\/title>/i.exec(text)?.[1]?.trim()
-      const lines = text.split('\n').length
+      const title = /<title[^>]*>([^<]*)<\/title>/i.exec(view)?.[1]?.trim()
+      const lines = view.split('\n').length
       const head = [
         '## Document',
-        `file: ${path ? path.replace(/^.*[/\\]/, '') : '(untitled, not saved yet)'}  (${text.length.toLocaleString()} chars, ${lines} lines, version ${access.getVersion()})`,
+        `file: ${path ? path.replace(/^.*[/\\]/, '') : '(untitled, not saved yet)'}  (${view.length.toLocaleString()} chars, ${lines} lines, version ${access.getVersion()})`,
         title ? `title: ${title}` : '',
-        text.trim()
+        view.trim()
           ? ''
           : 'The document is empty: plan_page (mode new) or write_document creates it.',
       ].filter(Boolean)
-      let outline = buildOutline(text, map, { depth: 2, maxLines: 60 })
+      let outline = buildOutline(proj, map, { depth: 2, maxLines: 60 })
       const selectedSid = access.getSelectedSid()
       const selected = selectedSid !== null ? map.bySid.get(selectedSid) : undefined
       let selection = ''
       if (selected) {
-        const source = text.slice(selected.range[0], selected.range[1])
+        const source = proj.projectRange(selected.range[0], selected.range[1])
         const clipped =
           source.length > SELECTION_MAX_CHARS
             ? `${source.slice(0, SELECTION_MAX_CHARS)}\n… (truncated; read_source sid=${selected.sid} for the rest)`
             : source
-        const l1 = lineOf(text, selected.range[0])
-        const l2 = lineOf(text, Math.max(selected.range[0], selected.range[1] - 1))
+        const l1 = lineOf(proj.view, proj.toViewOffset(selected.range[0]))
+        const l2 = lineOf(
+          proj.view,
+          proj.toViewOffset(Math.max(selected.range[0], selected.range[1] - 1)),
+        )
         selection = `\n\n## User selection\nsid=${selected.sid} <${selected.tag}> L${l1}-L${l2}\nEdit/rewrite-style requests apply to this element by default.\n\`\`\`html\n${clipped}\n\`\`\``
       }
       const brief = parseBrief(text)
       const briefBlock = brief
-        ? `\n\n## Brief (pinned in <meta name="genoffice:brief">)\n${briefSummary(brief)}\nNew content follows this core hook and style; a restyle starts by updating the --brief-* variables and this meta via plan_page.`
+        ? `\n\n## Brief (pinned in <meta name="hermesoffice:brief">)\n${briefSummary(brief)}\nNew content follows this core hook and style; a restyle starts by updating the --brief-* variables and this meta via plan_page.`
         : ''
       const budget =
         CONTEXT_MAX_CHARS - head.join('\n').length - selection.length - briefBlock.length - 40
@@ -661,12 +853,21 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
               summary: t('aiToolOutline'),
             }
           }
-          const out = buildOutline(text, map, { depth, fromSid, maxLines: 400 })
+          const out = buildOutline(buildProjection(text, map), map, {
+            depth,
+            fromSid,
+            maxLines: 400,
+          })
           return { output: out || '(empty document)', summary: t('aiToolOutline') }
         }
         case 'read_source': {
           markSeen()
           const page = Number.isInteger(call.input.page) ? Math.max(0, Number(call.input.page)) : 0
+          // Line numbers the model sends address the text it was shown, which is
+          // the projection — a 40-character key shown as an 11-character marker
+          // moves every line after it. So the view is what we resolve lines
+          // against, and the raw offsets come back through the projection.
+          const proj = buildProjection(text, map)
           let from = 0
           let to = text.length
           if (Number.isInteger(call.input.sid)) {
@@ -682,16 +883,18 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
             Number.isInteger(call.input.start_line) ||
             Number.isInteger(call.input.end_line)
           ) {
-            const lines = text.split('\n')
+            const lines = proj.view.split('\n')
             const s = Math.max(1, Number(call.input.start_line) || 1)
             const e = Math.min(lines.length, Number(call.input.end_line) || lines.length)
-            from = lines.slice(0, s - 1).join('\n').length + (s > 1 ? 1 : 0)
-            to = lines.slice(0, e).join('\n').length
+            const viewFrom = lines.slice(0, s - 1).join('\n').length + (s > 1 ? 1 : 0)
+            const viewTo = lines.slice(0, e).join('\n').length
+            from = proj.toRawOffset(viewFrom)
+            to = proj.toRawOffset(viewTo)
           }
-          const slice = text.slice(from, to)
+          const slice = proj.projectRange(from, to)
           const pages = Math.max(1, Math.ceil(slice.length / READ_PAGE_CHARS))
           const chunk = slice.slice(page * READ_PAGE_CHARS, (page + 1) * READ_PAGE_CHARS)
-          const startLine = lineOf(text, from + page * READ_PAGE_CHARS)
+          const startLine = lineOf(proj.view, proj.toViewOffset(from) + page * READ_PAGE_CHARS)
           const body = numbered(chunk, startLine)
           const footer =
             pages > 1 ? `\n(page ${page + 1} of ${pages}; pass page=${page + 1} for more)` : ''
@@ -712,6 +915,21 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
             summary: t('aiToolApplyOpsFailed'),
           })
           if (stale()) return staleResult()
+          // A span withheld from the model is a mark over real characters, so an
+          // op reaching one destroys the reader's data silently. Checked before
+          // anything is compiled or applied, so a refusal changes nothing.
+          const refusal = redactGuardForOps(
+            ops,
+            buildProjection(access.getText(), access.getMap()),
+            access.getMap(),
+          )
+          if (refusal) {
+            return {
+              output: `0 of ${ops.length} ops applied — ${refusal.reason}`,
+              isError: true,
+              summary: t('aiToolApplyOpsFailed'),
+            }
+          }
           const truncatedAt = findTruncatedDataUrl(ops as HtmlOp[])
           if (truncatedAt >= 0) {
             return {
@@ -827,8 +1045,11 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
           const spec: BriefPlanSpec = {
             mode,
             notes: str(call.input.notes),
+            // the brief writer is the model: it reads the projection, not the source
             page:
-              mode === 'restyle' || mode === 'extract' ? text.slice(0, PAGE_HEAD_CHARS) : undefined,
+              mode === 'restyle' || mode === 'extract'
+                ? buildProjection(text, map).view.slice(0, PAGE_HEAD_CHARS)
+                : undefined,
           }
           return planBrief(spec, currentSignal).then(async (drafted) => {
             if (!drafted.ok)
@@ -880,7 +1101,7 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
             return {
               output: `Brief confirmed (${mode}).${edited}\n${briefSummary(decision.brief)}\n${
                 pinned
-                  ? 'The brief is now pinned in <head> (meta name="genoffice:brief"). '
+                  ? 'The brief is now pinned in <head> (meta name="hermesoffice:brief"). '
                   : 'The pinned brief was already current. '
               }${
                 mode === 'restyle'
@@ -913,6 +1134,10 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
             '',
           )
         }
+        case 'search_images':
+          return executeImageSearch(call)
+        case 'generate_image':
+          return generateImage(call)
         default:
           return { output: `Unknown tool: ${call.name}`, isError: true, summary: call.name }
       }
@@ -920,12 +1145,26 @@ export function createHtmlSkillCore(access: HtmlDocAccess): {
   }
 }
 
-export function createHtmlSkill(access: HtmlDocAccess, systemPrompt: string): AgentSkill {
+/** A live prompt is read on every request, so it can follow the document. */
+export function createHtmlSkill(
+  access: HtmlDocAccess,
+  systemPrompt: string | { readonly systemPrompt: string },
+  /** live predicate (gsk login && cloud-tools toggle, or a BYOK media key); false hides generate_image */
+  imageGenAvailable?: () => boolean,
+): AgentSkill {
   const core = createHtmlSkillCore(access)
   return {
     id: 'html',
-    systemPrompt,
-    tools: AGENT_TOOLS,
+    get systemPrompt() {
+      const base = typeof systemPrompt === 'string' ? systemPrompt : systemPrompt.systemPrompt
+      return imageGenAvailable?.() === false ? `${base}${IMAGE_GEN_OFF_NOTE}` : base
+    },
+    // live like the prompt: the loop re-reads the tool list before every request
+    get tools() {
+      return imageGenAvailable?.() === false
+        ? AGENT_TOOLS.filter((tl) => tl.name !== 'generate_image')
+        : AGENT_TOOLS
+    },
     buildContext: () => core.buildContext(),
     executeTool: (call, signal) => core.executeTool(call, signal),
   }

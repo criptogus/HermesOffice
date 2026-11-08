@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   GENERATED_IMAGE_DIR,
+  MAX_GENERATED_IMAGE_BYTES,
   readGeneratedImage,
   storeGeneratedImage,
 } from '../src/generated-images'
@@ -32,10 +33,23 @@ describe('generated image store', () => {
     expect(readGeneratedImage(pathToFileURL(stray).toString())).toBeNull()
     expect(
       readGeneratedImage(
-        pathToFileURL(join(GENERATED_IMAGE_DIR, '..', 'genoffice-ai-images', 'x.png')).toString(),
+        pathToFileURL(
+          join(GENERATED_IMAGE_DIR, '..', 'hermesoffice-ai-images', 'x.png'),
+        ).toString(),
       ),
     ).toBeNull()
     expect(readGeneratedImage('https://example.com/a.png')).toBeNull()
     expect(await fetchRemoteImage('file:///etc/hosts')).toBeNull()
+  })
+
+  it('rejects oversized or empty bytes and falls back on overlong mime labels', () => {
+    expect(() => storeGeneratedImage(new Uint8Array(0), 'image/png')).toThrow()
+    expect(() =>
+      storeGeneratedImage(new Uint8Array(MAX_GENERATED_IMAGE_BYTES + 1), 'image/png'),
+    ).toThrow('too large')
+    expect(MAX_GENERATED_IMAGE_BYTES).toBe(25 * 1024 * 1024)
+    const url = storeGeneratedImage(PNG, `image/png;${'x'.repeat(500)}`)
+    expect(url).toMatch(/\.png$/)
+    expect(readGeneratedImage(url)?.mime).toBe('image/png')
   })
 })

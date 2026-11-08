@@ -19,7 +19,6 @@ import {
   addSmartArt,
   addMedia,
   addModel3d,
-  model3dPartOf,
   solidPng,
   setElementLink,
   getElementLink,
@@ -474,7 +473,7 @@ describe('addMedia / addModel3d', () => {
     expect(el.media?.kind).toBe('audio')
   })
 
-  it('3d model embeds glb part and poster picture with descr marker', async () => {
+  it('3d model embeds the glb as a model3d part behind its picture', async () => {
     const opened = await openPptx(fx('01_standard_business.pptx'))
     const glb = new Uint8Array([0x67, 0x6c, 0x54, 0x46]) // "glTF"
     const r = addModel3d(opened, 0, { bytes: glb, ext: 'glb', offset: { ...OFF } })
@@ -483,9 +482,8 @@ describe('addMedia / addModel3d', () => {
     const reopened = await openPptx(await savePptx(opened))
     const el = reopened.deck.slides[0]!.elements.at(-1) as PictureElement
     expect(el.type).toBe('picture')
-    const part = model3dPartOf(el)
-    expect(part).toMatch(/^ppt\/media\/media\d+\.glb$/)
-    expect(reopened.archive.readBytes(part!)).toEqual(glb)
+    expect(el.model3d?.target).toMatch(/^ppt\/media\/model3d\d+\.glb$/)
+    expect(reopened.archive.readBytes(el.model3d!.target!)).toEqual(glb)
   })
 
   it('solidPng produces a decodable png signature', () => {
@@ -563,6 +561,48 @@ describe('setElementLink / getElementLink', () => {
     expect(getElementLink(reopened, 0, last.id)).toEqual({
       kind: 'url',
       url: 'https://example.com/a?b=1',
+    })
+  })
+
+  it('url link tooltip round-trips through save and reopen', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const slide = opened.deck.slides[0]!
+    const el = addElement(slide, { kind: 'rect', offset: { ...OFF } })
+    const fresh = setElementLink(opened, 0, el.id, {
+      kind: 'url',
+      url: 'https://example.com/tip',
+      tooltip: 'See notes',
+    })!
+    expect(getElementLink(opened, 0, fresh.elements.at(-1)!.id)).toEqual({
+      kind: 'url',
+      url: 'https://example.com/tip',
+      tooltip: 'See notes',
+    })
+    const reopened = await openPptx(await savePptx(opened))
+    expect(getElementLink(reopened, 0, reopened.deck.slides[0]!.elements.at(-1)!.id)).toEqual({
+      kind: 'url',
+      url: 'https://example.com/tip',
+      tooltip: 'See notes',
+    })
+  })
+
+  it('re-setting a link without a tooltip keeps the existing ScreenTip', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const slide = opened.deck.slides[0]!
+    const el = addElement(slide, { kind: 'rect', offset: { ...OFF } })
+    const first = setElementLink(opened, 0, el.id, {
+      kind: 'url',
+      url: 'https://example.com/one',
+      tooltip: 'Keep "A & B" <me>',
+    })!
+    const second = setElementLink(opened, 0, first.elements.at(-1)!.id, {
+      kind: 'url',
+      url: 'https://example.com/two',
+    })!
+    expect(getElementLink(opened, 0, second.elements.at(-1)!.id)).toEqual({
+      kind: 'url',
+      url: 'https://example.com/two',
+      tooltip: 'Keep "A & B" <me>',
     })
   })
 
@@ -694,6 +734,28 @@ describe('setElementLink / getElementLink', () => {
     expect(links[0]!.elementId).not.toBe(grouped.groupId)
     const group = grouped.slide.elements.find((e) => e.id === grouped.groupId) as GroupElement
     expect(group.children.some((c) => c.id === links[0]!.elementId)).toBe(true)
+  })
+
+  it('getSlideLinks keeps a group own link when its header carries attributes', async () => {
+    const opened = await openPptx(fx('01_standard_business.pptx'))
+    const slide = opened.deck.slides[0]!
+    const a = addElement(slide, { kind: 'rect', offset: { ...OFF } })
+    const b = addElement(slide, { kind: 'ellipse', offset: { ...OFF, x: 5486400 } })
+    const grouped = groupElements(opened, 0, [a.id, b.id])!
+    const linked = setElementLink(opened, 0, grouped.groupId, {
+      kind: 'url',
+      url: 'https://group.dev',
+    })!
+    const group = linked.elements.find((e) => e.type === 'group') as GroupElement
+    // Producers may put attributes on the group's non-visual header
+    group.anchor.originalXml = group.anchor.originalXml.replace(
+      '<p:nvGrpSpPr>',
+      '<p:nvGrpSpPr foo="1">',
+    )
+
+    expect(getSlideLinks(opened, 0)).toEqual([
+      { elementId: group.id, target: { kind: 'url', url: 'https://group.dev' } },
+    ])
   })
 })
 

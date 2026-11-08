@@ -111,6 +111,8 @@ export const pt = {
   aiErrUnknown: 'Erro desconhecido',
   aiErrStreamTimeout:
     'A solicitação de IA expirou: sem resposta da rede, a execução foi interrompida. Verifique sua conexão e tente novamente',
+  aiErrRegion:
+    'O fornecedor deste modelo não atende à sua região atual — escolha outro modelo ou mude de rede',
   aiErrOverloaded: 'O serviço de IA está sobrecarregado no momento — tente novamente em instantes',
   aiErrNetwork:
     'Problema de rede: não foi possível conectar ao serviço de IA. Verifique sua conexão e tente novamente',
@@ -135,6 +137,7 @@ export const pt = {
   aiClarifyOther: 'Outro (digite)',
   aiClarifySkip: 'Pular pesquisa',
   aiClarifyNext: 'Próxima',
+  aiClarifyPrev: 'Anterior',
   aiClarifySubmit: 'Gerar',
   aiSumReadAttachment: 'Ler anexo',
   aiSumReadAttachmentName: 'Ler anexo {name}',

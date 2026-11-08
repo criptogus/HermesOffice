@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { normalizeCustomProfile } from '@hermesoffice/ai-provider/browser'
 
 import {
   HEADER_FOOTER_PICTURE_POSITION,
@@ -13,10 +14,15 @@ import {
 } from './ipc-channels'
 import { ADDABLE_SHAPE_TYPES } from '@hermesoffice/xlsx-gateway/shared/shape-types'
 import {
+  PIVOT_AGGREGATIONS,
+  PIVOT_SHOW_DATA_AS,
+} from '@hermesoffice/xlsx-gateway/domain/pivot-value-modes'
+import {
   CHART_CATEGORY_WIRE_MAX,
   CHART_TEXT_WIRE_MAX,
   drawingAnchorSchema,
   hexColorSchema,
+  shapePaintSchema,
   richRunSchema,
   workbookChartEditSchema,
   workbookStyleEditSchema,
@@ -59,6 +65,30 @@ const cellAreaSchema = z
     endColumn: z.number().int().nonnegative(),
   })
   .strict()
+const sheetThreadReplySchema = z
+  .object({
+    id: z.string().max(64),
+    personId: z.string().max(64),
+    author: z.string().max(255),
+    dT: z.string().max(40),
+    text: z.string().max(32_767),
+  })
+  .strict()
+
+/// Threaded (modern) comment identity; the root text is the note's `text`.
+export const sheetThreadSchema = z
+  .object({
+    id: z.string().max(64),
+    personId: z.string().max(64),
+    author: z.string().max(255),
+    dT: z.string().max(40),
+    done: z.boolean(),
+    replies: z.array(sheetThreadReplySchema).max(500),
+  })
+  .strict()
+export type SheetThread = z.infer<typeof sheetThreadSchema>
+export type SheetThreadReply = z.infer<typeof sheetThreadReplySchema>
+
 const worksheetMetadataSchema = z
   .object({
     id: z.string().min(1),
@@ -68,6 +98,13 @@ const worksheetMetadataSchema = z
     /// Uncompressed worksheet XML size reported by the sidecar. Optional for
     /// compatibility with an older sidecar binary.
     sourceXmlBytes: z.number().int().nonnegative().optional(),
+    /// Cells with a value, formula or style (rowCount x columnCount is only
+    /// the bounding box). Optional for compatibility with an older sidecar.
+    storedCellCount: z.number().int().nonnegative().optional(),
+    /// Stored cells with a value or formula, and the box they span.
+    valueCellCount: z.number().int().nonnegative().optional(),
+    valueRowCount: z.number().int().nonnegative().optional(),
+    valueColumnCount: z.number().int().nonnegative().optional(),
     columnWidths: z.array(
       z
         .object({
@@ -102,6 +139,8 @@ const worksheetMetadataSchema = z
       .strict()
       .nullable(),
     hidden: z.boolean(),
+    /// state="veryHidden": only VBA can unhide it in Excel.
+    veryHidden: z.boolean().optional(),
     tabColor: z.string().nullable(),
     showGridLines: z.boolean(),
     /// sheetView/@showFormulas — the sheet opens in formula view.
@@ -112,6 +151,12 @@ const worksheetMetadataSchema = z
     rightToLeft: z.boolean().optional(),
     /// Saved normal-view zoom percent (10-400); omitted at the 100% default.
     zoomScale: z.number().int().min(10).max(400).optional(),
+    /// sheetFormatPr/@outlineLevelRow|Col — outline depth before rows stream in.
+    outlineLevelRow: z.number().int().min(1).max(7).optional(),
+    outlineLevelCol: z.number().int().min(1).max(7).optional(),
+    /// sheetPr/outlinePr summaryBelow / summaryRight; omitted at the default (true).
+    outlineSummaryBelow: z.literal(false).optional(),
+    outlineSummaryRight: z.literal(false).optional(),
     tables: z.array(
       z
         .object({
@@ -167,6 +212,10 @@ const worksheetMetadataSchema = z
           column: z.number().int().nonnegative(),
           author: z.string(),
           text: z.string(),
+          thread: sheetThreadSchema.extend({ text: z.string() }).optional(),
+          /// The picture the note's shape is showing, fetched with readMedia
+          /// under this id — the same shape a cell image would use.
+          image: z.object({ id: z.string() }).strict().optional(),
         })
         .strict(),
     ),
@@ -350,6 +399,8 @@ const cellStyleSchema = z
     italic: z.boolean(),
     underline: z.boolean(),
     strikethrough: z.boolean(),
+    /// font <vertAlign val>; absent for baseline.
+    vertAlign: z.enum(['superscript', 'subscript']).optional(),
     wrapText: z.boolean(),
     /// alignment/@shrinkToFit; omitted by the sidecar when false.
     shrinkToFit: z.boolean().optional(),
@@ -377,8 +428,42 @@ const cellStyleSchema = z
     borderDiagonal: borderEdgeSchema.optional(),
     diagonalUp: z.boolean(),
     diagonalDown: z.boolean(),
+    /// protection/@locked; the sidecar sends it only when the xf unlocks.
+    locked: z.boolean().optional(),
+    /// protection/@hidden; sent only when the xf hides the formula.
+    hidden: z.boolean().optional(),
   })
   .strict()
+const sheetProtectionAllowSchema = z
+  .object({
+    selectLockedCells: z.boolean(),
+    selectUnlockedCells: z.boolean(),
+    formatCells: z.boolean(),
+    formatColumns: z.boolean(),
+    formatRows: z.boolean(),
+    insertColumns: z.boolean(),
+    insertRows: z.boolean(),
+    insertHyperlinks: z.boolean(),
+    deleteColumns: z.boolean(),
+    deleteRows: z.boolean(),
+    sort: z.boolean(),
+    autoFilter: z.boolean(),
+    pivotTables: z.boolean(),
+    objects: z.boolean(),
+    scenarios: z.boolean(),
+  })
+  .strict()
+const sheetPasswordHashSchema = z.union([
+  z.object({ legacy: z.string().min(1).max(8) }).strict(),
+  z
+    .object({
+      algorithmName: z.string().min(1).max(32),
+      hashValue: z.string().max(1024),
+      saltValue: z.string().max(1024),
+      spinCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+])
 /// c:txPr//a:defRPr shorthand shared by the chart title and data labels.
 const chartTextStyleSchema = z
   .object({
@@ -410,6 +495,15 @@ const chartAxisInfoSchema = z
     displayUnit: z.number().finite().positive().optional(),
     /// c:dispUnitsLbl text, only when the file draws the label.
     displayUnitLabel: z.string().optional(),
+  })
+  .strict()
+
+const pictureCropSchema = z
+  .object({
+    left: z.number().min(-1).max(1),
+    top: z.number().min(-1).max(1),
+    right: z.number().min(-1).max(1),
+    bottom: z.number().min(-1).max(1),
   })
   .strict()
 
@@ -480,6 +574,10 @@ const visualObjectSchema = z
               marker: z.string().optional(),
               /// Parent plot group (barChart, lineChart, ...) of the series.
               plot: z.string().optional(),
+              /// Combo Select Data: the series rides the secondary axis
+              /// pair (edit-pipeline only; a reload infers it from the
+              /// group).
+              secondaryAxis: z.boolean().optional(),
               /// Label mode the series resolves to: its own `c:dLbls`, else
               /// the plot element's.
               dataLabels: z
@@ -568,6 +666,11 @@ const visualObjectSchema = z
         /// c:chartSpace/c:spPr and c:plotArea/c:spPr fills (flat colors).
         chartAreaFill: z.string().optional(),
         plotAreaFill: z.string().optional(),
+        /// Session-added charts only: part path of the PivotTable the chart
+        /// was created from (`xl/pivotTables/…`). The save resolves it into a
+        /// chartSpace <c:pivotSource> so Excel recognizes the PivotChart.
+        /// The sidecar never emits this field.
+        pivotTablePath: z.string().min(1).max(255).optional(),
       })
       .strict()
       .optional(),
@@ -577,15 +680,7 @@ const visualObjectSchema = z
     /// a:blip/a:alphaModFix amt as 0..1 picture opacity.
     opacity: z.number().min(0).max(1).optional(),
     /// a:srcRect as 0..1 fractions cut from each source edge.
-    crop: z
-      .object({
-        left: z.number().min(-1).max(1),
-        top: z.number().min(-1).max(1),
-        right: z.number().min(-1).max(1),
-        bottom: z.number().min(-1).max(1),
-      })
-      .strict()
-      .optional(),
+    crop: pictureCropSchema.optional(),
     /// spPr/a:blipFill on a shape — the image painted clipped to the
     /// preset geometry.
     fillMediaPath: z.string().optional(),
@@ -695,6 +790,11 @@ const visualObjectSchema = z
       .regex(/^xl\/drawings\/[A-Za-z0-9._/-]+\.xml$/)
       .optional(),
     drawingIndex: z.number().int().nonnegative().max(10_000).optional(),
+    /// cNvPr descr (alt text), twoCellAnchor editAs (absent for other anchor
+    /// kinds), and the cNvPr hlinkClick target.
+    altText: z.string().optional(),
+    editAs: z.enum(['twoCell', 'oneCell', 'absolute']).optional(),
+    hyperlink: z.string().optional(),
   })
   .strict()
 
@@ -730,11 +830,17 @@ export const workbookFileSchema = z
     /// Converted .xls import: the first save opens a Save As dialog,
     /// so background flows (AutoSave) must not trigger mode 'save'.
     needsSaveAs: z.boolean().optional(),
+    /// The shell's "New spreadsheet" before its first save: still needsSaveAs
+    /// for Ctrl+S, but AutoSave and the recovery copy keep running (a quiet
+    /// save writes the backing temp file in place, no dialog).
+    unsavedNew: z.boolean().optional(),
     /// CSV session: the original .csv on disk. Save keeps the CSV identity —
     /// the renderer sends csvContent with the save and the main process
     /// writes it back here. Background flows (AutoSave, crash recovery)
     /// stand down: silently flattening the file would lose data.
     csvPath: z.string().min(1).optional(),
+    /// The source CSV had no data rows; the renderer opens a blank grid with one notice.
+    emptyCsv: z.boolean().optional(),
     /// Session opened from a restored crash-recovery copy: Save silently
     /// writes back to the original file, and the 30s recovery writer stands
     /// down (it would overwrite the copy the sidecar is streaming from).
@@ -743,6 +849,8 @@ export const workbookFileSchema = z
     /// string-based patcher to rewrite safely every 30 seconds. Manual Save
     /// remains available; only the background crash-recovery copy is disabled.
     automaticRecoveryDisabled: z.boolean().optional(),
+    /// True when the OOXML package is encrypted with an Office open password.
+    passwordProtected: z.boolean().optional(),
     /// Theme palette as #RRGGBB in theme index order [lt1, dk1, lt2, dk2,
     /// accent1-6, hlink, folHlink]; absent without a readable theme.
     themeColors: z.array(z.string()).length(12).optional(),
@@ -920,6 +1028,9 @@ export const workbookRangeResultSchema = z
       .object({
         protected: z.boolean(),
         hasPassword: z.boolean(),
+        /// Absent from stale sidecar binaries.
+        allow: sheetProtectionAllowSchema.optional(),
+        password: sheetPasswordHashSchema.optional(),
       })
       .strict()
       .nullable(),
@@ -1010,12 +1121,100 @@ export const workbookFormulaCellsRequestSchema = z
   })
   .strict()
 
-/// All formula cells of one sheet, for closure-mode analysis.
+/// Row outline attributes indexed so far (every <row> carrying outlineLevel
+/// or collapsed), so the gutter does not wait for rows to stream in.
+export const workbookRowOutlineResultSchema = z
+  .object({
+    rows: z
+      .array(
+        z
+          .object({
+            row: z.number().int().nonnegative(),
+            level: z.number().int().min(0).max(7),
+            collapsed: z.boolean().optional(),
+            hidden: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(1_048_576),
+    indexingComplete: z.boolean(),
+  })
+  .strict()
+
+/// One `<f t="shared">` group of a sheet: the master cell's formula plus
+/// the followers that inherit it shifted by their offset — either the
+/// exact `ref` span or an explicit `[row, column]` list (file coordinates).
+export const workbookSharedFormulaGroupSchema = z
+  .object({
+    si: z.number().int().nonnegative(),
+    row: z.number().int().nonnegative(),
+    column: z.number().int().nonnegative(),
+    formula: z.string(),
+    range: cellAreaSchema.optional(),
+    cells: z
+      .array(z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]))
+      .optional(),
+  })
+  .strict()
+
+/// Masters and ordinary formula cells of one sheet (shared-formula followers
+/// arrive as `sharedGroups`), for closure-mode analysis.
 export const workbookFormulaCellsResultSchema = z
   .object({
     cells: z.array(workbookCellRecordSchema).max(100_000),
+    sharedGroups: z.array(workbookSharedFormulaGroupSchema).max(100_000),
     indexingComplete: z.boolean(),
     truncated: z.boolean(),
+  })
+  .strict()
+
+/// Per-page cap of the sidecar's find_cells (mirrors MAX_FIND_MATCHES).
+export const MAX_FIND_CELLS_PAGE = 100_000
+
+const findCellsCursorSchema = z
+  .object({
+    sheetId: z.string().min(1),
+    row: z.number().int().nonnegative(),
+    column: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/// Excel-style Find executed in the sidecar over file cells (journal edits
+/// are overlaid by the renderer). `resumeAt` is the inclusive position the
+/// previous page's `nextCursor` reported.
+export const workbookFindCellsRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    sheetId: z.string().min(1).optional(),
+    query: z.string().min(1).max(10_000),
+    matchCase: z.boolean(),
+    matchEntireCell: z.boolean(),
+    lookIn: z.enum(['values', 'formulas', 'formulas_only', 'both']),
+    wildcards: z.boolean(),
+    resumeAt: findCellsCursorSchema.optional(),
+    limit: z.number().int().min(1).max(MAX_FIND_CELLS_PAGE),
+  })
+  .strict()
+
+export const workbookFindCellsResultSchema = z
+  .object({
+    matches: z
+      .array(
+        z
+          .object({
+            sheetId: z.string().min(1),
+            row: z.number().int().nonnegative(),
+            column: z.number().int().nonnegative(),
+            value: cellScalarSchema,
+            valueText: z.string().nullable(),
+            formulaText: z.string().optional(),
+          })
+          .strict(),
+      )
+      .max(MAX_FIND_CELLS_PAGE),
+    complete: z.boolean(),
+    nextCursor: findCellsCursorSchema.optional(),
+    indexingComplete: z.boolean(),
   })
   .strict()
 
@@ -1045,10 +1244,11 @@ export const workbookRecalcRequestSchema = z
             sheetId: z.string().min(1),
             range: z
               .object({
-                startRow: z.number().int().nonnegative(),
-                endRow: z.number().int().nonnegative(),
-                startColumn: z.number().int().nonnegative(),
-                endColumn: z.number().int().nonnegative(),
+                // xlsx sheet limits, 0-indexed
+                startRow: z.number().int().nonnegative().max(1_048_575),
+                endRow: z.number().int().nonnegative().max(1_048_575),
+                startColumn: z.number().int().nonnegative().max(16_383),
+                endColumn: z.number().int().nonnegative().max(16_383),
               })
               .strict(),
           })
@@ -1216,6 +1416,14 @@ export const workbookStructuralOpSchema = z.union([
     .refine((op) => op.end >= op.start && op.end - op.start < 100_000, {
       message: 'Invalid axis span.',
     }),
+  z
+    .object({
+      sheetId: z.string().min(1),
+      kind: z.literal('set-outline-pr'),
+      summaryBelow: z.boolean(),
+      summaryRight: z.boolean(),
+    })
+    .strict(),
 ])
 
 /// Declarative conditional-formatting snapshot for one sheet: the FULL rule
@@ -1290,6 +1498,8 @@ export const workbookPageSetupStateSchema = z
     zoomScale: z.number().int().min(10).max(400).optional(),
     showFormulas: z.boolean().optional(),
     showHeadings: z.boolean().optional(),
+    /// sheetView/@rightToLeft — the grid is mirrored (column A at the right).
+    rightToLeft: z.boolean().optional(),
     printArea: z.union([z.string().min(1).max(255), z.null()]).optional(),
     printTitles: z.union([z.string().regex(/^\d{1,7}:\d{1,7}$/), z.null()]).optional(),
     /// Frozen pane counts; both present together, 0/0 removes the pane.
@@ -1384,12 +1594,36 @@ export const workbookSheetOpSchema = z.union([
       hidden: z.boolean(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('set-sheet-tab-color'),
+      sheetId: z.string().min(1),
+      color: z
+        .string()
+        .regex(/^#[0-9A-F]{6}$/)
+        .nullable(),
+    })
+    .strict(),
   /// Marker: only the tab order changed; the order itself rides sheetOrder.
   z.object({ kind: z.literal('reorder-sheets') }).strict(),
 ])
 
 /// A visual created in the editor this session; the save writes charts as new
 /// chart + drawing parts, shapes as anchors on the sheet's drawing part.
+/// Arrange-tab properties a session shape/picture carries into the file.
+const visualAddPropertiesShape = {
+  rotation: z.number().finite().min(-360).max(360).optional(),
+  flipH: z.boolean().optional(),
+  flipV: z.boolean().optional(),
+  frameSize: z
+    .object({ width: z.number().int().positive(), height: z.number().int().positive() })
+    .strict()
+    .optional(),
+  altText: z.string().max(2_000).optional(),
+  hyperlink: z.string().max(2_048).optional(),
+  editAs: z.enum(['twoCell', 'oneCell', 'absolute']).optional(),
+}
+
 export const workbookVisualAddSchema = z
   .object({
     sheetId: z.string().min(1),
@@ -1418,6 +1652,12 @@ export const workbookVisualAddSchema = z
                 valuesRef: z.string().max(512).optional(),
                 categoriesRef: z.string().max(512).optional(),
                 color: hexColorSchema.optional(),
+                /// Combo chart: plot group the series joins ('lineChart' =
+                /// line, anything else / absent = column). Untagged series
+                /// keep Insert Chart's combo shape.
+                plot: z.enum(['barChart', 'lineChart']).optional(),
+                /// Combo chart: the series rides the secondary axis pair.
+                secondaryAxis: z.boolean().optional(),
                 /// Per-point fills (`c:dPt`), keyed by 0-based point index.
                 pointColors: z.record(z.string().regex(/^[0-9]{1,3}$/), hexColorSchema).optional(),
                 explosionPct: z.number().int().min(0).max(400).optional(),
@@ -1451,6 +1691,11 @@ export const workbookVisualAddSchema = z
           .optional(),
         gapWidthPct: z.number().int().min(0).max(500).optional(),
         holeSizePct: z.number().int().min(10).max(90).optional(),
+        /// PivotChart marker: part path of the PivotTable the chart is bound
+        /// to; the save writes chartSpace <c:pivotSource> from it.
+        pivotTablePath: z.string().min(1).max(255).optional(),
+        altText: visualAddPropertiesShape.altText,
+        editAs: visualAddPropertiesShape.editAs,
       })
       .strict()
       .optional(),
@@ -1461,8 +1706,10 @@ export const workbookVisualAddSchema = z
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/)
           .optional(),
+        lineColor: shapePaintSchema.optional(),
         text: z.string().max(1_000).optional(),
         isTextBox: z.boolean().optional(),
+        ...visualAddPropertiesShape,
       })
       .strict()
       .optional(),
@@ -1471,6 +1718,10 @@ export const workbookVisualAddSchema = z
         mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif']),
         /// ~20MB decoded
         base64: z.string().min(1).max(28_000_000),
+        /// Carried over when a file picture is cut/copied and pasted.
+        opacity: z.number().min(0).max(1).optional(),
+        crop: pictureCropSchema.optional(),
+        ...visualAddPropertiesShape,
       })
       .strict()
       .optional(),
@@ -1481,6 +1732,19 @@ export const workbookVisualAddSchema = z
       [visual.chart, visual.shape, visual.image].filter((kind) => kind !== undefined).length === 1,
     { message: 'A visual addition carries exactly one of chart, shape, or image.' },
   )
+
+/// A picture embedded in a cell ("Place in Cell"): the save writes Excel's
+/// rich-value parts and marks the host cell with `vm=`.
+export const workbookCellImageAddSchema = z
+  .object({
+    sheetId: z.string().min(1),
+    row: z.number().int().nonnegative().max(1_048_575),
+    column: z.number().int().nonnegative().max(16_383),
+    mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif']),
+    /// ~20MB decoded
+    base64: z.string().min(1).max(28_000_000),
+  })
+  .strict()
 
 /// Declarative note snapshot: the sheet's full comment set after the edit
 /// (empty list removes all comments).
@@ -1495,6 +1759,26 @@ export const workbookNoteStateSchema = z
             column: z.number().int().nonnegative().max(16_383),
             author: z.string().max(255),
             text: z.string().max(32_767),
+            thread: sheetThreadSchema.nullable().optional(),
+            /**
+             * The picture this note shows. Absent keeps whatever the note was
+             * already carrying; `null` takes the picture away.
+             */
+            picture: z
+              .object({
+                mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif']),
+                /// ~20MB decoded
+                base64: z.string().min(1).max(28_000_000),
+                /// The picture's pixel size: the note's shape is given it, so a
+                /// photograph is shown at its own proportions.
+                widthPx: z.number().int().positive().max(200_000),
+                heightPx: z.number().int().positive().max(200_000),
+                /// The file name, carried into the picture's title.
+                name: z.string().max(255).optional(),
+              })
+              .strict()
+              .nullable()
+              .optional(),
           })
           .strict(),
       )
@@ -1521,6 +1805,41 @@ export const workbookTableAddSchema = z
       .regex(/^TableStyle(?:Light|Medium|Dark)[1-9][0-9]?$/)
       .optional(),
     bandedRows: z.boolean(),
+    /// Table Design options; omitted = Excel defaults (header on, totals
+    /// off, first/last column off, column stripes off, filter button on).
+    headerRow: z.boolean().optional(),
+    totalsRow: z.boolean().optional(),
+    firstColumn: z.boolean().optional(),
+    lastColumn: z.boolean().optional(),
+    bandedColumns: z.boolean().optional(),
+    filterButton: z.boolean().optional(),
+  })
+  .strict()
+
+/// Table Design changes to a table that came with the file, located by its
+/// displayName at open time. The save rewrites the table part in place
+/// (or removes it for Convert to Range).
+export const workbookTableEditSchema = z
+  .object({
+    sheetId: z.string().min(1),
+    tableName: z.string().min(1).max(255),
+    name: z.string().min(1).max(255).optional(),
+    /// Final coordinates, header and totals rows included.
+    area: cellAreaSchema.optional(),
+    /// Full column list after a resize (header texts, blanks = ColumnN).
+    columnNames: z.array(z.string().max(255)).min(1).max(1_000).optional(),
+    style: z
+      .string()
+      .regex(/^TableStyle(?:Light|Medium|Dark)[1-9][0-9]?$/)
+      .optional(),
+    headerRow: z.boolean().optional(),
+    totalsRow: z.boolean().optional(),
+    bandedRows: z.boolean().optional(),
+    bandedColumns: z.boolean().optional(),
+    firstColumn: z.boolean().optional(),
+    lastColumn: z.boolean().optional(),
+    filterButton: z.boolean().optional(),
+    remove: z.literal(true).optional(),
   })
   .strict()
 
@@ -1543,8 +1862,14 @@ export const workbookPivotAddSchema = z
     /// Indices into fieldNames for the row dimension levels (outer → inner).
     rowFieldIndices: z.array(z.number().int().nonnegative()).min(1).max(8),
     columnFieldIndex: z.number().int().nonnegative().optional(),
-    /// Indices into fieldNames for page (report-filter) fields.
+    /// Indices into fieldNames for page (report-filter) fields, their member
+    /// lists (parallel), and the selected member per field (null = all).
     pageFieldIndices: z.array(z.number().int().nonnegative()).max(4).optional(),
+    pageLevelItems: z
+      .array(z.array(z.string().max(255)).max(10_000))
+      .max(4)
+      .optional(),
+    pageItems: z.array(z.number().int().nonnegative().nullable()).max(4).optional(),
     /// Distinct row/column item captions in baked (first-appearance) order.
     rowItems: z.array(z.string().max(255)).min(1).max(10_000),
     /// Deduplicated member lists per row level (required for multi-level rows;
@@ -1655,11 +1980,19 @@ export const workbookPivotAddSchema = z
           .object({
             /// Source field index; -1 for calculated fields (formula present).
             fieldIndex: z.number().int().min(-1),
-            agg: z.enum(['sum', 'count', 'average', 'max', 'min']),
+            agg: z.enum(PIVOT_AGGREGATIONS),
             /// Optional Excel number format string, e.g. "#,##0.00"
             numFmt: z.string().min(1).max(255).optional(),
-            /// "Show values as" mode (percentages); absent = plain aggregate value.
-            showDataAs: z.enum(['percentOfTotal', 'percentOfRow', 'percentOfCol']).optional(),
+            /// "Show values as" mode; absent = plain aggregate value.
+            showDataAs: z.enum(PIVOT_SHOW_DATA_AS).optional(),
+            /// "Show values as" base field (index into fieldNames; must sit on
+            /// rows/columns); present for the base-field modes.
+            baseFieldIndex: z.number().int().nonnegative().max(199).optional(),
+            /// Base item index within the base field's member list; present for
+            /// difference / percentDiff / percentOf.
+            baseItemIndex: z.number().int().nonnegative().max(9_999).optional(),
+            /// Custom data-field caption; absent = "Sum of <field>".
+            name: z.string().min(1).max(255).optional(),
             /// Calculated field: formula (referencing source field names) plus the new
             /// field name; agg is fixed to sum.
             formula: z.string().min(1).max(1_024).optional(),
@@ -1713,6 +2046,74 @@ export const workbookSaveEditsAbortSchema = z
   })
   .strict()
 
+/**
+ * One withheld rectangle, in zero-based screen coordinates — the shape the
+ * gateway's own `RedactionMark` uses, restated here so the renderer never has
+ * to trust a main-process payload it did not validate.
+ */
+const redactionMarkSchema = z
+  .object({
+    startRow: z.number().int().nonnegative(),
+    endRow: z.number().int().nonnegative(),
+    startColumn: z.number().int().nonnegative(),
+    endColumn: z.number().int().nonnegative(),
+    label: z.string().min(1).max(255),
+    /**
+     * The fill the cell carried before the mark, so clearing can restore it.
+     *
+     * Optional and nullable, and it has to be: `.strict()` on this schema
+     * rejects an unknown key outright, so a renderer that starts sending
+     * `previousFill` without a matching field here would have every save
+     * refused — the mark would silently never reach the file. `#RRGGBB` only,
+     * because it is written back onto a cell as a literal fill.
+     */
+    previousFill: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/)
+      .nullish(),
+  })
+  .strict()
+
+/** Marks per sheet are bounded so a damaged part cannot balloon a session. */
+const MAX_REDACTION_MARKS = 100_000
+
+/**
+ * Exported for the test that pins this boundary: the fill a mark displaced has
+ * to survive `.strict()` here, or every save is refused and the mark silently
+ * never reaches the file.
+ */
+export const redactionStatesSchema = z
+  .array(
+    z
+      .object({
+        sheetName: z.string().min(1).max(255),
+        marks: z.array(redactionMarkSchema).max(MAX_REDACTION_MARKS),
+      })
+      .strict(),
+  )
+  .max(1_000)
+
+/// Breaks and source retargets of the workbook's external links, applied by
+/// the save planner on the final entry contents. Indexes are the stored `[n]`
+/// positions in `<externalReferences>`; a break also needs the affected cells
+/// journaled as literals, so the model and the file agree after the save.
+export const externalLinkOpsSchema = z
+  .object({
+    broken: z.array(z.number().int().positive()).max(64),
+    retargets: z
+      .array(
+        z
+          .object({
+            index: z.number().int().positive(),
+            target: z.string().min(1).max(2_048),
+          })
+          .strict(),
+      )
+      .max(64),
+  })
+  .strict()
+export type ExternalLinkOps = z.infer<typeof externalLinkOpsSchema>
+
 export const workbookSaveRequestSchema = z
   .object({
     sessionId: z.string().uuid(),
@@ -1726,6 +2127,14 @@ export const workbookSaveRequestSchema = z
     /// change is the workbook bytes themselves, so the request is valid with
     /// an otherwise empty payload (like an explicit Save As).
     restoreWriteBack: z.boolean().optional(),
+    /// Background save (AutoSave, AI-run autosave): an unsaved new workbook
+    /// then writes its backing file in place instead of asking where to save.
+    quiet: z.boolean().optional(),
+    /// Name offered by the Save As dialog in place of the file's own. A stem
+    /// the model proposed for a document the reader named by hand: it prefills
+    /// the dialog rather than replacing it, so the reader still chooses where
+    /// the file goes, and cancelling still cancels.
+    defaultName: z.string().min(1).max(1024).optional(),
     /// CSV session in-place save: the active sheet serialized as CSV text.
     /// Written back to the session's original .csv after the xlsx save.
     csvContent: z.string().max(MAX_CSV_EXPORT_CHARS).optional(),
@@ -1740,7 +2149,9 @@ export const workbookSaveRequestSchema = z
     chartEdits: z.array(workbookChartEditSchema).max(100),
     visualEdits: z.array(workbookVisualEditSchema).max(100),
     visualAdditions: z.array(workbookVisualAddSchema).max(50),
+    cellImageAdditions: z.array(workbookCellImageAddSchema).max(50).optional(),
     tableAdditions: z.array(workbookTableAddSchema).max(50),
+    tableEdits: z.array(workbookTableEditSchema).max(100).optional(),
     pivotAdditions: z.array(workbookPivotAddSchema).max(20),
     sheetOps: z.array(workbookSheetOpSchema).max(100),
     /// Final tab order (Univer sheet ids); required with any sheet op.
@@ -1792,13 +2203,17 @@ export const workbookSaveRequestSchema = z
           .strict(),
       )
       .max(100),
-    /// Desired worksheet-protection state per sheet (no password support).
+    /// Desired worksheet-protection state per sheet. `verified` = the
+    /// renderer checked the file's password, so unprotecting may drop it.
     sheetProtections: z
       .array(
         z
           .object({
             sheetId: z.string().min(1),
             protected: z.boolean(),
+            allow: sheetProtectionAllowSchema.optional(),
+            password: sheetPasswordHashSchema.nullable().optional(),
+            verified: z.boolean().optional(),
           })
           .strict(),
       )
@@ -1829,6 +2244,65 @@ export const workbookSaveRequestSchema = z
       )
       .max(50)
       .default([]),
+    /// Session slicer panels persisted as x14 slicer parts on this save
+    /// (created, edited, or deleted this session; null = nothing
+    /// slicer-related rides the save, leaving any file parts untouched).
+    slicerState: z
+      .object({
+        slicers: z
+          .array(
+            z
+              .object({
+                sheetId: z.string().min(1),
+                /// Package-absolute pivot part path (file.sheets[].pivotTables).
+                pivotPath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+                /// Cache field name (slicerCacheDefinition@sourceName).
+                sourceName: z.string().min(1).max(255),
+                caption: z.string().max(255),
+                /// File identity from the restore; present = update in place.
+                name: z.string().min(1).max(255).optional(),
+                partPath: z
+                  .string()
+                  .regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/)
+                  .optional(),
+                cachePath: z
+                  .string()
+                  .regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/)
+                  .optional(),
+                cacheName: z.string().min(1).max(255).optional(),
+                /// Every member with its selection (x = sharedItems index).
+                items: z
+                  .array(
+                    z
+                      .object({
+                        x: z.number().int().nonnegative(),
+                        selected: z.boolean(),
+                      })
+                      .strict(),
+                  )
+                  .min(1)
+                  .max(100_000),
+              })
+              .strict(),
+          )
+          .max(100),
+        /// Controls restored from the file and deleted this session: their
+        /// parts and references are removed; file slicers the session never
+        /// restored are never listed here (and never touched).
+        removals: z
+          .array(
+            z
+              .object({
+                partPath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+                cachePath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+              })
+              .strict(),
+          )
+          .max(200),
+      })
+      .strict()
+      .nullable()
+      .default(null),
     /// Declarative defined-names snapshot (null = untouched). `preserveNames`
     /// lists file names the editor could not model — they stay verbatim, as do
     /// _xlnm.* built-ins and hidden names.
@@ -1878,7 +2352,9 @@ export const workbookSaveRequestSchema = z
       .strict()
       .nullable()
       .default(null),
-    /// Full allow-edit-range snapshots for sheets whose set changed.
+    /// Full allow-edit-range snapshots for sheets whose set changed. A range may
+    /// carry its password as the hash the renderer already computed (legacy or
+    /// spi form, see SheetPasswordHash); the file never hands hashes back.
     protectedRangeStates: z
       .array(
         z
@@ -1890,6 +2366,7 @@ export const workbookSaveRequestSchema = z
                   .object({
                     name: z.string().min(1).max(255),
                     sqref: z.string().min(1).max(1_024),
+                    password: sheetPasswordHashSchema.optional(),
                   })
                   .strict(),
               )
@@ -1899,6 +2376,15 @@ export const workbookSaveRequestSchema = z
       )
       .max(1_000)
       .default([]),
+    /**
+     * The cells the reader withheld from the model. Keyed by sheet NAME rather
+     * than by id, like the part itself: the marks are re-keyed for the renames
+     * and removals this save performs, and that re-keying maps the name the
+     * session loaded onto the name the file ends up with. Main passes them
+     * through without a translation step.
+     */
+    redactionStates: redactionStatesSchema.nullable().default(null),
+    externalLinkOps: externalLinkOpsSchema.nullable().default(null),
   })
   .strict()
   .refine(
@@ -1928,9 +2414,14 @@ export const workbookSaveRequestSchema = z
       request.workbookProtectionState !== null ||
       request.protectedRangeStates.length > 0 ||
       request.visualAdditions.length > 0 ||
+      (request.cellImageAdditions?.length ?? 0) > 0 ||
       request.tableAdditions.length > 0 ||
+      (request.tableEdits?.length ?? 0) > 0 ||
       request.pivotAdditions.length > 0 ||
-      request.sparklineAdditions.length > 0,
+      request.sparklineAdditions.length > 0 ||
+      request.slicerState !== null ||
+      (request.redactionStates?.length ?? 0) > 0 ||
+      request.externalLinkOps !== null,
     { message: 'A save needs at least one edit.' },
   )
   .refine((request) => request.sheetOps.length === 0 || request.sheetOrder.length > 0, {
@@ -2024,6 +2515,97 @@ export const workbookPivotRequestSchema = z
   })
   .strict()
 
+export const workbookSlicerStateRequestSchema = z.object({ sessionId: z.string().uuid() }).strict()
+
+/// One slicer control the file carries, as parsed by the gateway (see
+/// xlsx-slicer parseSlicerState). The renderer binds the pivot through
+/// pivotCacheDefinitionPath against the sheet metadata's pivotTables entries,
+/// then rebuilds the session panel (with file identity for update-in-place).
+export const workbookSlicerPartSchema = z
+  .object({
+    /// `sheet-<sheetId>` — matches WorkbookFile sheets[].id.
+    sheetId: z.string().min(1),
+    worksheetPath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+    partPath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+    cachePath: z.string().regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/),
+    name: z.string().min(1).max(255),
+    cacheName: z.string().min(1).max(255),
+    sourceName: z.string().max(255),
+    caption: z.string().max(255),
+    pivotCacheDefinitionPath: z
+      .string()
+      .regex(/^xl\/[A-Za-z0-9._/-]+\.xml$/)
+      .nullable(),
+    /// sharedItems indices of the selected members; null = the cache carried
+    /// no item list (treat as unfiltered).
+    selectedItems: z.array(z.number().int().nonnegative()).max(100_000).nullable(),
+  })
+  .strict()
+
+export const workbookSlicerStateResultSchema = z.array(workbookSlicerPartSchema).max(1_000)
+export const workbookQueriesRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+  })
+  .strict()
+
+/** Data › Queries & Connections (read-only): one entry per connection in xl/connections.xml */
+export const workbookQueriesResultSchema = z
+  .array(
+    z
+      .object({
+        name: z.string().max(1_000),
+        kind: z.enum(['powerQuery', 'web', 'text', 'database', 'other']),
+        source: z.string().max(4_000).optional(),
+        description: z.string().max(4_000).optional(),
+        destination: z
+          .object({
+            sheet: z.string().max(1_000),
+            table: z.string().max(1_000).optional(),
+            hasTable: z.boolean(),
+            range: z.string().max(100),
+            headerRows: z.number().int().min(0),
+            totalsRows: z.number().int().min(0),
+            rows: z.number().int().min(0),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+  )
+  .max(1_000)
+
+export const workbookRedactionsRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+  })
+  .strict()
+
+/**
+ * The redaction part read at open, in three states rather than two.
+ *
+ * `absent` and `unreadable` must stay distinguishable: the first is the common
+ * case of a workbook that withholds nothing, the second is a part this version
+ * cannot understand. Collapsing the second into an empty `states` array would
+ * read as "nothing is withheld" and hand the model exactly the values the
+ * reader hid, so the failure is carried to the renderer instead of being
+ * smoothed over here.
+ */
+export const workbookRedactionsResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('absent') }).strict(),
+  z
+    .object({
+      status: z.literal('ok'),
+      states: redactionStatesSchema,
+      /// Which copy answered — the package part, or the defined-name mirror that
+      /// stands in when a reader dropped the part. Same cells either way; the
+      /// difference is whether the workbook is intact.
+      source: z.enum(['part', 'mirror']),
+    })
+    .strict(),
+  z.object({ status: z.literal('unreadable'), error: z.string().min(1).max(4_000) }).strict(),
+])
+
 const pivotLayoutLineSchema = z
   .object({
     t: z.string().max(32),
@@ -2098,9 +2680,12 @@ export const workbookPivotDefinitionSchema = z
             name: z.string().max(255),
             field: z.number().int().nonnegative().max(1_000),
             subtotal: z.string().max(32),
-            /// "Show values as" mode (percentages); the parser only carries it over when
-            /// supported.
-            showDataAs: z.enum(['percentOfTotal', 'percentOfRow', 'percentOfCol']).optional(),
+            /// "Show values as" mode; the parser only carries it over when supported.
+            showDataAs: z.enum(PIVOT_SHOW_DATA_AS).optional(),
+            /// Base field (cache-field index) / base item (fieldItems index) of
+            /// the "show values as" calculation; present for the base modes.
+            baseField: z.number().int().nonnegative().max(1_000).optional(),
+            baseItem: z.number().int().nonnegative().max(100_000).optional(),
             /// Calculated-field formula (carried when fld points at a cacheField with a
             /// formula).
             formula: z.string().max(2_048).optional(),
@@ -2177,15 +2762,174 @@ export type WorkbookSaveResult = z.infer<typeof workbookSaveResultSchema>
 export type WorkbookRangeRequest = z.infer<typeof workbookRangeRequestSchema>
 export type WorkbookFormulaCellsRequest = z.infer<typeof workbookFormulaCellsRequestSchema>
 export type WorkbookFormulaCellsResult = z.infer<typeof workbookFormulaCellsResultSchema>
+export type WorkbookFindCellsRequest = z.infer<typeof workbookFindCellsRequestSchema>
+export type WorkbookFindCellsResult = z.infer<typeof workbookFindCellsResultSchema>
+export type WorkbookFindCellsMatch = WorkbookFindCellsResult['matches'][number]
+export type WorkbookSharedFormulaGroup = z.infer<typeof workbookSharedFormulaGroupSchema>
+export type WorkbookRowOutlineResult = z.infer<typeof workbookRowOutlineResultSchema>
 export type WorkbookRangeResult = z.infer<typeof workbookRangeResultSchema>
 /// The sheet's saved print settings as parsed from the file.
 export type WorkbookPagePrintSettings = NonNullable<WorkbookRangeResult['pageSetup']>
 export type WorkbookRecalcRequest = z.infer<typeof workbookRecalcRequestSchema>
+
+/// External-link reads and retargets are addressed by the open session, not a
+/// renderer-supplied path: the main process resolves the workbook this tab
+/// actually has open (the same binding the other workbook handlers use).
+export const externalLinksRequestSchema = z.object({ sessionId: z.string().uuid() }).strict()
+export type ExternalLinksRequest = z.infer<typeof externalLinksRequestSchema>
+
+/// Locate a source: the renderer names the link index of its own session, never
+/// a path, so the main process resolves the target from what the sidecar reads.
+export const externalLinkRevealRequestSchema = z
+  .object({ sessionId: z.string().uuid(), index: z.number().int().positive() })
+  .strict()
+export type ExternalLinkRevealRequest = z.infer<typeof externalLinkRevealRequestSchema>
+
+/// One link as the read-only listing carries it. Deliberately no `reachable`:
+/// listing the links must not probe the targets on disk (a dead network share
+/// can block the open), so reachability is answered only by the explicit
+/// update.
+export const externalLinkListStatusSchema = z
+  .object({
+    index: z.number().int().positive(),
+    rawTarget: z.string(),
+    source: z.string().nullable(),
+    sheetNames: z.array(z.string()),
+  })
+  .strict()
+export type ExternalLinkListStatus = z.infer<typeof externalLinkListStatusSchema>
+
+/// One row of the links panel: the listing's fields, plus the update's
+/// reachability verdict once it has run.
+export type ExternalLinkRow = ExternalLinkListStatus & { readonly reachable?: boolean }
+
+export const externalLinkStatusSchema = z
+  .object({
+    index: z.number().int().positive(),
+    rawTarget: z.string(),
+    source: z.string().nullable(),
+    reachable: z.boolean(),
+    sheetNames: z.array(z.string()),
+  })
+  .strict()
+export type ExternalLinkStatus = z.infer<typeof externalLinkStatusSchema>
+
+/// The panel's non-probing listing (the sidecar's `list_external_links`).
+export const externalLinksResultSchema = z
+  .object({ links: z.array(externalLinkListStatusSchema) })
+  .strict()
+export type ExternalLinksResult = z.infer<typeof externalLinksResultSchema>
+
+/// The kinds an external-formula cell's value can have: the save path writes a
+/// boolean as `t="b"` and an error as `t="e"` instead of spelling them as a
+/// text cache.
+export const externalLinkCellKindSchema = z.enum(['number', 'text', 'boolean', 'error'])
+export type ExternalLinkCellKind = z.infer<typeof externalLinkCellKindSchema>
+
+// One external-formula cell of an update report. `row` and `column` are
+// 0-based in the report; IronCalc, which computed the value, addresses the
+// same cells 1-based. `kind` is absent when the cell has no usable value (a
+// formula the file never cached), so the host keeps the cell's own cache;
+// older sidecars spell that as `null`.
+export const externalLinkCellSchema = z
+  .object({
+    sheet: z.string(),
+    row: z.number().int().nonnegative(),
+    column: z.number().int().nonnegative(),
+    formatted: z.string(),
+    number: z.number().nullable().optional(),
+    kind: externalLinkCellKindSchema.nullish(),
+    formula: z.string(),
+  })
+  .strict()
+export type ExternalLinkCell = z.infer<typeof externalLinkCellSchema>
+
+export const externalLinksUpdateResultSchema = z
+  .object({
+    links: z.array(externalLinkStatusSchema),
+    cells: z.array(externalLinkCellSchema),
+  })
+  .strict()
+export type ExternalLinksUpdateResult = z.infer<typeof externalLinksUpdateResultSchema>
+
+/// One formula cell that references a link, as the usage scan carries it: the
+/// value a break would freeze the cell at, typed by the cached `<v>`. `row`
+/// and `column` are 0-based.
+export const externalLinkUsageCellSchema = z
+  .object({
+    sheet: z.string(),
+    row: z.number().int().nonnegative(),
+    column: z.number().int().nonnegative(),
+    value: z.union([
+      z.object({ kind: z.literal('number'), value: z.number() }).strict(),
+      z.object({ kind: z.literal('text'), value: z.string() }).strict(),
+      z.object({ kind: z.literal('bool'), value: z.boolean() }).strict(),
+      z.object({ kind: z.literal('error'), value: z.string() }).strict(),
+      z.object({ kind: z.literal('missing') }).strict(),
+    ]),
+  })
+  .strict()
+export type ExternalLinkUsageCell = z.infer<typeof externalLinkUsageCellSchema>
+
+/// Every formula cell of the workbook that references link `[n]`.
+export const externalLinkUsageSchema = z
+  .object({
+    index: z.number().int().positive(),
+    cells: z.array(externalLinkUsageCellSchema),
+  })
+  .strict()
+export type ExternalLinkUsage = z.infer<typeof externalLinkUsageSchema>
+
+export const externalLinkUsageResultSchema = z
+  .object({ links: z.array(externalLinkUsageSchema) })
+  .strict()
+export type ExternalLinkUsageResult = z.infer<typeof externalLinkUsageResultSchema>
+
+// ── cross-workbook range picking (hermesoffice#2109) ──────────────────────
+
+/// Another open workbook tab, as the picker's book list shows it.
+export const workbookTabSchema = z
+  .object({
+    wcId: z.number().int().positive(),
+    name: z.string().min(1),
+    path: z.string().min(1),
+  })
+  .strict()
+export type WorkbookTab = z.infer<typeof workbookTabSchema>
+
+export const workbookTabsResultSchema = z.object({ tabs: z.array(workbookTabSchema) }).strict()
+export type WorkbookTabsResult = z.infer<typeof workbookTabsResultSchema>
+
+export const pickIdPayloadSchema = z.object({ pickId: z.string().min(1) }).strict()
+export type PickIdPayload = z.infer<typeof pickIdPayloadSchema>
+
+/// One picked range on another workbook's grid, relayed to the tab whose
+/// formula is being edited. 0-based bounds, Univer's RANGE_TYPE for 1=rows,
+/// 2=columns picks.
+export const workbookPickSelectionSchema = z
+  .object({
+    pickId: z.string().min(1),
+    sheetName: z.string().min(1),
+    startRow: z.number().int().nonnegative(),
+    endRow: z.number().int().nonnegative(),
+    startColumn: z.number().int().nonnegative(),
+    endColumn: z.number().int().nonnegative(),
+    rangeType: z.number().int().optional(),
+  })
+  .strict()
+export type WorkbookPickSelection = z.infer<typeof workbookPickSelectionSchema>
 export type WorkbookRecalcResult = z.infer<typeof workbookRecalcResultSchema>
 export type WorkbookMediaRequest = z.infer<typeof workbookMediaRequestSchema>
 export type WorkbookMediaResult = z.infer<typeof workbookMediaResultSchema>
 export type WorkbookPivotRequest = z.infer<typeof workbookPivotRequestSchema>
 export type WorkbookPivotDefinition = z.infer<typeof workbookPivotDefinitionSchema>
+export type WorkbookSlicerStateRequest = z.infer<typeof workbookSlicerStateRequestSchema>
+export type WorkbookSlicerPart = z.infer<typeof workbookSlicerPartSchema>
+export type WorkbookSlicerState = z.infer<typeof workbookSlicerStateResultSchema>
+export type WorkbookQueriesRequest = z.infer<typeof workbookQueriesRequestSchema>
+export type WorkbookQueriesResult = z.infer<typeof workbookQueriesResultSchema>
+export type WorkbookRedactionsRequest = z.infer<typeof workbookRedactionsRequestSchema>
+export type WorkbookRedactionsResult = z.infer<typeof workbookRedactionsResultSchema>
 export type LocalImageRequest = z.infer<typeof localImageRequestSchema>
 export type LocalImageResult = z.infer<typeof localImageResultSchema>
 export type ScreenSourcesResult = z.infer<typeof screenSourcesResultSchema>
@@ -2193,7 +2937,9 @@ export type ScreenCaptureRequest = z.infer<typeof screenCaptureRequestSchema>
 export type ScreenCaptureResult = z.infer<typeof screenCaptureResultSchema>
 export type WorkbookVisualObject = z.infer<typeof visualObjectSchema>
 export type WorkbookVisualAdd = z.infer<typeof workbookVisualAddSchema>
+export type WorkbookCellImageAdd = z.infer<typeof workbookCellImageAddSchema>
 export type WorkbookTableAdd = z.infer<typeof workbookTableAddSchema>
+export type WorkbookTableEdit = z.infer<typeof workbookTableEditSchema>
 export type WorkbookPivotAdd = z.infer<typeof workbookPivotAddSchema>
 export type WorkbookCellStyle = z.infer<typeof cellStyleSchema>
 export type WorkbookConditionalRule = z.infer<typeof conditionalRuleSchema>
@@ -2204,12 +2950,48 @@ export type WorkbookConditionalRule = z.infer<typeof conditionalRuleSchema>
 // site, which has every known provider key once merged through
 // resolveAiSettings/defaultAiSettings. ----
 
+const aiCustomCompatSchema = z
+  .object({
+    omitTemperature: z.boolean().optional(),
+    echoReasoning: z.boolean().optional(),
+    vision: z.boolean().optional(),
+    useMaxCompletionTokens: z.boolean().optional(),
+  })
+  .strict()
+
+const aiCustomModelProfileSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    alias: z.string().optional(),
+    name: z.string().optional(),
+    ...aiCustomCompatSchema.shape,
+    maxTokens: z.number().int().positive().optional(),
+    contextWindow: z.number().int().positive().optional(),
+  })
+  .strict()
+
+// Keep IPC fields explicit, then use the canonical normalizer for header
+// legality and profile size bounds, just like the other apps' settings gate.
+const aiCustomProfileSchema = z
+  .object({
+    api: z.enum(['openai-compatible', 'anthropic', 'gemini']).optional(),
+    apiKeyEnv: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    idleTimeoutMs: z.number().int().positive().optional(),
+    compat: aiCustomCompatSchema.optional(),
+    bodyExtras: z.record(z.string(), z.unknown()).optional(),
+    modelProfiles: z.array(aiCustomModelProfileSchema).optional(),
+    probedProfiles: z.array(aiCustomModelProfileSchema).optional(),
+  })
+  .strict()
+
 const aiProviderConfigSchema = z
   .object({
     apiKey: z.string(),
     model: z.string(),
     baseUrl: z.string().optional(),
     cliPath: z.string().optional(),
+    profile: aiCustomProfileSchema.transform(normalizeCustomProfile).optional(),
   })
   .strict()
 
@@ -2222,10 +3004,33 @@ const aiMediaProviderConfigSchema = z
   })
   .strict()
 
+const aiCustomEndpointSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    baseUrl: z.string(),
+    apiKey: z.string(),
+    model: z.string(),
+    models: z.array(z.string()).optional(),
+    ...aiCustomProfileSchema.shape,
+  })
+  .strict()
+  .transform(({ id, name, baseUrl, apiKey, model, models, ...profile }) => ({
+    id,
+    name,
+    baseUrl,
+    apiKey,
+    model,
+    ...(models !== undefined ? { models } : {}),
+    ...normalizeCustomProfile(profile),
+  }))
+
 export const aiSettingsInputSchema = z
   .object({
     provider: z.string().min(1),
     providers: z.record(z.string(), aiProviderConfigSchema),
+    customEndpoints: z.array(aiCustomEndpointSchema).optional(),
+    customEndpoint: z.string().optional(),
     gskToolsEnabled: z.boolean().optional(),
     media: z
       .object({
@@ -2266,6 +3071,7 @@ const agentToolCallSchema = z
     id: z.string(),
     name: z.string(),
     input: z.record(z.string(), z.unknown()),
+    signature: z.string().optional(),
   })
   .strict()
 
@@ -2380,8 +3186,21 @@ export const workbookExportPdfRequestSchema = z
     /// Headless export mode only (--headless-export): write here instead of
     /// opening the save dialog. Ignored by a normal GUI session.
     outPath: z.string().min(1).max(4096).optional(),
+    /// Print only: silent print on this printer ('' = the system default);
+    /// absent opens the system print dialog.
+    deviceName: z.string().max(255).optional(),
+    copies: z.number().int().min(1).max(999).optional(),
+    collate: z.boolean().optional(),
   })
   .strict()
+
+export const printerInfoSchema = z
+  .object({
+    name: z.string().max(255),
+    displayName: z.string().max(255),
+  })
+  .strict()
+export type PrinterInfo = z.infer<typeof printerInfoSchema>
 
 export const workbookExportPdfResultSchema = z.union([
   z.object({ canceled: z.literal(true) }).strict(),
@@ -2519,6 +3338,12 @@ export interface AttachmentImageResult {
 
 export type UiTheme = 'light' | 'dark' | 'system'
 
+/**
+ * Document page theme preference (hermesoffice#1811): what the editors' canvas/paper does
+ * relative to the UI theme. 'follow' keeps the previous single-theme behavior.
+ */
+export type DocTheme = 'follow' | 'light' | 'dark'
+
 /** shell-wide AutoSave default; updatedAt is 0 until the user has ever set it */
 export interface AutoSaveDefault {
   on: boolean
@@ -2553,6 +3378,8 @@ export interface McpCommandResult {
 }
 
 export interface DesktopApi {
+  /** open any shell-routed document path (an AI answer's filenav citation) */
+  openSourcePath(path: string): Promise<void>
   /** current UI language (persisted by the shell in app-settings.json) */
   getLanguage(): Promise<'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'>
   /** language switched from the shell home page */
@@ -2565,6 +3392,10 @@ export interface DesktopApi {
   getTheme(): Promise<UiTheme>
   /** theme switched from the shell home page */
   onThemeChanged(handler: (theme: UiTheme) => void): () => void
+  /** current document page theme preference (hermesoffice#1811, persisted by the shell in app-settings.json) */
+  getDocumentTheme(): Promise<DocTheme>
+  /** document page theme switched from the shell home page */
+  onDocumentThemeChanged(handler: (theme: DocTheme) => void): () => void
   /** shell-wide AutoSave default (see useAutoSavePref) */
   getAutoSaveDefault(): Promise<AutoSaveDefault>
   onAutoSaveDefaultChanged(handler: (value: AutoSaveDefault) => void): () => void
@@ -2578,16 +3409,66 @@ export interface DesktopApi {
    * press for dismissing open popovers
    */
   onChromePressed(handler: () => void): () => void
-  selectWorkbook(): Promise<WorkbookFile | null>
+  selectWorkbook(): Promise<WorkbookFile | { passwordRequired: true; path: string } | null>
+  openEncryptedWorkbook(path: string, password: string): Promise<WorkbookFile | null>
+  updateWorkbookPassword(
+    sessionId: string,
+    newPassword: string,
+  ): Promise<{ sha256: string; fileBytes: number; passwordProtected: true }>
   /** multi-select xlsx picker; each file opens a secondary sidecar session for merge reads */
   selectWorkbooksForMerge(): Promise<WorkbookFile[] | null>
   /** open explicit spreadsheet paths (chat attachments) as merge-source sessions */
   openWorkbooksForMerge(paths: string[]): Promise<WorkbookFile[] | null>
+  /// Re-open a known path through the normal open path (the pipeline
+  /// selectWorkbook runs) to adopt a live session after a sidecar crash.
+  /// Not the merge-source open: a recovered workbook is a normal session, and
+  /// a csv/xls is imported as the workbook itself, not as a merge input.
+  reopenWorkbook(path: string): Promise<WorkbookFile | null>
+  /// The sidecar process died: every session id this renderer holds is gone.
+  /// A positive crash signal — the main process raises it only for an actual
+  /// process death, never for a session it closed or swapped on purpose.
+  onSidecarCrashed(callback: () => void): () => void
   readWorkbookRange(request: WorkbookRangeRequest): Promise<WorkbookRangeResult>
   readWorkbookFormulas(request: WorkbookFormulaCellsRequest): Promise<WorkbookFormulaCellsResult>
+  findWorkbookCells(request: WorkbookFindCellsRequest): Promise<WorkbookFindCellsResult>
+  /** The workbook's refreshable data connections (web queries for now). */
+  listWorkbookConnections(request: WorkbookConnectionsRequest): Promise<WorkbookConnectionsResult>
+  /** Fetch a web query's table: main resolves its URL from the workbook part. */
+  refreshWorkbookConnection(request: WorkbookRefreshRequest): Promise<WorkbookRefreshResult>
+  readWorkbookRowOutline(request: WorkbookFormulaCellsRequest): Promise<WorkbookRowOutlineResult>
   recalcWorkbook(request: WorkbookRecalcRequest): Promise<WorkbookRecalcResult>
+  listExternalLinks(request: ExternalLinksRequest): Promise<ExternalLinksResult>
+  updateExternalLinks(request: ExternalLinksRequest): Promise<ExternalLinksUpdateResult>
+  /// The formula cells referencing each [n] link, with the value a break
+  /// would freeze them at — the file-level scan, not the model's view.
+  readExternalLinkUsage(request: ExternalLinksRequest): Promise<ExternalLinkUsageResult>
+  /// A single-workbook file picker for "Change Source" (a link's new source).
+  selectExternalLinkSource(): Promise<string | null>
+  /// Other open workbook tabs (the cross-workbook range picker's book list).
+  listWorkbookTabs(): Promise<{ tabs: WorkbookTab[] }>
+  /// Arms a cross-workbook pick from this tab; other sheets' grids become
+  /// the pick target until a selection or a cancel.
+  armWorkbookPick(wcId: number): Promise<{ pickId: string }>
+  sendWorkbookPickSelection(selection: WorkbookPickSelection): Promise<void>
+  cancelWorkbookPick(pickId: string): Promise<void>
+  onWorkbookPickArmed(listener: (payload: { pickId: string }) => void): () => void
+  onWorkbookPickSelected(listener: (selection: WorkbookPickSelection) => void): () => void
+  onWorkbookPickCancelled(listener: (payload: { pickId: string }) => void): () => void
+  revealLinkSource(request: ExternalLinkRevealRequest): void
   readWorkbookMedia(request: WorkbookMediaRequest): Promise<WorkbookMediaResult>
   readPivotDefinition(request: WorkbookPivotRequest): Promise<WorkbookPivotDefinition>
+  /// Slicer controls the file carries; read once per open so the session can
+  /// restore the panels (and re-save them update-in-place). Timelines are not
+  /// read or restored: they stay session-only for now.
+  readSlicerState(request: WorkbookSlicerStateRequest): Promise<WorkbookSlicerState>
+  /**
+   * The cells the reader withheld from the model, read once per open. An
+   * unreadable part is reported as such rather than as "nothing withheld" —
+   * see `workbookRedactionsResultSchema`.
+   */
+  readWorkbookRedactions(request: WorkbookRedactionsRequest): Promise<WorkbookRedactionsResult>
+  /** Data › Queries & Connections: the workbook's connections and where each loads (read-only) */
+  readWorkbookQueries(request: WorkbookQueriesRequest): Promise<WorkbookQueriesResult>
   readLocalImage(request: LocalImageRequest): Promise<LocalImageResult>
   captureScreenSources(): Promise<ScreenSourcesResult>
   /// null when the source vanished between listing and capture.
@@ -2612,6 +3493,7 @@ export interface DesktopApi {
   ): Promise<{ renamed: boolean; name?: string }>
   exportPdf(request: WorkbookExportPdfRequest): Promise<WorkbookExportPdfResult>
   printWorkbook(request: WorkbookExportPdfRequest): Promise<WorkbookPrintResult>
+  listPrinters(): Promise<PrinterInfo[]>
   exportCsv(request: WorkbookExportCsvRequest): Promise<WorkbookExportCsvResult>
   /// First Save of a CSV session: native "keep this format?" dialog.
   confirmCsvSave(): Promise<'csv' | 'xlsx' | 'cancel'>
@@ -2652,8 +3534,21 @@ export interface DesktopApi {
   consumeHeadlessExport(): Promise<string | null>
   /// Headless export mode: report the export outcome so the main process can quit.
   headlessExportDone(result: { ok: boolean; error?: string }): void
+  /// Author name for threaded comments (Settings → General, falling back to the OS account).
+  getUserDisplayName(): Promise<string>
+  onUserDisplayNameChanged(handler: (name: string) => void): () => void
   getAiSettings(): Promise<AiSettings>
   setAiSettings(settings: AiSettings): Promise<void>
+  /// ai-settings.json was rewritten by any renderer; re-read it
+  onAiSettingsChanged(handler: () => void): () => void
+  /// shell only: switch to Home and open Settings › AI Model (rejects in standalone)
+  openAiModelSettings(): Promise<void>
+  /// shell only: switch to Home and open Settings › Integrations (the skills list)
+  openSkillsSettings(): Promise<void>
+  /// the skills installed into HermesOffice's own folder
+  skillsList(): Promise<UserSkillEntry[]>
+  /// one installed skill's body, by name; the main process resolves the path
+  skillText(name: string): Promise<string>
   aiChat(request: AiChatRequest): Promise<AiChatResponse>
   /// start a streaming AI call; deltas arrive via onAiStream with the same requestId
   aiStream(request: AiStreamRequest): Promise<void>
@@ -2719,4 +3614,68 @@ export interface ImageSearchResponse {
 export interface GenerateImageResult {
   url?: string
   error?: string
+}
+
+/// A workbook's data connections that can be refreshed: a web query fills a
+/// range on a sheet, and its URL lives in the workbook's connection part.
+/// Text queries are not listed yet: a local path cannot go through the SSRF
+/// gate, so refreshing one would only fail (hermesoffice#2363 review).
+export const workbookConnectionSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    /** only web queries are refreshable for now */
+    kind: z.literal('web'),
+    /** the URL the query reads */
+    source: z.string(),
+    /** the sheet the query's rows land on */
+    sheetName: z.string(),
+    /** the A1 range the query fills, header row included */
+    range: z.string(),
+    /** rows at the top of the range that are the query's header (0 or 1) */
+    headerRows: z.number().int().min(0),
+    /** trailing rows that hold a ListObject's totals row, left untouched */
+    totalsRows: z.number().int().min(0),
+    /** true when the rows live in a ListObject, whose column names pin the header cells */
+    hasTable: z.boolean(),
+  })
+  .strict()
+
+export const workbookConnectionsRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+  })
+  .strict()
+
+export const workbookConnectionsResultSchema = z
+  .object({
+    connections: z.array(workbookConnectionSchema),
+  })
+  .strict()
+
+export const workbookRefreshRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    /** the connection list's id; main resolves the URL from the workbook */
+    connectionId: z.string().min(1).max(200),
+  })
+  .strict()
+
+export const workbookRefreshResultSchema = z
+  .object({
+    headers: z.array(z.string()),
+    rows: z.array(z.array(z.string())),
+  })
+  .strict()
+
+export type WorkbookConnection = z.infer<typeof workbookConnectionSchema>
+export type WorkbookConnectionsRequest = z.infer<typeof workbookConnectionsRequestSchema>
+export type WorkbookConnectionsResult = z.infer<typeof workbookConnectionsResultSchema>
+export type WorkbookRefreshRequest = z.infer<typeof workbookRefreshRequestSchema>
+export type WorkbookRefreshResult = z.infer<typeof workbookRefreshResultSchema>
+
+export interface UserSkillEntry {
+  name: string
+  description: string
+  relevant: boolean
 }

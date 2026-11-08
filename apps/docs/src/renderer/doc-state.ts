@@ -45,6 +45,30 @@ export interface PendingNumbering {
     abstractNumId: string
     startOverrides: Record<number, number>
   }>
+  /** one w:lvl of an existing abstractNum rewritten (Adjust List Indents on a parsed list) */
+  levelEdits: Array<{
+    abstractNumId: string
+    ilvl: number
+    level: import('@hermesoffice/docx-engine').CustomNumberingLevel
+  }>
+  /** picture bullets (w:numPicBullet) referenced by pending levels */
+  picBullets: Array<{ id: number; base64: string; mime: 'image/png' | 'image/jpeg' | 'image/gif' }>
+}
+
+export const EMPTY_PENDING_NUMBERING: PendingNumbering = {
+  newDefs: [],
+  restartNums: [],
+  levelEdits: [],
+  picBullets: [],
+}
+
+export function pendingNumberingDirty(p: PendingNumbering): boolean {
+  return (
+    p.newDefs.length > 0 ||
+    p.restartNums.length > 0 ||
+    p.levelEdits.length > 0 ||
+    p.picBullets.length > 0
+  )
 }
 
 export function hfFromPart(part: HfPartInfo | null | undefined): HeaderFooter | null {
@@ -63,7 +87,7 @@ export function hfFromPart(part: HfPartInfo | null | undefined): HeaderFooter | 
 }
 
 /**
- * Variant a resting canvas header/footer area shows (no variant chip picked):
+ * Variant a canvas edge header/footer area shows (it follows its page, as in Word):
  * the header area sits on page 1 (titlePg -> first-page variant, blank when
  * that part is absent — Word semantics), the footer area on the last page.
  */

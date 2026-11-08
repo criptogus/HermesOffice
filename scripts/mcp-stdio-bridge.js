@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * GenOffice MCP stdio bridge.
+ * HermesOffice MCP stdio bridge.
  *
  * MCP clients that only speak stdio (Claude Desktop, Cursor) can't reach the
- * GenOffice localhost server directly. This script bridges stdin/stdout
+ * HermesOffice localhost server directly. This script bridges stdin/stdout
  * JSON-RPC to the running app's legacy SSE transport (/sse + /messages).
  *
- * The GenOffice app must be running with the MCP server enabled
+ * The HermesOffice app must be running with the MCP server enabled
  * (Settings > MCP Settings).
  *
  * Usage:
@@ -18,7 +18,7 @@
  *     "mcpServers": {
  *       "hermesoffice": {
  *         "command": "node",
- *         "args": ["/path/to/genoffice/scripts/mcp-stdio-bridge.js"]
+ *         "args": ["/path/to/hermesoffice/scripts/mcp-stdio-bridge.js"]
  *       }
  *     }
  *   }
@@ -61,7 +61,7 @@ const suppressedResponseIds = new Set()
 
 /** stderr only: stdout is the JSON-RPC channel */
 function log(message) {
-  process.stderr.write(`[genoffice-mcp-bridge] ${message}\n`)
+  process.stderr.write(`[hermesoffice-mcp-bridge] ${message}\n`)
 }
 
 function sendResponse(response) {
@@ -283,10 +283,10 @@ async function main() {
   log(`bridging stdio to ${baseUrl}`)
   try {
     const health = await httpRequest('GET', '/health')
-    if (health.status === 200) log('GenOffice MCP server is reachable')
-    else log('warning: unexpected /health response; is GenOffice running?')
+    if (health.status === 200) log('HermesOffice MCP server is reachable')
+    else log('warning: unexpected /health response; is HermesOffice running?')
   } catch {
-    log('warning: cannot reach GenOffice. Start the app and enable Settings > MCP Settings.')
+    log('warning: cannot reach HermesOffice. Start the app and enable Settings > MCP Settings.')
   }
 
   try {

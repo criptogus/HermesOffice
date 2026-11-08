@@ -99,7 +99,7 @@ describe('clampBoundsToExtent', () => {
   })
 
   it('keeps a drag from A1 on a fresh workbook, where Univer reports the extent as A1', () => {
-    // genoffice#294: the chip read "A1" for an A1:G18 drag on a just-opened empty sheet
+    // hermesoffice#294: the chip read "A1" for an A1:G18 drag on a just-opened empty sheet
     const bounds = { startRow: 0, startColumn: 0, endRow: 17, endColumn: 6 }
     const empty = { lastRow: 0, lastColumn: 0 }
     const size = { rowCount: 1000, columnCount: 20 }

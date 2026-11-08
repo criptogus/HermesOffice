@@ -34,22 +34,21 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
-    "electron": "^43.3.0",
+    "electron": "^43.8.3",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "jsdom": "^28.0.0",
     "marked": "^17.0.6",
-    "officecrypto-tool": "^0.0.19",
     "opentype.js": "^2.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1",
-    "vitest": "^4.1.11"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   },
-  "author": "GenOffice",
+  "author": "HermesOffice",
   "build": {
-    "appId": "com.genoffice.docs",
+    "appId": "com.hermesoffice.docs",
     "productName": "HermesOffice Docs",
     "electronVersion": "43.3.0",
     "artifactName": "AIDocx-${version}-${arch}.${ext}",
@@ -96,6 +95,8 @@
     "electron-updater": "^6.8.9",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",
-    "@hermesoffice/pptx-render": "*"
+    "@hermesoffice/pptx-render": "*",
+    "@hermesoffice/xlsx-gateway": "*",
+    "@hermesoffice/agent-core": "*"
   }
 }

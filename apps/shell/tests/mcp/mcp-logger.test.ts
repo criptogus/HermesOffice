@@ -12,7 +12,7 @@ let logPath: string
 let logger: McpLogger
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'genoffice-mcp-log-'))
+  dir = await mkdtemp(join(tmpdir(), 'hermesoffice-mcp-log-'))
   logPath = join(dir, 'mcp-log.txt')
   logger = new McpLogger(logPath)
 })

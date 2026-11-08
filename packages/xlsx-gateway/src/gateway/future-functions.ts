@@ -170,12 +170,6 @@ const XLFN_FUNCTIONS = new Set([
   'ANCHORARRAY',
 ])
 
-// Lookahead keeps the "(" unconsumed so back-to-back calls (SORT(FILTER(…)
-// both match; the lead guard rejects already-marked calls (the "." before
-// the name) and sheet-qualified identifiers. Case-insensitive: Excel
-// accepts lowercase input, and the marker must still be written.
-const FUNCTION_CALL_PATTERN = /(^|[^A-Za-z0-9_."'!])([A-Za-z][A-Za-z0-9.]*)(?=\s*\()/g
-
 /// Functions whose result spills into neighbouring cells. Excel 365 only
 /// spills a stored formula that is marked as a dynamic array (`t="array"` on
 /// the <f> plus `cm="1"` on the cell); an unmarked call is read as `@FILTER`
@@ -206,31 +200,97 @@ const SPILL_FUNCTIONS = new Set([
   'WRAPROWS',
 ])
 
-export function spillsDynamicArray(formula: string): boolean {
-  const segments = formula.replace(/_xlfn\.(?:_xlws\.)?/gi, '').split('"')
-  for (let index = 0; index < segments.length; index += 2) {
-    const segment = segments[index]
-    if (segment === undefined) continue
-    for (const match of segment.matchAll(FUNCTION_CALL_PATTERN)) {
-      if (SPILL_FUNCTIONS.has(match[2]!.toUpperCase())) return true
+interface FormulaCall {
+  start: number
+  end: number
+  name: string
+  marked: boolean
+}
+
+function isNameCharacter(character: string): boolean {
+  return (
+    character === '_' ||
+    character === '.' ||
+    character === '\\' ||
+    character === '$' ||
+    /[\p{L}\p{N}]/u.test(character)
+  )
+}
+
+function quotedEnd(formula: string, start: number): number {
+  const quote = formula[start]
+  let index = start + 1
+  while (index < formula.length) {
+    if (formula[index] === quote) {
+      if (formula[index + 1] === quote) {
+        index += 2
+        continue
+      }
+      return index + 1
     }
+    index += 1
   }
-  return false
+  return formula.length
+}
+
+function functionCalls(formula: string): FormulaCall[] {
+  const calls: FormulaCall[] = []
+  let cursor = 0
+  while (cursor < formula.length) {
+    const character = formula[cursor]!
+    if (character === '"' || character === "'") {
+      cursor = quotedEnd(formula, cursor)
+      continue
+    }
+    const codePoint = formula.codePointAt(cursor)!
+    const symbol = String.fromCodePoint(codePoint)
+    if (!isNameCharacter(symbol)) {
+      cursor += symbol.length
+      continue
+    }
+    const start = cursor
+    let end = cursor
+    while (end < formula.length) {
+      const current = String.fromCodePoint(formula.codePointAt(end)!)
+      if (!isNameCharacter(current)) break
+      end += current.length
+    }
+    let after = end
+    while (after < formula.length && /\s/.test(formula[after]!)) after += 1
+    if (formula[after] === '(') {
+      const token = formula.slice(start, end)
+      const marked = /^_xlfn\.(?:_xlws\.)?/i.test(token) || /^_xlws\./i.test(token)
+      const name = token.replace(/^_xlfn\.(?:_xlws\.)?/i, '').replace(/^_xlws\./i, '')
+      calls.push({ start, end, name, marked })
+    }
+    cursor = end
+  }
+  return calls
+}
+
+export function spillsDynamicArray(formula: string): boolean {
+  return functionCalls(formula).some((call) => SPILL_FUNCTIONS.has(call.name.toUpperCase()))
 }
 
 /// Prefixes future-function calls with their storage markers, outside
 /// string literals. Marked calls store the canonical uppercase name.
 export function withFutureFunctionMarkers(formula: string): string {
-  const segments = formula.split('"')
-  for (let index = 0; index < segments.length; index += 2) {
-    const segment = segments[index]
-    if (segment === undefined) continue
-    segments[index] = segment.replace(FUNCTION_CALL_PATTERN, (full, lead: string, name: string) => {
-      const canonical = name.toUpperCase()
-      if (XLWS_FUNCTIONS.has(canonical)) return `${lead}_xlfn._xlws.${canonical}`
-      if (XLFN_FUNCTIONS.has(canonical)) return `${lead}_xlfn.${canonical}`
-      return full
-    })
+  let out = ''
+  let cursor = 0
+  for (const call of functionCalls(formula)) {
+    out += formula.slice(cursor, call.start)
+    const token = formula.slice(call.start, call.end)
+    const canonical = call.name.toUpperCase()
+    if (call.marked) {
+      out += token
+    } else if (XLWS_FUNCTIONS.has(canonical)) {
+      out += `_xlfn._xlws.${canonical}`
+    } else if (XLFN_FUNCTIONS.has(canonical)) {
+      out += `_xlfn.${canonical}`
+    } else {
+      out += token
+    }
+    cursor = call.end
   }
-  return segments.join('"')
+  return out + formula.slice(cursor)
 }

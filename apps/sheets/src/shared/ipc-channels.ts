@@ -47,18 +47,56 @@ export const HEADER_FOOTER_PICTURE_POSITION = /^[LCR][HF](EVEN|FIRST)?$/
 
 export const IPC_CHANNELS = {
   selectWorkbook: 'workbook:select',
+  openEncryptedWorkbook: 'workbook:open-encrypted',
+  updateWorkbookPassword: 'workbook:update-password',
   /** Multi-file picker + sidecar sessions for merging into the current workbook */
   selectWorkbooksForMerge: 'workbook:select-for-merge',
   /** Open explicit paths (chat attachments) as merge-source sessions — no dialog */
   openWorkbooksForMerge: 'workbook:open-for-merge',
   readWorkbookRange: 'workbook:read-range',
   readWorkbookFormulas: 'workbook:read-formulas',
+  /** Sidecar-side Find over the file's chunk index (streamed workbooks) */
+  findWorkbookCells: 'workbook:find-cells',
+  /// The sidecar process died; every session id the renderer holds is gone.
+  /// A positive crash signal, so recovery never has to infer a crash from a
+  /// session guard's error text (the Save swap and closeWorkbook reject ids
+  /// with that same text on purpose).
+  sidecarCrashed: 'workbook:sidecar-crashed',
+  /// Re-open an already-known path through the normal open path (the same
+  /// pipeline selectWorkbook runs), for recovering from a sidecar crash.
+  reopenWorkbook: 'workbook:reopen',
+  readWorkbookRowOutline: 'workbook:read-row-outline',
   recalcWorkbook: 'workbook:recalc',
+  listExternalLinks: 'workbook:list-external-links',
+  updateExternalLinks: 'workbook:update-external-links',
+  readExternalLinkUsage: 'workbook:read-external-link-usage',
+  selectExternalLinkSource: 'workbook:select-external-link-source',
+  /// Cross-workbook range picking (hermesoffice#2109): the tab editing a formula
+  /// arms a pick, the user clicks a range in another workbook's tab, main
+  /// relays the selection back and re-activates the editing tab.
+  listWorkbookTabs: 'workbook:list-tabs',
+  armWorkbookPick: 'workbook:pick-arm',
+  sendWorkbookPickSelection: 'workbook:pick-select',
+  cancelWorkbookPick: 'workbook:pick-cancel',
+  workbookPickArmed: 'workbook:pick-armed',
+  workbookPickSelected: 'workbook:pick-selected',
+  workbookPickCancelled: 'workbook:pick-cancelled',
+  revealLinkSource: 'shell:reveal-link-source',
   readWorkbookMedia: 'workbook:read-media',
   readPivotDefinition: 'workbook:read-pivot-definition',
+  /** Slicer/timeline controls the file carries (xl/slicers, xl/timelines) */
+  readSlicerState: 'workbook:read-slicer-state',
+  /** The cells the reader withheld from the model (xl/gxRedactions.json) */
+  readWorkbookRedactions: 'workbook:read-redactions',
+  /** Data › Queries & Connections: the workbook's connections, read-only (xl/connections.xml) */
+  readWorkbookQueries: 'workbook:read-queries',
   readLocalImage: 'shell:read-local-image',
   closeWorkbook: 'workbook:close',
   saveWorkbook: 'workbook:save',
+  /** The workbook's refreshable data connections (web queries for now). */
+  listWorkbookConnections: 'workbook:list-connections',
+  /** Fetch a web query's table; main resolves the URL from the connection id. */
+  refreshWorkbookConnection: 'workbook:refresh-connection',
   /** Chunked upload of a large save's cell edits, consumed by the next save */
   saveEditsBegin: 'workbook:save-edits-begin',
   saveEditsChunk: 'workbook:save-edits-chunk',
@@ -75,14 +113,18 @@ export const IPC_CHANNELS = {
   closeSaveResult: 'workbook:close-save-result',
   exportPdf: 'workbook:export-pdf',
   printWorkbook: 'workbook:print',
+  listPrinters: 'workbook:list-printers',
   exportCsv: 'workbook:export-csv',
   csvSaveConfirm: 'workbook:csv-save-confirm',
   /** AI create_document: new standalone file in the default folder (no dialog) */
   createDocument: 'workbook:create-document',
   openExternal: 'shell:open-external',
   menuAction: 'menu:action',
+  userDisplayName: 'user:display-name',
   aiGetSettings: 'ai:get-settings',
   aiSetSettings: 'ai:set-settings',
+  aiSettingsChanged: 'ai:settings-changed',
+  aiOpenModelSettings: 'ai:open-model-settings',
   aiChat: 'ai:chat',
   aiStream: 'ai:stream',
   aiStreamCancel: 'ai:stream-cancel',

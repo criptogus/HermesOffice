@@ -62,7 +62,7 @@ describe('docStyleCss header/footer strips under a typed grid', () => {
 
   it('declares the document line factor on .page-wrap for the canvas strips', () => {
     const css = docStyleCss(parsedWith(null))
-    const wrap = /\.page-wrap \{ --doc-line-factor:([0-9.]+) \}/.exec(css)
+    const wrap = /\.page-wrap \{ --doc-line-factor:([0-9.]+);/.exec(css)
     const page = /\.doc-page, \.pv-page \{[^}]*--doc-line-factor:([0-9.]+)/.exec(css)
     expect(wrap?.[1]).toBeDefined()
     expect(wrap?.[1]).toBe(page?.[1])
@@ -71,5 +71,22 @@ describe('docStyleCss header/footer strips under a typed grid', () => {
   it('emits no strip override without a typed grid', () => {
     const css = docStyleCss(parsedWith(null))
     expect(css).not.toContain('.doc-page .page-hf')
+  })
+})
+
+describe('docStyleCss glyph shift off the typed grid', () => {
+  it('releases the grid centering in table cells and strips', () => {
+    const css = docStyleCss(parsedWith(GRID_SECT))
+    expect(css).toContain(
+      '.doc-page .doc-table :is(td, th), .doc-page .doc-table :is(td, th) *, .doc-page .page-hf, .doc-page .page-hf * { --doc-lead-grid:0 }',
+    )
+  })
+
+  it('keeps cells centred like the body when adjustLineHeightInTable snaps them', () => {
+    const parsed = parsedWith(GRID_SECT)
+    ;(parsed as unknown as { adjustLineHeightInTable: boolean }).adjustLineHeightInTable = true
+    const css = docStyleCss(parsed)
+    expect(css).toContain('.doc-page .page-hf, .doc-page .page-hf * { --doc-lead-grid:0 }')
+    expect(css).not.toContain('.doc-table :is(td, th) * { --doc-lead-grid:0 }')
   })
 })

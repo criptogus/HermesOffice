@@ -296,6 +296,9 @@ export function evaluateArithmetic(expression: string): number | null {
 /// three-color midpoint, an even percent split for icon sets.
 export function defaultThreshold(ruleType: string, index: number, count: number): ScaleCfvo {
   if (index <= 0) return { kind: 'min' }
+  // A malformed rule can carry count <= 0: (index*100)/count would emit
+  // Infinity/NaN percent stops into Univer, so fall back to min.
+  if (!Number.isInteger(count) || count <= 0) return { kind: 'min' }
   if (ruleType === 'iconSet') {
     return { kind: 'percent', value: String(Math.round((index * 100) / count)) }
   }

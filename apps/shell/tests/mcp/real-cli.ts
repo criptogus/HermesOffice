@@ -11,7 +11,7 @@ import type {
  *
  * This is the counterpart to `fakeCli`: it exercises the actual argv contract
  * (the flags the MCP tools build against the real commands) without spawning a
- * process or depending on a built `dist/genoffice.cjs`, so it works in CI under
+ * process or depending on a built `dist/hermesoffice.cjs`, so it works in CI under
  * plain `npm test`. It captures the CLI's `--json` stdout and maps it to the
  * same outcome shape the spawn runner returns.
  */

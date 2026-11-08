@@ -1,5 +1,6 @@
 import {
   DOCX_MEDIA_SCHEME_PRIVILEGE,
+  SLIDE_MEDIA_SCHEME_PRIVILEGE,
   RENDERER_SCHEME_PRIVILEGE,
 } from '@hermesoffice/electron-utils'
 import { protocol } from 'electron'
@@ -14,6 +15,7 @@ export function registerPrivilegedSchemes(): void {
   protocol.registerSchemesAsPrivileged([
     RENDERER_SCHEME_PRIVILEGE,
     DOCX_MEDIA_SCHEME_PRIVILEGE,
+    SLIDE_MEDIA_SCHEME_PRIVILEGE,
     {
       scheme: PREVIEW_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },

@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { parseFileToText } from '../src/index'
 import { pptxToText } from '../src/pptx'
-import { normalizeXlsxRelTarget, xlsxToText } from '../src/xlsx'
+import { xlsxToText } from '../src/xlsx'
+import { resolveTarget } from '../src/opc'
 import {
   buildDocxFixture,
+  buildPdfFixture,
   buildPptxFixture,
   buildXlsxFixture,
   writeFixture,
@@ -14,6 +16,40 @@ import {
 function legacyFixture(name: string): string {
   return fileURLToPath(new URL(`fixtures/${name}`, import.meta.url))
 }
+
+describe('parseFileToText: magic-byte sniffing', () => {
+  it('rejects a ZIP named .pdf with a content-mismatch error', async () => {
+    const zip = new JSZip()
+    zip.file('test.txt', 'hello')
+    const path = writeFixture('fake.pdf', await zip.generateAsync({ type: 'uint8array' }))
+    const result = await parseFileToText(path)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('Content mismatch')
+  })
+
+  it('rejects a PDF named .docx with a content-mismatch error', async () => {
+    const path = writeFixture('fake.docx', buildPdfFixture('hello'))
+    const result = await parseFileToText(path)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('Content mismatch')
+  })
+
+  it('parses DOCX bytes saved under a .doc name', async () => {
+    const path = writeFixture('docx-as.doc', await buildDocxFixture())
+    const result = await parseFileToText(path)
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('hello docx')
+  })
+
+  it('still rejects a ZIP named .ppt with a content-mismatch error', async () => {
+    const zip = new JSZip()
+    zip.file('test.txt', 'hello')
+    const path = writeFixture('fake.ppt', await zip.generateAsync({ type: 'uint8array' }))
+    const result = await parseFileToText(path)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('Content mismatch')
+  })
+})
 
 describe('parseFileToText: doc', () => {
   it('extracts body text from a Word 97-2003 document', async () => {
@@ -106,6 +142,41 @@ describe('parseFileToText: pptx', () => {
     expect(result.text).toContain('## Slide 10\nSummary Slide')
   })
 
+  it('accepts arbitrary namespace prefixes for presentation and slide parts', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      '<p-x:presentation xmlns:p-x="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:rel-x="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<p-x:sldIdLst><p-x:sldId id="not-rel-1" rel-x:id="rId1"/>' +
+        '<p-x:sldId rel-x:id="rId2" id="not-rel-2"/>' +
+        '</p-x:sldIdLst></p-x:presentation>',
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      '<rel-p:Relationships xmlns:rel-p="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<rel-p:Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>' +
+        '<rel-p:Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>' +
+        '</rel-p:Relationships>',
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<s-x:sld xmlns:s-x="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:t-x="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+        '<s-x:cSld><s-x:spTree><s-x:sp><s-x:txBody><t-x:p><t-x:r><t-x:t>Prefixed text</t-x:t>' +
+        '</t-x:r></t-x:p></s-x:txBody></s-x:sp></s-x:spTree></s-x:cSld></s-x:sld>',
+    )
+    zip.file(
+      'ppt/slides/slide2.xml',
+      '<s-x:sld xmlns:s-x="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:w-x="http://schemas.openxmlformats.org/presentationml/2006/main">' +
+        '<s-x:cSld><s-x:spTree><w-x:pic/><w-x:pic/></s-x:spTree></s-x:cSld></s-x:sld>',
+    )
+    const text = await pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('## Slide 1\nPrefixed text')
+    expect(text).toContain('## Slide 2\n[picture-only slide: 2 images, no extractable text]')
+  })
+
   it('keeps run text verbatim: leading zeros and the spaces between runs', async () => {
     const path = writeFixture('deck.pptx', await buildPptxFixture())
     const result = await parseFileToText(path)
@@ -130,6 +201,51 @@ describe('parseFileToText: pptx', () => {
     expect(result.text).not.toContain('authoring note')
   })
 
+  const PIC_SLIDE =
+    '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<p:cSld><p:spTree>' +
+    '<p:pic><p:blipFill><a:blip r:embed="rId2"/></p:blipFill></p:pic>' +
+    '<p:grpSp><p:pic><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic></p:grpSp>' +
+    '<p:sp><p:txBody><a:p><a:endParaRPr/></a:p></p:txBody></p:sp>' +
+    '</p:spTree></p:cSld></p:sld>'
+
+  it('marks picture-only slides instead of emitting a bare heading', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+        '<p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Agenda</a:t></a:r></a:p>' +
+        '</p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    )
+    zip.file('ppt/slides/slide2.xml', PIC_SLIDE)
+    const text = await pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('## Slide 1\nAgenda')
+    expect(text).toContain('## Slide 2\n[picture-only slide: 2 images, no extractable text]')
+    expect(text).not.toContain('No extractable text')
+  })
+
+  it('leads with a deck-level note when every slide is picture-only', async () => {
+    const zip = new JSZip()
+    zip.file('ppt/slides/slide1.xml', PIC_SLIDE)
+    zip.file('ppt/slides/slide2.xml', PIC_SLIDE)
+    const text = await pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text.startsWith('[No extractable text: none of the 2 slides carries text')).toBe(true)
+    expect(text).toContain('## Slide 1\n[picture-only slide: 2 images, no extractable text]')
+  })
+
+  it('leaves a blank slide (no text, no pictures) as a bare heading', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">' +
+        '<p:cSld><p:spTree/></p:cSld></p:sld>',
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe('## Slide 1')
+  })
+
   it('keeps a:tab as a tab between runs', async () => {
     const zip = new JSZip()
     zip.file(
@@ -143,6 +259,64 @@ describe('parseFileToText: pptx', () => {
     )
     const bytes = await zip.generateAsync({ type: 'uint8array' })
     expect(await pptxToText(bytes)).toContain('Col1\tCol2')
+  })
+
+  /** minimal slide part: the txBody the walkers read, in the shape tree they walk to find it */
+  function slideXml(body: string): string {
+    return (
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+      'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+      `<p:cSld><p:spTree><p:sp><p:txBody>${body}</p:txBody></p:sp></p:spTree></p:cSld></p:sld>`
+    )
+  }
+
+  /** the two branches of one shape's mc:AlternateContent; no fallback at all when it is omitted */
+  function altContent(choice: string, fallback?: string): string {
+    return (
+      '<mc:AlternateContent>' +
+      `<mc:Choice Requires="a14">${choice}</mc:Choice>` +
+      (fallback === undefined ? '' : `<mc:Fallback>${fallback}</mc:Fallback>`) +
+      '</mc:AlternateContent>'
+    )
+  }
+
+  it('reads one branch of an mc:AlternateContent, never both', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      slideXml(
+        // the branches carry different runs on purpose: identical ones would let a
+        // walker read both without the duplication showing up here
+        `<a:p><a:r><a:t xml:space="preserve">Total: </a:t></a:r>` +
+          altContent('<a:r><a:t>21</a:t></a:r>', '<a:r><a:t>20</a:t></a:r>') +
+          `</a:p>` +
+          // a Choice with no Fallback is the branch a consumer that understands the
+          // required namespaces would take, so it is the text that survives
+          `<a:p>${altContent('<a:r><a:t>ChoiceOnly</a:t></a:r>')}</a:p>` +
+          '<a:p><mc:AlternateContent/></a:p>' +
+          '<a:p><a:r><a:t>Plain</a:t></a:r></a:p>',
+      ),
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe(
+      '## Slide 1\nTotal: 20\nChoiceOnly\nPlain',
+    )
+  })
+
+  it('counts a picture its two branches both carry as the one image', async () => {
+    const zip = new JSZip()
+    zip.file('ppt/slides/slide1.xml', slideXml('<a:p><a:r><a:t>Agenda</a:t></a:r></a:p>'))
+    const pic = '<p:pic><p:blipFill><a:blip r:embed="rId2"/></p:blipFill></p:pic>'
+    zip.file(
+      'ppt/slides/slide2.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+        `<p:cSld><p:spTree>${altContent(pic, pic)}</p:spTree></p:cSld></p:sld>`,
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toContain(
+      '## Slide 2\n[picture-only slide: 1 image, no extractable text]',
+    )
   })
 
   async function presentationFixture(slideIds: string, relationships: string): Promise<JSZip> {
@@ -168,6 +342,127 @@ describe('parseFileToText: pptx', () => {
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"/>'
     )
   }
+
+  function notesSlideXml(body: string[], slideNum: string): string {
+    const paras = (runs: string[]) =>
+      runs.map((t) => `<a:p><a:r><a:t xml:space="preserve">${t}</a:t></a:r></a:p>`).join('')
+    return (
+      '<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ' +
+      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>' +
+      '<p:sp><p:nvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr></p:sp>' +
+      `<p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody>${paras(body)}</p:txBody></p:sp>` +
+      '<p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum" sz="quarter" idx="10"/></p:nvPr></p:nvSpPr>' +
+      `<p:txBody><a:p><a:fld id="{N}" type="slidenum"><a:t>${slideNum}</a:t></a:fld></a:p></p:txBody></p:sp>` +
+      '</p:spTree></p:cSld></p:notes>'
+    )
+  }
+
+  function notesRelationship(target: string): string {
+    return (
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      `<Relationship Id="rId2" Target="${target}" ` +
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"/>' +
+      '</Relationships>'
+    )
+  }
+
+  it('appends speaker notes after each slide and skips the slide-number field', async () => {
+    const zip = await presentationFixture(
+      "<p:sldId id='256' r:id='rId1'/><p:sldId id='257' r:id='rId2'/>",
+      slideRelationship('rId1', 'slides/slide1.xml') +
+        slideRelationship('rId2', 'slides/slide2.xml'),
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      notesRelationship('../notesSlides/notesSlide1.xml'),
+    )
+    zip.file(
+      'ppt/notesSlides/notesSlide1.xml',
+      notesSlideXml(['Remember to greet the audience', 'Mention the Q3 numbers'], '1'),
+    )
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe(
+      '## Slide 1\nProductIntro\nFirst slide subtitle\n### Notes\nRemember to greet the audience\nMention the Q3 numbers' +
+        '\n\n## Slide 2\nMarket Analysis\nOrder 0042',
+    )
+  })
+
+  it('counts notes as text on a slide that otherwise only holds pictures', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'ppt/slides/slide1.xml',
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">' +
+        '<p:cSld><p:spTree><p:pic/></p:spTree></p:cSld></p:sld>',
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      notesRelationship('../notesSlides/notesSlide1.xml'),
+    )
+    zip.file('ppt/notesSlides/notesSlide1.xml', notesSlideXml(['The chart shows revenue'], '1'))
+    expect(await pptxToText(await zip.generateAsync({ type: 'uint8array' }))).toBe(
+      '## Slide 1\n[picture-only slide: 1 image, no extractable text]\n### Notes\nThe chart shows revenue',
+    )
+  })
+
+  it.each([1, 2])(
+    'reads notes inside %i nested shape groups without reading page numbers',
+    async (depth) => {
+      const zip = await JSZip.loadAsync(await buildPptxFixture())
+      zip.file(
+        'ppt/slides/_rels/slide1.xml.rels',
+        notesRelationship('../notesSlides/notesSlide1.xml'),
+      )
+      const xml = notesSlideXml(['Grouped note 0042', 'Second paragraph'], '99')
+        .replace('<p:spTree>', `<p:spTree>${'<p:grpSp>'.repeat(depth)}`)
+        .replace('</p:spTree>', `${'</p:grpSp>'.repeat(depth)}</p:spTree>`)
+      zip.file('ppt/notesSlides/notesSlide1.xml', xml)
+      const text = await pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+      expect(text).toContain('### Notes\nGrouped note 0042\nSecond paragraph')
+      expect(text).not.toContain('99')
+      expect(text.match(/Grouped note 0042/g)).toHaveLength(1)
+    },
+  )
+
+  it('reads one compatibility branch of grouped notes', async () => {
+    const zip = await JSZip.loadAsync(await buildPptxFixture())
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      notesRelationship('../notesSlides/notesSlide1.xml'),
+    )
+    const xml = notesSlideXml(['Fallback notes'], '99')
+      .replace(
+        '<p:spTree>',
+        '<p:spTree><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="p"><p:grpSp/></mc:Choice><mc:Fallback><p:grpSp>',
+      )
+      .replace('</p:spTree>', '</p:grpSp></mc:Fallback></mc:AlternateContent></p:spTree>')
+    zip.file('ppt/notesSlides/notesSlide1.xml', xml)
+    const text = await pptxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('### Notes\nFallback notes')
+    expect(text).not.toContain('99')
+    expect(text.match(/Fallback notes/g)).toHaveLength(1)
+  })
+
+  it.each(['single quotes', 'shape attributes', 'alternate prefixes'])(
+    'reads speaker notes with %s',
+    async (variant) => {
+      const zip = await JSZip.loadAsync(await buildPptxFixture())
+      zip.file(
+        'ppt/slides/_rels/slide1.xml.rels',
+        notesRelationship('../notesSlides/notesSlide1.xml'),
+      )
+      let xml = notesSlideXml(['Discuss revenue &amp; costs', 'Keep 0042 intact'], '1')
+      if (variant === 'single quotes') xml = xml.replaceAll('"', "'")
+      if (variant === 'shape attributes') xml = xml.replaceAll('<p:sp>', '<p:sp useBgFill="0">')
+      if (variant === 'alternate prefixes')
+        xml = xml.replaceAll('p:', 'presentation:').replaceAll('xmlns:p=', 'xmlns:presentation=')
+      zip.file('ppt/notesSlides/notesSlide1.xml', xml)
+      const result = await parseFileToText(
+        writeFixture(`notes-${variant}.pptx`, await zip.generateAsync({ type: 'uint8array' })),
+      )
+      expect(result.ok).toBe(true)
+      expect(result.text).toContain('### Notes\nDiscuss revenue & costs\nKeep 0042 intact')
+      expect(result.text).not.toContain('Keep 0042 intact\n1')
+    },
+  )
 
   it('follows presentation order with positional numbering and excludes orphan slides', async () => {
     const zip = await presentationFixture(
@@ -301,6 +596,50 @@ describe('parseFileToText: xlsx', () => {
     expect(result.text).toContain('\n Alice pts \n #N/A ')
   })
 
+  it('accepts arbitrary namespace prefixes for workbook and drawing parts', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<q:workbook xmlns:q="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<q:sheets><q:sheet name="Data" sheetId="1" id="not-rel-1" rel:id="rId1"/>' +
+        '<q:sheet rel:id="rId2" id="not-rel-2" name="Pictures" sheetId="2"/></q:sheets></q:workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<rel:Relationships xmlns:rel="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<rel:Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '<rel:Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>' +
+        '</rel:Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<q:worksheet xmlns:q="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<q:sheetData><q:row><q:c r="A1"><q:v>7</q:v></q:c></q:row></q:sheetData></q:worksheet>',
+    )
+    zip.file(
+      'xl/worksheets/sheet2.xml',
+      '<q:worksheet xmlns:q="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<q:sheetData/><q:drawing id="not-rel-drawing" rel:id="rId1"/></q:worksheet>',
+    )
+    zip.file(
+      'xl/worksheets/_rels/sheet2.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/drawings/drawing1.xml',
+      '<x-dr:wsDr xmlns:x-dr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">' +
+        '<x-dr:twoCellAnchor><x-dr:pic/></x-dr:twoCellAnchor>' +
+        '<x-dr:twoCellAnchor><x-dr:pic/></x-dr:twoCellAnchor></x-dr:wsDr>',
+    )
+    const text = await xlsxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('# Data\n7')
+    expect(text).toContain('# Pictures\n[image-only sheet: 2 images, no cell data]')
+  })
+
   it('parses .xlsm through the same xlsx path', async () => {
     const path = writeFixture('table.xlsm', await buildXlsxFixture())
     const result = await parseFileToText(path)
@@ -313,6 +652,106 @@ describe('parseFileToText: xlsx', () => {
     const result = await parseFileToText(path)
     expect(result.ok).toBe(false)
     expect(result.error).toBeTruthy()
+  })
+
+  it('marks an image-only sheet and counts the pictures in its drawing part', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="Chart" sheetId="1" r:id="rId1"/><sheet name="Data" sheetId="2" r:id="rId2"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheetData/><drawing r:id="rId1"/></worksheet>',
+    )
+    zip.file(
+      'xl/worksheets/_rels/sheet1.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/drawings/drawing1.xml',
+      '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">' +
+        '<xdr:twoCellAnchor><xdr:pic/></xdr:twoCellAnchor>' +
+        '</xdr:wsDr>',
+    )
+    zip.file(
+      'xl/worksheets/sheet2.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="A1"><v>7</v></c></row></sheetData></worksheet>',
+    )
+    const text = await xlsxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('# Chart\n[image-only sheet: 1 image, no cell data]')
+    expect(text).toContain('# Data\n7')
+    expect(text).not.toContain('No extractable text')
+  })
+
+  it('surfaces formula text for cells without a cached value', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="Calc" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>SUM(A1:A3)</f></c><c r="C1"><f>A1*2</f><v></v></c></row>' +
+        '<row r="2"><c r="A2"><v>2</v></c><c r="B2"><f t="shared" ref="B2:B3" si="0">A2+1</f></c><c r="C2"><f>A2*2</f><v>4</v></c></row>' +
+        '<row r="3"><c r="A3"><v>3</v></c><c r="B3"><f t="shared" si="0"/></c><c r="C3"><f t="shared" ref="C3:C4" si="1">A3*10</f><v>30</v></c></row>' +
+        '<row r="4"><c r="C4"><f t="shared" si="1"/></c></row>' +
+        '</sheetData></worksheet>',
+    )
+    const text = await xlsxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toBe(
+      '# Calc\n1 | =SUM(A1:A3) | =A1*2\n2 | =A2+1 | 4\n3 | =A3+1 | 30\n |  | =A4*10',
+    )
+  })
+
+  it('leads with a workbook-level note when every sheet is image-only', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '</Relationships>',
+    )
+    // no sheet rels at all: the drawing is still reported, just without a count
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t> </t></is></c></row></sheetData>' +
+        '<drawing r:id="rId1"/></worksheet>',
+    )
+    const text = await xlsxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text.startsWith('[No extractable text: none of the 1 sheet holds cell data')).toBe(true)
+    expect(text).toContain('# Sheet1\n \n[image-only sheet: a drawing but no cell data]')
   })
 
   it('reads lowercase cell refs at the right columns', async () => {
@@ -378,8 +817,42 @@ describe('parseFileToText: xlsx', () => {
     )
     const bytes = await zip.generateAsync({ type: 'uint8array' })
     const text = await xlsxToText(bytes)
-    // Only the valid index 0 survives; every malformed shared ref degrades to empty.
-    expect(text).toContain('First |  |  |  |  | ')
+    // Only the valid index 0 survives; every malformed shared ref degrades to
+    // empty, and trailing empty slots are trimmed from the line.
+    expect(text).toContain('First')
+    expect(text).not.toContain('Second')
+    expect(text).not.toMatch(/First \|/)
+    expect(text).not.toMatch(/ \| $/m)
+  })
+
+  it('collapses long empty runs before a far-right cell instead of emitting 16k separators', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c>' +
+        '<c r="XFD1" t="inlineStr"><is><t>z</t></is></c></row>' +
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>b</t></is></c>' +
+        '<c r="D2" t="inlineStr"><is><t>d</t></is></c><c r="XFD2"/></row>' +
+        '</sheetData></worksheet>',
+    )
+    const text = await xlsxToText(await zip.generateAsync({ type: 'uint8array' }))
+    expect(text).toContain('a | (16382 empty) | z')
+    // Short gaps keep their column positions; an empty far cell is dropped.
+    expect(text).toMatch(/^b \| {2}\| {2}\| d$/m)
+    expect(text.length).toBeLessThan(200)
   })
 
   it('appends cells with malformed refs instead of dropping their text', async () => {
@@ -408,6 +881,106 @@ describe('parseFileToText: xlsx', () => {
     const bytes = await zip.generateAsync({ type: 'uint8array' })
     const text = await xlsxToText(bytes)
     expect(text).toContain('ok | orphan')
+  })
+
+  it('keeps an appended cell when a later explicit ref targets its column', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="1"><v>orphan</v></c><c r="A1"><v>late</v></c></row>' +
+        '</sheetData></worksheet>',
+    )
+    const bytes = await zip.generateAsync({ type: 'uint8array' })
+    const text = await xlsxToText(bytes)
+    // A1 claims its declared column; the appended cell keeps its text one to the right
+    expect(text).toContain('late | orphan')
+  })
+
+  it('keeps out-of-order explicit refs in their declared columns', async () => {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    )
+    zip.file(
+      'xl/_rels/workbook.xml.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '</Relationships>',
+    )
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="C1"><v>third</v></c><c r="A1"><v>first</v></c></row>' +
+        '</sheetData></worksheet>',
+    )
+    const bytes = await zip.generateAsync({ type: 'uint8array' })
+    const text = await xlsxToText(bytes)
+    expect(text).toContain('first |  | third')
+    expect(text).not.toContain('| third |')
+  })
+
+  it('keeps both values of a duplicated ref and stays linear on many duplicates', async () => {
+    const sheet = (cells: string) =>
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+      `<row r="1">${cells}</row></sheetData></worksheet>`
+    const build = async (cells: string) => {
+      const zip = new JSZip()
+      zip.file(
+        'xl/workbook.xml',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+          '<sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+      )
+      zip.file(
+        'xl/_rels/workbook.xml.rels',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+          '</Relationships>',
+      )
+      zip.file('xl/worksheets/sheet1.xml', sheet(cells))
+      return zip.generateAsync({ type: 'uint8array' })
+    }
+    const small = await xlsxToText(
+      await build('<c r="A1"><v>x</v></c><c r="A1"><v>y</v></c><c r="C1"><v>c</v></c>'),
+    )
+    expect(small).toContain('y | x |  | c')
+    // An empty duplicate must not wipe the values already stacked in its slot.
+    const stacked = await xlsxToText(
+      await build('<c r="A1"><v>x</v></c><c r="A1"/><c r="A1"><v>y</v></c>'),
+    )
+    expect(stacked).toContain('y | x')
+
+    const many = Array.from({ length: 150_000 }, (_, i) => `<c r="A1"><v>${i}</v></c>`).join('')
+    const started = performance.now()
+    const text = await xlsxToText(await build(many))
+    expect(performance.now() - started).toBeLessThan(8_000)
+    expect(text).toContain('149999 | 149998 | ')
+    expect(text).toMatch(/\| 1 \| 0$/m)
   })
 
   it('clamps wild column refs instead of padding millions of cells', async () => {
@@ -439,14 +1012,76 @@ describe('parseFileToText: xlsx', () => {
     expect(text.length).toBeLessThan(1000)
   })
 
-  it('normalizes workbook rel targets to zip paths', () => {
-    expect(normalizeXlsxRelTarget('worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
-    expect(normalizeXlsxRelTarget('worksheets\\sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
-    expect(normalizeXlsxRelTarget('/xl/worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
-    expect(normalizeXlsxRelTarget('../worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
-    expect(normalizeXlsxRelTarget('../../xl/worksheets/sheet1.xml')).toBe(
-      'xl/worksheets/sheet1.xml',
+  async function workbookZip(rels: string, sheets: string): Promise<Uint8Array> {
+    const zip = new JSZip()
+    zip.file(
+      'xl/workbook.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        `<sheets>${sheets}</sheets></workbook>`,
     )
+    if (rels !== '') zip.file('xl/_rels/workbook.xml.rels', rels)
+    zip.file(
+      'xl/worksheets/sheet1.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' +
+        '<row r="1"><c r="A1"><v>7</v></c></row>' +
+        '</sheetData></worksheet>',
+    )
+    return zip.generateAsync({ type: 'uint8array' })
+  }
+
+  function worksheetRel(id: string, target: string): string {
+    return (
+      `<Relationship Id="${id}" Target="${target}" ` +
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/>'
+    )
+  }
+
+  it('fails with a diagnostic when the workbook rels part is missing', async () => {
+    const bytes = await workbookZip('', '<sheet name="Data" sheetId="1" r:id="rId1"/>')
+    await expect(xlsxToText(bytes)).rejects.toThrow(/xl\/_rels\/workbook\.xml\.rels is missing/)
+    const result = await parseFileToText(writeFixture('norels.xlsx', bytes))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('xl/_rels/workbook.xml.rels is missing')
+  })
+
+  it('fails with a diagnostic when a sheet relationship has an empty target', async () => {
+    const rels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      worksheetRel('rId1', '') +
+      '</Relationships>'
+    const bytes = await workbookZip(rels, '<sheet name="Data" sheetId="1" r:id="rId1"/>')
+    await expect(xlsxToText(bytes)).rejects.toThrow(/resolves to a readable worksheet part/)
+  })
+
+  it('still extracts the resolvable sheets when one relationship target is empty', async () => {
+    const rels =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      worksheetRel('rId1', 'worksheets/sheet1.xml') +
+      worksheetRel('rId2', '   ') +
+      '</Relationships>'
+    const bytes = await workbookZip(
+      rels,
+      '<sheet name="Data" sheetId="1" r:id="rId1"/><sheet name="Broken" sheetId="2" r:id="rId2"/>',
+    )
+    const text = await xlsxToText(bytes)
+    expect(text).toBe('# Data\n7')
+  })
+
+  it('resolves workbook rel targets against xl/workbook.xml', () => {
+    const wb = (t: string) => resolveTarget('xl/workbook.xml', t)
+    expect(wb('worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
+    expect(wb('worksheets\\sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
+    expect(wb('/xl/worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
+    // a backslash-rooted target is still root-anchored: the root test has to
+    // run on the normalized string, or it resolves relative and the part is lost
+    expect(wb('\\xl\\worksheets\\sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
+    expect(wb('../customXml/item1.xml')).toBe('customXml/item1.xml')
+    expect(wb('../../xl/worksheets/sheet1.xml')).toBe('xl/worksheets/sheet1.xml')
   })
 
   it('resolves sheets through backslash rel targets from Windows producers', async () => {

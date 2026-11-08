@@ -1,7 +1,22 @@
-import { chmodSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { defaultCandidateDirs, inspectCliLink, installCliLink } from '../src/install'
+import {
+  defaultCandidateDirs,
+  homebrewBinDirs,
+  inspectCliLink,
+  installCliLink,
+  isOurLauncher,
+  pathHint,
+} from '../src/install'
 import { tempDir } from './helpers'
 
 describe('installCliLink', () => {
@@ -26,19 +41,6 @@ describe('installCliLink', () => {
     })
   })
 
-  it('does not take ownership of an upstream GenOffice launcher', () => {
-    const dir = tempDir()
-    const bin = join(dir, 'bin')
-    mkdirSync(bin)
-    const foreign = join(dir, 'GenOffice.app', 'Contents', 'Resources', 'cli', 'genoffice')
-    symlinkSync(foreign, join(bin, 'hermesoffice'))
-    expect(
-      installCliLink({ launcher: '/our/cli/hermesoffice', platform: 'linux', candidateDirs: [bin] })
-        .status,
-    ).toBe('occupied')
-    expect(readlinkSync(join(bin, 'hermesoffice'))).toBe(foreign)
-  })
-
   it('replaces our stale symlink but never a real file or a foreign symlink, and reports unwritable dirs with a manual command', () => {
     const dir = tempDir()
     const bin = join(dir, 'bin')
@@ -58,6 +60,8 @@ describe('installCliLink', () => {
     const npm = join(dir, 'npm-bin')
     mkdirSync(npm)
     const npmTarget = join(dir, 'lib', 'node_modules', 'hermesoffice', 'bin', 'hermesoffice.js')
+    mkdirSync(join(npmTarget, '..'), { recursive: true })
+    writeFileSync(npmTarget, '')
     symlinkSync(npmTarget, join(npm, 'hermesoffice'))
     expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [npm] }).status).toBe(
       'occupied',
@@ -103,6 +107,63 @@ describe('installCliLink', () => {
     }
   })
 
+  it('owns only launchers shipped with the app, not any path ending in /cli/hermesoffice (hermesoffice#895)', () => {
+    const dir = tempDir()
+    const launcher = join(dir, 'HermesOffice.app', 'Contents', 'Resources', 'cli', 'hermesoffice')
+    mkdirSync(join(launcher, '..'), { recursive: true })
+    writeFileSync(launcher, '#!/bin/sh\n')
+    writeFileSync(join(launcher, '..', 'hermesoffice.cjs'), '')
+
+    const vendor = join(dir, 'opt', 'vendor', 'cli', 'hermesoffice')
+    mkdirSync(join(vendor, '..'), { recursive: true })
+    writeFileSync(vendor, '#!/bin/sh\necho vendor\n')
+    expect(isOurLauncher(vendor, launcher)).toBe(false)
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    symlinkSync(vendor, join(bin, 'hermesoffice'))
+    expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [bin] })).toEqual({
+      status: 'occupied',
+      location: join(bin, 'hermesoffice'),
+      manual: expect.any(String),
+    })
+    expect(readlinkSync(join(bin, 'hermesoffice'))).toBe(vendor)
+    expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: [bin] }).status).toBe(
+      'occupied',
+    )
+
+    const dead = join(dir, 'dead-bin')
+    mkdirSync(dead)
+    symlinkSync(join(dir, 'gone', 'cli', 'hermesoffice'), join(dead, 'hermesoffice'))
+    expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [dead] }).status).toBe(
+      'linked',
+    )
+    expect(readlinkSync(join(dead, 'hermesoffice'))).toBe(launcher)
+
+    const older = join(dir, 'opt', 'HermesOffice', 'resources', 'cli', 'hermesoffice')
+    mkdirSync(join(older, '..'), { recursive: true })
+    writeFileSync(older, '#!/bin/sh\n')
+    writeFileSync(join(older, '..', 'hermesoffice.cjs'), '')
+    expect(isOurLauncher(older, launcher)).toBe(true)
+    const upgraded = join(dir, 'upgraded-bin')
+    mkdirSync(upgraded)
+    symlinkSync(older, join(upgraded, 'hermesoffice'))
+    expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [upgraded] }).status).toBe(
+      'linked',
+    )
+    expect(readlinkSync(join(upgraded, 'hermesoffice'))).toBe(launcher)
+
+    const alias = join(dir, 'Applications')
+    symlinkSync(join(dir, 'HermesOffice.app'), alias, 'dir')
+    const viaAlias = join(alias, 'Contents', 'Resources', 'cli', 'hermesoffice')
+    expect(isOurLauncher(viaAlias, launcher)).toBe(true)
+    const relative = join(dir, 'relative-bin')
+    mkdirSync(relative)
+    symlinkSync(join('..', 'opt', 'vendor', 'cli', 'hermesoffice'), join(relative, 'hermesoffice'))
+    expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [relative] }).status).toBe(
+      'occupied',
+    )
+  })
+
   it('reports a missing /usr/local/bin as unwritable instead of skipping it', () => {
     const dir = tempDir()
     const launcher = join(dir, 'hermesoffice')
@@ -127,6 +188,72 @@ describe('installCliLink', () => {
     expect(inspectCliLink({ launcher, platform: 'darwin', candidateDirs: [absent] }).status).toBe(
       'unwritable',
     )
+  })
+
+  it('falls back to $XDG_BIN_HOME, then ~/.local/bin, when the system dirs refuse (hermesoffice#1019)', () => {
+    const home = tempDir()
+    expect(defaultCandidateDirs('linux', { HOME: home })).toEqual([
+      '/usr/local/bin',
+      join(home, '.local', 'bin'),
+    ])
+    expect(defaultCandidateDirs('darwin', { HOME: home, XDG_BIN_HOME: join(home, 'bin') })).toEqual(
+      ['/usr/local/bin', join(home, 'bin'), join(home, '.local', 'bin')],
+    )
+    expect(defaultCandidateDirs('linux', { HOME: home, XDG_BIN_HOME: 'relative/bin' })).toEqual([
+      '/usr/local/bin',
+      join(home, '.local', 'bin'),
+    ])
+
+    const launcher = join(home, 'app', 'hermesoffice')
+    mkdirSync(join(home, 'app'))
+    writeFileSync(launcher, '#!/bin/sh\n')
+    const locked = join(home, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o555)
+    const userBin = join(home, '.local', 'bin')
+    const env = { HOME: home, PATH: '/usr/bin:/bin' }
+    const dirs = [locked, userBin]
+    try {
+      if (process.getuid?.() === 0) return
+      expect(inspectCliLink({ launcher, platform: 'linux', candidateDirs: dirs, env })).toEqual({
+        status: 'missing',
+        location: join(userBin, 'hermesoffice'),
+        manual: expect.stringContaining('sudo'),
+        pathHint: 'export PATH="$HOME/.local/bin:$PATH"',
+      })
+      expect(existsSync(userBin)).toBe(false)
+      expect(installCliLink({ launcher, platform: 'linux', candidateDirs: dirs, env })).toEqual({
+        status: 'linked',
+        location: join(userBin, 'hermesoffice'),
+        pathHint: 'export PATH="$HOME/.local/bin:$PATH"',
+      })
+      expect(readlinkSync(join(userBin, 'hermesoffice'))).toBe(launcher)
+      const onPath = { ...env, PATH: `${userBin}/:${env.PATH}` }
+      expect(
+        installCliLink({ launcher, platform: 'linux', candidateDirs: dirs, env: onPath }),
+      ).toEqual({ status: 'present', location: join(userBin, 'hermesoffice') })
+      // an explicit non-user dir never gets created or a PATH hint
+      const absent = join(home, 'no-such-bin')
+      expect(installCliLink({ launcher, platform: 'linux', candidateDirs: [absent], env })).toEqual(
+        {
+          status: 'unwritable',
+          location: join(absent, 'hermesoffice'),
+          manual: expect.any(String),
+        },
+      )
+      expect(existsSync(absent)).toBe(false)
+    } finally {
+      chmodSync(locked, 0o755)
+    }
+  })
+
+  it('writes the PATH hint only for directories the shell does not already search', () => {
+    expect(pathHint('/home/u/.local/bin', { HOME: '/home/u', PATH: '/usr/bin' })).toBe(
+      'export PATH="$HOME/.local/bin:$PATH"',
+    )
+    expect(pathHint('/opt/bin', { HOME: '/home/u', PATH: '/usr/bin:/opt/bin' })).toBeUndefined()
+    expect(pathHint('/opt/bin', { HOME: '/home/u', PATH: '/opt/bin/' })).toBeUndefined()
+    expect(pathHint('/opt/bin', { HOME: '/home/u', PATH: '' })).toBe('export PATH="/opt/bin:$PATH"')
   })
 
   it('edits the user PATH on Windows without expanding existing entries', () => {
@@ -176,5 +303,86 @@ describe('installCliLink', () => {
     })
     expect(missing.status).toBe('missing')
     expect(missing.manual).toContain('SetEnvironmentVariable')
+  })
+})
+
+describe('the Homebrew prefix is never written uninvited (hermesoffice#1914)', () => {
+  const none = () => false
+
+  it('never offers /opt/homebrew/bin, and keeps the user directory', () => {
+    const home = tempDir()
+    const xdg = join(home, 'bin')
+    for (const platform of ['darwin', 'linux'] as const) {
+      const dirs = defaultCandidateDirs(platform, { HOME: home, XDG_BIN_HOME: xdg }, none)
+      expect(
+        dirs.some((d) => /homebrew/i.test(d)),
+        `${platform}: ${dirs.join()}`,
+      ).toBe(false)
+      expect(dirs).toContain(xdg)
+    }
+  })
+
+  it('drops /usr/local/bin when it is a classic Intel Homebrew prefix, by env or by bin/brew', () => {
+    const home = tempDir()
+    const env = { HOME: home }
+    expect(defaultCandidateDirs('darwin', env, none)[0]).toBe('/usr/local/bin')
+    expect(
+      defaultCandidateDirs('darwin', { ...env, HOMEBREW_PREFIX: '/usr/local/' }, none),
+    ).toEqual([join(home, '.local', 'bin')])
+    const intelBrew = (p: string) => p === '/usr/local/bin/brew'
+    expect(defaultCandidateDirs('darwin', env, intelBrew)).toEqual([join(home, '.local', 'bin')])
+    // Apple Silicon brew lives in /opt/homebrew: /usr/local/bin is still fine
+    const armBrew = (p: string) => p === '/opt/homebrew/bin/brew'
+    expect(defaultCandidateDirs('darwin', env, armBrew)[0]).toBe('/usr/local/bin')
+    expect(homebrewBinDirs('darwin', env, armBrew)).toEqual(['/opt/homebrew/bin'])
+    expect(defaultCandidateDirs('linux', { ...env, HOMEBREW_PREFIX: 'relative' }, none)[0]).toBe(
+      '/usr/local/bin',
+    )
+  })
+
+  it('does not break the unwritable report when the only system dir was the brew prefix', () => {
+    const home = tempDir()
+    const launcher = join(home, 'app', 'hermesoffice')
+    mkdirSync(join(home, 'app'))
+    writeFileSync(launcher, '#!/bin/sh\n')
+    const r = installCliLink({
+      launcher,
+      platform: 'darwin',
+      env: { HOME: home, HOMEBREW_PREFIX: '/usr/local' },
+      candidateDirs: defaultCandidateDirs(
+        'darwin',
+        { HOME: home, HOMEBREW_PREFIX: '/usr/local' },
+        none,
+      ),
+    })
+    expect(r.status).toBe('linked')
+    expect(r.location).toBe(join(home, '.local', 'bin', 'hermesoffice'))
+  })
+  it('leaves a Homebrew-prefix directory alone even when it is the one writable', () => {
+    // the shape that produced the report: every system dir is unwritable, and
+    // the first directory the old walk found writable was the brew prefix
+    const home = tempDir()
+    const locked = join(home, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o555)
+    const launcher = join(home, 'app', 'hermesoffice')
+    mkdirSync(join(home, 'app'))
+    writeFileSync(launcher, '#!/bin/sh\n')
+    const userBin = join(home, '.local', 'bin')
+    try {
+      const r = installCliLink({
+        launcher,
+        platform: 'linux',
+        env: { HOME: home },
+        // stand in for the brew prefix: writable, and not one of ours
+        candidateDirs: [locked, userBin],
+      })
+      expect(r.status).toBe('linked')
+      expect(r.location).toBe(join(userBin, 'hermesoffice'))
+      // nothing landed anywhere but the directory we were told to consider
+      expect(existsSync(join(userBin, 'hermesoffice'))).toBe(true)
+    } finally {
+      chmodSync(locked, 0o755)
+    }
   })
 })

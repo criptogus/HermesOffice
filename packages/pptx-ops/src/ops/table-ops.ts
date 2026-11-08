@@ -31,6 +31,39 @@ import type { EditParagraph } from '../types'
 import { applyEditParagraphs, collectParagraphFormatPatches } from '../edit-text'
 import { GuidedError, register, resolveElement, type Op, type OpRecord } from './registry'
 
+/** PowerPoint's line weight ceiling. */
+const MAX_BORDER_WIDTH_PT = 1584
+
+/** Per-edit cell targets accepted by setTableStyle (a table is at most 50x50). */
+const MAX_TABLE_STYLE_CELLS = 4096
+
+function resolveStyleCells(raw: unknown): TableStyleEdit['cells'] | undefined {
+  if (raw == null) return undefined
+  if (!Array.isArray(raw)) {
+    throw new GuidedError(
+      'op "setTableStyle": cells must be an array of { "row": number, "col": number } pairs.',
+    )
+  }
+  if (raw.length > MAX_TABLE_STYLE_CELLS) {
+    throw new GuidedError(
+      `op "setTableStyle": cells takes at most ${MAX_TABLE_STYLE_CELLS} entries, got ${raw.length}.`,
+    )
+  }
+  return raw.map((entry, i) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new GuidedError(`op "setTableStyle": cells[${i}] must be a { row, col } object.`)
+    }
+    const { row, col } = entry as { row?: unknown; col?: unknown }
+    if (!Number.isInteger(row) || !Number.isInteger(col)) {
+      throw new GuidedError(`op "setTableStyle": cells[${i}] row and col must be integers.`)
+    }
+    if ((row as number) < 0 || (col as number) < 0) {
+      throw new GuidedError(`op "setTableStyle": cells[${i}] row and col must be >= 0.`)
+    }
+    return { row: row as number, col: col as number }
+  })
+}
+
 register({
   name: 'setTableCell',
   validate(op, ctx) {
@@ -256,18 +289,18 @@ function resolveTableStyle(op: Op): ResolvedTableStyle {
   if (
     op.shadingColor != null &&
     op.shadingColor !== 'none' &&
-    !HEX_RE.test(String(op.shadingColor))
+    !HEX_RE.test(String(op.shadingColor).trim())
   ) {
     throw new GuidedError('op "setTableStyle": shadingColor must be #RRGGBB or "none".')
   }
-  if (op.borderColor != null && !HEX_RE.test(String(op.borderColor))) {
+  if (op.borderColor != null && !HEX_RE.test(String(op.borderColor).trim())) {
     throw new GuidedError('op "setTableStyle": borderColor must be #RRGGBB.')
   }
   if (op.borderWidthPt != null) {
     const w = Number(op.borderWidthPt)
-    if (!Number.isFinite(w) || w <= 0 || w > 12) {
+    if (!Number.isFinite(w) || w <= 0 || w > MAX_BORDER_WIDTH_PT) {
       throw new GuidedError(
-        'op "setTableStyle": borderWidthPt must be a finite number > 0 and <= 12.',
+        'op "setTableStyle": borderWidthPt must be a finite number > 0 and <= 1584.',
       )
     }
   }
@@ -286,13 +319,13 @@ function resolveTableStyle(op: Op): ResolvedTableStyle {
       ...(op.bandCol != null ? { bandCol: Boolean(op.bandCol) } : {}),
       ...(op.bandRow != null ? { bandRow: Boolean(op.bandRow) } : {}),
       ...(op.rtl != null ? { rtl: Boolean(op.rtl) } : {}),
-      ...(op.shadingColor != null ? { shadingColor: String(op.shadingColor) } : {}),
-      ...(op.borderColor != null ? { borderColor: String(op.borderColor) } : {}),
+      ...(op.shadingColor != null ? { shadingColor: String(op.shadingColor).trim() } : {}),
+      ...(op.borderColor != null ? { borderColor: String(op.borderColor).trim() } : {}),
       ...(op.borderWidthPt != null
         ? { borderWidthEmu: Math.round(Number(op.borderWidthPt) * EMU_PER_PT) }
         : {}),
       ...(op.borderPreset != null ? { borderPreset: op.borderPreset as 'all' | 'none' } : {}),
-      ...(op.cells != null ? { cells: op.cells as TableStyleEdit['cells'] } : {}),
+      ...(op.cells != null ? { cells: resolveStyleCells(op.cells) } : {}),
     },
   }
 }

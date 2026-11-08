@@ -1,9 +1,106 @@
 import type { AgentToolCall } from '@hermesoffice/agent-core'
+import type { AiTokenUsage } from '../types'
+
+// ---- endpoint URL composition ----
+
+/**
+ * Append a provider endpoint path to a base URL without string concatenation.
+ *
+ * A custom base URL may carry a query string (Azure-style `?api-version=…`,
+ * gateways that pin a version) and a fragment. Concatenating would push the
+ * path into the query component, so the request 404s or lands on the wrong
+ * route. Setting `pathname` keeps the query in place and the fragment is
+ * dropped — it is never sent to the server anyway.
+ */
+export function endpointUrl(baseUrl: string, path: string, search?: string): string {
+  const url = new URL(baseUrl)
+  const base = url.pathname.replace(/\/+$/, '')
+  const suffix = path.replace(/^\/+/, '')
+  url.pathname = suffix ? `${base}/${suffix}` : base
+  url.hash = ''
+  if (search !== undefined) url.search = search
+  return url.toString()
+}
 
 // ---- streaming (SSE line splitting shared by all providers) ----
 
 /** Max buffered SSE line: a gateway sending GB without newline would OOM main. */
 export const MAX_SSE_LINE_BYTES = 4 * 1024 * 1024
+export const MAX_RESPONSE_BODY_BYTES = MAX_SSE_LINE_BYTES
+
+export class ResponseBodyTooLargeError extends Error {
+  constructor(
+    readonly receivedBytes: number,
+    readonly capBytes: number,
+  ) {
+    super(`Response body exceeded the ${capBytes}-byte limit (${receivedBytes} bytes)`)
+    this.name = 'ResponseBodyTooLargeError'
+  }
+}
+
+export interface CappedReadOptions {
+  maxBytes?: number
+  onBytes?: () => void
+  /** `truncate` keeps what fit under the cap and never throws (error-body diagnostics). */
+  onOverflow?: 'throw' | 'truncate'
+}
+
+export async function readCappedResponseText(
+  response: Response,
+  options: (() => void) | CappedReadOptions = {},
+): Promise<string> {
+  const opts = typeof options === 'function' ? { onBytes: options } : options
+  const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BODY_BYTES
+  const truncate = opts.onOverflow === 'truncate'
+  const declaredBytes = Number(response.headers.get('content-length'))
+  if (!truncate && Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    if (response.body) await response.body.cancel().catch(() => undefined)
+    throw new ResponseBodyTooLargeError(declaredBytes, maxBytes)
+  }
+  if (!response.body) return ''
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      opts.onBytes?.()
+      const total = bytes + value.byteLength
+      if (truncate && total >= maxBytes) {
+        text += decoder.decode(value.subarray(0, maxBytes - bytes), { stream: true })
+        break
+      }
+      if (total > maxBytes) throw new ResponseBodyTooLargeError(total, maxBytes)
+      bytes += value.byteLength
+      text += decoder.decode(value, { stream: true })
+    }
+    return text + decoder.decode()
+  } catch (err) {
+    // truncate mode reports whatever arrived: the caller is already reporting the status
+    if (!truncate) throw err
+    return text + decoder.decode()
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+}
+
+/** Flatten an OpenAI `content` field to text: gateways may answer with a string or an array of parts. */
+export function openAiContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        const text = (part as { text?: unknown } | null)?.text
+        return typeof text === 'string' ? text : ''
+      })
+      .join('')
+  }
+  return ''
+}
 
 export async function* sseLines(
   body: NodeJS.ReadableStream | ReadableStream<Uint8Array>,
@@ -11,6 +108,7 @@ export async function* sseLines(
 ): AsyncGenerator<string> {
   const decoder = new TextDecoder()
   let buffer = ''
+  let lineBytes = 0
   const stream = body as ReadableStream<Uint8Array>
   const reader = stream.getReader()
   try {
@@ -18,12 +116,19 @@ export async function* sseLines(
       const { done, value } = await reader.read()
       if (done) break
       onBytes?.()
-      buffer += decoder.decode(value, { stream: true })
-      if (buffer.length > MAX_SSE_LINE_BYTES) {
-        throw new Error(
-          `SSE line exceeded buffer limit (${buffer.length} chars, cap ${MAX_SSE_LINE_BYTES}); the gateway sent a line without newline.`,
-        )
+      for (const byte of value) {
+        if (byte === 0x0a) {
+          lineBytes = 0
+          continue
+        }
+        lineBytes++
+        if (lineBytes > MAX_SSE_LINE_BYTES) {
+          throw new Error(
+            `SSE line exceeded buffer limit (${lineBytes} bytes, cap ${MAX_SSE_LINE_BYTES}); the gateway sent a line without newline.`,
+          )
+        }
       }
+      buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) yield line
@@ -51,6 +156,75 @@ export async function* sseLines(
  * cancels the underlying stream on the way out.
  */
 export const MAX_TOOL_JSON_CHARS = 512_000
+
+export interface SseDataEvent {
+  raw: string
+  /** Parsed JSON body, undefined for a non-JSON payload such as `[DONE]` or a keep-alive. */
+  json: unknown
+}
+
+/**
+ * Frames the `data:` payloads of an SSE stream into whole events.
+ *
+ * A server may split one JSON body across several `data:` lines (one event, joined
+ * with a newline), or close every event with a single newline and no blank line at
+ * all. So a value that already parses as JSON is dispatched on its own and only
+ * fragments are held back and joined. The parsed body rides along so callers do
+ * not parse twice. `[DONE]` counts as whole: holding it back as a fragment left a
+ * newline-only stream that keeps its socket open waiting forever.
+ */
+export async function* sseDataEvents(
+  body: NodeJS.ReadableStream | ReadableStream<Uint8Array>,
+  onBytes?: () => void,
+): AsyncGenerator<SseDataEvent> {
+  let parts: string[] = []
+  const flush = (): SseDataEvent | undefined => {
+    if (!parts.length) return undefined
+    const raw = parts.join('\n')
+    parts = []
+    return { raw, json: parseJson(raw) }
+  }
+  for await (const line of sseLines(body, onBytes)) {
+    if (!line.startsWith('data:')) {
+      const held = flush()
+      if (held) yield held
+      continue
+    }
+    const raw = line.slice(5).trim()
+    if (!raw) continue
+    const json = parseJson(raw)
+    if (raw === '[DONE]' || json !== undefined) {
+      const held = flush()
+      if (held) yield held
+      yield { raw, json }
+      continue
+    }
+    // Only a JSON opener starts a fragment; anything else alone is a keep-alive.
+    if (!parts.length && !/^[[{]/.test(raw)) {
+      yield { raw, json }
+      continue
+    }
+    parts.push(raw)
+    // Dispatch as soon as the joined fragments form a body, so a later keep-alive
+    // is not glued onto it.
+    const joined = parts.join('\n')
+    const whole = parseJson(joined)
+    if (whole !== undefined) {
+      parts = []
+      yield { raw: joined, json: whole }
+    }
+  }
+  const held = flush()
+  if (held) yield held
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
 
 export function throwIfToolJsonOverBudget(jsonLength: number, provider: string): void {
   if (jsonLength > MAX_TOOL_JSON_CHARS) {
@@ -84,11 +258,19 @@ export interface StreamCallbacks {
   onReasoningDelta?: (text: string) => void
   /** normalized stop reason ('max_tokens' when the output was cut off by the token limit) */
   onStopReason?: (reason: string) => void
+  /** tokens the provider billed for this turn; fires once at stream end when the provider reports usage at all */
+  onUsage?: (usage: AiTokenUsage) => void
   /** bytes arrived on the wire (fires per network chunk, including SSE pings; used for keepalive) */
   onActivity?: () => void
   /** Stable renderer transport id for providers with native sessions. */
   sessionId?: string
   signal: AbortSignal
+}
+
+/** Coerce a provider's usage figure (number on the wire, sometimes a numeric string) to a finite count. */
+export function usageCount(value: unknown): number | undefined {
+  const n = typeof value === 'string' ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined
 }
 
 /**
@@ -153,9 +335,14 @@ export function sseErrorText(error: unknown, fallback: string): string {
  * parser would find no `data:` lines in such a body and dissolve it into an empty
  * "successful" turn. Returns the body text when that happens, else null.
  */
-export async function jsonBodyInsteadOfSse(response: Response): Promise<string | null> {
+export async function jsonBodyInsteadOfSse(
+  response: Response,
+  onBytes?: () => void,
+): Promise<string | null> {
   const contentType = response.headers.get('content-type') ?? ''
-  return contentType.toLowerCase().includes('application/json') ? await response.text() : null
+  return contentType.toLowerCase().includes('application/json')
+    ? readCappedResponseText(response, onBytes)
+    : null
 }
 
 /**
@@ -202,14 +389,23 @@ export function throwIfCreditsNotice(bodyText: string): void {
 /** Don't throw on parse failure (it would kill the whole stream); return error so the loop feeds it back for retry */
 export function parseToolInput(json: string): { input: Record<string, unknown>; error?: string } {
   if (!json.trim()) return { input: {} }
+  let parsed: unknown
   try {
-    return { input: JSON.parse(json) as Record<string, unknown> }
+    parsed = JSON.parse(json)
   } catch (e) {
     try {
-      return { input: JSON.parse(repairUnescapedQuotes(json)) as Record<string, unknown> }
+      parsed = JSON.parse(repairUnescapedQuotes(json))
     } catch {
       const msg = e instanceof Error ? e.message : String(e)
       return { input: {}, error: `${msg}; raw: ${json.slice(0, 500)}` }
     }
   }
+  if (!isPlainObject(parsed)) {
+    return { input: {}, error: `tool input must be a JSON object; raw: ${json.slice(0, 500)}` }
+  }
+  return { input: parsed }
+}
+
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

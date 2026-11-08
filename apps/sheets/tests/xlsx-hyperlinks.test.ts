@@ -29,6 +29,25 @@ describe('applyHyperlinkEdits', () => {
     expect(patch.relsXml).toContain('Target="https://example.com/a&amp;b" TargetMode="External"')
   })
 
+  it('allocates a fresh id when an existing numeric id exceeds the safe integer range', () => {
+    const rels = RELS.replace('rId3', 'rId9007199254740992')
+    const patch = applyHyperlinkEdits(WORKSHEET, rels, [
+      { row: 0, column: 0, target: 'https://new.example' },
+    ])
+    expect(patch.worksheetXml).toContain('r:id="rId1"')
+    expect(patch.relsXml).toContain('Id="rId1"')
+    expect(patch.relsXml).toContain('Id="rId9007199254740992"')
+  })
+
+  it('expands a self-closing relationships root before adding a link', () => {
+    const patch = applyHyperlinkEdits(
+      WORKSHEET,
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>',
+      [{ row: 0, column: 0, target: 'https://example.com' }],
+    )
+    expect(patch.relsXml).toContain('<Relationship Id="rId1"')
+    expect(patch.relsXml).toContain('</Relationships>')
+  })
   it('writes an internal anchor as a location attribute with no rel', () => {
     const patch = applyHyperlinkEdits(WORKSHEET, null, [
       { row: 1, column: 1, target: "#'My Sheet'!B2" },
@@ -72,6 +91,32 @@ describe('applyHyperlinkEdits', () => {
     const patch = applyHyperlinkEdits(withLinks, RELS, [{ row: 0, column: 0, target: null }])
     expect(patch.worksheetXml).toContain('<hyperlink ref="B1" r:id="rId3"/>')
     expect(patch.relsXml).toContain('rId3')
+  })
+
+  it('reclaims and allocates ids in a rels part that uses single quotes', () => {
+    // rId1 is taken by a drawing and rId3 by the link being replaced; both are
+    // spelled with single quotes, which the id scan used to miss entirely.
+    const singleQuoted = RELS.replace(
+      '<Relationship Id="rId3"',
+      "<Relationship Id='rId1' Type='drawing' Target='../drawings/drawing1.xml'/>" +
+        '<Relationship Id="rId3"',
+    ).replace(/="(rId\d+|https:[^"]*)"/g, "='$1'")
+    const withLink = WORKSHEET.replace(
+      '<pageMargins',
+      '<hyperlinks><hyperlink ref="A1" r:id="rId3"/></hyperlinks><pageMargins',
+    )
+    const patch = applyHyperlinkEdits(withLink, singleQuoted, [
+      { row: 0, column: 0, target: 'https://new.example' },
+    ])
+
+    // The stale rel is dropped and the new one takes the next free id — never
+    // rId1 again, which would duplicate the drawing's relationship.
+    expect(patch.relsXml).not.toContain('https://old.example')
+    expect(patch.worksheetXml).toContain('r:id="rId2"')
+    const ids = [...(patch.relsXml ?? '').matchAll(/\bId=["'](rId\d+)["']/g)].map(
+      (match) => match[1],
+    )
+    expect(ids).toEqual(['rId1', 'rId2'])
   })
 
   it('appends before </worksheet> when no anchor element exists', () => {

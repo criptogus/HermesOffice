@@ -15,8 +15,17 @@ import {
 } from '@hermesoffice/pptx-ops/op-docs'
 import { auditSlideLayout, formatAudit } from '@hermesoffice/pipelines/slides/layout-audit'
 import { runLayoutScript, type LayoutScriptElement } from './layout-script'
+import {
+  extractLayoutSkeleton,
+  formatSkeletonForPrompt,
+  skeletonRole,
+  type LayoutSkeleton,
+} from './layout-skeleton'
 import { t } from '../i18n/locale'
 import systemPrompt from './prompts/system.md?raw'
+import { placeholderInstruction } from './redact'
+import { textForModel, redactLabelsOf } from './redact-view'
+import { redactGuardFor } from './redact-guard'
 
 /**
  * Slides capability as an AgentSkill: deck outline context + three tools (read structure /
@@ -26,6 +35,10 @@ import systemPrompt from './prompts/system.md?raw'
  */
 
 // ── Generation progress events (for the onProgress callback; renderer memory only, never persisted or journaled) ──
+
+/** Upper bound on generate_deck approx_pages; bounds planner round trips and the progress note. */
+export const MAX_APPROX_PAGES = 200
+const MAX_PROGRESS_NOTE_PAGES = 40
 
 /** Per-page progress status */
 export type PageProgressStatus = 'pending' | 'running' | 'done' | 'error'
@@ -66,7 +79,13 @@ export type DeckProgressEvent =
       summary: string
       pages: PageProgressItem[]
     }
-  | { stage: 'done'; total: number; summary: string }
+  | {
+      stage: 'done'
+      total: number
+      summary: string
+      /** absent on success; the card must not read a failed or stopped run as "done" */
+      outcome?: 'failed' | 'cancelled'
+    }
 
 /** Panel/skill access point to the currently open deck (refs provided by App, stay fresh across renders). */
 export interface DeckAccess {
@@ -113,8 +132,6 @@ export interface DeckAccess {
    * On search failure returns an empty array (fail-open; doesn't block the main generation path).
    */
   searchImages?(query: string, maxResults: number): Promise<string[]>
-  /** Whether cloud single-page generation is available (kill switch + gsk login state) */
-  isCloudPageGenEnabled?(): Promise<boolean>
   /** live predicate (gsk login && cloud-tools toggle, or a BYOK media key); false hides generate_image */
   imageGenAvailable?(): boolean
   /** same for analyze_media */
@@ -122,31 +139,9 @@ export interface DeckAccess {
   /** Write or clear speaker notes for a slide (set_speaker_notes tool). */
   setSpeakerNotes?(slideIndex: number, text: string): boolean | Promise<boolean>
   /**
-   * Cloud single-page generation (gsk slide_generate), used by generate_deck's self-driven
-   * pipeline: given the unified style + this page's brief/layout/images, the cloud service
-   * writes the HTML and converts it to a one-slide pptx. Returns a marker string that goes
-   * into a landGeneratedPages pageMarkers slot.
-   */
-  generatePageCloud?(args: {
-    pageIndex: number
-    totalPages: number
-    coreHook: string
-    style: string
-    title: string
-    brief: string
-    layout: string
-    images: string[]
-    context?: string
-    topic?: string
-    canvasW: number
-    canvasH: number
-    signal?: AbortSignal
-  }): Promise<{ ok: boolean; marker?: string; error?: string }>
-  /**
-   * Local single-page generation (used when cloud is unavailable, e.g. BYOK without gsk):
-   * same inputs and marker contract as generatePageCloud, but the page is produced entirely
-   * locally — one LLM request writes a structured slide spec and the main process builds it
-   * directly into a one-slide pptx (no HTML intermediate).
+   * Single-page generation used by generate_deck / regenerate_slide: one LLM request writes a
+   * structured slide spec and the main process builds it directly into a one-slide pptx.
+   * Returns a marker string that goes into a landGeneratedPages pageMarkers slot.
    */
   generatePageLocal?(args: {
     pageIndex: number
@@ -161,6 +156,8 @@ export interface DeckAccess {
     topic?: string
     canvasW: number
     canvasH: number
+    /** Formatted template-chrome block (layout-skeleton.ts) for this page's role; absent without a template */
+    skeleton?: string
     signal?: AbortSignal
   }): Promise<{ ok: boolean; marker?: string; error?: string; imageFailures?: string[] }>
   /**
@@ -203,21 +200,29 @@ export interface DeckAccess {
   saveSidecar?(data: { topic: string; styleSkill: string; createdAt: string }): Promise<void>
   /**
    * Save styleSkill into userData/style-templates/<name>.json for later reuse.
+   * `layout` is the deck's extracted chrome skeleton (title/brand-image slots,
+   * accents, backgrounds) — generation uses it to keep those elements consistent
+   * across pages (see layout-skeleton.ts).
    */
   saveStyleTemplate?(
     name: string,
-    data: { topic: string; styleSkill: string; createdAt: string },
+    data: { topic: string; styleSkill: string; createdAt: string; layout?: LayoutSkeleton },
   ): Promise<{ ok: boolean; error?: string }>
   /**
    * List saved Style templates (name + topic + createdAt).
    */
   listStyleTemplates?(): Promise<Array<{ name: string; topic: string; createdAt: string }>>
   /**
-   * Load the content of a given Style template.
+   * Load the content of a given Style template (styleSkill text plus, for
+   * templates saved by a build with skeleton support, the layout skeleton).
    */
-  loadStyleTemplate?(
-    name: string,
-  ): Promise<{ ok: boolean; styleSkill?: string; topic?: string; error?: string }>
+  loadStyleTemplate?(name: string): Promise<{
+    ok: boolean
+    styleSkill?: string
+    topic?: string
+    layout?: LayoutSkeleton
+    error?: string
+  }>
   fitWidthPx: number
   /** Base retry backoff in ms for single-page generation failures (default 2000; tests pass 0 to disable backoff) */
   retryBackoffMs?: number
@@ -285,7 +290,7 @@ const TOOLS: AgentToolDef[] = [
       "- setBox(id, {x?,y?,w?,h?,rotation?}): set an element's target box, pass only fields to change\n" +
       '- moveBy(id, dx, dy): relative move (left = negative dx, up = negative dy)\n' +
       '- resizeBy(id, dw, dh): relative resize\n' +
-      '- setText(id, textOrParagraphs): replace text entirely; pass a string (split into paragraphs by \\n) or a paragraph array (same format as apply_ops setText paragraphs)\n' +
+      '- setText(id, textOrParagraphs): replace text entirely; pass a string (split into paragraphs by \\n) or a paragraph array (same format as apply_ops setText paragraphs). Plain runs/strings inherit the original size, color and font — do not add fontSize/color/fontFamily unless the user asked to restyle\n' +
       '- setStyle(id, {fontSize?,color?,bold?,italic?,underline?,align?,fontFamily?}): change style without changing text, pass only fields to change\n' +
       "- setFill(id, colorOrNone): solid fill '#RRGGBB' or 'none'\n" +
       '- setStroke(id, {color?,widthPt?} | null): stroke; pass null to remove\n' +
@@ -566,7 +571,7 @@ const TOOLS: AgentToolDef[] = [
     name: 'generate_deck',
     description:
       '[First choice for creating a whole new deck — self-driven pipeline: auto image search, page-by-page generation with live display, no missing pages]' +
-      ' Recommended usage (especially with many pages): pass only topic + approx_pages (+ optional style/context); the system plans the outline internally (auto-batched beyond 12 pages), **auto-searches images** (no advance image_search — the system searches from the planned image_queries keywords internally and fills real URLs back before writing HTML), writes HTML page by page, and lands pages onto the canvas one by one.' +
+      ' Recommended usage (especially with many pages): pass only topic + approx_pages (+ optional style/context); the system plans the outline internally (auto-batched beyond 12 pages), **auto-searches images** (no advance image_search — the system searches from the planned image_queries keywords internally and fills real URLs back before designing pages), designs pages one by one, and lands them onto the canvas as they finish.' +
       ' You don\'t hand-write dozens of pages, and neither "only page 1 got generated" nor "arguments were truncated" can happen — the page count is guaranteed by the system loop.' +
       ' (If you already know each page you may pass core_hook+style+pages directly; pages[].image_queries takes English image-search keywords, searched internally; if you already know real http(s) URLs pass them directly — the system respects existing URLs and does not re-search.)' +
       ' To add a few pages to an existing deck, pass pages (briefs for just the new pages) + insert_mode:"append".',
@@ -580,7 +585,9 @@ const TOOLS: AgentToolDef[] = [
         },
         approx_pages: {
           type: 'integer',
-          description: 'Expected page count (used together with topic)',
+          minimum: 1,
+          maximum: MAX_APPROX_PAGES,
+          description: `Expected page count (used together with topic; at most ${MAX_APPROX_PAGES})`,
         },
         context: {
           type: 'string',
@@ -630,7 +637,7 @@ const TOOLS: AgentToolDef[] = [
         style_template: {
           type: 'string',
           description:
-            "Optional: name of a saved style template (from list_style_templates); when passed, Step 0 is skipped and the template's styleSkill is used directly, no style regeneration",
+            "Optional: name of a saved style template (from list_style_templates); when passed, Step 0 is skipped and the template's styleSkill is used directly, no style regeneration. A template saved from a finished deck also carries its layout skeleton, which pins the title/brand-image geometry on every page for a consistent look",
         },
         dataSource: {
           type: 'string',
@@ -644,7 +651,7 @@ const TOOLS: AgentToolDef[] = [
   {
     name: 'save_style_template',
     description:
-      '[Save the current deck\'s style as a reusable template] Saves the current presentation\'s Style Skill (visual style guide) under the given name; next time you generate a deck, pass the style_template argument to reuse it directly and skip style generation. Call when the user says "save this style" / "save as template".',
+      '[Save the current deck\'s style as a reusable template] Saves the current presentation\'s Style Skill (visual style guide) under the given name, plus the deck\'s layout skeleton (recurring title box, brand-image slot, accent shapes and backgrounds). Next time you generate a deck, pass the style_template argument to reuse both directly and skip style generation. Call when the user says "save this style" / "save as template".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -724,7 +731,7 @@ const TOOLS: AgentToolDef[] = [
     description:
       '[Canonical edit surface] Apply a list of canonical edit ops as ONE transaction — atomic by default: any failure rolls everything back, nothing is half-applied. Set dry_run:true to validate the plan without touching the deck (rehearse risky batches). This is THE tool for every edit without a dedicated tool (fill, stroke, transform, delete, z-order, grouping, crop, opacity, effects, links, table cells, structure and styling, page background, speaker notes, page delete/move/duplicate, transitions, sections, theme) and for multi-page or many-element batches; a single op is a perfectly fine batch. For one-page layout math prefer execute_slide_script.\n' +
       'Addressing: every op takes target:{slide, el?} — slide = 0-based index or durable "s_<n>"; el = an element id from the outline/read_slide (e_* ids are durable). Group children: put the child id in target.el and add group:"<group id>".\n' +
-      'Units are document-space EMU. read_slide reports px and its exact "1 px = N EMU" factor — convert with that N (9525 only on a standard 16:9 deck; other page sizes differ). Font sizes are pt.\n' +
+      'Units are document-space EMU. read_slide reports px and its exact "1 px = N EMU" factor — convert with that N (9525 only on a standard 16:9 deck; other page sizes differ). Font sizes are pt. setText on an existing element: runs with only `text` inherit the original run formatting (size, color, font) — leave fontSize/color/fontFamily out unless the user asked to change the style.\n' +
       'Full op reference (the same executor every editing surface uses), one signature per op; ? marks optional fields:\n' +
       opSignatureIndex() +
       '\naddChart additionally takes dataSource:"user"|"document"|"search"|"sample" (figure provenance, checked before the batch runs; "search" needs a web_search in this conversation).' +
@@ -839,27 +846,16 @@ function targetError(
 /** Element info shared by outline/read_slide/edit scripts (includes absolute geometry; locked = layout decoration, read-only). */
 type NodeInfo = LayoutScriptElement
 
-function nodeText(n: RenderNode): string {
-  if (n.type === 'shape' || n.type === 'text') {
-    return ((n as ShapeRenderNode).text?.lines ?? [])
-      .map((line) => line.runs.map((r) => r.text).join(''))
-      .join('\n')
-  }
-  if (n.type === 'table') {
-    // Tables join cell text row by row (tab-separated) so the AI can read table content
-    const byRow = new Map<number, string[]>()
-    for (const c of n.cells) {
-      const t = (c.text?.lines ?? []).map((l) => l.runs.map((r) => r.text).join('')).join(' ')
-      const row = byRow.get(c.y) ?? []
-      row.push(t)
-      byRow.set(c.y, row)
-    }
-    return [...byRow.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, r]) => r.join('\t'))
-      .join('\n')
-  }
-  return ''
+/**
+ * The element's text as the model reads it.
+ *
+ * Delegates to `textForModel`, which substitutes a withheld span for its marker.
+ * `forDisplay` defaults to false, so this whole file gets the redacted view
+ * without having to know withholding exists; the reader's own find-and-replace
+ * asks for the raw words explicitly.
+ */
+function nodeText(n: RenderNode, forDisplay = false): string {
+  return textForModel(n, forDisplay)
 }
 
 /** Max font size of the text (pt, converted back from px); returns undefined when there is no text. */
@@ -1074,13 +1070,32 @@ function mediaToolsOffNote(hidden: Set<string>): string {
 
 export function createSlidesSkill(access: DeckAccess): AgentSkill {
   // The HTML pipeline was already used in this conversation → later calls without an explicit mode default to append.
+  /**
+   * Every label withheld anywhere in the deck, in first-seen order.
+   *
+   * Read from the render tree the tools already use, so the instruction and the
+   * text the model is shown cannot disagree about what is withheld.
+   */
+  function deckRedactLabels(access: DeckAccess): string[] {
+    const seen = new Set<string>()
+    for (const slide of access.getSlides()) {
+      for (const label of redactLabelsOf(slide)) seen.add(label)
+    }
+    return [...seen]
+  }
+
   // Safety net for when the AI ignores the "pass all pages at once" constraint: separate calls no longer overwrite each other (P0-1).
   const state: SkillState = { htmlGenerated: false }
   return {
     id: 'slides',
     // live like tools: the off-note overrides the prose that still mentions the hidden tools
     get systemPrompt() {
-      return systemPrompt + mediaToolsOffNote(hiddenMediaTools(access))
+      // spans the reader withheld are named here, from the live deck, so the
+      // model can see the marker exists and write around it. A deck with none
+      // pays nothing and is not told to look for markers that are not there.
+      const labels = deckRedactLabels(access)
+      const redact = labels.length > 0 ? `\n\n${placeholderInstruction(labels)}` : ''
+      return systemPrompt + mediaToolsOffNote(hiddenMediaTools(access)) + redact
     },
     // live view: the predicates are re-read before every model request
     get tools() {
@@ -1139,7 +1154,7 @@ function blockScratchBuild(
     output:
       "For blank/from-scratch scenarios don't hand-assemble pages element by element with addElement/addSmartArt/addTable/addChart ops (crude layout). " +
       'Use the generation pipeline instead: new whole deck → generate_deck; new pages for an existing deck → generate_deck(pages, insert_mode:"append"). ' +
-      'Write it beautifully in HTML/CSS and the system converts it into editable elements. Use insert ops only when the deck already has polished content and one element needs refining.',
+      'The pipeline designs each page and builds it into editable elements. Use insert ops only when the deck already has polished content and one element needs refining.',
     isError: true,
     mutated: false,
     summary: t('aiSumFromScratchGuard', { label }),
@@ -1162,9 +1177,14 @@ function buildProgressNote(state?: SkillState): string {
   }
   // Name unfinished pages one by one from pageDone (page numbers stay accurate when a middle page fails)
   const remaining: string[] = []
+  let omitted = 0
   for (let i = 0; i < planned; i++) {
-    if (!flags[i]) remaining.push(`page ${i + 1}${titles[i] ? ` "${titles[i]}"` : ''}`)
+    if (flags[i]) continue
+    if (remaining.length < MAX_PROGRESS_NOTE_PAGES) {
+      remaining.push(`page ${i + 1}${titles[i] ? ` "${titles[i]}"` : ''}`)
+    } else omitted++
   }
+  if (omitted > 0) remaining.push(`and ${omitted} more`)
   return (
     `<generation-progress>\n` +
     `⚠️ Incomplete: ${planned} pages planned, ${done} generated, ${planned - done} still missing.\n` +
@@ -1315,6 +1335,14 @@ function preflightOps(
     }
     const op = { ...(raw as Record<string, unknown>) }
     const name = op.op as string
+    // A span withheld from the model is a mark over real words, so an edit that
+    // rewrites or drops those words costs the reader data they chose to keep.
+    // Checked here, before anything is dispatched — apply_ops is atomic, so a
+    // refusal leaves the deck exactly as it was.
+    const guard = redactGuardFor(op, slides)
+    if (guard) {
+      return fail(t('aiFailApplyOps'), `ops[${i}] ${name}: ${guard.reason}`)
+    }
     if (SCRATCH_GUARDED_OPS.has(name)) {
       const blocked = blockScratchBuild(
         name === 'addSmartArt' ? 'smartart' : 'element',
@@ -1435,8 +1463,9 @@ async function executeTool(
       if (counts.fill > 0) parts.push(`fill ${counts.fill} item(s)`)
       if (counts.stroke > 0) parts.push(`stroke ${counts.stroke} item(s)`)
       const issues = auditSlideLayout(applied.slide)
+      const notesStr = applied.notes?.length ? `\nNote:\n${applied.notes.join('\n')}` : ''
       return {
-        output: `Applied the edit script to page ${idx + 1}: ${parts.join(', ')}.${returnedStr}${logsStr}${formatAudit(issues)}`,
+        output: `Applied the edit script to page ${idx + 1}: ${parts.join(', ')}.${returnedStr}${logsStr}${notesStr}${formatAudit(issues)}`,
         mutated: true,
         summary: t('aiSumScript', { n: idx + 1, count: r.ops.length + r.edits.length }),
       }
@@ -1716,9 +1745,7 @@ async function executeTool(
       const idx = Number(call.input.slideIndex)
       if (!slides[idx])
         return fail(t('aiFailRegen'), `slideIndex out of range (0-${slides.length - 1})`)
-      const regenUseCloud =
-        !!access.generatePageCloud && !!(await access.isCloudPageGenEnabled?.().catch(() => false))
-      if (!access.regenerateSlide || (!regenUseCloud && !access.generatePageLocal))
+      if (!access.regenerateSlide || !access.generatePageLocal)
         return fail(
           t('aiFailRegen'),
           'The current environment does not support the page-redo pipeline',
@@ -1733,8 +1760,7 @@ async function executeTool(
       const regenImages = Array.isArray(call.input.image_urls)
         ? (call.input.image_urls as unknown[]).map(String).filter((u) => /^https?:\/\//.test(u))
         : []
-      // One retry then give up (same semantics as generate_deck pages). Both paths return a
-      // marker pointing at a one-slide pptx temp file; landing is shared.
+      // One retry then give up (same semantics as generate_deck pages).
       const backoff = access.retryBackoffMs ?? 2000
       let marker: string | null = null
       let genImageFails: string[] = []
@@ -1751,14 +1777,12 @@ async function executeTool(
         canvasW: 1280,
         canvasH: 720,
       }
-      const regenGen = regenUseCloud ? access.generatePageCloud! : access.generatePageLocal!
       for (let attempt = 0; attempt < 2 && !marker; attempt++) {
         if (attempt > 0 && backoff > 0) await new Promise((r) => setTimeout(r, backoff))
-        const res = await regenGen(regenArgs)
+        const res = await access.generatePageLocal(regenArgs)
         if (res.ok && res.marker) {
           marker = res.marker
-          if ('imageFailures' in res && Array.isArray(res.imageFailures))
-            genImageFails = res.imageFailures
+          if (Array.isArray(res.imageFailures)) genImageFails = res.imageFailures
         } else lastErr = res.error ?? t('aiErrUnknown')
       }
       if (!marker)
@@ -1790,11 +1814,8 @@ async function executeTool(
       // ── Self-driven pipeline:
       //   1) Plan: use pages if passed; with topic, the tool plans the outline via LLM (batched recursion over threshold) — fixes missing pages at the input side.
       //   2) Generate: batched concurrent page generation (one retry per page), **each batch lands immediately → frontend shows pages one by one**.
-      //      Cloud (gsk slide_generate) when available; otherwise fully local — the LLM (app AI
-      //      transport, works with BYOK) writes a slide spec that is built directly into a pptx.
-      const useCloud =
-        !!access.generatePageCloud && !!(await access.isCloudPageGenEnabled?.().catch(() => false))
-      if (!useCloud && !access.generatePageLocal)
+      //      The LLM (app AI transport) writes a slide spec that is built directly into a pptx.
+      if (!access.generatePageLocal)
         return fail(
           t('aiFailGenDeck'),
           'No page generation pipeline is available in this environment',
@@ -1857,11 +1878,13 @@ async function executeTool(
       // When full pages+style are passed, respect the user's style (don't regenerate).
       // When style_template is passed, load the template directly and skip Step 0 (no LLM style generation).
       let styleSkill = ''
+      let templateSkeleton: LayoutSkeleton | undefined
       if (styleTemplateName && access.loadStyleTemplate) {
         // Preferred: load from a saved template (fail-open: on load failure continue normal generation)
         try {
           const tr = await access.loadStyleTemplate(styleTemplateName)
           if (tr.ok && tr.styleSkill) styleSkill = tr.styleSkill
+          if (tr.ok && tr.layout) templateSkeleton = tr.layout
         } catch {
           /* fail-open */
         }
@@ -1903,9 +1926,9 @@ async function executeTool(
       if (!styleSkill) styleSkill = style // Fallback: use the user-passed style, or empty
 
       // ── Step 1: plan the outline — without pages, plan in-tool from topic (batched recursion over PLAN_BATCH; layouts chosen per the Style Skill).
-      const approxForProgress = Math.max(
-        1,
-        parseInt(String(call.input.approx_pages ?? '0'), 10) || pages.length || 1,
+      const approxForProgress = Math.min(
+        MAX_APPROX_PAGES,
+        Math.max(1, parseInt(String(call.input.approx_pages ?? '0'), 10) || pages.length || 1),
       )
       if (pages.length === 0) {
         const approx = approxForProgress
@@ -2105,14 +2128,14 @@ async function executeTool(
       const deckName = String(pages[0]?.title ?? '').trim() || topic || coreHook
 
       // ── Step 2: generate page by page + land as we go (frontend shows pages one by one).
-      // Cloud (gsk slide_generate) and local (LLM spec → pptx-engine build) both produce a
-      // one-slide pptx temp file; genOne returns its marker and landing reads the bytes.
+      // Each page (LLM spec → pptx-engine build) is a one-slide pptx temp file; genOne returns
+      // its marker and landing reads the bytes.
       // Land strictly in page order: nextToLand pointer; a page lands only when its marker is ready, keeping page order intact.
       const markerByIndex: (string | null)[] = new Array(total).fill(null)
       // Per-page completion flags (aligned with pages; same reference as state.pageDone, used by buildContext progress injection)
       const doneFlags: boolean[] = state?.pageDone ?? new Array(total).fill(false)
       const genFailed: number[] = [] // Page indexes (0-based) whose page generation failed
-      const landFailed: number[] = [] // Page indexes (0-based) whose HTML generated but conversion/landing failed
+      const landFailed: number[] = [] // Page indexes (0-based) whose page generated but landing failed
       const degraded: number[] = [] // Page indexes (0-based) that "landed" via the plain-text fallback — must be reported, otherwise dead pages appear silently
       const deckImageFails: { page: number; url: string }[] = [] // Image download/conversion failures (page numbers are deck-global 1-based)
       const pageErrors: (string | undefined)[] = new Array(total).fill(undefined) // Last failure reason per page
@@ -2138,6 +2161,27 @@ async function executeTool(
         pages: [...pageProgressItems],
       })
 
+      type PageGen = NonNullable<DeckAccess['generatePageLocal']>
+      // Up to two attempts; returns the marker or the last error.
+      const tryGenerate = async (
+        pageArgs: Parameters<PageGen>[0],
+        pageIndex: number,
+      ): Promise<{ marker: string | null; err: string }> => {
+        let lastErr = ''
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (cancelled()) return { marker: null, err: lastErr }
+          if (attempt > 0 && BACKOFF_MS > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS))
+          const res = await access.generatePageLocal!(pageArgs)
+          if (res.ok && res.marker) {
+            if (Array.isArray(res.imageFailures))
+              deckImageFails.push(...res.imageFailures.map((url) => ({ page: pageIndex, url })))
+            return { marker: res.marker, err: '' }
+          }
+          lastErr = res.error ?? t('aiErrUnknown')
+        }
+        return { marker: null, err: lastErr }
+      }
+
       const genOne = async (p: Record<string, unknown>, pageIndex: number) => {
         // Mark as running
         pageProgressItems[pageIndex - 1] = {
@@ -2158,7 +2202,12 @@ async function executeTool(
               .map((x) => String(x))
               .filter((x) => /^https?:\/\//.test(x))
           : []
-        let lastErr = ''
+        // The template's chrome block for this page's role (cover/content/closing):
+        // the exact boxes every page of the role must reuse for a consistent look
+        const skeleton = templateSkeleton
+          ? formatSkeletonForPrompt(templateSkeleton, skeletonRole(pageIndex - 1, total)) ||
+            undefined
+          : undefined
         const pageArgs = {
           pageIndex,
           totalPages: total,
@@ -2172,26 +2221,12 @@ async function executeTool(
           ...(topic ? { topic } : {}),
           canvasW,
           canvasH,
+          ...(skeleton ? { skeleton } : {}),
           ...(signal ? { signal } : {}),
         }
-        // Both paths return a marker pointing at a one-slide pptx temp file. One retry, then the
-        // page is skipped for now (locally-failed pages get one more chance in the retry round)
-        // and the rest of the deck keeps generating.
-        const gen = useCloud ? access.generatePageCloud! : access.generatePageLocal!
-        for (let attempt = 0; attempt < 2; attempt++) {
-          if (cancelled()) return null
-          if (attempt > 0 && BACKOFF_MS > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS))
-          const res = await gen(pageArgs)
-          if (res.ok && res.marker) {
-            pageErrors[pageIndex - 1] = undefined
-            if ('imageFailures' in res && Array.isArray(res.imageFailures))
-              deckImageFails.push(...res.imageFailures.map((url) => ({ page: pageIndex, url })))
-            return res.marker
-          }
-          lastErr = res.error ?? t('aiErrUnknown')
-        }
-        pageErrors[pageIndex - 1] = lastErr
-        return null
+        const res = await tryGenerate(pageArgs, pageIndex)
+        pageErrors[pageIndex - 1] = res.marker ? undefined : res.err
+        return res.marker
       }
 
       // Land in page order: starting from nextToLand, land as many as possible (stop at a gap and wait for it to generate).
@@ -2267,18 +2302,14 @@ async function executeTool(
 
       // ── One retry round for failed pages, re-inserted at their original page position with
       //   insert_at (target position = existing-page offset + pages completed before this one).
-      //   Landing-failed pages re-land (cheap: the one-slide pptx already exists). Cloud
-      //   generation-failed pages already spent their single retry and stay skipped; local
-      //   generation-failed pages get one more generation attempt here (LLM calls are the
-      //   user's own quota, and a JSON spec retry is cheap).
+      //   Landing-failed pages re-land (cheap: the one-slide pptx already exists). Pages whose
+      //   generation failed get one more attempt here (a JSON spec retry is cheap).
       if (!cancelled()) {
-        const retryIdxs = [...new Set([...(useCloud ? [] : genFailed), ...landFailed])].sort(
-          (a, b) => a - b,
-        )
+        const retryIdxs = [...new Set([...genFailed, ...landFailed])].sort((a, b) => a - b)
         for (const idx of retryIdxs) {
           if (cancelled()) break
           let marker = markerByIndex[idx]
-          if (!marker && !useCloud) marker = await genOne(pages[idx]!, idx + 1)
+          if (!marker) marker = await genOne(pages[idx]!, idx + 1)
           if (!marker) {
             pageProgressItems[idx] = {
               ...pageProgressItems[idx]!,
@@ -2338,6 +2369,7 @@ async function executeTool(
           stage: 'done',
           total: landedPages,
           summary: t('aiSumStoppedKept', { n: landedPages }),
+          outcome: 'cancelled',
         })
         return cancelResult(landedPages, total)
       }
@@ -2362,6 +2394,7 @@ async function executeTool(
           stage: 'done',
           total: 0,
           summary: t('aiStageAllFailed', { n: total }),
+          outcome: 'failed',
         })
         return fail(
           t('aiFailGenDeck'),
@@ -2378,11 +2411,11 @@ async function executeTool(
 
       const note = buildProgressNote(state)
       const progressTail = note ? `\n${note}` : ''
-      // Faithfully report all unfinished pages (both HTML generation failures and conversion/landing failures; all already retried once)
+      // Faithfully report all unfinished pages (generation and landing failures; all already retried once)
       const stillFailed: number[] = []
       for (let i = 0; i < total; i++) if (!doneFlags[i]) stillFailed.push(i + 1)
       const briefErr = (s?: string) => (s ? (s.length > 80 ? `${s.slice(0, 80)}…` : s) : '')
-      const okMsg = `Self-driven generation produced ${landedPages}/${total} pages (HTML written page by page, displayed as generated; failed pages were auto-retried).`
+      const okMsg = `Self-driven generation produced ${landedPages}/${total} pages (pages generated one by one and displayed as they land; failed pages were auto-retried).`
       const failDetail = stillFailed
         .map((n) => `page ${n}${pageErrors[n - 1] ? ` (${briefErr(pageErrors[n - 1])})` : ''}`)
         .join(', ')
@@ -2488,10 +2521,14 @@ async function executeTool(
       const doneStr = (r.records ?? [])
         .map((rec) => `${rec.op}${rec.target ? ` @${rec.target}` : ''}`)
         .join(', ')
+      const notes = (r.records ?? [])
+        .filter((rec) => rec.note)
+        .map((rec) => `${rec.target ?? rec.op}: ${rec.note}`)
       return {
         output:
           `Applied ${r.records?.length ?? 0} op(s): ${doneStr}.` +
           (created.length ? ` New element ids: ${created.join(', ')}.` : '') +
+          (notes.length ? `\nNote:\n${notes.join('\n')}` : '') +
           (failLines ? `\nSkipped (per_op):\n${failLines}` : '') +
           (pre.sampleData ? SAMPLE_DATA_NOTE : '') +
           auditTouchedPages(r.records, r.slides!),
@@ -2533,14 +2570,18 @@ async function executeTool(
           t('aiFailSaveTemplate'),
           'The current deck has no Style Skill to save (generate a presentation with generate_deck first)',
         )
+      // Chrome skeleton from the current deck (title box, brand-image slot, accents,
+      // backgrounds) so pages generated from this template stay geometrically consistent
+      const layout = extractLayoutSkeleton(access.getSlides()) ?? undefined
       const r = await access.saveStyleTemplate(name, {
         topic: topicToSave,
         styleSkill: styleSkillToSave,
         createdAt: new Date().toISOString(),
+        ...(layout ? { layout } : {}),
       })
       if (!r.ok) return fail(t('aiFailSaveTemplate'), r.error ?? 'Save failed')
       return {
-        output: `Saved the style "${name}" as a template; next time pass style_template:"${name}" to reuse it directly.`,
+        output: `Saved the style "${name}" as a template${layout ? ' with its layout skeleton (title/brand-image geometry is pinned for future pages)' : ''}; next time pass style_template:"${name}" to reuse it directly.`,
         mutated: false,
         summary: t('aiSumSaveTemplate', { name }),
       }

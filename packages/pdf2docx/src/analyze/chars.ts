@@ -117,20 +117,49 @@ export function dedupeDoubleDrawnChars(chars: ExtractedPage['chars']): void {
   }
   const dropped = new Set<number>()
   for (const list of byCode.values()) {
+    if (list.length < 2) continue
+    let maxSize = 1
+    for (const index of list) maxSize = Math.max(maxSize, Math.max(chars[index]!.fontSize, 1))
+    const cellSize = DOUBLE_DRAW_MAX_DIST_RATIO * maxSize
+    const buckets = new Map<string, number[]>()
+    const addToBucket = (position: number, x: number, y: number): void => {
+      const key = `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`
+      const bucket = buckets.get(key)
+      if (bucket) bucket.push(position)
+      else buckets.set(key, [position])
+    }
+    const centers = list.map((index, position) => {
+      const centerX = rectCenterX(chars[index]!.box)
+      const centerY = rectCenterY(chars[index]!.box)
+      addToBucket(position, centerX, centerY)
+      return { centerX, centerY }
+    })
     for (let a = 0; a < list.length; a++) {
       const ia = list[a]!
       if (dropped.has(ia)) continue
       const ca = chars[ia]!
-      const sizeA = Math.max(ca.fontSize, 1)
-      for (let b = a + 1; b < list.length; b++) {
+      const centerA = centers[a]!
+      const cellX = Math.floor(centerA.centerX / cellSize)
+      const cellY = Math.floor(centerA.centerY / cellSize)
+      const candidatePositions = new Set<number>()
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (const position of buckets.get(`${cellX + dx},${cellY + dy}`) ?? []) {
+            if (position > a) candidatePositions.add(position)
+          }
+        }
+      }
+      const candidates = [...candidatePositions].sort((x, y) => x - y)
+      for (const b of candidates) {
         const ib = list[b]!
         if (dropped.has(ib)) continue
         const cb = chars[ib]!
+        const sizeA = Math.max(ca.fontSize, 1)
         const sizeB = Math.max(cb.fontSize, 1)
         const ratio = sizeB / sizeA
         if (ratio < DOUBLE_DRAW_MIN_SIZE_RATIO || ratio > DOUBLE_DRAW_MAX_SIZE_RATIO) continue
-        const dx = rectCenterX(ca.box) - rectCenterX(cb.box)
-        const dy = rectCenterY(ca.box) - rectCenterY(cb.box)
+        const dx = centerA.centerX - centers[b].centerX
+        const dy = centerA.centerY - centers[b].centerY
         if (Math.hypot(dx, dy) >= DOUBLE_DRAW_MAX_DIST_RATIO * Math.max(sizeA, sizeB)) continue
         if (overlapRatio(ca.box, cb.box) < DOUBLE_DRAW_MIN_BOX_OVERLAP) continue
         if (isLigatureExpansionPair(ia, ib, ca, cb)) continue

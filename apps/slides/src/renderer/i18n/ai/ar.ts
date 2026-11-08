@@ -108,6 +108,8 @@ export const ar = {
   aiErrUnknown: 'خطأ غير معروف',
   aiErrStreamTimeout:
     'انتهت مهلة طلب الذكاء الاصطناعي: لا توجد استجابة من الشبكة وتم الإيقاف. تحقق من الاتصال وحاول مجددًا',
+  aiErrRegion:
+    'مزوّد هذا النموذج لا يقدم الخدمة في منطقتك الحالية — اختر نموذجًا آخر أو غيّر الشبكة',
   aiErrOverloaded: 'خدمة الذكاء الاصطناعي مشغولة حاليًا — يرجى المحاولة مرة أخرى بعد قليل',
   aiErrNetwork:
     'مشكلة في الشبكة: تعذّر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من الاتصال وحاول مجددًا',
@@ -132,6 +134,7 @@ export const ar = {
   aiClarifyOther: 'أخرى (يمكن الكتابة)',
   aiClarifySkip: 'تخطي الاستبيان',
   aiClarifyNext: 'التالي',
+  aiClarifyPrev: 'السابق',
   aiClarifySubmit: 'إنشاء',
   aiSumReadAttachment: 'قراءة المرفق',
   aiSumReadAttachmentName: 'قراءة المرفق {name}',

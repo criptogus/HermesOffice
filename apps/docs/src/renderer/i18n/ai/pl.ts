@@ -56,6 +56,7 @@ export const pl = {
   aiSumInsertFootnote: 'Wstawiono przypis dolny',
   aiSumInsertEndnote: 'Wstawiono przypis końcowy',
   aiSumDeleteNote: 'Usunięto przypis',
+  aiSumEditNote: 'Zmieniono przypis',
   aiSumReadNotes: 'Odczyt przypisów',
   aiSumAddComment: 'Dodano komentarz',
   aiSumDeleteComment: 'Usunięto komentarz',
@@ -99,6 +100,11 @@ export const pl = {
     'Śledzenie zmian włączone: zmiany treści wprowadzane przez AI są oznaczane jako poprawki (wstawienia podkreślone, usunięcia przekreślone); zaakceptuj lub odrzuć je w sekcji Recenzja',
   aiTrackOffTitle:
     'Śledzenie zmian wyłączone: zmiany AI są stosowane od razu (nadal możesz przywrócić stan przez migawki wersji)',
+  aiRevisionBarTitle: 'Zmiany',
+  aiRevisionCount: 'Oczekujące zmiany: {count}',
+  aiRevisionRejectAll: 'Odrzuć wszystkie',
+  aiRevisionAcceptAll: 'Zaakceptuj wszystkie',
+  aiRevisionPara: 'Akapit {n}',
   aiTurnLimit:
     '(Osiągnięto limit rund wywołań narzędzi dla tego żądania; powyższa odpowiedź opiera się na dotychczas ukończonych krokach i może być niepełna.)',
   aiStopped: '(Zatrzymano)',
@@ -111,6 +117,8 @@ export const pl = {
   aiUnknownError: 'Nieznany błąd',
   aiTimeoutError:
     'Przekroczono limit czasu żądania AI: brak odpowiedzi sieci, przerwano. Sprawdź połączenie i spróbuj ponownie',
+  aiRegionError:
+    'Dostawca tego modelu nie obsługuje Twojego obecnego regionu — wybierz inny model lub zmień sieć',
   aiOverloadedError: 'Usługa AI jest obecnie przeciążona — spróbuj ponownie za chwilę',
   aiNetworkError:
     'Problem z siecią: nie można połączyć się z usługą AI. Sprawdź połączenie i spróbuj ponownie',
@@ -120,6 +128,9 @@ export const pl = {
   aiSumImageAttachment: 'Załącznik graficzny {name}',
   aiSumRead: 'Odczyt {name}',
   aiSumReadAttachmentName: 'Odczyt załącznika {name}',
+  aiSumSkillsList: 'Wypisano zainstalowane skille',
+  aiSumSkillRead: 'Przeczytano skill {name}',
+  aiSumRunCli: 'Wykonano {args}',
   aiSumWebSearch: 'Wyszukiwanie w internecie',
   aiSumWebSearchDone: 'Wyszukano „{query}” ({count} wyników)',
   aiSumImageSearch: 'Wyszukiwanie obrazów',
@@ -167,6 +178,8 @@ export const pl = {
   aiCmdNone: 'Brak pasujących bloków; dokument nie został zmieniony.',
   aiCmdNoneSkipped:
     'Brak bloków do edycji; dokument nie został zmieniony (pominięto chronione bloki: {count} — tabel/obrazów nie można zmieniać poleceniami stylu).',
+  aiCmdNoneUnchanged:
+    'Pasujące bloki pozostały bez zmian: {count} — dokument nie został zmieniony.',
   aiCmdTextStyle: 'Zaktualizowano styl tekstu w blokach: {count}',
   aiCmdMatchedStyle: 'Zastosowano styl do {count} dopasowań w {blocks} blokach',
   aiCmdParaStyle: 'Zaktualizowano format akapitu w blokach: {count}',
@@ -181,4 +194,22 @@ export const pl = {
   aiCmdImages: 'Zaktualizowano obrazów: {count}',
   aiCmdToc: 'Wstawiono spis treści (pozycji: {count})',
   aiCmdSkipped: ' (pominięto chronione bloki: {count})',
+  aiStarterMindMap: 'Wygeneruj mapę myśli tego dokumentu',
+  aiMindMapBtn: 'Mapa myśli AI',
+  aiMindMapPrompt:
+    'Wygeneruj mapę myśli tego dokumentu, porządkując główne tematy i kluczowe pojęcia według struktury sekcji',
+  aiSumMindMap: 'Generuj mapę myśli',
+  aiMindMapTitle: 'Mapa myśli',
+  aiMindMapNodes: '{count} węzłów',
+  aiMindMapAskPrompt: 'Opowiedz o „{label}” w tym dokumencie',
+  aiMindMapJump: 'Przejdź do cytowanego fragmentu',
+  aiMindMapExport: 'Eksportuj PNG',
+  aiMindMapExportSvg: 'Eksportuj SVG',
+  aiMindMapInsert: 'Wstaw do dokumentu',
+  aiMindMapReset: 'Resetuj widok',
+  aiMindMapExpand: 'Rozwiń gałąź',
+  aiMindMapCollapse: 'Zwiń gałąź',
+  aiMindMapToggleLayout: 'Zmień układ',
+  aiMindMapLayoutTopDown: 'Przełącz na układ od góry do dołu',
+  aiMindMapLayoutLeftRight: 'Przełącz na układ od lewej do prawej',
 } satisfies Record<keyof typeof zh, string>

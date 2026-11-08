@@ -94,6 +94,61 @@ function implicitParagraphs(raw: string, hasPrevious: boolean, hasNext: boolean)
   return Math.max(separators - (hasPrevious && hasNext ? 1 : 0), 0)
 }
 
+function normalizeReferenceTag(value: string): string {
+  return value.replace(/\s+/g, ' ').toLowerCase()
+}
+
+function referenceTag(raw: string): string | null {
+  const start = raw[0] === '!' ? 1 : 0
+  if (raw[start] !== '[') return null
+  let depth = 0
+  let firstClose = -1
+  for (let i = start; i < raw.length; i++) {
+    if (raw[i] === '\\') {
+      i++
+      continue
+    }
+    if (raw[i] === '[') depth++
+    else if (raw[i] === ']') {
+      depth--
+      if (depth === 0) {
+        firstClose = i
+        break
+      }
+    }
+  }
+  if (firstClose < 0) return null
+  let label: string
+  if (raw[firstClose + 1] === '[' && raw.endsWith(']')) {
+    label = raw.slice(firstClose + 2, -1)
+    if (!label.trim()) label = raw.slice(start + 1, firstClose)
+  } else if (raw.length === firstClose + 1) {
+    label = raw.slice(start + 1, firstClose)
+  } else {
+    return null
+  }
+  return label.trim() ? normalizeReferenceTag(label) : null
+}
+
+function collectReferenceTags(token: MarkedToken, tags: Set<string>): void {
+  if (token.type === 'link' || token.type === 'image') {
+    const tag = referenceTag(token.raw)
+    if (tag) tags.add(tag)
+    return
+  }
+  for (const child of token.tokens ?? []) collectReferenceTags(child, tags)
+  for (const child of token.nestedTokens ?? []) collectReferenceTags(child, tags)
+  for (const item of token.items ?? []) collectReferenceTags(item, tags)
+  for (const cell of token.header ?? []) {
+    for (const child of cell.tokens ?? []) collectReferenceTags(child, tags)
+  }
+  for (const row of token.rows ?? []) {
+    for (const cell of row) {
+      for (const child of cell.tokens ?? []) collectReferenceTags(child, tags)
+    }
+  }
+}
+
 /**
  * Split `source` into blocks and pair them with `doc`'s top-level nodes.
  * Returns null when the pairing cannot be established (tokens that do not tile
@@ -114,8 +169,16 @@ export function buildSourceMap(editor: Editor, doc: PmNode, source: string): Sou
 
   const tokens = splitAbsorbedBlankLines(rawTokens)
   const nonSpace = tokens.map((t) => t.type !== 'space')
+  const definitions = new Map<string, string>()
+  for (const token of tokens) {
+    if (token.type !== 'def') continue
+    if (!token.tag) return null
+    if (!definitions.has(token.tag)) definitions.set(token.tag, token.raw.trimEnd())
+  }
   const units: Unit[] = [{ core: '', glue: '', space: false, first: 0, count: 0, style: {} }]
   const types: string[] = []
+  let parseWork = 0
+  const parseBudget = source.length * 4 + 64 * 1024
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!
     let produced: string[]
@@ -129,8 +192,24 @@ export function buildSourceMap(editor: Editor, doc: PmNode, source: string): Sou
       space = true
     } else {
       let parsed
+      const core = token.raw.replace(TRAILING_BLANK_LINES, '')
+      parseWork += core.length
+      if (parseWork > parseBudget) return null
+      let alone = core
+      if (token.type !== 'def' && definitions.size > 0) {
+        const tags = new Set<string>()
+        collectReferenceTags(token, tags)
+        for (const tag of tags) {
+          const definition = definitions.get(tag)
+          if (!definition) continue
+          const addition = `\n\n${definition}`
+          parseWork += addition.length
+          if (parseWork > parseBudget) return null
+          alone += addition
+        }
+      }
       try {
-        parsed = manager.parse(token.raw.replace(TRAILING_BLANK_LINES, '')).content ?? []
+        parsed = manager.parse(alone).content ?? []
       } catch {
         return null
       }

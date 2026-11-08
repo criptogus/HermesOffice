@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
-// the preload exposes window.__genofficeDebug only under this env var
+// the preload exposes window.__hermesofficeDebug only under this env var
 process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
 /**
@@ -17,7 +17,7 @@ process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
  */
 test.describe('sheets: tiled paste of formulas survives save', () => {
   test('followers keep their (shifted) formula in the saved xlsx', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-paste-save-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-paste-save-'))
     const launched = await launchShell({
       onboardingSeen: true,
       videoDir: 'sheets-paste-shared-formula-save',
@@ -27,6 +27,14 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
       await app.evaluate(({ app: electronApp }, dir) => {
         electronApp.setPath('documents', dir)
       }, scratch)
+      const saveDir = join(scratch, 'HermesOffice')
+      // the workbook has no file yet: Save answers the Save As picker (hermesoffice#1036)
+      await app.evaluate(
+        ({ dialog }, target) => {
+          dialog.showSaveDialog = async () => ({ canceled: false, filePath: target })
+        },
+        join(saveDir, 'pasted.xlsx'),
+      )
 
       await expect(page.locator('.quick-card').nth(1)).toContainText('AI Sheets')
       await page.locator('.quick-card').nth(1).click()
@@ -49,7 +57,7 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
 
       // source row A1:C1: two values and a formula referencing the row
       await sheets.evaluate(async () => {
-        const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+        const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
           univerAPI: {
             getActiveWorkbook(): {
               getActiveSheet(): {
@@ -67,12 +75,12 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         await sheet.getRange(0, 0, 1, 3).setValues([[10, 'hi', '=A1&"-x"']])
         sheet.getRange(0, 0, 1, 3).activate()
       })
-      await sheets.keyboard.press('ControlOrMeta+c')
+      await sheets.keyboard.press('Control+c')
       await sheets.waitForTimeout(300)
 
       // tile-paste into A2:C3 — row 3's formula cell becomes an si follower
       await sheets.evaluate(() => {
-        const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+        const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
           univerAPI: {
             getActiveWorkbook(): {
               getActiveSheet(): {
@@ -88,7 +96,7 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         }
         debug.univerAPI.getActiveWorkbook().getActiveSheet().getRange(1, 0, 2, 3).activate()
       })
-      await sheets.keyboard.press('ControlOrMeta+v')
+      await sheets.keyboard.press('Control+v')
       await sheets.waitForTimeout(800)
 
       await app.evaluate(({ webContents }) => {
@@ -96,7 +104,6 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         wc?.send('menu:action', 'save')
       })
 
-      const saveDir = join(scratch, 'HermesOffice')
       await expect(async () => {
         const files = (await readdir(saveDir)).filter((f) => f.endsWith('.xlsx'))
         expect(files).toHaveLength(1)
@@ -106,8 +113,12 @@ test.describe('sheets: tiled paste of formulas survives save', () => {
         // both pasted repetitions keep values and a row-shifted formula
         expect(xml).toContain('<c r="A2" s="1"><v>10</v></c>')
         expect(xml).toContain('<c r="A3" s="1"><v>10</v></c>')
-        expect(xml).toMatch(/<c r="C2" s="1"><f>A2&amp;"-x"<\/f><\/c>/)
-        expect(xml).toMatch(/<c r="C3" s="1"><f>A3&amp;"-x"<\/f><\/c>/)
+        // the formula keeps its row-shifted text and now also carries the value
+        // the engine computed for it: a formula the session owns is saved with
+        // its cache (hermesoffice#2466), so a reader that takes the cached value
+        // as is sees the right result instead of an empty one
+        expect(xml).toMatch(/<c r="C2" s="1"[^>]*><f>A2&amp;"-x"<\/f><v>10-x<\/v><\/c>/)
+        expect(xml).toMatch(/<c r="C3" s="1"[^>]*><f>A3&amp;"-x"<\/f><v>10-x<\/v><\/c>/)
       }).toPass({ timeout: 15_000 })
     } finally {
       await closeAndSaveVideo(launched, 'sheets-paste-shared-formula-save')

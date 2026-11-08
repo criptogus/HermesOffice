@@ -54,6 +54,7 @@ export const ar = {
   aiSumInsertFootnote: 'تمت إضافة حاشية سفلية',
   aiSumInsertEndnote: 'تمت إضافة تعليق ختامي',
   aiSumDeleteNote: 'تم حذف الحاشية',
+  aiSumEditNote: 'تم تعديل الحاشية',
   aiSumReadNotes: 'قراءة الحواشي',
   aiSumAddComment: 'إضافة تعليق',
   aiSumDeleteComment: 'حذف تعليق',
@@ -97,6 +98,11 @@ export const ar = {
     'تعقب التغييرات مفعّل: تُوضع علامة على تغييرات محتوى الذكاء الاصطناعي كمراجعات (الإدراجات مسطّرة والحذف مشطوب)؛ اقبلها أو ارفضها في «مراجعة»',
   aiTrackOffTitle:
     'تعقب التغييرات متوقف: تُطبَّق تغييرات الذكاء الاصطناعي فورًا (لا يزال بإمكانك الاسترجاع عبر لقطات الإصدارات)',
+  aiRevisionBarTitle: 'المراجعات',
+  aiRevisionCount: '{count} تغييرات معلقة',
+  aiRevisionRejectAll: 'رفض الكل',
+  aiRevisionAcceptAll: 'قبول الكل',
+  aiRevisionPara: 'الفقرة {n}',
   aiTurnLimit:
     '(تم بلوغ الحد الأقصى لجولات استدعاء الأدوات لهذا الطلب؛ الإجابة أعلاه تستند إلى الخطوات المكتملة وقد تكون غير كاملة.)',
   aiStopped: '(تم الإيقاف)',
@@ -108,6 +114,8 @@ export const ar = {
   aiUnknownError: 'خطأ غير معروف',
   aiTimeoutError:
     'انتهت مهلة طلب الذكاء الاصطناعي: لا توجد استجابة من الشبكة وتم الإيقاف. تحقق من الاتصال وحاول مجددًا',
+  aiRegionError:
+    'مزوّد هذا النموذج لا يقدم الخدمة في منطقتك الحالية — اختر نموذجًا آخر أو غيّر الشبكة',
   aiOverloadedError: 'خدمة الذكاء الاصطناعي مشغولة حاليًا — يرجى المحاولة مرة أخرى بعد قليل',
   aiNetworkError:
     'مشكلة في الشبكة: تعذّر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من الاتصال وحاول مجددًا',
@@ -117,6 +125,9 @@ export const ar = {
   aiSumImageAttachment: 'مرفق صورة {name}',
   aiSumRead: 'قراءة {name}',
   aiSumReadAttachmentName: 'قراءة المرفق {name}',
+  aiSumSkillsList: 'سرد المهارات المثبتة',
+  aiSumSkillRead: 'قراءة المهارة {name}',
+  aiSumRunCli: 'تنفيذ {args}',
   aiSumWebSearch: 'بحث على الويب',
   aiSumWebSearchDone: 'تم البحث عن «{query}» ({count} نتيجة)',
   aiSumImageSearch: 'بحث عن صور',
@@ -163,6 +174,7 @@ export const ar = {
   aiCmdNone: 'لا توجد كتل مطابقة؛ لم يتغير المستند.',
   aiCmdNoneSkipped:
     'لا توجد كتل قابلة للتعديل؛ لم يتغير المستند (تم تخطي {count} كتلة محمية — لا يمكن تعديل الجداول/الصور بأوامر الأنماط).',
+  aiCmdNoneUnchanged: 'تُركت {count} كتلة مطابقة دون تغيير؛ لم يتغير المستند.',
   aiCmdTextStyle: 'تم تحديث نمط النص في {count} كتلة',
   aiCmdMatchedStyle: 'طُبق النمط على {count} تطابقات في {blocks} كتل',
   aiCmdParaStyle: 'تم تحديث تنسيق الفقرة في {count} كتلة',
@@ -177,4 +189,22 @@ export const ar = {
   aiCmdImages: 'تم تحديث {count} صورة',
   aiCmdToc: 'تم إدراج جدول محتويات ({count} إدخالًا)',
   aiCmdSkipped: ' (تم تخطي {count} كتلة محمية)',
+  aiStarterMindMap: 'إنشاء خريطة ذهنية لهذا المستند',
+  aiMindMapBtn: 'خريطة ذهنية بالذكاء الاصطناعي',
+  aiMindMapPrompt:
+    'أنشئ خريطة ذهنية لهذا المستند، ونظّم المواضيع الرئيسية والمفاهيم الأساسية وفق بنية أقسامه',
+  aiSumMindMap: 'إنشاء خريطة ذهنية',
+  aiMindMapTitle: 'خريطة ذهنية',
+  aiMindMapNodes: '{count} عقد',
+  aiMindMapAskPrompt: 'حدثني عن «{label}» في هذا المستند',
+  aiMindMapJump: 'الانتقال إلى المقطع المشار إليه',
+  aiMindMapExport: 'تصدير PNG',
+  aiMindMapExportSvg: 'تصدير SVG',
+  aiMindMapInsert: 'إدراج في المستند',
+  aiMindMapReset: 'إعادة ضبط العرض',
+  aiMindMapExpand: 'توسيع الفرع',
+  aiMindMapCollapse: 'طي الفرع',
+  aiMindMapToggleLayout: 'تبديل التخطيط',
+  aiMindMapLayoutTopDown: 'التبديل إلى التخطيط من أعلى إلى أسفل',
+  aiMindMapLayoutLeftRight: 'التبديل إلى التخطيط من اليسار إلى اليمين',
 } satisfies Record<keyof typeof zh, string>

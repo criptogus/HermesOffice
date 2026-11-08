@@ -19,6 +19,8 @@ import { ms } from './strings/ms'
 import { he } from './strings/he'
 import { hi } from './strings/hi'
 import { zhTW } from './strings/zh-TW'
+import { vi } from './strings/vi'
+import { tr } from './strings/tr'
 
 /** PDF chrome strings; zh defines the key set every locale shard must match. */
 export const strings = defineStrings({
@@ -42,4 +44,6 @@ export const strings = defineStrings({
   he: he,
   hi: hi,
   'zh-TW': zhTW,
+  vi: vi,
+  tr: tr,
 })

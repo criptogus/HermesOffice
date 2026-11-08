@@ -2,6 +2,16 @@
  * corners + concave "feet" merging into the content area below.
  * Metrics copied from Chrome (macOS, light): 40px strip, 34px tabs that
  * shrink from 240px but never stretch, "+" hugging the last tab. */
+/* Interface scale (issue #1913).
+ *
+ * The shell window is its own webContents and the six editors are
+ * WebContentsViews painted beside it, never inside it — so zooming the shell's
+ * frame cannot reach a document canvas. That is the whole reason this is a
+ * `--ui-scale` variable and not a window zoom: see src/main/ui-scale.ts. */
+.app-frame {
+  zoom: var(--ui-scale);
+}
+
 .tab-bar {
   --tabstrip-bg: #ebebeb;
   --tabstrip-text: #454746;
@@ -21,7 +31,7 @@
 
 /* While a Home popover is open the strip must deliver presses (drag regions
    swallow them), so outside-press dismissal can see presses on the blank band */
-html.genoffice-popover-open .tab-bar {
+html.hermesoffice-popover-open .tab-bar {
   -webkit-app-region: no-drag;
 }
 
@@ -216,10 +226,37 @@ body.overlay-title-bar .tab-bar-drag-spacer {
   z-index: 2;
 }
 
+/* ---- dock target (a detached window dragged over the strip): the strip
+ * tints and a slim bar marks the slot the document will land in ---- */
+
+.tab-strip {
+  position: relative;
+}
+
+.tab-strip.dock-target {
+  background: var(--hover);
+}
+
+.tab-dock-indicator {
+  position: absolute;
+  top: 8px;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 3;
+}
+
 .tab-icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+}
+
+.tab-item.tab-dormant .tab-title {
+  opacity: 0.55;
 }
 
 .tab-title {
@@ -360,4 +397,18 @@ body.overlay-title-bar .tab-bar-drag-spacer {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.tab-rename-input {
+  min-width: 80px;
+  max-width: 220px;
+  width: 100%;
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
 }

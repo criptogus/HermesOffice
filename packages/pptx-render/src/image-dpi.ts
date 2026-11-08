@@ -1,24 +1,33 @@
 /**
- * Image resolution tag (PNG pHYs / JPEG JFIF density) read from a base64 data URL.
+ * Image resolution tag (PNG pHYs / JPEG JFIF density, EXIF X/YResolution when JFIF
+ * declares none) read from a base64 data URL or raw bytes.
  * PowerPoint sizes a:tile cells by this tag (measured: a 128px 75dpi JFIF texture tiles
  * at 1.71in, a 1460px 150dpi PNG at 9.73in); untagged bitmaps fall back to 144dpi.
  */
 
+export interface ImageDpi {
+  x: number
+  y: number
+}
+
 /** Only the header region is decoded: pHYs precedes IDAT and JFIF's APP0 is at offset 2. */
 const HEAD_B64_CHARS = 96 * 1024
 
-const cache = new Map<string, { x: number; y: number } | undefined>()
+const cache = new Map<string, ImageDpi | undefined>()
 
 /** Max cached entries; oldest inserted key is evicted once the cap is reached. */
 export const IMAGE_DPI_CACHE_MAX = 256
 
 /**
- * Compact cache key for a data URL: input length plus FNV-1a hash.
- * The full data URL string (often megabytes) is never used as a Map key.
+ * Compact cache key for a data URL: input length plus FNV-1a hash of the head.
+ * The dpi tag lives in the header decodeHead reads, so hashing only that region
+ * keeps the key exact while bounding the cost for multi-megabyte URLs.
  */
 export function cacheKeyFor(dataUrl: string): string {
+  const comma = dataUrl.indexOf(',')
+  const end = Math.min(dataUrl.length, (comma < 0 ? 0 : comma + 1) + HEAD_B64_CHARS)
   let hash = 0x811c9dc5
-  for (let i = 0; i < dataUrl.length; i++) {
+  for (let i = 0; i < end; i++) {
     hash ^= dataUrl.charCodeAt(i)
     hash = Math.imul(hash, 0x01000193)
   }
@@ -40,9 +49,7 @@ export function clearImageDpiCache(): void {
   cache.clear()
 }
 
-export function imageDpiFromDataUrl(
-  dataUrl: string | undefined,
-): { x: number; y: number } | undefined {
+export function imageDpiFromDataUrl(dataUrl: string | undefined): ImageDpi | undefined {
   if (!dataUrl) return undefined
   const key = cacheKeyFor(dataUrl)
   if (cache.has(key)) {
@@ -52,7 +59,7 @@ export function imageDpiFromDataUrl(
     cache.set(key, cached)
     return cached
   }
-  const dpi = readDpi(decodeHead(dataUrl))
+  const dpi = imageDpiFromBytes(decodeHead(dataUrl))
   if (cache.size >= IMAGE_DPI_CACHE_MAX) {
     const oldest = cache.keys().next()
     if (!oldest.done) cache.delete(oldest.value)
@@ -78,14 +85,60 @@ function decodeHead(dataUrl: string): Uint8Array {
   }
 }
 
-function readDpi(b: Uint8Array): { x: number; y: number } | undefined {
+/** Declared resolution of a PNG or JPEG; undefined when the header carries none. */
+export function imageDpiFromBytes(b: Uint8Array): ImageDpi | undefined {
   if (b.length < 16) return undefined
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return pngDpi(b)
   if (b[0] === 0xff && b[1] === 0xd8) return jpegDpi(b)
   return undefined
 }
 
-function plausible(x: number, y: number): { x: number; y: number } | undefined {
+export interface ImageSize {
+  w: number
+  h: number
+}
+
+/** Pixel size from a PNG IHDR or the first JPEG SOF frame header; undefined for other formats. */
+export function imageSizeFromBytes(b: Uint8Array): ImageSize | undefined {
+  if (b.length < 24) return undefined
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    if (String.fromCharCode(b[12]!, b[13]!, b[14]!, b[15]!) !== 'IHDR') return undefined
+    return sizeOrUndefined(u32(b, 16), u32(b, 20))
+  }
+  if (b[0] === 0xff && b[1] === 0xd8) return jpegSize(b)
+  return undefined
+}
+
+function sizeOrUndefined(w: number, h: number): ImageSize | undefined {
+  return w > 0 && h > 0 ? { w, h } : undefined
+}
+
+function jpegSize(b: Uint8Array): ImageSize | undefined {
+  let o = 2
+  while (o + 4 <= b.length && b[o] === 0xff) {
+    const marker = b[o + 1]!
+    if (
+      marker === 0xd8 ||
+      (marker >= 0xd0 && marker <= 0xd7) ||
+      marker === 0x01 ||
+      marker === 0xff
+    ) {
+      o += marker === 0xff ? 1 : 2
+      continue
+    }
+    const len = (b[o + 2]! << 8) + b[o + 3]!
+    if (marker === 0xda || marker === 0xd9) return undefined
+    // SOF0..SOF15 minus DHT (C4), JPG (C8) and DAC (CC): height then width follow the precision byte
+    const isSof = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)
+    if (isSof && o + 9 <= b.length) {
+      return sizeOrUndefined((b[o + 7]! << 8) + b[o + 8]!, (b[o + 5]! << 8) + b[o + 6]!)
+    }
+    o += 2 + len
+  }
+  return undefined
+}
+
+function plausible(x: number, y: number): ImageDpi | undefined {
   return x >= 10 && x <= 10000 && y >= 10 && y <= 10000 ? { x, y } : undefined
 }
 
@@ -93,7 +146,7 @@ function u32(b: Uint8Array, o: number): number {
   return ((b[o]! << 24) >>> 0) + (b[o + 1]! << 16) + (b[o + 2]! << 8) + b[o + 3]!
 }
 
-function pngDpi(b: Uint8Array): { x: number; y: number } | undefined {
+function pngDpi(b: Uint8Array): ImageDpi | undefined {
   let o = 8
   while (o + 12 <= b.length) {
     const len = u32(b, o)
@@ -109,7 +162,8 @@ function pngDpi(b: Uint8Array): { x: number; y: number } | undefined {
   return undefined
 }
 
-function jpegDpi(b: Uint8Array): { x: number; y: number } | undefined {
+function jpegDpi(b: Uint8Array): ImageDpi | undefined {
+  let exif: ImageDpi | undefined
   let o = 2
   while (o + 4 <= b.length && b[o] === 0xff) {
     const marker = b[o + 1]!
@@ -118,7 +172,7 @@ function jpegDpi(b: Uint8Array): { x: number; y: number } | undefined {
       continue
     }
     const len = (b[o + 2]! << 8) + b[o + 3]!
-    if (marker === 0xda || marker === 0xd9) return undefined
+    if (marker === 0xda || marker === 0xd9) return exif
     if (marker === 0xe0 && len >= 16 && o + 2 + len <= b.length) {
       const p = o + 4
       const isJfif =
@@ -131,12 +185,59 @@ function jpegDpi(b: Uint8Array): { x: number; y: number } | undefined {
         const units = b[p + 7]!
         const xd = (b[p + 8]! << 8) + b[p + 9]!
         const yd = (b[p + 10]! << 8) + b[p + 11]!
+        // JFIF wins over EXIF; units 0 declares only an aspect ratio, so keep scanning
         if (units === 1) return plausible(xd, yd)
         if (units === 2) return plausible(xd * 2.54, yd * 2.54)
-        return undefined
       }
     }
+    if (marker === 0xe1 && !exif && o + 2 + len <= b.length) exif = exifDpi(b, o + 4, o + 2 + len)
     o += 2 + len
   }
-  return undefined
+  return exif
+}
+
+const EXIF_X_RESOLUTION = 0x011a
+const EXIF_Y_RESOLUTION = 0x011b
+const EXIF_RESOLUTION_UNIT = 0x0128
+
+/** IFD0 XResolution/YResolution of an APP1 "Exif" segment spanning [p, end). */
+function exifDpi(b: Uint8Array, p: number, end: number): ImageDpi | undefined {
+  const isExif =
+    b[p] === 0x45 &&
+    b[p + 1] === 0x78 &&
+    b[p + 2] === 0x69 &&
+    b[p + 3] === 0x66 &&
+    b[p + 4] === 0 &&
+    b[p + 5] === 0
+  if (!isExif) return undefined
+  const tiff = p + 6
+  const le = b[tiff] === 0x49 && b[tiff + 1] === 0x49
+  if (!le && !(b[tiff] === 0x4d && b[tiff + 1] === 0x4d)) return undefined
+  const u16 = (o: number) => (le ? b[o]! | (b[o + 1]! << 8) : (b[o]! << 8) | b[o + 1]!)
+  const rd32 = (o: number) =>
+    le ? (b[o]! | (b[o + 1]! << 8) | (b[o + 2]! << 16) | (b[o + 3]! << 24)) >>> 0 : u32(b, o)
+  const rational = (e: number) => {
+    const at = tiff + rd32(e + 8)
+    if (at + 8 > end) return undefined
+    const den = rd32(at + 4)
+    return den ? rd32(at) / den : undefined
+  }
+  if (tiff + 8 > end) return undefined
+  const ifd0 = tiff + rd32(tiff + 4)
+  if (ifd0 + 2 > end) return undefined
+  const count = u16(ifd0)
+  let x: number | undefined
+  let y: number | undefined
+  let unit = 2
+  for (let i = 0; i < count; i++) {
+    const e = ifd0 + 2 + i * 12
+    if (e + 12 > end) return undefined
+    const tag = u16(e)
+    if (tag === EXIF_X_RESOLUTION) x = rational(e)
+    else if (tag === EXIF_Y_RESOLUTION) y = rational(e)
+    else if (tag === EXIF_RESOLUTION_UNIT) unit = u16(e + 8)
+  }
+  if (x == null || y == null) return undefined
+  if (unit === 3) return plausible(x * 2.54, y * 2.54)
+  return unit === 2 ? plausible(x, y) : undefined
 }

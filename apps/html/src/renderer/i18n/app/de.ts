@@ -1,12 +1,30 @@
 import type { zh } from './zh'
 
 export const de = {
+  redactMenuLabel: 'Auswahl vor der KI verbergen',
+  redactDialogDesc:
+    'Die Wörter bleiben im Dokument und in der Datei; das Modell sieht nur den Platzhalter. Geben Sie ihm einen Namen.',
+  redactDialogScope:
+    'Das Verbergen gilt nur für die KI dieser App. CLI, MCP-Tools und der Headless-Export lesen die Datei direkt und sehen diese Wörter weiterhin.',
+  redactDialogPlaceholder: 'Name des Platzhalters, z. B. Telefonnummer des Kunden',
+  redactCancel: 'Abbrechen',
+  redactInsert: 'Verbergen',
+  diskChangedMsg: 'Diese Datei wurde von einem anderen Programm geändert.',
+  diskConflictMsg:
+    'Diese Datei wurde auf der Festplatte geändert; Speichern überschreibt diese Änderungen.',
+  diskReload: 'Neu laden',
+  diskKeepMine: 'Meine behalten',
+  diskOverwrite: 'Trotzdem überschreiben',
+
   loading: 'Wird geladen…',
   loadFailed: 'Datei konnte nicht geöffnet werden',
   untitled: 'Unbenannt',
   saveFailed: 'Speichern fehlgeschlagen: {error}',
   saveFailedStatus: 'Speichern fehlgeschlagen',
   exportFailed: 'Export fehlgeschlagen',
+  printFailed: 'Druck fehlgeschlagen: {error}',
+  exportHtmlSkipped:
+    'Exportiert, aber {count} Ressource(n) konnten nicht eingebettet werden (z. B. {first})',
   viewPreview: 'Vorschau',
   viewSplit: 'Geteilt',
   viewSource: 'Quelltext',
@@ -47,13 +65,14 @@ export const de = {
   elementMoveUp: 'Nach oben',
   elementMoveDown: 'Nach unten',
   elementToolbar: 'Element-Symbolleiste',
+  elementPath: 'Elementpfad',
   fmtBold: 'Fett',
   fmtItalic: 'Kursiv',
   openExternal: 'Link im Browser geöffnet',
   save: 'Speichern (⌘S)',
   saveAs: 'Speichern unter…',
+  aiNameFile: 'Mit KI benennen…',
   ribbonCollapse: 'Menüband reduzieren',
-  ribbonPin: 'Menüband anheften',
   ribbonExpand: 'Menüband erweitern',
   ribbonGroupInsert: 'Einfügen',
   editText: 'Text bearbeiten',
@@ -83,6 +102,7 @@ export const de = {
   alignLeft: 'Linksbündig',
   alignCenter: 'Zentriert',
   alignRight: 'Rechtsbündig',
+  alignJustify: 'Blocksatz',
   fontSizeDec: 'Schriftgrad verkleinern',
   fontSizeInc: 'Schriftgrad vergrößern',
   typography: 'Typografie',
@@ -119,6 +139,7 @@ export const de = {
   insertImageUrl: 'Bild von URL…',
   insertConfirm: 'Einfügen',
   insertMore: 'Mehr',
+  insertSkeleton: 'Grundgerüst einfügen',
   insertTableSize: '{r}×{c} Tabelle',
   insertTablePickSize: 'Tabellengröße auswählen',
   insertPlaceholderTableHeader: 'Kopfzeile {n}',

@@ -5,6 +5,49 @@ use std::borrow::Cow;
 
 use super::*;
 
+/// Budget for the parts `read_zip_string` materialises whole (workbook.xml,
+/// its rels, styles, table definitions). These never approach this size in a
+/// real workbook, whereas `MAX_EXTRACTED_ENTRY_BYTES` is sized for densely
+/// styled worksheets and would let one metadata part inflate to 500 MiB.
+pub(crate) const MAX_METADATA_PART_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(crate) fn decode_uri_path(value: &str) -> Result<String, SidecarError> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return Err(SidecarError::Workbook(
+                "OOXML relationship target is malformed.".into(),
+            ));
+        }
+        let high = hex_value(bytes[index + 1]).ok_or_else(|| {
+            SidecarError::Workbook("OOXML relationship target is malformed.".into())
+        })?;
+        let low = hex_value(bytes[index + 2]).ok_or_else(|| {
+            SidecarError::Workbook("OOXML relationship target is malformed.".into())
+        })?;
+        decoded.push(high << 4 | low);
+        index += 3;
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| SidecarError::Workbook("OOXML relationship target is not valid UTF-8.".into()))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Entry lookup tolerant of non-conformant producers: '\' separators,
 /// leading '/', and case drift in entry names. Excel opens such packages
 /// (tdf131575: .NET-written `xl\workbook.xml` with `sharedstrings.xml`).
@@ -18,23 +61,67 @@ pub(crate) fn zip_entry<'a>(
         let normalize = |value: &str| {
             crate::archive::canonical_entry_name(value).map(|name| name.to_ascii_lowercase())
         };
-        let wanted = normalize(name);
-        archive
-            .file_names()
-            .find(|candidate| normalize(candidate) == wanted)
-            .map(ToOwned::to_owned)
+        let decoded = decode_uri_path(name).ok();
+        let mut resolved = None;
+        for candidate in [Some(name), decoded.as_deref()].into_iter().flatten() {
+            let wanted = normalize(candidate);
+            if let Some(found) = archive
+                .file_names()
+                .filter_map(Result::ok)
+                .find(|candidate| normalize(candidate) == wanted)
+            {
+                resolved = Some(found.into_owned());
+                break;
+            }
+        }
+        resolved
     };
     archive.by_name(resolved.as_deref().unwrap_or(name))
 }
 
+/// Reads a zip entry as a string under a metered limit (see
+/// `copy_entry_bounded` for why a declared size alone bounds nothing): one
+/// byte past the smaller of the claim and `MAX_METADATA_PART_BYTES` is read,
+/// and a part that inflates past that is refused rather than materialised.
+///
+/// This is the path nearly every workbook part arrives through, so an uncapped
+/// read here undoes the work genoffice#781 did for media and `@genoffice/zip-gate` does
+/// for the docx and pptx hosts.
 pub(crate) fn read_zip_string(
     archive: &mut ZipArchive<File>,
     path: &str,
 ) -> Result<String, SidecarError> {
     let mut entry = zip_entry(archive, path)?;
-    let mut value = String::new();
-    entry.read_to_string(&mut value)?;
-    Ok(value)
+    let declared = entry.size();
+    if declared > MAX_METADATA_PART_BYTES {
+        return Err(SidecarError::Workbook(format!(
+            "{path} is {declared} bytes uncompressed, above the {MAX_METADATA_PART_BYTES} byte metadata part limit."
+        )));
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(declared.min(1 << 20) as usize);
+    copy_entry_bounded(&mut entry, declared, MAX_METADATA_PART_BYTES, &mut out)?;
+    String::from_utf8(out)
+        .map_err(|_| SidecarError::Workbook(format!("{path} is not valid UTF-8.")))
+}
+
+/// `ZipFile::size()` is only the declared length and zip bounds just the
+/// compressed input, so an entry may inflate past its claim; reading one byte
+/// past `min(declared, cap)` catches that (same rule as `@genoffice/zip-gate`,
+/// genoffice#781 / genoffice#1386).
+pub(crate) fn copy_entry_bounded<R: Read, W: Write>(
+    entry: &mut R,
+    declared: u64,
+    cap: u64,
+    out: &mut W,
+) -> Result<u64, SidecarError> {
+    let allowance = declared.min(cap);
+    let copied = std::io::copy(&mut entry.take(allowance.saturating_add(1)), out)?;
+    if copied > allowance {
+        return Err(SidecarError::Workbook(
+            "ZIP entry inflates past the size it declares.".into(),
+        ));
+    }
+    Ok(copied)
 }
 
 pub(crate) fn attribute_value<R: std::io::BufRead>(

@@ -30,14 +30,75 @@ const lineModel: ChartModel = {
 }
 
 describe('buildChartNode', () => {
+  // 130,000-element series are real CPU work (up to ~5 s on a loaded CI
+  // runner), so vitest's default 5 s budget flakes; this matches the 60 s
+  // budget of build-chart-series-bounds.test.ts for the same workload
+  const TIMEOUT = 60_000
+
+  it(
+    'renders a valid 130,000-point line series with its full value range',
+    () => {
+      const values = Array<number>(130_000).fill(10)
+      values[0] = -5
+      values[values.length - 1] = 30
+      const model: ChartModel = {
+        kind: 'line',
+        categories: Array<string>(values.length).fill(''),
+        series: [{ values, marker: false }],
+        catAxis: { tickLblHidden: true },
+      }
+      const node = buildChartNode('large', 'large', model, box, vp, metrics)!
+      const points = node.polylines[0]!.points
+      expect(points).toHaveLength(values.length * 2)
+      expect(points[1]).toBeGreaterThan(points[points.length - 1]!)
+      expect(node.labels.some((label) => label.text === '30')).toBe(true)
+    },
+    TIMEOUT,
+  )
+
+  it(
+    'renders 130,000 horizontal bars without spreading their values',
+    () => {
+      const values = Array<number>(130_000).fill(10)
+      const model: ChartModel = {
+        kind: 'bar',
+        barDir: 'bar',
+        categories: Array<string>(values.length).fill(''),
+        series: [{ values }],
+        catAxis: { tickLblHidden: true },
+      }
+      expect(
+        buildChartNode('large-bars', 'large-bars', model, box, vp, metrics)?.bars,
+      ).toHaveLength(values.length)
+    },
+    TIMEOUT,
+  )
+
+  it(
+    'renders 130,000 scatter points without spreading axis values',
+    () => {
+      const values = Array<number>(130_000).fill(10)
+      const model: ChartModel = {
+        kind: 'scatter',
+        scatterStyle: 'marker',
+        categories: [],
+        series: [{ values }],
+      }
+      expect(
+        buildChartNode('large-scatter', 'large-scatter', model, box, vp, metrics)?.markers,
+      ).toHaveLength(values.length)
+    },
+    TIMEOUT,
+  )
+
   it('builds line chart: polylines within plot, markers, gridlines, legend', () => {
     const node = buildChartNode('r_1', 'el1', lineModel, box, vp, metrics)!
     expect(node.type).toBe('chart')
-    expect(node.polylines).toHaveLength(2)
-    expect(node.markers.length).toBe(8)
+    // 2 series polylines + 2 legend line keys (with their markers)
+    expect(node.polylines).toHaveLength(4)
+    expect(node.markers.length).toBe(10)
     expect(node.gridLines.length).toBeGreaterThan(2)
-    // Legend: 2 swatches + at least 2 texts (more with tick/category labels)
-    expect(node.swatches).toHaveLength(2)
+    expect(node.swatches).toHaveLength(0)
     // All polyline points are inside the chart box
     for (const p of node.polylines) {
       for (let i = 0; i < p.points.length; i += 2) {
@@ -113,11 +174,13 @@ describe('buildChartNode', () => {
     // The bar series yields only 3 bars (not 6), the line series yields 1 polyline
     expect(node.bars).toHaveLength(3)
     expect(node.bars.every((b) => b.color === '#4472C4')).toBe(true)
-    expect(node.polylines).toHaveLength(1)
+    // series polyline + the line series' legend key
+    expect(node.polylines).toHaveLength(2)
     expect(node.polylines[0]!.color).toBe('#ED7D31')
     expect(node.polylines[0]!.points).toHaveLength(6)
-    // The legend includes both series
-    expect(node.swatches).toHaveLength(2)
+    // The legend includes both series: bar swatch + line key
+    expect(node.swatches).toHaveLength(1)
+    expect(node.polylines[1]!.points).toHaveLength(4)
   })
 
   it('combo dual axis: line maps to the right secondary value-axis range, right axis line and tick labels drawn', () => {
@@ -157,6 +220,229 @@ describe('buildChartNode', () => {
     expect(lastY).toBeCloseTo(rightAxis.y1, 1)
     // Bars still use the primary range: the tallest bar 240/250 doesn't reach the top
     expect(Math.min(...node.bars.map((b) => b.y))).toBeGreaterThan(rightAxis.y1)
+  })
+
+  it('lays out a logarithmic value axis with one gridline per decade and log-spaced points', () => {
+    const model: ChartModel = {
+      kind: 'line',
+      categories: ['a', 'b', 'c', 'd'],
+      series: [{ name: 's', color: '#4472C4', values: [9, 101, 870, 960], plotKind: 'line' }],
+      valAxis: { logBase: 10, min: 1, max: 10000, gridColor: '#DDDDDD' },
+    }
+    const node = buildChartNode('r_log', 'elog', model, box, vp, metrics)!
+    const texts = node.labels.map((l) => l.text)
+    for (const t of ['1', '10', '100', '1000', '10000']) expect(texts).toContain(t)
+    expect(texts).not.toContain('9,001')
+    expect(node.gridLines).toHaveLength(5)
+    const ys = node.gridLines.map((g) => g.y1).sort((a, b) => a - b)
+    const gaps = ys.slice(1).map((y, i) => y - ys[i]!)
+    for (const g of gaps) expect(g).toBeCloseTo(gaps[0]!, 3)
+    // 101 sits just above the 100 gridline, 960 just below 1000
+    const pts = node.polylines[0]!.points
+    const y100 = ys[2]!
+    expect(pts[3]!).toBeLessThan(y100)
+    expect(pts[3]!).toBeGreaterThan(y100 - gaps[0]! * 0.02)
+  })
+
+  it('auto-ranges a logarithmic axis to the enclosing powers of the base', () => {
+    const model: ChartModel = {
+      kind: 'line',
+      categories: ['a', 'b'],
+      series: [{ name: 's', color: '#4472C4', values: [9, 960], plotKind: 'line' }],
+      valAxis: { logBase: 10 },
+    }
+    const node = buildChartNode('r_log2', 'elog2', model, box, vp, metrics)!
+    const texts = node.labels.map((l) => l.text)
+    expect(texts).toEqual(expect.arrayContaining(['1', '10', '100', '1000']))
+    expect(texts).not.toContain('10000')
+  })
+
+  it('keeps exact powers as log-axis ends and puts minors at 2..9 of each decade', () => {
+    const model: ChartModel = {
+      kind: 'line',
+      categories: ['a', 'b'],
+      series: [{ name: 's', color: '#4472C4', values: [1000, 5000], plotKind: 'line' }],
+      valAxis: { logBase: 10, gridColor: '#DDDDDD', minorGridColor: '#EEEEEE' },
+    }
+    const node = buildChartNode('r_log3', 'elog3', model, box, vp, metrics)!
+    const texts = node.labels.map((l) => l.text)
+    expect(texts).toContain('1000')
+    expect(texts).not.toContain('100')
+    // one decade 1000..10000: 2 majors + 8 minors (2000..9000)
+    expect(node.gridLines).toHaveLength(10)
+  })
+
+  it('moves the value axis to the right when the category axis is reversed', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['Jun', 'May', 'Apr'],
+      series: [{ name: 's', color: '#4472C4', values: [3, 2, 1], plotKind: 'bar' }],
+      catAxis: { reversed: true },
+      valAxis: { min: 0, max: 4 },
+    }
+    const node = buildChartNode('r_rev', 'erev', model, box, vp, metrics)!
+    const [xAxis, yAxis] = node.axisLines
+    expect(yAxis!.x1).toBeCloseTo(xAxis!.x2, 3)
+    const valLabels = node.labels.filter((l) => /^[0-4]$/.test(l.text))
+    expect(valLabels.length).toBeGreaterThan(0)
+    for (const l of valLabels) expect(l.x).toBeGreaterThan(xAxis!.x2)
+    // the tallest bar (first category) sits on the right
+    const tallest = node.bars.reduce((a, b) => (b.h > a.h ? b : a))
+    expect(tallest.x).toBeGreaterThan(node.bars[1]!.x)
+  })
+
+  it('a right legend clears the right-hand value-axis labels', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['Jun', 'May', 'Apr'],
+      series: [{ name: 'Series one', color: '#4472C4', values: [3, 2, 1], plotKind: 'bar' }],
+      catAxis: { reversed: true },
+      valAxis: { min: 0, max: 4 },
+      legendPos: 'r',
+    }
+    const node = buildChartNode('r_rev3', 'erev3', model, box, vp, metrics)!
+    const valLabels = node.labels.filter((l) => /^[0-4]$/.test(l.text))
+    const legend = node.labels.find((l) => l.text === 'Series one')!
+    const labelRight = Math.max(...valLabels.map((l) => l.x + ptToPx(10, vp.scale) * l.text.length))
+    expect(legend.x).toBeGreaterThan(labelRight)
+  })
+
+  it('crosses=max on the value axis cancels the reversed-category side switch', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['Jun', 'May', 'Apr'],
+      series: [{ name: 's', color: '#4472C4', values: [3, 2, 1], plotKind: 'bar' }],
+      catAxis: { reversed: true },
+      valAxis: { min: 0, max: 4, crosses: 'max' },
+    }
+    const node = buildChartNode('r_rev2', 'erev2', model, box, vp, metrics)!
+    const [xAxis, yAxis] = node.axisLines
+    expect(yAxis!.x1).toBeCloseTo(xAxis!.x1, 3)
+  })
+
+  it('horizontal bars put series 1 on top of each group when the category axis is reversed', () => {
+    const mk = (reversed: boolean): ChartModel => ({
+      kind: 'bar',
+      barDir: 'bar',
+      categories: ['a', 'b'],
+      series: [
+        { name: 's1', color: '#111111', values: [50, 40], plotKind: 'bar' },
+        { name: 's2', color: '#999999', values: [30, 20], plotKind: 'bar' },
+      ],
+      catAxis: { reversed },
+      valAxis: { min: 0, max: 60 },
+    })
+    const normal = buildChartNode('r_h1', 'eh1', mk(false), box, vp, metrics)!
+    const flipped = buildChartNode('r_h2', 'eh2', mk(true), box, vp, metrics)!
+    const top = (node: typeof normal, color: string) =>
+      Math.min(...node.bars.filter((b) => b.color === color).map((b) => b.y))
+    // series 1 sits below series 2 normally (bottom-up), above it once the axis is reversed
+    expect(top(normal, '#111111')).toBeGreaterThan(top(normal, '#999999'))
+    expect(top(flipped, '#111111')).toBeLessThan(top(flipped, '#999999'))
+  })
+
+  it('data labels format with the series numFmt and carry their box colors', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['a', 'b'],
+      series: [
+        {
+          name: 's1',
+          color: '#111111',
+          values: [50.6, 38.9],
+          plotKind: 'bar',
+          dataLabels: true,
+          dataLabelFmt: '#,##0',
+          dataLabelFill: '#FFFF00',
+          dLblOverrides: [{ idx: 1, val: true, fill: '#FF0000', border: '#000000' }],
+        },
+      ],
+      valAxis: { min: 0, max: 60 },
+    }
+    const node = buildChartNode('r_lb', 'elb', model, box, vp, metrics)!
+    const l0 = node.labels.find((l) => l.text === '51')!
+    const l1 = node.labels.find((l) => l.text === '39')!
+    expect(l0.fill).toBe('#FFFF00')
+    expect(l0.w).toBeGreaterThan(0)
+    expect(l1.fill).toBe('#FF0000')
+    expect(l1.stroke).toBe('#000000')
+  })
+
+  it('a point dLbl with a:noFill clears the series label box', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['a', 'b'],
+      series: [
+        {
+          name: 's1',
+          color: '#111111',
+          values: [33, 27],
+          plotKind: 'bar',
+          dataLabels: true,
+          dataLabelFill: '#FFFF00',
+          dataLabelBorder: '#000000',
+          dLblOverrides: [{ idx: 1, val: true, fill: null, border: null }],
+        },
+      ],
+      valAxis: { min: 0, max: 60 },
+    }
+    const node = buildChartNode('r_nf', 'enf', model, box, vp, metrics)!
+    expect(node.labels.find((l) => l.text === '33')!.fill).toBe('#FFFF00')
+    const cleared = node.labels.find((l) => l.text === '27')!
+    expect(cleared.fill).toBeUndefined()
+    expect(cleared.stroke).toBeUndefined()
+  })
+
+  it('a reversed horizontal-bar chart lists the legend in document order', () => {
+    const mk = (reversed: boolean): ChartModel => ({
+      kind: 'bar',
+      barDir: 'bar',
+      categories: ['a'],
+      series: [
+        { name: 'First', color: '#111111', values: [5], plotKind: 'bar' },
+        { name: 'Second', color: '#999999', values: [3], plotKind: 'bar' },
+      ],
+      catAxis: { reversed },
+      valAxis: { min: 0, max: 6 },
+      legendPos: 'b',
+    })
+    const legendY = (node: ReturnType<typeof buildChartNode>, name: string) =>
+      node!.labels.find((l) => l.text === name)!.x
+    const normal = buildChartNode('r_lg1', 'elg1', mk(false), box, vp, metrics)
+    const flipped = buildChartNode('r_lg2', 'elg2', mk(true), box, vp, metrics)
+    // bottom-up stacking lists Second first; the reversed axis restores document order
+    expect(legendY(normal, 'Second')).toBeLessThan(legendY(normal, 'First'))
+    expect(legendY(flipped, 'First')).toBeLessThan(legendY(flipped, 'Second'))
+  })
+
+  it('a point dLbl txPr color and size apply to bar labels', () => {
+    const model: ChartModel = {
+      kind: 'bar',
+      barDir: 'col',
+      categories: ['a', 'b'],
+      series: [
+        {
+          name: 's1',
+          color: '#111111',
+          values: [33, 27],
+          plotKind: 'bar',
+          dataLabels: true,
+          dLblOverrides: [{ idx: 0, val: true, color: '#FF0000', sizePt: 9 }],
+        },
+      ],
+      valAxis: { min: 0, max: 60 },
+    }
+    const node = buildChartNode('r_lc', 'elc', model, box, vp, metrics)!
+    const l0 = node.labels.find((l) => l.text === '33')!
+    const l1 = node.labels.find((l) => l.text === '27')!
+    expect(l0.color).toBe('#FF0000')
+    expect(l0.fontSizePx).toBeCloseTo(ptToPx(9, vp.scale), 3)
+    expect(l1.color).not.toBe('#FF0000')
   })
 
   it('returns null for unsupported kinds (falls back to chip upstream)', () => {
@@ -1028,5 +1314,58 @@ describe('chartSpace default text color + legacy line width', () => {
       metrics,
     )!
     expect(modern.polylines[0]!.widthPx).toBeCloseTo(ptToPx(1.5, vp.scale), 3)
+  })
+})
+
+describe('per-point picture fills', () => {
+  it('paint the bar with the resolved image instead of the series color (c:dPt blipFill)', () => {
+    const bar: ChartModel = {
+      kind: 'bar',
+      categories: ['a', 'b'],
+      series: [
+        {
+          values: [1, 2],
+          pointFills: [
+            undefined,
+            { type: 'image', mediaRef: 'ppt/media/image9.png', mode: 'stretch' },
+          ],
+        },
+      ],
+    }
+    const media = () => 'data:image/png;base64,AAAA'
+    const node = buildChartNode('r_9', 'el9', bar, box, vp, metrics, media)!
+    expect(node.bars).toHaveLength(2)
+    expect(node.bars[0]!.fill).toBeUndefined()
+    expect(node.bars[1]!.fill).toMatchObject({
+      kind: 'image',
+      dataUrl: 'data:image/png;base64,AAAA',
+    })
+  })
+})
+
+describe('legend top slot under a title with a manual plot layout', () => {
+  const base: ChartModel = {
+    kind: 'bar',
+    barDir: 'col',
+    categories: ['T1', 'T2'],
+    series: [
+      { name: 'Y1', color: '#5B9BD5', values: [1, 2] },
+      { name: 'Y2', color: '#ED7D31', values: [2, 3] },
+    ],
+    title: 'Total output',
+    titlePt: 30,
+    legendPos: 't',
+    plotLayout: { x: 0.05, y: 0.14, w: 0.95, h: 0.73 },
+  }
+  const legendY = (model: ChartModel) =>
+    buildChartNode('lg', 'lg', model, box, vp, metrics)!.labels.find((l) => l.text === 'Y1')!.y
+  const titleH = ptToPx(30, vp.scale) * (0.5 + 1.17) - 1
+
+  it('keeps the auto-placed legend below the title row', () => {
+    expect(legendY(base)).toBeGreaterThanOrEqual(titleH)
+  })
+
+  it('an overlay title reserves nothing', () => {
+    expect(legendY({ ...base, titleOverlay: true })).toBeLessThan(titleH)
   })
 })

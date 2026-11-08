@@ -110,6 +110,8 @@ export const ko = {
   aiErrUnknown: '알 수 없는 오류',
   aiErrStreamTimeout:
     'AI 요청 시간 초과: 네트워크 응답이 없어 중단되었습니다. 연결을 확인한 후 다시 시도해 주세요',
+  aiErrRegion:
+    '이 모델의 제공업체는 현재 지역에서 서비스를 제공하지 않습니다. 다른 모델을 선택하거나 네트워크를 변경하세요',
   aiErrOverloaded: 'AI 서비스가 혼잡합니다. 잠시 후 다시 시도해 주세요',
   aiErrNetwork:
     '네트워크에 문제가 있어 AI 서비스에 연결할 수 없습니다. 연결을 확인한 후 다시 시도해 주세요',
@@ -134,6 +136,7 @@ export const ko = {
   aiClarifyOther: '기타(직접 입력)',
   aiClarifySkip: '설문 건너뛰기',
   aiClarifyNext: '다음',
+  aiClarifyPrev: '이전',
   aiClarifySubmit: '생성하기',
   aiSumReadAttachment: '첨부 파일 읽기',
   aiSumReadAttachmentName: '첨부 파일 {name} 읽기',

@@ -1,4 +1,4 @@
-import { crc32 } from 'node:zlib'
+import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { lazyMediaPlaceholder } from '../src/lazy-media'
 import {
@@ -95,6 +95,31 @@ describe('zip splice robustness', () => {
     await expect(readZipEntries(bufferSource(outsideSize))).rejects.toThrow(
       /corrupt central directory/,
     )
+  })
+
+  it('rejects entries whose declared data lies outside the archive', async () => {
+    const valid = writeZip([storeEntry('word/document.xml', Buffer.from('<w:document/>'))])
+    const CENTRAL_SIG = Buffer.from([0x50, 0x4b, 0x01, 0x02])
+
+    // readers allocate from the declared csize before touching the file; an
+    // >int32 length additionally aborts Node outright inside fs.read
+    const oversized = Buffer.from(valid)
+    const c1 = oversized.indexOf(CENTRAL_SIG)
+    oversized.writeUInt32LE(0xffffff00, c1 + 20)
+    await expect(readZipEntries(bufferSource(oversized))).rejects.toThrow(
+      /outside the .*-byte archive/,
+    )
+
+    // so must a csize that merely overshoots the end of the file
+    const overhang = Buffer.from(valid)
+    const c2 = overhang.indexOf(CENTRAL_SIG)
+    overhang.writeUInt32LE(overhang.length, c2 + 20)
+    await expect(readZipEntries(bufferSource(overhang))).rejects.toThrow(
+      /outside the .*-byte archive/,
+    )
+
+    // the unmodified archive still parses
+    expect((await readZipEntries(bufferSource(Buffer.from(valid)))).length).toBe(1)
   })
 
   it('closes materialize sources on success and lets the caller use the result', async () => {
@@ -211,5 +236,40 @@ describe('zip splice robustness', () => {
       /source unavailable/,
     )
     expect(errorCloses).toBe(1)
+  })
+})
+
+describe('writeZip local headers', () => {
+  it('stores crc, sizes and name length at the standard local-header offsets', async () => {
+    const plain = Buffer.from('hello hello hello hello hello')
+    const deflated = deflateRawSync(plain)
+    const stored = storeEntry('word/media/image1.png', Buffer.from('png-bytes'))
+    const compressed = {
+      ...storeEntry('word/document.xml', deflated),
+      meta: {
+        ...storeEntry('word/document.xml', deflated).meta,
+        method: 8,
+        crc: crc32(plain),
+        usize: plain.length,
+      },
+    }
+    const bytes = writeZip([stored, compressed])
+    const entries = await readZipEntries(bufferSource(bytes))
+    expect(entries).toHaveLength(2)
+    for (const e of entries) {
+      const header = bytes.subarray(e.dataOffset - 30 - e.nameBytes.length, e.dataOffset)
+      expect(header.readUInt32LE(0)).toBe(0x04034b50)
+      expect(header.readUInt16LE(8)).toBe(e.method)
+      expect(header.readUInt32LE(14)).toBe(e.crc)
+      expect(header.readUInt32LE(18)).toBe(e.csize)
+      expect(header.readUInt32LE(22)).toBe(e.usize)
+      expect(header.readUInt16LE(26)).toBe(e.nameBytes.length)
+      expect(header.readUInt16LE(28)).toBe(0)
+      expect(header.subarray(30).toString()).toBe(e.name)
+    }
+    const doc = entries.find((e) => e.name === 'word/document.xml')!
+    expect(inflateRawSync(bytes.subarray(doc.dataOffset, doc.dataOffset + doc.csize))).toEqual(
+      plain,
+    )
   })
 })

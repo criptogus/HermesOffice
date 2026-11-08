@@ -1,12 +1,30 @@
 import type { zh } from './zh'
 
 export const it = {
+  redactMenuLabel: 'Nascondi la selezione all’IA',
+  redactDialogDesc:
+    'Le parole restano nel documento e nel file; il modello vede solo il segnaposto. Dai un nome perché sappia cosa rappresenta.',
+  redactDialogScope:
+    'Nascondere vale solo per l’IA di questa app. La CLI, gli strumenti MCP e l’esportazione senza interfaccia leggono direttamente il file e vedono comunque queste parole.',
+  redactDialogPlaceholder: 'Nome del segnaposto, es. telefono del cliente',
+  redactCancel: 'Annulla',
+  redactInsert: 'Nascondi',
+  diskChangedMsg: 'Questo file è stato modificato da un altro programma.',
+  diskConflictMsg:
+    'Questo file è cambiato su disco; il salvataggio sovrascriverà quelle modifiche.',
+  diskReload: 'Ricarica',
+  diskKeepMine: 'Mantieni il mio',
+  diskOverwrite: 'Sovrascrivi comunque',
+
   loading: 'Caricamento…',
   loadFailed: 'Impossibile aprire il file',
   untitled: 'Senza titolo',
   saveFailed: 'Salvataggio non riuscito: {error}',
   saveFailedStatus: 'Salvataggio non riuscito',
   exportFailed: 'Esportazione non riuscita',
+  printFailed: 'Stampa non riuscita: {error}',
+  exportHtmlSkipped:
+    'Esportato, ma {count} risorsa/e non è stato possibile incorporarle (es. {first})',
   viewPreview: 'Anteprima',
   viewSplit: 'Diviso',
   viewSource: 'Sorgente',
@@ -48,13 +66,14 @@ export const it = {
   elementMoveUp: 'Sposta su',
   elementMoveDown: 'Sposta giù',
   elementToolbar: 'Barra degli strumenti elemento',
+  elementPath: "Percorso dell'elemento",
   fmtBold: 'Grassetto',
   fmtItalic: 'Corsivo',
   openExternal: 'Link aperto nel browser',
   save: 'Salva (⌘S)',
   saveAs: 'Salva con nome…',
+  aiNameFile: 'Assegna un nome con IA…',
   ribbonCollapse: 'Riduci a icona la barra multifunzione',
-  ribbonPin: 'Aggiungi la barra multifunzione',
   ribbonExpand: 'Espandi la barra multifunzione',
   ribbonGroupInsert: 'Inserisci',
   editText: 'Modifica testo',
@@ -84,6 +103,7 @@ export const it = {
   alignLeft: 'Allinea a sinistra',
   alignCenter: 'Centra',
   alignRight: 'Allinea a destra',
+  alignJustify: 'Giustifica',
   fontSizeDec: 'Riduci dimensione carattere',
   fontSizeInc: 'Aumenta dimensione carattere',
   typography: 'Tipografia',
@@ -120,6 +140,7 @@ export const it = {
   insertImageUrl: 'Immagine da URL…',
   insertConfirm: 'Inserisci',
   insertMore: 'Altro',
+  insertSkeleton: 'Inserisci struttura',
   insertTableSize: 'Tabella {r}×{c}',
   insertTablePickSize: 'Scegli le dimensioni della tabella',
   insertPlaceholderTableHeader: 'Intestazione {n}',

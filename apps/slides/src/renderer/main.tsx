@@ -1,15 +1,18 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { htmlLang, type Lang } from '@hermesoffice/i18n'
+import { htmlDir, htmlLang, type Lang } from '@hermesoffice/i18n'
 import { App } from './App'
 import { AudienceView } from './components/AudienceView'
 import { LocaleProvider, setModuleLang } from './i18n/locale'
 import type { UiTheme } from '../shared/ipc'
 import '@hermesoffice/ui/tokens.css'
 import '@hermesoffice/ui/screentip.css'
+import '@hermesoffice/ui/ai-model-picker.css'
+import '@hermesoffice/ui/ai-queue-strip.css'
+import '@hermesoffice/ui/ai-usage.css'
+import '@hermesoffice/ui/ai-skills.css'
 import '@hermesoffice/ui/color-picker.css'
 import '@hermesoffice/ui/dropdown.css'
-import '@hermesoffice/ui/app-dialog.css'
 import '@hermesoffice/ui/ribbon-collapse.css'
 import '@hermesoffice/ui/markdown.css'
 import '@hermesoffice/ui/ai-panel-prefs.css'
@@ -54,11 +57,12 @@ async function bootstrap(): Promise<void> {
   }
   setModuleLang(lang)
   document.documentElement.lang = htmlLang(lang)
+  document.documentElement.dir = htmlDir(lang)
   // the audience show window renders slide content only — it never themes
   if (mode !== 'audience') {
     applyTheme(theme)
     window.slidesApi?.onThemeChanged(applyTheme)
-    void window.slidesApi
+    await window.slidesApi
       ?.getAiPanelPrefs?.()
       .then(applyAiPanelPrefs)
       .catch(() => {})

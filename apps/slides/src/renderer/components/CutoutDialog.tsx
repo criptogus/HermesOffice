@@ -12,8 +12,10 @@
  * Reuses SettingsModal's .modal-backdrop/.modal styles.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useEscOverlay } from '../esc-overlay'
 import { removeBackground, sampleBackgroundColors, type PixelImage, type RGB } from '../cutout'
 import { useI18n, type StringKey } from '../i18n/locale'
+import { setImageSource } from '../image-loader'
 
 /** Longest side of the preview canvas (px) */
 const PREVIEW_MAX = 520
@@ -33,6 +35,7 @@ interface Props {
 }
 
 export function CutoutDialog({ dataUrl, onApply, onCancel }: Props) {
+  useEscOverlay(true)
   const { t } = useI18n()
   const [tolerance, setTolerance] = useState(DEFAULT_TOLERANCE)
   const [loaded, setLoaded] = useState(false)
@@ -100,7 +103,7 @@ export function CutoutDialog({ dataUrl, onApply, onCancel }: Props) {
     img.onerror = () => {
       if (!cancelled) setError('paneCutoutLoadFail')
     }
-    img.src = dataUrl
+    setImageSource(img, dataUrl)
     return () => {
       cancelled = true
     }

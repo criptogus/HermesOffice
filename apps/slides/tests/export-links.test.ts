@@ -1,6 +1,8 @@
 import type { RenderNode, RenderSlide } from '@hermesoffice/pptx-render'
 import { describe, expect, it } from 'vitest'
+import { safeExternalUrl } from '@hermesoffice/electron-utils/safe-external-url'
 import type { LinkTargetOp } from '../src/shared/ipc'
+import { DECK_LINK_PROTOCOLS, decodeLinkTarget } from '../src/shared/run-link'
 import {
   collectExportPdfLinks,
   collectSlideLinkRects,
@@ -125,6 +127,33 @@ describe('exportLinkHref', () => {
     expect(exportLinkHref({ kind: 'action', action: 'lastslide' }, 0, pages, 2)).toBe('#pg2')
     expect(exportLinkHref({ kind: 'action', action: 'endshow' }, 0, pages, 2)).toBeNull()
     expect(exportLinkHref({ kind: 'action', action: 'lastslideviewed' }, 0, pages, 2)).toBeNull()
+  })
+
+  it('drops dangerous URL schemes from export hrefs', () => {
+    expect(exportLinkHref(url('javascript:alert(1)'), 0, pages, 2)).toBeNull()
+    expect(exportLinkHref(url('data:text/html,hi'), 0, pages, 2)).toBeNull()
+    expect(exportLinkHref(url('file:///etc/passwd'), 0, pages, 2)).toBeNull()
+    expect(exportLinkHref(url('mailto:a@b.test'), 0, pages, 2)).toBe('mailto:a@b.test')
+    expect(exportLinkHref(url('https://x.test/'), 0, pages, 2)).toBe('https://x.test/')
+  })
+})
+
+describe('set-link gate (DECK_LINK_PROTOCOLS)', () => {
+  it('rejects javascript:/data: and keeps http(s)/mailto', () => {
+    const gate = (u: string) => safeExternalUrl(u, { allowedProtocols: DECK_LINK_PROTOCOLS })
+    expect(gate('javascript:alert(1)')).toBeNull()
+    expect(gate('data:text/html,hi')).toBeNull()
+    expect(gate('https://x.test/')).toBe('https://x.test/')
+    expect(gate('mailto:a@b.test')).toBe('mailto:a@b.test')
+  })
+})
+
+describe('decodeLinkTarget', () => {
+  it('never drops a file-authored link, whatever its scheme', () => {
+    for (const u of ['../report.pdf', 'www.x.com', 'tel:+123', 'ftp://h/f', 'javascript:1']) {
+      expect(decodeLinkTarget(u)).toEqual({ kind: 'url', url: u })
+    }
+    expect(decodeLinkTarget('slide:2')).toEqual({ kind: 'slide', slideIndex: 2 })
   })
 })
 

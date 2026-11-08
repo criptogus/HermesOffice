@@ -1,10 +1,12 @@
+import { checkPlaceholders, placeholderSource, REDACT_MARK } from './redact'
 import type { Editor } from '@tiptap/core'
 import type { Node as PmDocNode, Schema } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
-import { generateTocFieldXml, type TocEntry } from '@hermesoffice/docx-engine'
+import { generateTocFieldXml, type TabStop, type TocEntry } from '@hermesoffice/docx-engine'
 import { isEastAsianFontName } from '../font-list'
 import { t } from '../i18n/locale'
 import { blockRangePositions, isTrackedDeleted, liveText } from './doc-utils'
+import { tabSpecsToStops, validateTabs, type TabSpec } from './tab-stops'
 import { styleOpDefs, type AiStyleAccess } from './style-ops'
 import { fieldOpDefs } from './field-ops'
 import { tableOpDefs } from './table-ops'
@@ -66,6 +68,8 @@ export interface ParagraphFields {
   shadingFill?: string | null
   /** Paragraph borders, a subset of "tblr" */
   borders?: string | null
+  /** the paragraph's own tab stops; [] or null clears them, a `clear` entry cancels a style stop */
+  tabs?: TabSpec[] | null
 }
 
 export interface Op {
@@ -201,6 +205,7 @@ const PARA_KEYS = [
   'pageBreakBefore',
   'shadingFill',
   'borders',
+  'tabs',
 ] as const
 const IMAGE_KEYS = ['widthPx', 'heightPx', 'align'] as const
 
@@ -234,15 +239,21 @@ function validateTarget(target: unknown, where: string): string | null {
     typeof tg.containsText === 'string' ||
     (Array.isArray(tg.blockIndexes) && tg.blockIndexes.length > 0) ||
     tg.scope === 'selection' ||
+    tg.scope === 'document' ||
     tg.range !== undefined
-  if (!hasCondition) return `${where}: target requires at least one condition`
+  if (!hasCondition)
+    return `${where}: target requires at least one condition (use {"scope":"document"} for the whole document)`
   return null
 }
+
+const isEmptyTarget = (v: unknown): boolean =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0
 
 function validateShape(op: Op, def: OpDef, where: string): string | null {
   if (def.target === 'none' && op.target !== undefined) {
     return `${where}: does not take a target`
   }
+  if (def.target === 'optional' && isEmptyTarget(op.target)) delete op.target
   if (def.target === 'required' || op.target !== undefined) {
     const error = validateTarget(op.target, where)
     if (error) return error
@@ -285,6 +296,12 @@ const isNumberOrNull = (v: unknown) => v === null || (typeof v === 'number' && N
 /** a present number must be positive; null (= clear) passes */
 const isPositiveOrNull = (v: unknown) =>
   v === null || (typeof v === 'number' && Number.isFinite(v) && v > 0)
+/** Word's w:sz range is 2..3276 half-points. */
+export const MIN_FONT_SIZE_PT = 1
+export const MAX_FONT_SIZE_PT = 1638
+const isFontSizeOrNull = (v: unknown) =>
+  v === null ||
+  (typeof v === 'number' && Number.isFinite(v) && v >= MIN_FONT_SIZE_PT && v <= MAX_FONT_SIZE_PT)
 const isStringOrNull = (v: unknown) => v === null || typeof v === 'string'
 
 function validateFontFields(op: Op, where: string): string | null {
@@ -298,8 +315,8 @@ function validateFontFields(op: Op, where: string): string | null {
   if (op.highlight !== undefined && !isStringOrNull(op.highlight)) {
     return `${where}: highlight must be a color name / hex string or null`
   }
-  if (op.fontSize !== undefined && !isPositiveOrNull(op.fontSize)) {
-    return `${where}: fontSize must be a positive number of points (or null to clear)`
+  if (op.fontSize !== undefined && !isFontSizeOrNull(op.fontSize)) {
+    return `${where}: fontSize must be ${MIN_FONT_SIZE_PT}-${MAX_FONT_SIZE_PT}pt (or null to clear)`
   }
   if (op.fontFamily !== undefined && !isStringOrNull(op.fontFamily)) {
     return `${where}: fontFamily must be a string or null`
@@ -354,10 +371,32 @@ function validateParagraphFields(op: Op, where: string): string | null {
       return `${where}: borders must be a subset of "tblr" (or null)`
     }
   }
+  if (op.tabs !== undefined) {
+    const error = validateTabs(op.tabs, where)
+    if (error) return error
+  }
   if (present(op, PARA_KEYS).length === 0) {
     return `${where}: give at least one paragraph field (${PARA_KEYS.join(', ')})`
   }
   return null
+}
+
+/** the paragraph's tabStops attr with its own stops replaced; display-only (style-inherited,
+ *  w:ptab) entries survive except where a new stop or a clear sits at their position */
+function mergeTabStopsAttr(existing: unknown, direct: TabStop[]): string {
+  let displayOnly: TabStop[] = []
+  if (typeof existing === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(existing)
+      if (Array.isArray(parsed))
+        displayOnly = (parsed as TabStop[]).filter((s) => s.inherited || s.rel)
+    } catch {
+      /* malformed attr: no display-only stops */
+    }
+  }
+  const taken = new Set(direct.map((s) => s.pos))
+  const kept = displayOnly.filter((s) => !taken.has(s.pos))
+  return JSON.stringify([...direct, ...kept].sort((a, b) => a.pos - b.pos))
 }
 
 function validateAfterBlockIndex(op: Op, where: string): string | null {
@@ -475,6 +514,18 @@ function paragraphsIn(b: TopBlock, scoped: SelRange | null): ParagraphHit[] {
 }
 
 /** true when [from, to) lies inside the block's selected span (no clip = whole block is fair game) */
+/** Text blocks a character-level scan visits inside a top block: the block itself, or the paragraphs nested in a container such as a table (kept to the scoped range) */
+function scanParagraphs(b: TopBlock, scoped: SelRange | null): ParagraphHit[] {
+  return paragraphsIn(b, scoped)
+}
+
+/** a character span is in play when it lies inside the top block's clip and, for nested paragraphs, inside the scoped range (a caret-only scope leaves the block whole, as matchTarget does) */
+function insideScope(b: TopBlock, scoped: SelRange | null, from: number, to: number): boolean {
+  if (!insideClip(b, from, to)) return false
+  if (!scoped || b.node.isTextblock || scoped.from === scoped.to) return true
+  return from >= scoped.from && to <= scoped.to
+}
+
 function insideClip(b: TopBlock, from: number, to: number): boolean {
   return !b.clip || (from >= b.clip.from && to <= b.clip.to)
 }
@@ -536,6 +587,8 @@ function applyParagraphPatch(
     }
     for (const p of paragraphsIn(b, scoped)) {
       const attrs = { ...p.node.attrs, ...patch }
+      if (Array.isArray(patch.tabStops))
+        attrs.tabStops = mergeTabStopsAttr(p.node.attrs.tabStops, patch.tabStops as TabStop[])
       const dirty = Object.keys(patch).some((k) => attrs[k] !== p.node.attrs[k])
       if (!dirty) continue
       tr.setNodeMarkup(p.pos, undefined, changedAttrs(ctx, attrs))
@@ -637,6 +690,7 @@ function runSetParagraphFormat(op: Op, env: RunEnv): OpResult {
   for (const k of present(op, PARA_KEYS)) {
     if (k === 'shadingFill') patch.shadingFill = normalizeHex(op.shadingFill, op.op, 'shadingFill')
     else if (k === 'pageBreakBefore') patch.pageBreakBefore = op.pageBreakBefore === true
+    else if (k === 'tabs') patch.tabStops = tabSpecsToStops(op.tabs as TabSpec[] | null)
     else patch[k] = op[k] ?? null
   }
   return applyParagraphPatch(env, op, patch)
@@ -749,6 +803,93 @@ function runSetHeadingLevel(op: Op, env: RunEnv): OpResult {
   return { op: 'setHeadingLevel', matched: matched.length, changed, skippedProtected }
 }
 
+/** UI: Paragraph dialog outline level — a direct w:outlineLvl, the style stays (Word never restyles for it) */
+function runSetOutlineLevel(op: Op, env: RunEnv): OpResult {
+  const { tr, schema, ctx, sel } = env
+  const level = Number(op.level)
+  const target = targetOf(op)
+  const matched = matchTarget(tr.doc, target, sel)
+  const scoped = scopedRange(target, sel)
+  let changed = 0
+  let skippedProtected = 0
+  for (const b of matched) {
+    if (b.node.type.name === 'docProtected') {
+      skippedProtected++
+      continue
+    }
+    for (const p of paragraphsIn(b, scoped)) {
+      const name = p.node.type.name
+      const isHeading = name === 'docHeading'
+      // a styled heading's level belongs to its style; list items have no level slot
+      if (isHeading ? !p.node.attrs.outlineOnly : name !== 'docParagraph') continue
+      if (level === 0) {
+        if (!isHeading) continue
+        const { level: _l, outlineOnly: _o, ...rest } = p.node.attrs
+        tr.setNodeMarkup(p.pos, schema.nodes.docParagraph, changedAttrs(ctx, rest))
+      } else {
+        if (isHeading && Number(p.node.attrs.level) === level) continue
+        const attrs = { ...p.node.attrs, level, outlineOnly: true }
+        tr.setNodeMarkup(p.pos, schema.nodes.docHeading, changedAttrs(ctx, attrs))
+      }
+      changed++
+    }
+  }
+  return { op: 'setOutlineLevel', matched: matched.length, changed, skippedProtected }
+}
+
+/**
+ * The block as the model reads it — withheld spans already replaced by their
+ * markers, so a before/after comparison is in one coordinate system — together
+ * with the markers that produced, one per withheld span.
+ *
+ * The markers are returned rather than recovered from the text because a
+ * `{{...}}` in a document is not necessarily ours. A mail-merge template is
+ * full of them, and a model asked to fill one in is doing exactly what it was
+ * asked; only the markers standing in for withheld spans have to survive an
+ * edit untouched, because nothing else in the document promises that.
+ */
+function modelViewOf(node: PmDocNode): { text: string; markers: string[] } {
+  const markers: string[] = []
+  let out = ''
+  const visit = (n: PmDocNode) => {
+    const mark = n.marks.find((m) => m.type.name === REDACT_MARK)
+    if (mark) {
+      const label = mark.attrs?.label
+      const source = placeholderSource(typeof label === 'string' ? label : 'private')
+      markers.push(source)
+      out += source
+      return
+    }
+    if (n.isText) {
+      out += n.text ?? ''
+      return
+    }
+    if (n.isLeaf) return
+    n.forEach(visit)
+  }
+  node.forEach(visit)
+  return { text: out, markers }
+}
+
+/**
+ * Document ranges a withheld span covers in a block, in the same coordinates
+ * the replacements are collected in.
+ *
+ * This is what catches an edit aimed at the span itself. Placeholder spelling
+ * cannot: `find` matches the real text, so a model that never saw the words
+ * cannot name them, and an edit that did reach them is a range collision
+ * rather than a marker the model spelled wrong.
+ */
+function redactionRangesOf(node: PmDocNode, base: number): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = []
+  node.descendants((child, pos) => {
+    if (!child.isText || !child.text) return
+    if (!child.marks.some((m) => m.type.name === REDACT_MARK)) return
+    out.push({ from: base + pos, to: base + pos + child.text.length })
+  })
+  return out
+}
+
 function runFindReplace(op: Op, env: RunEnv): OpResult {
   const { tr, schema, ctx, sel } = env
   const find = String(op.find)
@@ -756,6 +897,7 @@ function runFindReplace(op: Op, env: RunEnv): OpResult {
   const matchCase = op.matchCase !== false
   const needle = matchCase ? find : find.toLowerCase()
   const blocks = op.target ? matchTarget(tr.doc, targetOf(op), sel) : topLevelBlocks(tr.doc)
+  const scoped = op.target ? scopedRange(targetOf(op), sel) : null
   const replacements: Array<{ from: number; to: number; marks: PmDocNode['marks'] }> = []
   const touchedIndexes = new Set<number>()
   let skippedProtected = 0
@@ -767,29 +909,92 @@ function runFindReplace(op: Op, env: RunEnv): OpResult {
       continue
     }
     const blockDeleted = isTrackedDeleted(b.node)
-    b.node.forEach((child, offset) => {
-      if (!child.isText || !child.text) return
-      const struck = blockDeleted || child.marks.some((m) => m.type.name === 'del')
-      const hay = matchCase ? child.text : child.text.toLowerCase()
-      let at = hay.indexOf(needle)
-      while (at !== -1) {
-        const from = b.pos + 1 + offset + at
-        if (struck) {
-          skippedDeleted++
-        } else if (insideClip(b, from, from + needle.length)) {
-          replacements.push({ from, to: from + needle.length, marks: child.marks })
-          touchedIndexes.add(b.index)
+    for (const p of scanParagraphs(b, scoped)) {
+      const paraDeleted = blockDeleted || isTrackedDeleted(p.node)
+      p.node.forEach((child, offset) => {
+        if (!child.isText || !child.text) return
+        const struck = paraDeleted || child.marks.some((m) => m.type.name === 'del')
+        const hay = matchCase ? child.text : child.text.toLowerCase()
+        let at = hay.indexOf(needle)
+        while (at !== -1) {
+          const from = p.pos + 1 + offset + at
+          if (struck) {
+            skippedDeleted++
+          } else if (insideScope(b, scoped, from, from + needle.length)) {
+            replacements.push({ from, to: from + needle.length, marks: child.marks })
+            touchedIndexes.add(b.index)
+          }
+          at = hay.indexOf(needle, at + needle.length)
         }
-        at = hay.indexOf(needle, at + needle.length)
-      }
-    })
+      })
+    }
   }
 
-  // apply back-to-front so earlier positions stay valid
-  for (const r of [...replacements].reverse()) {
-    if (replace) tr.replaceWith(r.from, r.to, schema.text(replace, r.marks))
-    else tr.delete(r.from, r.to)
+  // A rewrite is refused only when it would actually touch a withheld span: the
+  // collected replacements are exactly the text the model is about to
+  // overwrite, so a batch that edits a different paragraph — or the words
+  // beside a marker — is left alone, while one that eats a span is stopped
+  // before anything is dispatched.
+  if (replacements.length > 0) {
+    // 1. no replacement may overlap the words the model was never shown
+    let overlaps = 0
+    for (const b of blocks) {
+      if (!touchedIndexes.has(b.index)) continue
+      for (const span of redactionRangesOf(b.node, b.pos + 1)) {
+        for (const r of replacements) {
+          if (r.from < span.to && r.to > span.from) overlaps++
+        }
+      }
+    }
+    if (overlaps > 0) {
+      throw new Error(
+        `this edit would overwrite ${overlaps} private placeholder(s) — those words are withheld from the model, so rewrite around them instead of replacing them`,
+      )
+    }
+
+    // 2. and whatever the model wrote must leave every marker it was given
+    //    standing. Both sides are the model's own view: comparing markers
+    //    against raw text would report every batch as a deletion.
+    //
+    //    A block is policed only when it actually holds a withheld span. A
+    //    block with none is the document's own text, and a `{{token}}` in it
+    //    is content to be filled in rather than a marker of ours — a mail
+    //    merge template is the normal case, and policing it is what stopped
+    //    `hermesoffice merge` from filling a docx at all. Where a block is
+    //    policed, the whole `{{...}}` bag has to match, so a marker cannot be
+    //    renamed, split, or shadowed by a token the model invented.
+    //
+    //    The "after" side is read off the transaction *after* applying the
+    //    replacements, rather than computed by shifting offsets. A withheld
+    //    span is longer or shorter than the marker that stands in for it, so
+    //    any arithmetic between the two coordinate systems drifts; replaying
+    //    the real steps cannot. executeOps discards the transaction when this
+    //    throws, so nothing reaches the document.
+    const before = new Map<number, { text: string; markers: string[] }>()
+    for (const b of blocks) {
+      if (touchedIndexes.has(b.index)) before.set(b.index, modelViewOf(b.node))
+    }
+
+    // the redaction mark belongs to the reader, so a rewrite never inherits it
+    for (const r of [...replacements].reverse()) {
+      const marks = r.marks.filter((m) => m.type.name !== REDACT_MARK)
+      if (replace) tr.replaceWith(r.from, r.to, schema.text(replace, marks))
+      else tr.delete(r.from, r.to)
+    }
+
+    let damaged = 0
+    for (const b of topLevelBlocks(tr.doc)) {
+      const was = before.get(b.index)
+      if (was === undefined || was.markers.length === 0) continue
+      damaged += checkPlaceholders(was.text, modelViewOf(b.node).text).length
+    }
+    if (damaged > 0) {
+      throw new Error(
+        `this edit would damage ${damaged} private placeholder(s) (dropped, renamed, split or duplicated) — reproduce each {{...}} exactly and rephrase around them instead`,
+      )
+    }
   }
+
   if (touchedIndexes.size > 0) {
     for (const b of topLevelBlocks(tr.doc)) {
       if (touchedIndexes.has(b.index)) markChanged(tr, b.pos, ctx)
@@ -805,12 +1010,31 @@ function runFindReplace(op: Op, env: RunEnv): OpResult {
   }
 }
 
+/** does this text node currently carry the color / size the op asks to match? */
+function runStyleMatches(child: PmDocNode, op: Op): boolean {
+  const ts = child.marks.find((m) => m.type.name === 'docTextStyle')
+  if (op.matchColor !== undefined) {
+    const raw = ts?.attrs.color
+    const have = typeof raw === 'string' && raw && raw !== 'auto' ? raw.toUpperCase() : null
+    const want = op.matchColor === 'auto' ? null : normalizeHex(op.matchColor, op.op, 'matchColor')
+    if (have !== want) return false
+  }
+  if (op.matchFontSize !== undefined) {
+    const have = typeof ts?.attrs.sizeHalfPoints === 'number' ? ts.attrs.sizeHalfPoints : null
+    const want =
+      op.matchFontSize === 'default' ? null : Math.round((op.matchFontSize as number) * 2)
+    if (have !== want) return false
+  }
+  return true
+}
+
 function runSetMatchedFont(op: Op, env: RunEnv): OpResult {
   const { tr, ctx, sel } = env
-  const text = String(op.text)
+  const text = typeof op.text === 'string' ? op.text : null
   const matchCase = op.matchCase !== false
-  const needle = matchCase ? text : text.toLowerCase()
+  const needle = text === null ? null : matchCase ? text : text.toLowerCase()
   const blocks = op.target ? matchTarget(tr.doc, targetOf(op), sel) : topLevelBlocks(tr.doc)
+  const scoped = op.target ? scopedRange(targetOf(op), sel) : null
   const boolKeys = present(op, Object.keys(BOOL_MARK_TYPES))
   const markPatch = buildTextMarkPatch(op)
   const touched = new Set<number>()
@@ -820,29 +1044,49 @@ function runSetMatchedFont(op: Op, env: RunEnv): OpResult {
 
   for (const b of blocks) {
     if (b.node.type.name === 'docProtected') {
-      if (blockText(b.node).includes(text)) skippedProtected++
+      if (text === null || blockText(b.node).includes(text)) skippedProtected++
       continue
     }
     const blockDeleted = isTrackedDeleted(b.node)
-    const contentFrom = b.pos + 1
-    b.node.forEach((child, offset) => {
-      if (!child.isText || !child.text) return
-      const struck = blockDeleted || child.marks.some((m) => m.type.name === 'del')
-      const hay = matchCase ? child.text : child.text.toLowerCase()
-      let at = hay.indexOf(needle)
-      while (at !== -1) {
-        const from = contentFrom + offset + at
-        const to = from + needle.length
-        if (struck) {
-          skippedDeleted++
-        } else if (insideClip(b, from, to)) {
-          applyFontRange(env, op, boolKeys, markPatch, from, to, b.node, contentFrom)
-          styledCount++
-          touched.add(b.index)
+    for (const p of scanParagraphs(b, scoped)) {
+      const paraDeleted = blockDeleted || isTrackedDeleted(p.node)
+      const contentFrom = p.pos + 1
+      p.node.forEach((child, offset) => {
+        if (!child.isText || !child.text) return
+        if (!runStyleMatches(child, op)) return
+        const struck = paraDeleted || child.marks.some((m) => m.type.name === 'del')
+        // no text to match: the whole run is one match
+        const ranges: Array<[number, number]> = []
+        if (needle === null) {
+          ranges.push([0, child.text.length])
+        } else {
+          const hay = matchCase ? child.text : child.text.toLowerCase()
+          let at = hay.indexOf(needle)
+          while (at !== -1) {
+            ranges.push([at, at + needle.length])
+            at = hay.indexOf(needle, at + needle.length)
+          }
         }
-        at = hay.indexOf(needle, at + needle.length)
-      }
-    })
+        for (const [start, end] of ranges) {
+          let from = contentFrom + offset + start
+          let to = contentFrom + offset + end
+          if (needle === null) {
+            // a style match is the whole run; a selection may cut into it, so clip instead of skipping
+            if (b.clip) [from, to] = [Math.max(from, b.clip.from), Math.min(to, b.clip.to)]
+            if (scoped && !b.node.isTextblock && scoped.from !== scoped.to)
+              [from, to] = [Math.max(from, scoped.from), Math.min(to, scoped.to)]
+            if (from >= to) continue
+          }
+          if (struck) {
+            skippedDeleted++
+          } else if (insideScope(b, scoped, from, to)) {
+            applyFontRange(env, op, boolKeys, markPatch, from, to, p.node, contentFrom)
+            styledCount++
+            touched.add(b.index)
+          }
+        }
+      })
+    }
   }
   // mark steps never shift positions, so block offsets are still valid here
   for (const b of topLevelBlocks(tr.doc)) {
@@ -1062,15 +1306,30 @@ register({
 
 register({
   name: 'setMatchedFont',
-  signature: `{ op: "setMatchedFont", text, matchCase?, target?, ${FONT_SIGNATURE_FIELDS} }  // character-level: styles only the occurrences of text (not the whole block); target narrows the scanned blocks, omitted = whole document`,
-  keys: ['text', 'matchCase', ...FONT_KEYS],
+  signature: `{ op: "setMatchedFont", text?, matchCase?, matchColor?: "#RRGGBB"|"auto", matchFontSize?: pt|"default", target?, ${FONT_SIGNATURE_FIELDS} }  // character-level: styles only the runs that match (not the whole block) — occurrences of text, and/or runs currently in matchColor / at matchFontSize (as shown by read_blocks spans); give at least one of text / matchColor / matchFontSize; target narrows the scanned blocks, omitted = whole document (table cells included)`,
+  keys: ['text', 'matchCase', 'matchColor', 'matchFontSize', ...FONT_KEYS],
   target: 'optional',
   validate(op, where) {
     const shape = validateShape(op, this, where)
     if (shape) return shape
-    if (typeof op.text !== 'string' || op.text === '') return `${where}: text must not be empty`
+    if (op.text !== undefined && (typeof op.text !== 'string' || op.text === ''))
+      return `${where}: text must not be empty`
     if (op.matchCase !== undefined && typeof op.matchCase !== 'boolean') {
       return `${where}: matchCase must be a boolean`
+    }
+    if (op.matchColor !== undefined && op.matchColor !== 'auto') {
+      const error = checkHex(op.matchColor, where, 'matchColor')
+      if (error) return error
+    }
+    if (
+      op.matchFontSize !== undefined &&
+      op.matchFontSize !== 'default' &&
+      !(typeof op.matchFontSize === 'number' && isFontSizeOrNull(op.matchFontSize))
+    ) {
+      return `${where}: matchFontSize must be ${MIN_FONT_SIZE_PT}-${MAX_FONT_SIZE_PT}pt or "default" (runs without an explicit size)`
+    }
+    if (op.text === undefined && op.matchColor === undefined && op.matchFontSize === undefined) {
+      return `${where}: give text, matchColor or matchFontSize (what to match)`
     }
     return validateFontFields(op, where)
   },
@@ -1080,7 +1339,7 @@ register({
 register({
   name: 'setParagraphFormat',
   signature:
-    '{ op: "setParagraphFormat", target, align?: "left"|"center"|"right"|"justify"|null, lineSpacing?, indentLeft?, indentRight?, indentFirstLine?, spaceBefore?, spaceAfter?, pageBreakBefore?: boolean, shadingFill?: "#RRGGBB"|null, borders?: subset of "tblr"|null }  // paragraph format of the targeted blocks (whole blocks, even for a partial selection); lengths in twips, lineSpacing as a multiple; indentFirstLine positive = first-line indent, negative = hanging; a two-character CJK indent ≈ font size in pt × 40 twips',
+    '{ op: "setParagraphFormat", target, align?: "left"|"center"|"right"|"justify"|null, lineSpacing?, indentLeft?, indentRight?, indentFirstLine?, spaceBefore?, spaceAfter?, pageBreakBefore?: boolean, shadingFill?: "#RRGGBB"|null, borders?: subset of "tblr"|null, tabs?: [{ pos: twips|"6.5in", align?: "left"|"center"|"right"|"decimal"|"bar", leader?: "none"|"dot"|"hyphen"|"underscore"|"middleDot", clear?: true }]|null }  // paragraph format of the targeted blocks (whole blocks, even for a partial selection); lengths in twips, lineSpacing as a multiple; indentFirstLine positive = first-line indent, negative = hanging; a two-character CJK indent ≈ font size in pt × 40 twips; tabs replaces the paragraph\'s own stops ([] / null clears them, clear: true cancels a style stop); a tab character in HTML is <span data-tab></span>',
   keys: PARA_KEYS,
   target: 'required',
   validate(op, where) {
@@ -1264,6 +1523,23 @@ register({
 })
 
 register({
+  name: 'setOutlineLevel',
+  signature: '{ op: "setOutlineLevel", target, level: 0-9 }',
+  keys: ['level'],
+  target: 'required',
+  hidden: true,
+  validate(op, where) {
+    const shape = validateShape(op, this, where)
+    if (shape) return shape
+    if (!Number.isInteger(op.level) || Number(op.level) < 0 || Number(op.level) > 9) {
+      return `${where}: level must be an integer between 0 and 9`
+    }
+    return null
+  },
+  apply: runSetOutlineLevel,
+})
+
+register({
   name: 'stepIndent',
   signature: '{ op: "stepIndent", target, delta: 1|-1 }',
   keys: ['delta'],
@@ -1317,7 +1593,15 @@ function summarize(results: OpResult[]): string {
   const total = results.reduce((sum, r) => sum + r.changed, 0)
   if (total === 0) {
     const skipped = results.reduce((sum, r) => sum + r.skippedProtected, 0)
-    return skipped > 0 ? t('aiCmdNoneSkipped', { count: skipped }) : t('aiCmdNone')
+    if (skipped > 0) return t('aiCmdNoneSkipped', { count: skipped })
+    // blocks were found but needed no edit: say so, or the model retries other selectors.
+    // deleteBlocks is the only op whose `matched` includes its tracked-deleted targets;
+    // elsewhere skippedDeleted counts hits already left out of `matched`, hence the clamp.
+    const unchanged = results.reduce(
+      (sum, r) => sum + Math.max(0, r.matched - (r.skippedDeleted ?? 0)),
+      0,
+    )
+    return unchanged > 0 ? t('aiCmdNoneUnchanged', { count: unchanged }) : t('aiCmdNone')
   }
   const parts = results.map((r) => {
     let part: string

@@ -1,6 +1,23 @@
 import { z } from 'zod'
+import {
+  SHEET_PROTECTION_PERMISSIONS,
+  type SheetProtectionPermission,
+} from '../gateway/xlsx-protection'
+import { MAX_GRID_COLUMNS, MAX_GRID_ROWS } from '../shared/grid-bounds'
+import {
+  normalizePivotPageFields,
+  PIVOT_AGGREGATIONS,
+  PIVOT_SHOW_DATA_AS,
+} from './pivot-value-modes'
 import { ADDABLE_SHAPE_TYPES } from '../shared/shape-types'
-import { columnIndex, columnLabel, formatAddress, parseRange, rangeCellCount } from './cell-address'
+import {
+  columnIndex,
+  columnLabel,
+  formatAddress,
+  parseAddress,
+  parseRange,
+  rangeCellCount,
+} from './cell-address'
 import { computeSortChanges } from './sort-range'
 import {
   describeStyleColor,
@@ -10,9 +27,53 @@ import {
   THEME_SLOT_NAMES,
 } from './style-color'
 
-const cellAddressSchema = z.string().regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}$/)
-const cellRangeSchema = z.string().regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/)
-const columnLabelSchema = z.string().regex(/^[A-Z]{1,3}$/)
+/// An address past the last grid row or column names no cell that can exist in
+/// the file: the write is accepted here and the value is gone on reopen.
+/// The address pattern above already rejects anything unparseable, and a refine
+/// runs even after that pattern fails, so this must not throw.
+const withinGrid = (address: string): boolean => {
+  let row: number
+  let column: number
+  try {
+    ;({ row, column } = parseAddress(address))
+  } catch {
+    return true
+  }
+  return row + 1 <= MAX_GRID_ROWS && column + 1 <= MAX_GRID_COLUMNS
+}
+
+const withinGridColumn = (label: string): boolean => {
+  try {
+    return columnIndex(label) + 1 <= MAX_GRID_COLUMNS
+  } catch {
+    return true
+  }
+}
+
+const cellAddressSchema = z
+  .string()
+  .regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}$/)
+  .refine(withinGrid, 'Address is outside the worksheet grid (XFD1048576)')
+const cellRangeSchema = z
+  .string()
+  .regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/)
+  .refine(
+    (range) => range.split(':').every(withinGrid),
+    'Range is outside the worksheet grid (XFD1048576)',
+  )
+const columnLabelSchema = z
+  .string()
+  .regex(/^[A-Z]{1,3}$/)
+  .refine(withinGridColumn, 'Column is past the last grid column (XFD)')
+/// 1-based first row of a row-axis span, capped at the last grid row: past it
+/// names no cell the file can hold.
+const rowStartSchema = z.number().int().min(1).max(MAX_GRID_ROWS)
+/// The field caps still admit a span overhanging the edge (row 1048576, count
+/// 5), so the span end is checked across both fields. Zod runs this only once
+/// row and count parse, so the arithmetic below never sees a bad value.
+const rowSpanFits = (span: { row: number; count: number }): boolean =>
+  span.row + span.count - 1 <= MAX_GRID_ROWS
+const ROW_SPAN_ERROR = `Rows must end at or before ${MAX_GRID_ROWS}.`
 const sheetNameSchema = z
   .string()
   .trim()
@@ -153,6 +214,20 @@ const copyRangeSchema = z.object({
   filterValues: z.array(z.string().trim().min(1).max(32_767)).min(1).max(100).optional(),
 })
 
+// Excel's cut → paste as one operation: a copy_range followed by clearing
+// the source block. Exists so "move / cut these rows to that sheet" has a
+// direct op instead of a per-cell rewrite.
+const moveRangeSchema = z.object({
+  op: z.literal('move_range'),
+  sheetId: z.string().min(1),
+  /** block to move, e.g. "A2:V14" (up to 200,000 cells) */
+  source: cellRangeSchema,
+  /** sheet the source lives on; defaults to the target sheet */
+  sourceSheetId: z.string().min(1).optional(),
+  /** destination: its top-left cell, or a range exactly the source's size */
+  target: cellRangeSchema,
+})
+
 // Freezes formulas into their current computed values (Excel's copy →
 // paste-values onto the same cells). Non-formula cells and all formatting
 // stay untouched.
@@ -162,21 +237,25 @@ const convertToValuesSchema = z.object({
   range: cellRangeSchema,
 })
 
-const insertRowsSchema = z.object({
-  op: z.literal('insert_rows'),
-  sheetId: z.string().min(1),
-  /** 1-based; new rows are inserted before this row */
-  row: z.number().int().min(1).max(9999999),
-  count: z.number().int().min(1).max(500),
-})
+const insertRowsSchema = z
+  .object({
+    op: z.literal('insert_rows'),
+    sheetId: z.string().min(1),
+    /** 1-based; new rows are inserted before this row */
+    row: rowStartSchema,
+    count: z.number().int().min(1).max(500),
+  })
+  .refine(rowSpanFits, ROW_SPAN_ERROR)
 
-const deleteRowsSchema = z.object({
-  op: z.literal('delete_rows'),
-  sheetId: z.string().min(1),
-  /** 1-based first row to delete */
-  row: z.number().int().min(1).max(9999999),
-  count: z.number().int().min(1).max(500),
-})
+const deleteRowsSchema = z
+  .object({
+    op: z.literal('delete_rows'),
+    sheetId: z.string().min(1),
+    /** 1-based first row to delete */
+    row: rowStartSchema,
+    count: z.number().int().min(1).max(500),
+  })
+  .refine(rowSpanFits, ROW_SPAN_ERROR)
 
 const insertColsSchema = z.object({
   op: z.literal('insert_cols'),
@@ -198,9 +277,9 @@ const addSheetSchema = z.object({
   name: sheetNameSchema,
   /** grid rows for the new sheet (default 1000) — writes and formula spills
    * beyond the grid are rejected/truncated, so size it to the expected data */
-  rows: z.number().int().min(1).max(1_048_576).optional(),
+  rows: z.number().int().min(1).max(MAX_GRID_ROWS).optional(),
   /** grid columns for the new sheet (default 20) */
-  columns: z.number().int().min(1).max(16_384).optional(),
+  columns: z.number().int().min(1).max(MAX_GRID_COLUMNS).optional(),
 })
 
 const deleteSheetSchema = z.object({
@@ -408,24 +487,57 @@ const addPivotSchema = z.object({
     .union([z.string().min(1).max(255), z.array(z.string().min(1).max(255)).min(1).max(8)])
     .optional(),
   /**
-   * Report filter fields (pageFields) — up to 4 source headers that are
-   * placed above the pivot as filter drop-downs in the saved Excel file.
-   * The baked grid omits the filter row; Excel/LibreOffice shows them on open.
+   * Report filter fields (pageFields) — up to 4 source headers placed above the
+   * pivot as filter rows (one "Field | (All)" row each plus a blank row), like
+   * Excel. A bare header shows all items; { field, item } restricts the whole
+   * report to rows whose field equals item (the item must exist in the source).
    */
-  pageFields: z.array(z.string().min(1).max(255)).max(4).optional(),
+  pageFields: z
+    .array(
+      z.union([
+        z.string().min(1).max(255),
+        z.object({
+          field: z.string().min(1).max(255),
+          item: z.string().max(255).optional(),
+        }),
+      ]),
+    )
+    .max(4)
+    .optional(),
   values: z
     .array(
       z.object({
         field: z.string().min(1).max(255),
-        agg: z.enum(['sum', 'count', 'average', 'max', 'min']),
+        /** sum/count/average/max/min/product/countNums (count of numeric cells) */
+        agg: z.enum(PIVOT_AGGREGATIONS),
         /** Optional Excel number format string, e.g. "#,##0.00" or "0%" */
         numFmt: z.string().min(1).max(255).optional(),
         /**
-         * "Show values as" mode: percentOfTotal = percent of grand total /
-         * percentOfRow = percent of row total / percentOfCol = percent of column
-         * total; defaults to the plain aggregate value.
+         * "Show values as" mode: percentOfTotal / percentOfRow / percentOfCol
+         * divide by the grand, row, or column total; percentOfParentRow /
+         * percentOfParentCol divide by the parent level's total; index =
+         * (cell × grand total) / (row total × column total); difference /
+         * percentDiff compare against a base item of a base field (value−base,
+         * (value−base)/base); percentOf = value/base; percentOfParent divides
+         * by the base field's parent-level subtotal; runTotal /
+         * percentOfRunningTotal accumulate along the base field's items;
+         * rankAscending / rankDescending rank the cell among the base field's
+         * items. Defaults to the plain aggregate value.
          */
-        showDataAs: z.enum(['percentOfTotal', 'percentOfRow', 'percentOfCol']).optional(),
+        showDataAs: z.enum(PIVOT_SHOW_DATA_AS).optional(),
+        /**
+         * Base field of the showDataAs calculation (a row/column dimension
+         * header). Required by the base-field modes above; ignored otherwise.
+         */
+        baseField: z.string().min(1).max(255).optional(),
+        /**
+         * Base item of the showDataAs calculation: a member label of the base
+         * field. Required by difference / percentDiff / percentOf; ignored
+         * otherwise.
+         */
+        baseItem: z.string().max(255).optional(),
+        /** Custom caption for the data field; default "Sum of <field>" */
+        name: z.string().min(1).max(255).optional(),
         /**
          * Calculated field: when formula is present, field is the new data field's
          * name (must not clash with source headers); the formula does basic
@@ -499,14 +611,16 @@ const addPivotSchema = z.object({
     .optional(),
 })
 
-const setRowsHiddenSchema = z.object({
-  op: z.literal('set_rows_hidden'),
-  sheetId: z.string().min(1),
-  /** 1-based first row */
-  row: z.number().int().min(1).max(9999999),
-  count: z.number().int().min(1).max(10000).default(1),
-  hidden: z.boolean(),
-})
+const setRowsHiddenSchema = z
+  .object({
+    op: z.literal('set_rows_hidden'),
+    sheetId: z.string().min(1),
+    /** 1-based first row */
+    row: rowStartSchema,
+    count: z.number().int().min(1).max(10000).default(1),
+    hidden: z.boolean(),
+  })
+  .refine(rowSpanFits, ROW_SPAN_ERROR)
 
 const setColsHiddenSchema = z.object({
   op: z.literal('set_cols_hidden'),
@@ -525,10 +639,24 @@ const setHyperlinkSchema = z.object({
   target: z.string().min(1).max(2048).nullable(),
 })
 
+const sheetProtectionAllowSchema = z
+  .object(
+    Object.fromEntries(SHEET_PROTECTION_PERMISSIONS.map((key) => [key, z.boolean()])) as Record<
+      SheetProtectionPermission,
+      z.ZodBoolean
+    >,
+  )
+  .partial()
+
+// `password` is the plaintext: hashed when protecting, checked against the
+// file's hash when unprotecting a password-protected sheet. `allow` lists
+// what stays available while protected (Excel's dialog; unlisted = false).
 const protectSheetSchema = z.object({
   op: z.literal('protect_sheet'),
   sheetId: z.string().min(1),
   protected: z.boolean(),
+  password: z.string().min(1).max(255).optional(),
+  allow: sheetProtectionAllowSchema.optional(),
 })
 
 // Creates (or replaces) the sheet's auto-filter over the range. Filter
@@ -681,6 +809,35 @@ const headerFooterPartsSchema = z.object({
   right: z.string().max(255).optional(),
 })
 
+/// "1:3", "A:B" or "A:B,1:3"; the refine also runs on unparseable input, so it must not throw.
+const isValidPrintTitles = (value: string): boolean => {
+  try {
+    const spans = value.split(',')
+    if (spans.length > 2) return false
+    let rows = 0
+    let cols = 0
+    for (const raw of spans) {
+      const span = raw.trim()
+      const rowSpan = /^\$?(\d{1,7}):\$?(\d{1,7})$/.exec(span)
+      if (rowSpan) {
+        if (Number(rowSpan[1]) > Number(rowSpan[2])) return false
+        rows += 1
+        continue
+      }
+      const colSpan = /^\$?([A-Za-z]{1,3}):\$?([A-Za-z]{1,3})$/.exec(span)
+      if (colSpan) {
+        if (columnIndex(colSpan[1]!) > columnIndex(colSpan[2]!)) return false
+        cols += 1
+        continue
+      }
+      return false
+    }
+    return rows <= 1 && cols <= 1 && rows + cols > 0
+  } catch {
+    return false
+  }
+}
+
 const setPageSetupSchema = z.object({
   op: z.literal('set_page_setup'),
   sheetId: z.string().min(1),
@@ -698,10 +855,13 @@ const setPageSetupSchema = z.object({
   printHeadings: z.boolean().optional(),
   /** A1 range to print; null clears the print area */
   printArea: cellRangeSchema.nullable().optional(),
-  /** rows repeated at the top of every printed page, e.g. "1:1"; null clears */
+  /** title rows ("1:1") and/or columns ("A:A") repeated on every printed page; null clears */
   printTitles: z
     .string()
-    .regex(/^\$?\d{1,7}:\$?\d{1,7}$/)
+    .regex(
+      /^\$?([A-Za-z]{1,3}|\d{1,7}):\$?([A-Za-z]{1,3}|\d{1,7})(,\$?([A-Za-z]{1,3}|\d{1,7}):\$?([A-Za-z]{1,3}|\d{1,7}))?$/,
+    )
+    .refine(isValidPrintTitles, 'Invalid print titles (rows "1:3", columns "A:B", or both)')
     .nullable()
     .optional(),
   /** printed header / footer sections; text carries Excel codes (&P page, &N pages, &D date, &F file, &A sheet); null clears */
@@ -832,15 +992,17 @@ const unmergeCellsSchema = z.object({
   range: cellRangeSchema,
 })
 
-const setRowHeightSchema = z.object({
-  op: z.literal('set_row_height'),
-  sheetId: z.string().min(1),
-  /** 1-based first row */
-  row: z.number().int().min(1).max(9999999),
-  count: z.number().int().min(1).max(500).default(1),
-  /** Excel points (2–409) */
-  heightPoints: z.number().min(2).max(409),
-})
+const setRowHeightSchema = z
+  .object({
+    op: z.literal('set_row_height'),
+    sheetId: z.string().min(1),
+    /** 1-based first row */
+    row: rowStartSchema,
+    count: z.number().int().min(1).max(500).default(1),
+    /** Excel points (2–409) */
+    heightPoints: z.number().min(2).max(409),
+  })
+  .refine(rowSpanFits, ROW_SPAN_ERROR)
 
 const setColWidthSchema = z.object({
   op: z.literal('set_col_width'),
@@ -908,6 +1070,7 @@ export const workbookOperationSchema = z.discriminatedUnion('op', [
   clearRangeSchema,
   fillRangeSchema,
   copyRangeSchema,
+  moveRangeSchema,
   convertToValuesSchema,
   formatRangeSchema,
   sortRangeSchema,
@@ -959,6 +1122,56 @@ export const workbookOperationSchema = z.discriminatedUnion('op', [
 ])
 
 export type WorkbookOperation = z.infer<typeof workbookOperationSchema>
+
+const OPERATION_FIELDS = new Map<string, readonly string[]>(
+  workbookOperationSchema.options.map((option) => [
+    (option.shape.op as z.ZodLiteral<string>).value,
+    Object.keys(option.shape).filter((key) => key !== 'op'),
+  ]),
+)
+
+/**
+ * A batch that fails schema validation is rejected whole, so the caller (an
+ * LLM, usually) must be told two things the raw ZodError does not say: nothing
+ * was applied, and what each bad operation should have looked like. Issues are
+ * grouped per operation; misspelled fields are named against the op's real
+ * field list so a `col`/`width` batch is fixed in one retry instead of a guess.
+ */
+export function describeOperationErrors(ops: readonly unknown[], error: z.ZodError): string {
+  const byIndex = new Map<number, string[]>()
+  for (const issue of error.issues) {
+    const index = typeof issue.path[0] === 'number' ? issue.path[0] : -1
+    const raw = ops[index]
+    const record = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+    const field = issue.path.slice(1).map(String).join('.')
+    const text =
+      issue.code === 'invalid_type' && issue.path.length === 2 && !(field in record)
+        ? `missing ${field} (expected ${issue.expected})`
+        : `${field || 'operation'}: ${issue.message}`
+    byIndex.set(index, [...(byIndex.get(index) ?? []), text])
+  }
+  const lines = [...byIndex.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([index, texts]) => {
+      const raw = ops[index]
+      const record = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+      const opName = typeof record.op === 'string' ? record.op : 'unknown'
+      const fields = OPERATION_FIELDS.get(opName)
+      const unknown = fields
+        ? Object.keys(record).filter((key) => key !== 'op' && !fields.includes(key))
+        : []
+      const hint =
+        unknown.length > 0
+          ? `; unknown field(s) ${unknown.join(', ')} — ${opName} takes: ${fields!.join(', ')}`
+          : ''
+      return `- operations[${index}] (${opName}): ${texts.join(', ')}${hint}`
+    })
+  return (
+    `Rejected — none of the ${ops.length} operation(s) were applied (a batch is all-or-nothing). ` +
+    `Fix the operations below and resubmit the whole batch, including the ones that were valid:\n` +
+    lines.join('\n')
+  )
+}
 export type SetCellOperation = z.infer<typeof setCellSchema>
 export type SetRangeOperation = z.infer<typeof setRangeSchema>
 export type SetFormulaOperation = z.infer<typeof setFormulaSchema>
@@ -1038,6 +1251,7 @@ export type DeleteTableOperation = z.infer<typeof deleteTableSchema>
 export type AddSparklineOperation = z.infer<typeof addSparklineSchema>
 export type FindReplaceOperation = z.infer<typeof findReplaceSchema>
 export type CopyRangeOperation = z.infer<typeof copyRangeSchema>
+export type MoveRangeOperation = z.infer<typeof moveRangeSchema>
 export type ConvertToValuesOperation = z.infer<typeof convertToValuesSchema>
 export type SortRangeOperation = z.infer<typeof sortRangeSchema>
 export type CellContentOperation = SetCellOperation | SetFormulaOperation | ClearCellOperation
@@ -1117,6 +1331,7 @@ const CELL_CONTENT_OPS = new Set([
   'clear_range',
   'fill_range',
   'copy_range',
+  'move_range',
   'convert_to_values',
   'format_range',
   'sort_range',
@@ -1217,7 +1432,7 @@ function validateFillRange(operation: FillRangeOperation): void {
  * the paste anchor and extends to the source's size; a multi-cell target
  * must already match the source exactly.
  */
-export function copyTargetBounds(operation: CopyRangeOperation): {
+export function copyTargetBounds(operation: CopyRangeOperation | MoveRangeOperation): {
   startRow: number
   endRow: number
   startColumn: number
@@ -1359,7 +1574,7 @@ export function convertToValuesBatchError(operations: readonly WorkbookOperation
       } else if (op.op === 'fill_range') {
         if (op.sheetId !== convert.sheetId) continue
         writes = parseRange(op.target)
-      } else if (op.op === 'copy_range') {
+      } else if (op.op === 'copy_range' || op.op === 'move_range') {
         if (op.sheetId !== convert.sheetId) continue
         writes = copyTargetBounds(op)
       } else {
@@ -1384,6 +1599,16 @@ export function convertToValuesBatchError(operations: readonly WorkbookOperation
 
 export function fillOpLabel(op: FillRangeOperation): string {
   return `Fill ${op.source} → ${op.target}`
+}
+
+export function moveRangeToCopy(op: MoveRangeOperation): CopyRangeOperation {
+  return {
+    op: 'copy_range',
+    sheetId: op.sheetId,
+    source: op.source,
+    sourceSheetId: op.sourceSheetId,
+    target: op.target,
+  }
 }
 
 export function copyOpLabel(op: CopyRangeOperation): string {
@@ -1445,8 +1670,12 @@ function setRangeOrigin(operation: SetRangeOperation): { startRow: number; start
   const width = operation.values[0]?.length ?? 0
   const jaggedIndex = operation.values.findIndex((row) => row.length !== width)
   if (jaggedIndex !== -1) {
+    // Name the array position, not a sheet row: `values` is 0-based, so
+    // "row ${jaggedIndex + 1}" pointed one line below the offending row and
+    // read like a spreadsheet row number. Matches the operations[index] and
+    // seriesData[index=] convention used elsewhere in this file.
     throw new Error(
-      `set_range values must be rectangular: row 1 has ${width} cell(s) but row ${jaggedIndex + 1} has ${operation.values[jaggedIndex]?.length}. ` +
+      `set_range values must be rectangular: values[0] has ${width} cell(s) but values[${jaggedIndex}] has ${operation.values[jaggedIndex]?.length}. ` +
         'Use null for cells that should be cleared, or split into separate set_range operations.',
     )
   }
@@ -1497,8 +1726,21 @@ export function expandToPrimitiveOps(
       throw new Error(`The batch expands to more than ${MAX_EXPANDED_CELL_OPS} cell edits.`)
     }
   }
-  for (const operation of operations) {
-    if (operation.op === 'set_range') {
+  // move_range desugars into copy_range + clear_range of the source; the
+  // queue keeps that order (apply runs range-level ops in op order, and the
+  // clear's per-cell edits land after the copy lane anyway).
+  const queue: WorkbookOperation[] = [...operations]
+  for (let index = 0; index < queue.length; index += 1) {
+    const operation = queue[index] as WorkbookOperation
+    if (operation.op === 'move_range') {
+      const copy = moveRangeToCopy(operation)
+      validateCopyRange(copy)
+      queue.splice(index + 1, 0, copy, {
+        op: 'clear_range',
+        sheetId: operation.sourceSheetId ?? operation.sheetId,
+        range: operation.source,
+      })
+    } else if (operation.op === 'set_range') {
       const origin = setRangeOrigin(operation)
       operation.values.forEach((rowValues, rowOffset) => {
         rowValues.forEach((value, columnOffset) => {
@@ -1645,7 +1887,9 @@ export function expandToPrimitiveOps(
           sheetId: operation.sheetId,
           address: change.address,
           value: change.after,
-          expectedValue: change.before,
+          // Guards on the display text: the CAS compares the cell's `value`,
+          // so the raw `before` would fail the check on a formatted cell.
+          expectedValue: change.expectedValue,
         })
       }
     } else if (operation.op === 'add_pivot') {
@@ -1673,7 +1917,7 @@ export function expandToPrimitiveOps(
       const allDimensionFields = [
         ...rowFieldsArray,
         ...columnFieldsArray,
-        ...(operation.pageFields ?? []),
+        ...normalizePivotPageFields(operation.pageFields).map((page) => page.field),
       ]
       if (operation.values.some((value) => allDimensionFields.includes(value.field))) {
         throw new Error('A values field cannot also be a row, column, or page filter field.')
@@ -1947,7 +2191,15 @@ export function layoutOpLabel(op: LayoutOperation): string {
       return (
         `Create pivot${op.name ? ` ${op.name}` : ''} from ${op.sourceRange} ` +
         `(rows: ${rowFieldsArray.join(' > ')}${columnFieldsArray.length > 0 ? `, columns: ${columnFieldsArray.join(' > ')}` : ''}` +
-        `${op.pageFields && op.pageFields.length > 0 ? `, filters: ${op.pageFields.join(', ')}` : ''}, ` +
+        `${
+          op.pageFields && op.pageFields.length > 0
+            ? `, filters: ${normalizePivotPageFields(op.pageFields)
+                .map((page) =>
+                  page.item === undefined ? page.field : `${page.field}=${page.item}`,
+                )
+                .join(', ')}`
+            : ''
+        }, ` +
         `values: ${op.values.map((value) => `${value.agg} ${value.field}`).join(', ')}) at ${op.targetCell}`
       )
     }
@@ -2000,7 +2252,9 @@ export function layoutOpLabel(op: LayoutOperation): string {
       if (op.printArea !== undefined)
         parts.push(op.printArea === null ? 'clear print area' : `print area ${op.printArea}`)
       if (op.printTitles !== undefined)
-        parts.push(op.printTitles === null ? 'clear print titles' : `repeat rows ${op.printTitles}`)
+        parts.push(
+          op.printTitles === null ? 'clear print titles' : `repeat titles ${op.printTitles}`,
+        )
       if (op.header !== undefined) parts.push(op.header === null ? 'clear header' : 'header')
       if (op.footer !== undefined) parts.push(op.footer === null ? 'clear footer' : 'footer')
       if (op.rowBreaks !== undefined) parts.push(`${op.rowBreaks.length} row break(s)`)

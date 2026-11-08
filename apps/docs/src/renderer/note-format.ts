@@ -44,17 +44,25 @@ export function toRoman(n: number): string {
 
 function toLetter(n: number): string {
   if (!Number.isFinite(n) || n < 1) return String(n)
-  const idx = (Math.floor(n) - 1) % 26
-  const reps = Math.floor((Math.floor(n) - 1) / 26) + 1
+  const floored = Math.floor(n)
+  // A footnote count is file-controlled: cap the repeat expansion so a huge
+  // number cannot allocate a multi-megabyte marker string.
+  if (floored > 26 * MAX_NOTE_REPS) return String(floored)
+  const idx = (floored - 1) % 26
+  const reps = Math.floor((floored - 1) / 26) + 1
   return String.fromCharCode(97 + idx).repeat(reps)
 }
 
 /** Word's chicago sequence: * † ‡ §, doubled on each wrap */
 const CHICAGO = ['*', '†', '‡', '§']
+/** Repeat expansions beyond this fall back to the decimal number. */
+const MAX_NOTE_REPS = 20
 function toChicago(n: number): string {
   if (!Number.isFinite(n) || n < 1) return String(n)
-  const idx = (Math.floor(n) - 1) % CHICAGO.length
-  const reps = Math.floor((Math.floor(n) - 1) / CHICAGO.length) + 1
+  const floored = Math.floor(n)
+  if (floored > CHICAGO.length * MAX_NOTE_REPS) return String(floored)
+  const idx = (floored - 1) % CHICAGO.length
+  const reps = Math.floor((floored - 1) / CHICAGO.length) + 1
   return CHICAGO[idx].repeat(reps)
 }
 

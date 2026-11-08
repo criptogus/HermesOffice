@@ -8,7 +8,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./install": "./src/install.ts",
+    "./args": "./src/args.ts",
     "./agent-skills": "./src/agent-skills.ts",
+    "./mcp-launch": "./src/mcp-launch.ts",
     "./control-protocol": "./src/control-protocol.ts"
   },
   "bin": {
@@ -23,26 +25,30 @@
   "dependencies": {
     "@hermesoffice/ai-provider": "*",
     "@hermesoffice/ai-search": "*",
+    "@hermesoffice/doc2docx": "*",
     "@hermesoffice/docx-engine": "*",
+    "@hermesoffice/hwp2docx": "*",
+    "@hermesoffice/odf2ooxml": "*",
     "@hermesoffice/pdf2docx": "*",
     "@hermesoffice/pipelines": "*",
     "@hermesoffice/pptx-engine": "*",
     "@hermesoffice/pptx-ops": "*",
     "@hermesoffice/pptx-render": "*",
     "@hermesoffice/xlsx-gateway": "*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@rhwp/core": "0.8.7",
     "@tiptap/core": "3.31.0",
     "jsdom": "^28.0.0",
     "jszip": "^3.10.1",
     "numfmt": "^3.2.6",
     "pngjs": "^7.0.0",
-    "undici": "^6.28.0",
-    "zod": "^4.3.6"
+    "undici": "^6.29.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "esbuild": "^0.25.12",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

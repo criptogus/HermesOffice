@@ -92,6 +92,18 @@ describe('applySpacingChain', () => {
     expect(warnings[0]).toMatch(/negative gap/)
   })
 
+  it('skips non-finite gaps from hostile boxes instead of emitting Infinity', () => {
+    const a = block(700)
+    const hostile = block(640)
+    hostile.box = { x0: 72, x1: 300, y0: NaN, y1: Infinity }
+    applySpacingChain([sectionOf([column(a, hostile)])])
+    expect(hostile.spacingBeforePt).toBeUndefined()
+    const huge = block(640)
+    huge.box = { x0: 72, x1: 300, y0: -1e12, y1: -1e12 }
+    applySpacingChain([sectionOf([column(a, huge)])])
+    expect(huge.spacingBeforePt).toBeLessThanOrEqual(1584)
+  })
+
   it('chains the first block of a later section from the previous section bottom', () => {
     const a = block(700, 686) // section 1, bottom 674
     const b = block(600) // section 2 first block, gap 74

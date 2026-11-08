@@ -26,7 +26,7 @@ function roundTrip(endpoint: string, line: string): Promise<{ reply: string; clo
 
 describe('control server', () => {
   it('publishes a token-protected endpoint and answers one request per connection', async () => {
-    const userData = mkdtempSync(join(tmpdir(), 'genoffice-control-'))
+    const userData = mkdtempSync(join(tmpdir(), 'hermesoffice-control-'))
     const seen: ControlRequest[] = []
     const server = await startControlServer(userData, async (req) => {
       seen.push(req)

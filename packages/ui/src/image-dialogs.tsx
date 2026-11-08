@@ -6,8 +6,17 @@
  * Both take the source as a data URL and hand back a base64 PNG (no data: prefix).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from 'react'
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactElement,
+  ReactNode,
+} from 'react'
 import { removeBackground, sampleBackgroundColors, type PixelImage, type RGB } from './cutout'
+import { useModalKeys } from './modal-keys'
+import { CROP_EDGE_LABELS } from './strings-crop-edges'
+import type { Lang } from '@hermesoffice/i18n'
 
 export interface ImageDialogLabels {
   cancel: string
@@ -196,16 +205,9 @@ export function CutoutDialog({
     [],
   )
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onCancel()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel])
+  // Esc / Tab / initial focus come from useModalKeys on the backdrop, the same
+  // way CropDialog does it.
+  const modalKeys = useModalKeys(onCancel, { restoreFocus: true })
 
   const apply = () => {
     const full = fullRef.current
@@ -228,10 +230,16 @@ export function CutoutDialog({
   }
 
   return (
-    <div className="gs-imgdlg-mask" onClick={onCancel}>
+    <div
+      className="gs-imgdlg-mask"
+      ref={modalKeys.ref}
+      onKeyDown={modalKeys.onKeyDown}
+      onClick={onCancel}
+    >
       <div
         className="gs-imgdlg"
         role="dialog"
+        aria-modal="true"
         aria-label={labels.cutoutTitle}
         style={{ maxWidth: PREVIEW_MAX + 48 }}
         onClick={(e) => e.stopPropagation()}
@@ -279,9 +287,63 @@ export function CutoutDialog({
 
 type CropHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'move'
 
+export type CropEdge = Exclude<CropHandle, 'move'>
+
 /** minimum crop-box side (preview px), prevents dragging to 0 */
 const MIN_CROP_PX = 16
-const HANDLES: CropHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+const HANDLES: CropEdge[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+export const CROP_EDGES = HANDLES
+/** keyboard edge nudge as a fraction of the image; Shift takes the coarse step */
+export const CROP_EDGE_STEP = 0.01
+export const CROP_EDGE_STEP_COARSE = 0.1
+
+/**
+ * Move one crop edge by (dx, dy) fractions of the image. Shares the drag
+ * clamp so a keyboard nudge and a pointer drag cannot disagree: each side is
+ * limited to the image bounds and to MIN_CROP_PX away from its opposite.
+ */
+export function nudgeCropEdge(
+  crop: CropFractions,
+  handle: CropEdge,
+  dx: number,
+  dy: number,
+  minW: number,
+  minH: number,
+): CropFractions {
+  let { l, t, r, b } = crop
+  if (handle.includes('w')) l = Math.min(Math.max(0, l + dx), r - minW)
+  if (handle.includes('e')) r = Math.max(Math.min(1, r + dx), l + minW)
+  if (handle.includes('n')) t = Math.min(Math.max(0, t + dy), b - minH)
+  if (handle.includes('s')) b = Math.max(Math.min(1, b + dy), t + minH)
+  return { l, t, r, b }
+}
+
+/** Fraction a handle reports as its slider value: the vertical side for a
+ * top/bottom edge (including corners), the horizontal side otherwise. */
+export function cropEdgeValue(crop: CropFractions, handle: CropEdge): number {
+  if (handle.includes('n')) return crop.t
+  if (handle.includes('s')) return crop.b
+  if (handle.includes('w')) return crop.l
+  return crop.r
+}
+
+/** Arrow key to edge nudge, or null when the key does not move this edge. */
+export function cropEdgeArrowDelta(
+  key: string,
+  handle: CropEdge,
+  coarse: boolean,
+): { dx: number; dy: number } | null {
+  const step = coarse ? CROP_EDGE_STEP_COARSE : CROP_EDGE_STEP
+  const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0
+  const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0
+  if (dx === 0 && dy === 0) return null
+  const movesX = handle.includes('w') || handle.includes('e')
+  const movesY = handle.includes('n') || handle.includes('s')
+  if (dx !== 0 && !movesX) return null
+  if (dy !== 0 && !movesY) return null
+  return { dx: movesX ? dx : 0, dy: movesY ? dy : 0 }
+}
+
 const HANDLE_CURSOR: Record<string, string> = {
   nw: 'nwse-resize',
   se: 'nwse-resize',
@@ -316,6 +378,7 @@ export function CropDialog({
   onApply,
   onCancel,
   extraFooter,
+  lang = 'en',
 }: {
   labels: ImageDialogLabels
   /** source picture as a data URL */
@@ -325,6 +388,8 @@ export function CropDialog({
   onCancel: () => void
   /** extra controls between the hint and the action buttons */
   extraFooter?: ReactNode
+  /** language of the edge handle names */
+  lang?: Lang
 }): ReactElement {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<ErrorKey | null>(null)
@@ -384,20 +449,41 @@ export function CropDialog({
     }
   }, [crop, onApply])
 
-  // Esc cancels / Enter applies
+  // Esc / Tab / initial focus come from useModalKeys on the backdrop.
+  const modalKeys = useModalKeys(onCancel, { restoreFocus: true })
+  // useModalKeys lands on the first control, which is Cancel, so Enter would
+  // cancel while the hint promises "Enter to apply". Apply is disabled until
+  // the picture is in; once it is, hand that default focus to Apply unless the
+  // user already moved on to a handle.
+  const applyRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onCancel()
-      } else if (e.key === 'Enter' && loaded && !error) {
-        e.preventDefault()
-        apply()
-      }
+    if (!loaded || error) return
+    const backdrop = modalKeys.ref.current
+    const active = document.activeElement
+    const first = backdrop?.querySelector('input, textarea, select, button')
+    if (!backdrop?.contains(active) || active === backdrop || active === first) {
+      applyRef.current?.focus()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel, apply, loaded, error])
+  }, [loaded, error, modalKeys.ref])
+
+  const minSide = useCallback(
+    () => ({
+      w: view ? MIN_CROP_PX / view.w : 0,
+      h: view ? MIN_CROP_PX / view.h : 0,
+    }),
+    [view],
+  )
+
+  const onHandleKeyDown = (e: ReactKeyboardEvent, handle: CropEdge) => {
+    const delta = cropEdgeArrowDelta(e.key, handle, e.shiftKey)
+    if (!delta) return
+    const min = minSide()
+    const next = nudgeCropEdge(crop, handle, delta.dx, delta.dy, min.w, min.h)
+    if (next.l === crop.l && next.t === crop.t && next.r === crop.r && next.b === crop.b) return
+    e.preventDefault()
+    e.stopPropagation()
+    setCrop(next)
+  }
 
   const startDrag = (handle: CropHandle) => (e: ReactMouseEvent) => {
     e.preventDefault()
@@ -445,13 +531,27 @@ export function CropDialog({
   const px = (v: number, total: number) => Math.round(v * total)
 
   return (
-    <div className="gs-imgdlg-mask" onClick={onCancel}>
+    <div
+      className="gs-imgdlg-mask"
+      ref={modalKeys.ref}
+      onKeyDown={modalKeys.onKeyDown}
+      onClick={onCancel}
+    >
       <div
         className="gs-imgdlg gs-imgdlg-crop"
         role="dialog"
+        aria-modal="true"
         aria-label={labels.cropTitle}
         style={{ width: PREVIEW_MAX + 48 + CROP_HANDLE_GUTTER * 2 }}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || !loaded || error) return
+          // a focused edge or button owns Enter: a global Enter must not apply
+          // a crop the user did not ask for
+          if ((e.target as HTMLElement | null)?.closest?.('button, [role="slider"]')) return
+          e.preventDefault()
+          apply()
+        }}
       >
         <div className="gs-imgdlg-title">{labels.cropTitle}</div>
         <Stage
@@ -505,7 +605,18 @@ export function CropDialog({
                     key={pos}
                     className="gs-imgdlg-handle"
                     style={handleStyle(pos)}
+                    role="slider"
+                    tabIndex={0}
+                    aria-label={CROP_EDGE_LABELS[lang][pos]}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(cropEdgeValue(crop, pos) * 100)}
+                    aria-orientation={
+                      pos.includes('n') || pos.includes('s') ? 'vertical' : 'horizontal'
+                    }
+                    data-crop-edge={pos}
                     onMouseDown={startDrag(pos)}
+                    onKeyDown={(e) => onHandleKeyDown(e, pos)}
                   />
                 ))}
               </div>
@@ -521,6 +632,7 @@ export function CropDialog({
           <button
             type="button"
             className="gs-imgdlg-btn primary"
+            ref={applyRef}
             onClick={apply}
             disabled={!loaded || !!error}
           >

@@ -72,7 +72,7 @@ export function getUserFontDir(): string | null {
  * the same private FontFace channel as Office DFonts. Registrations are process-wide and
  * live until the app exits — like PowerPoint keeping embedded fonts while the deck is open.
  */
-const EMBEDDED_FONT_DIR = join(tmpdir(), 'genoffice-embedded-fonts')
+const EMBEDDED_FONT_DIR = join(tmpdir(), 'hermesoffice-embedded-fonts')
 /** norm(typeface) -> styleKey ('<bold><italic>') -> extracted sfnt path */
 const embeddedFaces = new Map<string, Map<string, string>>()
 
@@ -137,24 +137,49 @@ function officeFontDirs(): string[] {
   )
 }
 
-const APPLE_FONT_ASSET_ROOT = '/System/Library/AssetsV2/com_apple_MobileAsset_Font7'
+const APPLE_ASSETS_V2 = '/System/Library/AssetsV2'
 const APPLE_FONT_SUBSETS =
   '/System/Library/PrivateFrameworks/FontServices.framework/Versions/A/Resources/Fonts/Subsets'
+
+/**
+ * Font asset catalogs under AssetsV2 (downloaded and OS-preinstalled), newest catalog
+ * version first. The version suffix moves with macOS releases (macOS 26 downloads into
+ * com_apple_MobileAsset_Font8 and leaves Font7 empty), so a hardcoded catalog silently
+ * drops every downloadable face back to its stub subset.
+ */
+export function appleFontAssetRoots(assetsV2: string = APPLE_ASSETS_V2): string[] {
+  const roots: Array<{ path: string; ver: number }> = []
+  for (const base of [assetsV2, join(assetsV2, 'PreinstalledAssetsV2/InstallWithOs')]) {
+    try {
+      for (const d of readdirSync(base)) {
+        const m = /^com_apple_MobileAsset_Font(\d+)$/.exec(d)
+        if (m) roots.push({ path: join(base, d), ver: Number(m[1]) })
+      }
+    } catch {
+      /* base absent */
+    }
+  }
+  // Newer catalogs first; at equal version the user-downloaded root beats the preinstalled one
+  return roots.sort((a, b) => b.ver - a.ver).map((r) => r.path)
+}
 
 /**
  * macOS on-demand font assets (CoreText downloadable fonts, e.g. NanumGothic): PowerPoint
  * renders with them but Chromium cannot resolve them by name — same private treatment as
  * Office DFonts. Materialized full downloads (AssetsV2) take precedence over the built-in
- * stub subsets; both are read-only system paths and simply absent on other platforms.
+ * stub subsets: a stub carries only the glyphs that spell its own name (NanumGothic's maps
+ * ~45 code points), so text measured against it falls to heuristic widths and draws in
+ * fallback fonts. Both are read-only system paths and simply absent on other platforms.
  */
 function appleFontAssetDirs(): string[] {
   if (process.platform !== 'darwin') return []
   const dirs: string[] = []
-  try {
-    for (const d of readdirSync(APPLE_FONT_ASSET_ROOT))
-      dirs.push(join(APPLE_FONT_ASSET_ROOT, d, 'AssetData'))
-  } catch {
-    /* asset root absent */
+  for (const root of appleFontAssetRoots()) {
+    try {
+      for (const d of readdirSync(root)) dirs.push(join(root, d, 'AssetData'))
+    } catch {
+      /* asset root unreadable */
+    }
   }
   dirs.push(APPLE_FONT_SUBSETS)
   return dirs
@@ -193,6 +218,7 @@ const MS_MINCHO = ['MSMincho']
 // by weight; the full name with W3 is the fallback (index key = normalized filename)
 const HIRAGINO_SANS = ['ヒラギノ角ゴシック', 'ヒラギノ角ゴシック W3']
 const HIRAGINO_MINCHO = ['ヒラギノ明朝 ProN']
+const SCRIPT_FALLBACK_KEYS = new Set([...HIRAGINO_SANS, ...HIRAGINO_MINCHO].map((f) => norm(f)))
 
 /** Common font-name aliases (localized name <-> English family <-> actual filename); keys match via norm. */
 const ALIASES: Record<string, string[]> = {
@@ -206,6 +232,7 @@ const ALIASES: Record<string, string[]> = {
   仿宋: ['FangSong', 'STFangsong'],
   helvetica: ['Arial'],
   'helvetica neue': ['Arial'],
+  'arial rounded mt bold': ['Arial Rounded Bold'],
   calibri: ['Carlito', 'Arial'],
   'calibri light': ['Carlito', 'Arial'],
   // PowerPoint for Mac substitutes the Windows-only Lucida Sans family with Lucida Grande
@@ -277,6 +304,16 @@ const ALIASES: Record<string, string[]> = {
 }
 const ALIAS_MAP = new Map(Object.entries(ALIASES).map(([k, v]) => [norm(k), v]))
 const aliasesOf = (family: string): string[] => ALIAS_MAP.get(norm(family)) ?? []
+
+// "X Variable" / "X VF" is the variable-font packaging of static "X" (same outlines and
+// advances); whichever one is installed stands in for the other before script substitution
+const VARIABLE_SUFFIX_RE = /\s+(?:variable|vf)$/i
+function variableTwinsOf(family: string): string[] {
+  const f = family.trim()
+  const m = VARIABLE_SUFFIX_RE.exec(f)
+  if (m) return [f.slice(0, m.index).trim()].filter(Boolean)
+  return [`${f} Variable`, `${f} VF`]
+}
 
 /**
  * Substitution for missing fonts (aligned with PowerPoint's font substitution): first classify
@@ -491,24 +528,68 @@ function readFaceDir(buf: Buffer): FaceInfo[] {
 /** OpenType layout tables — droppable for metrics-only parsing when opentype.js rejects them. */
 const LAYOUT_TABLES: ReadonlySet<string> = new Set(['GSUB', 'GPOS', 'GDEF'])
 
-/** Extract a single face from a ttc into a standalone sfnt (rewrite the table directory, copy table data by original offset). */
-function extractFace(buf: Buffer, offset: number, drop?: ReadonlySet<string>): ArrayBuffer {
+/**
+ * A gvar table with no glyph variations (axisCount filled in per font). Layout only needs
+ * advances, which come from hmtx plus HVAR deltas, but opentype.js exposes its variation API
+ * only when a gvar table exists and parses the real one eagerly — SF Pro's is 220 MB of heap.
+ * The stub keeps the API and drops the outlines' variations.
+ */
+function emptyGvar(axisCount: number): Buffer {
+  const b = Buffer.alloc(22)
+  b.writeUInt16BE(1, 0)
+  b.writeUInt16BE(axisCount, 4)
+  b.writeUInt32BE(20, 16)
+  return b
+}
+
+const metricsOnlyTableName = (tag: string) => tag === 'gvar' || tag === 'cvar'
+
+/**
+ * Extract a single face from a ttc into a standalone sfnt (rewrite the table directory, copy
+ * table data by original offset). `metricsOnly` also replaces the outline-variation tables
+ * (gvar stubbed empty, cvar dropped) for a parse that only reads advances.
+ */
+export function extractFace(
+  buf: Buffer,
+  offset: number,
+  drop?: ReadonlySet<string>,
+  metricsOnly = false,
+): ArrayBuffer {
   const isTtc = buf.toString('ascii', 0, 4) === 'ttcf'
-  if (!isTtc && !drop) {
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  }
   const faceOff = isTtc ? offset : 0
   const numTables = buf.readUInt16BE(faceOff + 4)
-  const entries: Array<{ dirPos: number; tOff: number; tLen: number; newOff: number }> = []
+  const entries: Array<{
+    dirPos: number
+    tOff: number
+    tLen: number
+    newOff: number
+    stub?: Buffer
+  }> = []
+  let axisCount = 0
+  let rewriteVariations = false
   for (let t = 0; t < numTables; t++) {
     const e = faceOff + 12 + 16 * t
-    if (drop?.has(buf.toString('ascii', e, e + 4))) continue
+    const tag = buf.toString('ascii', e, e + 4)
+    if (drop?.has(tag)) continue
+    if (tag === 'fvar') axisCount = buf.readUInt16BE(buf.readUInt32BE(e + 8) + 8)
+    if (metricsOnly && metricsOnlyTableName(tag)) rewriteVariations = true
+    if (metricsOnly && tag === 'cvar') continue
     entries.push({
       dirPos: e,
       tOff: buf.readUInt32BE(e + 8),
       tLen: buf.readUInt32BE(e + 12),
       newOff: 0,
     })
+  }
+  if (!isTtc && !drop && !rewriteVariations) {
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  }
+  if (rewriteVariations) {
+    for (const e of entries) {
+      if (buf.toString('ascii', e.dirPos, e.dirPos + 4) !== 'gvar') continue
+      e.stub = emptyGvar(axisCount)
+      e.tLen = e.stub.length
+    }
   }
   let total = 12 + 16 * entries.length
   for (const e of entries) {
@@ -527,7 +608,8 @@ function extractFace(buf: Buffer, offset: number, drop?: ReadonlySet<string>): A
     buf.copy(out, 12 + 16 * t, e.dirPos, e.dirPos + 8)
     out.writeUInt32BE(e.newOff, 12 + 16 * t + 8)
     out.writeUInt32BE(e.tLen, 12 + 16 * t + 12)
-    buf.copy(out, e.newOff, e.tOff, e.tOff + e.tLen)
+    if (e.stub) e.stub.copy(out, e.newOff)
+    else buf.copy(out, e.newOff, e.tOff, e.tOff + e.tLen)
   }
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer
 }
@@ -623,7 +705,7 @@ class FontRegistry {
       flat.push(dir)
     }
     // One prefix each covers every scanned asset dir for the isPrivate check
-    this.privateDirs.push(APPLE_FONT_ASSET_ROOT, APPLE_FONT_SUBSETS, EMBEDDED_FONT_DIR)
+    this.privateDirs.push(`${APPLE_ASSETS_V2}/`, APPLE_FONT_SUBSETS, EMBEDDED_FONT_DIR)
     flat.push(...appleFontAssetDirs())
     const tasks: ScanTask[] = flat.map((dir) => ({ kind: 'flat', dir }))
     const cloudBase = cloudFontBase()
@@ -671,14 +753,20 @@ class FontRegistry {
     let font: OpentypeFontLike | null
     try {
       const buf = readFileSync(path)
+      // lowMemory: glyphs are materialized on lookup instead of one object per glyph at
+      // parse time — PingFang (49k glyphs) drops from 171 MB of heap to 10 MB with identical
+      // advances; combined with the metrics-only face this is what keeps opening a CJK deck
+      // from pinning several hundred MB in the main process
       try {
-        font = opentype.parse(extractFace(buf, offset)) as unknown as OpentypeFontLike
+        font = opentype.parse(extractFace(buf, offset, undefined, true), {
+          lowMemory: true,
+        }) as unknown as OpentypeFontLike
       } catch {
         // Legacy CJK fonts (gulim/batang) carry GSUB versions opentype.js rejects; advances
         // only need cmap/hmtx/kern, so retry without the OpenType layout tables
-        font = opentype.parse(
-          extractFace(buf, offset, LAYOUT_TABLES),
-        ) as unknown as OpentypeFontLike
+        font = opentype.parse(extractFace(buf, offset, LAYOUT_TABLES, true), {
+          lowMemory: true,
+        }) as unknown as OpentypeFontLike
       }
     } catch {
       font = null
@@ -774,6 +862,7 @@ class FontRegistry {
     }
     push(style.fontFamily)
     for (const a of aliasesOf(style.fontFamily)) push(a)
+    for (const v of variableTwinsOf(style.fontFamily)) push(v)
     // Candidates after this index are same-script/class substitutes, not the requested
     // family — the sub-family cloud fallback below must run before them
     const substituteStart = candidates.length
@@ -840,6 +929,10 @@ class FontRegistry {
     if (embedded) return embedded
     for (const strict of style.bold || style.italic ? [true, false] : [false])
       for (const family of candidates.slice(1, substituteStart)) {
+        // The platform script fallback at the tail of a JP alias list is not a style
+        // variant of the family: a bold MS PGothic request must synthesize bold from
+        // msgothic.ttc (PowerPoint) rather than swap to Hiragino's real W6 face
+        if (strict && SCRIPT_FALLBACK_KEYS.has(norm(family))) break
         const hit = tryFamily(family, strict)
         if (hit) return hit
       }

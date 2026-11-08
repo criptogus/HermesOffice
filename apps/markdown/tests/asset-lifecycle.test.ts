@@ -29,6 +29,35 @@ afterEach(async () => {
 })
 
 describe('Markdown owned asset lifecycle', () => {
+  it('keeps the stem of an asset name with a drive-like colon on Windows', async () => {
+    // path.win32.basename reads a leading <letter>: as a drive prefix
+    // and would strip it before the sanitizer sees the colon; the
+    // sanitizer's own class maps a colon to _, so the stem must survive
+    // as a_b.png on every platform.
+    const directory = await temporaryDirectory('markdown-assets-colon-')
+    const documentPath = join(directory, 'note.md')
+    const authored = await writeImageIntoOwnedAssets(
+      documentPath,
+      'a:b.png',
+      Buffer.from('image bytes'),
+    )
+
+    expect(authored).toBe('assets/a_b.png')
+    expect(existsSync(join(directory, 'assets', 'a_b.png'))).toBe(true)
+  })
+
+  it('still strips directory components from a suggested asset name', async () => {
+    const directory = await temporaryDirectory('markdown-assets-dir-')
+    const documentPath = join(directory, 'note.md')
+    const authored = await writeImageIntoOwnedAssets(
+      documentPath,
+      '../pictures/photo.png',
+      Buffer.from('image bytes'),
+    )
+
+    expect(authored).toBe('assets/photo.png')
+  })
+
   it("deletes only pending owned files when edits are explicitly discarded with Don't Save", async () => {
     const directory = await temporaryDirectory('markdown-assets-discard-')
     const documentPath = join(directory, 'note.md')
@@ -409,6 +438,11 @@ describe('serialized Markdown image references', () => {
         '![one](assets/a.png "title")\n![two](<assets/b image.png>)\n![again](assets/a.png)',
       ),
     ).toEqual(['assets/a.png', 'assets/b image.png', 'assets/a.png'])
+  })
+
+  it('handles repeated malformed image starts without rescanning the document', () => {
+    const text = '![x'.repeat(16_000)
+    expect(extractMarkdownImageSources(text)).toEqual([])
   })
 
   it('extracts and rewrites mixed Markdown and HTML image sources without touching lookalikes', () => {

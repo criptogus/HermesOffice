@@ -29,6 +29,14 @@ export default defineConfig({
         here,
         '../../packages/pptx-engine/src/custgeom.ts',
       ),
+      '@hermesoffice/pptx-engine/model3d': resolve(
+        here,
+        '../../packages/pptx-engine/src/model3d.ts',
+      ),
+      '@hermesoffice/pptx-engine/chart-workbook': resolve(
+        here,
+        '../../packages/pptx-engine/src/chart-workbook.ts',
+      ),
       '@hermesoffice/pptx-engine': resolve(here, '../../packages/pptx-engine/src/index.ts'),
       '@hermesoffice/pptx-ops/op-docs': resolve(here, '../../packages/pptx-ops/src/op-docs.ts'),
       '@hermesoffice/pptx-ops/font-size': resolve(here, '../../packages/pptx-ops/src/font-size.ts'),

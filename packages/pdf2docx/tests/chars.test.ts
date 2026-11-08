@@ -138,6 +138,14 @@ describe('dedupeDoubleDrawnChars', () => {
     expect(chars).toHaveLength(2)
   })
 
+  it('scales across many separated same-code glyphs', () => {
+    const chars = Array.from({ length: 20_000 }, (_, index) =>
+      mkChar('A', 100 + index * 20, { fontSize: 10 }),
+    )
+    dedupeDoubleDrawnChars(chars)
+    expect(chars).toHaveLength(20_000)
+  })
+
   it('collapses a triple strike to a single survivor', () => {
     const chars: PdfChar[] = [
       mkChar('業', 200, { y: 300, fontSize: 28 }),

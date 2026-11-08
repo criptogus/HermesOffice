@@ -83,6 +83,27 @@ describe('hermesoffice create --type xlsx / sheet', () => {
     expect(await part(csvOut, 'xl/worksheets/sheet1.xml')).toContain('<v>10.5</v>')
   })
 
+  it('derives a valid sheet name from a file stem Excel would reject', async () => {
+    const dir = tempDir()
+    const csv = join(dir, "'data[final]:v2'.csv")
+    writeFileSync(csv, 'a,b\n1,2\n')
+    const out = join(dir, 'data.xlsx')
+    const c = await run(['create', '--type', 'xlsx', '--from', csv, '--out', out, '--json'])
+    expect(c.code).toBe(0)
+    expect(await part(out, 'xl/workbook.xml')).toContain('name="data_final__v2"')
+    const conv = await run([
+      'convert',
+      csv,
+      '--to',
+      'xlsx',
+      '--out',
+      join(dir, 'conv.xlsx'),
+      '--json',
+    ])
+    expect(conv.code).toBe(0)
+    expect(conv.json().detail.sheet).toBe('data_final__v2')
+  })
+
   it('types ISO dates, honours sep= and --decimal, and --header freezes and filters', async () => {
     const dir = tempDir()
     const csv = join(dir, 'orders.csv')
@@ -605,16 +626,23 @@ describe('formula cache policy', () => {
         JSON.stringify([
           [1, 2, 3],
           ['=FILTER(A1:C1,A1:C1>1)', '=1/0', '=SUM(A1:C1)', '="#N/A"'],
+          ['=FOOBAR(A1)'],
         ]),
       )
       const out = join(dir, 't.xlsx')
       const r = await run(['create', '--type', 'xlsx', '--from', table, '--out', out, '--json'])
       expect(r.code).toBe(0)
-      expect(r.json().warnings[0].message).toContain('A2')
+      // the engine evaluates FILTER: blocked by its occupied neighbours, the
+      // anchor caches the typed error instead of an uncached #NAME?, so the
+      // only warning is about the genuinely unknown function
+      const warnings = r.json().warnings ?? []
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0].message).toContain('A3')
       const sheet = await part(out, 'xl/worksheets/sheet1.xml')
       expect(sheet).toMatch(
         /<c r="A2"[^>]*\bcm="1"[^>]*><f t="array" ref="A2">_xlfn\._xlws\.FILTER\(/,
       )
+      expect(sheet).toMatch(/<c r="A2"[^>]*\bt="e"[^>]*>.*?<v>#SPILL!<\/v>/)
       expect(sheet).not.toContain('#NAME?')
       expect(sheet).toMatch(/<c r="B2"[^>]*\bt="e"[^>]*>.*?<v>#DIV\/0!<\/v>/)
       // text that spells an error is still text
@@ -627,4 +655,54 @@ describe('formula cache policy', () => {
       expect(read.code).toBe(0)
     },
   )
+})
+
+describe('package validity', () => {
+  /// Duplicate Relationship Ids or Override PartNames are invalid under the Open
+  /// Packaging Conventions, and Excel opens such a workbook only after repairing it.
+  async function expectSingleStylesPart(out: string): Promise<void> {
+    const rels = await part(out, 'xl/_rels/workbook.xml.rels')
+    const ids = [...rels.matchAll(/\bId="([^"]+)"/g)].map((m) => m[1])
+    expect(ids).toEqual([...new Set(ids)])
+    expect([...rels.matchAll(/\bType="[^"]*\/relationships\/styles"/g)].length).toBe(1)
+
+    const types = await part(out, '[Content_Types].xml')
+    const names = [...types.matchAll(/\bPartName="([^"]+)"/g)].map((m) => m[1])
+    expect(names).toEqual([...new Set(names)])
+    expect(names.filter((name) => name === '/xl/styles.xml')).toEqual(['/xl/styles.xml'])
+
+    expect(await part(out, 'xl/styles.xml')).toContain('<cellXfs')
+  }
+
+  it('writes the styles part once in a new workbook', async () => {
+    const dir = tempDir()
+    const table = join(dir, 'table.json')
+    writeFileSync(
+      table,
+      JSON.stringify([
+        ['item', 'qty'],
+        ['Apple', 2],
+      ]),
+    )
+    const out = join(dir, 'table.xlsx')
+    expect((await run(['create', '--type', 'xlsx', '--from', table, '--out', out])).code).toBe(0)
+    await expectSingleStylesPart(out)
+  })
+
+  it('writes the styles part once in a multi-sheet workbook', async () => {
+    const dir = tempDir()
+    const multi = join(dir, 'multi.json')
+    writeFileSync(
+      multi,
+      JSON.stringify({
+        sheets: [
+          { name: 'Data', rows: [['a', 1]] },
+          { name: 'Notes', rows: [['hello']] },
+        ],
+      }),
+    )
+    const out = join(dir, 'multi.xlsx')
+    expect((await run(['create', '--type', 'xlsx', '--from', multi, '--out', out])).code).toBe(0)
+    await expectSingleStylesPart(out)
+  })
 })

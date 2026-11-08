@@ -6,7 +6,12 @@ import {
   type RangeBounds,
 } from '@hermesoffice/xlsx-gateway/domain/cell-address'
 import { InMemoryWorkbookAdapter } from '@hermesoffice/xlsx-gateway/domain/in-memory-workbook'
-import type { ChangePlan, WorkbookSnapshot } from '@hermesoffice/xlsx-gateway/domain/workbook.types'
+import type {
+  ChangePlan,
+  CellState,
+  WorkbookSnapshot,
+  WorksheetState,
+} from '@hermesoffice/xlsx-gateway/domain/workbook.types'
 import type {
   CellFormatPatch,
   FillPatch,
@@ -109,6 +114,7 @@ export const ADAPTER_DSL_OPS = [
   'clear_range',
   'fill_range',
   'copy_range',
+  'move_range',
   'find_replace',
   'sort_range',
   'format_range',
@@ -210,6 +216,59 @@ export async function runWorkbookDsl(
   const fallback = defaultSheet ?? active ?? snapshot.sheets[0]?.name
   const convertWarnings: string[] = []
   const frozen = new Map<string, unknown>()
+  // A chart over formula results: the editable model keeps formulas valueless
+  // (the file's cached <v> is dropped), so the numeric-column check refuses a
+  // Total column — the most common thing to chart. Fill the sidecar's computed
+  // values into the rehearsal snapshot for each add_chart dataRange up front:
+  // value only, the formula stays, no cell change results from it, and a cell
+  // an earlier op rewrites takes that op's state (formula and null value) and
+  // is still rejected, the same batch-order hazard convert_to_values guards.
+  if (opts.sourcePath !== undefined) {
+    const filled = new Set<string>()
+    for (const raw of rawOps) {
+      const op = raw as { op?: unknown; sheet?: unknown; sheetId?: unknown; dataRange?: unknown }
+      if (op.op !== 'add_chart' || typeof op.dataRange !== 'string') continue
+      const wanted =
+        typeof op.sheet === 'string'
+          ? op.sheet
+          : typeof op.sheetId === 'string'
+            ? op.sheetId
+            : fallback
+      if (wanted === undefined) continue
+      const name = idByName.has(wanted) ? wanted : (imported.sheetNamesById[wanted] ?? undefined)
+      const sheetState =
+        name === undefined ? undefined : snapshot.sheets.find((s) => s.name === name)
+      if (sheetState === undefined) continue
+      let bounds: RangeBounds
+      try {
+        bounds = parseRange(op.dataRange)
+      } catch {
+        continue // an invalid range is the rehearsal's rejection to raise
+      }
+      if (filled.has(`${name}!${op.dataRange}`)) continue
+      const pending = rangeAddresses(bounds).filter((address) => {
+        const cell = sheetState.cells[address]
+        return cell?.formula !== undefined && (cell.value ?? null) === null
+      })
+      filled.add(`${name}!${op.dataRange}`)
+      if (pending.length === 0) continue
+      const values = await computedValues(opts.sourcePath, name!, bounds)
+      const cells = { ...sheetState.cells } as Record<string, CellState>
+      let filledAny = false
+      for (const address of pending) {
+        const { row, column } = parseAddress(address)
+        const computed = values.get(`${row}|${column}`)
+        if (computed && !computed.isError && computed.value !== null) {
+          cells[address] = { ...cells[address]!, value: computed.value }
+          filledAny = true
+        }
+      }
+      if (filledAny) {
+        const sheets = snapshot.sheets as WorksheetState[]
+        sheets[sheets.indexOf(sheetState)] = { ...sheetState, cells }
+      }
+    }
+  }
   const adapter = new InMemoryWorkbookAdapter(snapshot)
   const before = adapter.getSnapshot()
   // one plan per op, applied before the next is planned: sort_range / find_replace
@@ -721,8 +780,16 @@ function normalizeOp(
       },
     )
   }
-  // same convention as set_range and --cells: a value starting with "=" is a formula
-  if (op.op === 'set_cell' && typeof op.value === 'string' && op.value.startsWith('=')) {
+  // same convention as set_range and --cells: a value starting with "=" is a formula,
+  // unless type: "text" says the string is literal cell text
+  const literal = op.op === 'set_cell' && op.type === 'text'
+  if (op.op === 'set_cell') delete op.type
+  if (
+    !literal &&
+    op.op === 'set_cell' &&
+    typeof op.value === 'string' &&
+    op.value.startsWith('=')
+  ) {
     op.op = 'set_formula'
     op.formula = op.value
     delete op.value

@@ -45,7 +45,7 @@ const brief: Brief = {
 describe('brief persistence', () => {
   it('round-trips through the meta tag with quotes and angle brackets escaped', () => {
     const tag = briefMetaTag(brief)
-    expect(tag.startsWith(`<meta name="genoffice:brief" content='`)).toBe(true)
+    expect(tag.startsWith(`<meta name="hermesoffice:brief" content='`)).toBe(true)
     expect(tag).not.toContain("here's") // the apostrophe inside the single-quoted attribute is escaped
     const back = parseBrief(`<html><head>${tag}</head></html>`)
     expect(back?.core_hook).toBe(brief.core_hook)
@@ -62,21 +62,21 @@ describe('brief persistence', () => {
 
   it('injects after <meta charset>, else after <head>, else creates a head, and refreshes in place', () => {
     const a = injectBrief('<html><head><meta charset="utf-8"><title>x</title></head></html>', brief)
-    expect(a).toMatch(/<meta charset="utf-8">\n<meta name="genoffice:brief"/)
+    expect(a).toMatch(/<meta charset="utf-8">\n<meta name="hermesoffice:brief"/)
     const b = injectBrief('<html><head><title>x</title></head></html>', brief)
-    expect(b).toMatch(/<head>\n<meta name="genoffice:brief"/)
+    expect(b).toMatch(/<head>\n<meta name="hermesoffice:brief"/)
     const c = injectBrief('<html><body></body></html>', brief)
-    expect(c).toMatch(/<html>\n<head><meta name="genoffice:brief"/)
+    expect(c).toMatch(/<html>\n<head><meta name="hermesoffice:brief"/)
     const d = injectBrief('<p>frag</p>', brief)
-    expect(d.startsWith('<meta name="genoffice:brief"')).toBe(true)
+    expect(d.startsWith('<meta name="hermesoffice:brief"')).toBe(true)
     const refreshed = injectBrief(a, { ...brief, core_hook: 'changed' })
-    expect((refreshed.match(/genoffice:brief/g) ?? []).length).toBe(1)
+    expect((refreshed.match(/hermesoffice:brief/g) ?? []).length).toBe(1)
     expect(parseBrief(refreshed)?.core_hook).toBe('changed')
   })
 
   it('ignores malformed meta and summarizes compactly', () => {
-    expect(parseBrief(`<meta name="genoffice:brief" content='{not json'>`)).toBeNull()
-    expect(parseBrief(`<meta name="genoffice:brief" content='{"core_hook":1}'>`)).toBeNull()
+    expect(parseBrief(`<meta name="hermesoffice:brief" content='{not json'>`)).toBeNull()
+    expect(parseBrief(`<meta name="hermesoffice:brief" content='{"core_hook":1}'>`)).toBeNull()
     const s = briefSummary(brief)
     expect(s).toContain('core hook: Q3 grew 40%')
     expect(s).toContain('style: Boardroom navy — executive')

@@ -1,5 +1,6 @@
 import { PPR_CHILD_ORDER, RPR_CHILD_ORDER, splitXmlChildren } from './generate'
 import { escapeXmlAttr } from './xml-utils'
+import type { TabStop } from './types'
 
 /** Run properties of a style definition; a present key sets, null clears, absent keeps. */
 export interface StyleRunProps {
@@ -36,6 +37,10 @@ export interface StyleParaProps {
   pageBreakBefore?: boolean
   /** 1-9 (w:outlineLvl val + 1) */
   outlineLevel?: number | null
+  /** list level linked to the style (w:numPr); null removes it */
+  numPr?: { numId: string; ilvl: number } | null
+  /** w:tabs of the style; [] or null removes the element */
+  tabStops?: TabStop[] | null
 }
 
 /**
@@ -99,8 +104,51 @@ export interface StyleUpsert {
   next?: string | null
   /** w:qFormat (quick style gallery); new styles default to true */
   quickFormat?: boolean
+  /** one of Word's built-in styles (by name): created without w:customStyle */
+  builtIn?: boolean
   rPr?: StyleRunProps
   pPr?: StyleParaProps
+}
+
+/** half-point sizes of the built-in headings, as the blank template defines them */
+const BUILT_IN_HEADING_SIZES: Readonly<Record<number, number>> = {
+  1: 32,
+  2: 28,
+  3: 26,
+  4: 24,
+  5: 22,
+  6: 22,
+}
+
+/**
+ * Word's built-in "heading N" for a document that defines none: the same
+ * definition the blank template ships (bold, keep-with-next, outline level,
+ * quick-style), based on the document's default paragraph style so its fonts
+ * show through. The id is HeadingN — parse-styles reads that id as the level
+ * even without the name, so the saved heading survives reopen.
+ */
+export function builtInHeadingStyleUpsert(
+  level: number,
+  defaultParagraphStyleId: string | undefined,
+): StyleUpsert {
+  const lvl = Math.min(Math.max(Math.round(level) || 1, 1), 9)
+  return {
+    styleId: `Heading${lvl}`,
+    type: 'paragraph',
+    name: `heading ${lvl}`,
+    ...(defaultParagraphStyleId
+      ? { basedOn: defaultParagraphStyleId, next: defaultParagraphStyleId }
+      : {}),
+    quickFormat: true,
+    builtIn: true,
+    pPr: {
+      keepNext: true,
+      spaceBeforeTwips: lvl <= 2 ? 240 : 160,
+      spaceAfterTwips: 120,
+      outlineLevel: lvl,
+    },
+    rPr: { bold: true, sizeHalfPoints: BUILT_IN_HEADING_SIZES[lvl] ?? 22 },
+  }
 }
 
 const STYLE_CHILD_ORDER = [
@@ -136,10 +184,13 @@ interface Child {
 type Attrs = Map<string, string>
 
 function parseTag(xml: string): { name: string; attrs: Attrs; selfClosing: boolean } {
-  const m = /^<([A-Za-z0-9:._-]+)((?:\s+[^\s=>]+="[^"]*")*)\s*(\/?)>/.exec(xml)
+  const m = /^<([A-Za-z0-9:._-]+)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/.exec(xml)
   if (!m) throw new Error(`style-upsert: not an element: ${xml.slice(0, 40)}`)
   const attrs: Attrs = new Map()
-  for (const a of m[2]!.matchAll(/([^\s=>]+)="([^"]*)"/g)) attrs.set(a[1]!, a[2]!)
+  for (const a of m[2]!.matchAll(/([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    const value = a[2] !== undefined ? a[2]! : a[3]!.replace(/"/g, '&quot;')
+    attrs.set(a[1]!, value)
+  }
   return { name: m[1]!, attrs, selfClosing: m[3] === '/' }
 }
 
@@ -211,11 +262,10 @@ const num = (n: number) => {
   return String(Math.round(n))
 }
 
-/** Valid style font size in half-points (Word range 1..3168). */
-function assertFontSizeHalfPoints(v: number): void {
-  if (!Number.isFinite(v) || v < 1 || v > 3168) {
-    throw new Error(`Invalid font size: ${String(v)} half-points (expected 1..3168)`)
-  }
+/** Word's size range is 1..1638 pt (2..3276 half-points); NaN/Infinity land on the floor. */
+function clampFontSizeHalfPoints(v: number): number {
+  if (Number.isNaN(v)) return 2
+  return Math.min(3276, Math.max(2, Math.round(v)))
 }
 
 function patchRun(children: Children, rp: StyleRunProps): void {
@@ -241,8 +291,7 @@ function patchRun(children: Children, rp: StyleRunProps): void {
     )
   }
   if (rp.sizeHalfPoints !== undefined) {
-    if (rp.sizeHalfPoints !== null) assertFontSizeHalfPoints(rp.sizeHalfPoints)
-    const sz = rp.sizeHalfPoints === null ? null : num(rp.sizeHalfPoints)
+    const sz = rp.sizeHalfPoints === null ? null : clampFontSizeHalfPoints(rp.sizeHalfPoints)
     children.set('w:sz', sz === null ? null : `<w:sz w:val="${sz}"/>`)
     children.set('w:szCs', sz === null ? null : `<w:szCs w:val="${sz}"/>`)
   }
@@ -264,6 +313,14 @@ function patchRun(children: Children, rp: StyleRunProps): void {
 }
 
 function patchPara(children: Children, pp: StyleParaProps): void {
+  if (pp.numPr !== undefined) {
+    children.set(
+      'w:numPr',
+      pp.numPr === null
+        ? null
+        : `<w:numPr><w:ilvl w:val="${pp.numPr.ilvl}"/><w:numId w:val="${pp.numPr.numId}"/></w:numPr>`,
+    )
+  }
   if (pp.align !== undefined) {
     children.set(
       'w:jc',
@@ -304,6 +361,19 @@ function patchPara(children: Children, pp: StyleParaProps): void {
       pp.outlineLevel === null ? null : `<w:outlineLvl w:val="${num(pp.outlineLevel - 1)}"/>`,
     )
   }
+  if (pp.tabStops !== undefined) {
+    const stops = pp.tabStops ?? []
+    children.set(
+      'w:tabs',
+      stops.length === 0 ? null : `<w:tabs>${stops.map(tabXml).join('')}</w:tabs>`,
+    )
+  }
+}
+
+function tabXml(ts: TabStop): string {
+  let xml = `<w:tab w:val="${escapeXmlAttr(ts.val)}" w:pos="${num(ts.pos)}"`
+  if (ts.leader && ts.leader !== 'none') xml += ` w:leader="${escapeXmlAttr(ts.leader)}"`
+  return xml + '/>'
 }
 
 /** The w:style element after applying `up` to `existing` (null = create). */
@@ -313,7 +383,7 @@ export function mergeStyleXml(existing: string | null, up: StyleUpsert): string 
     ? new Map([
         ['w:type', up.type ?? 'paragraph'],
         ['w:styleId', escapeXmlAttr(up.styleId)],
-        ['w:customStyle', '1'],
+        ...(up.builtIn ? [] : [['w:customStyle', '1'] as const]),
       ])
     : parseTag(existing).attrs
   const children = new Children(
@@ -346,6 +416,18 @@ export function mergeStyleXml(existing: string | null, up: StyleUpsert): string 
     children.set('w:rPr', inner.size ? `<w:rPr>${inner.toXml()}</w:rPr>` : null)
   }
   return tag('w:style', attrs, children.toXml())
+}
+
+export function upsertStyleXml(xml: string, up: StyleUpsert): string {
+  const escapedId = up.styleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const existing = new RegExp(
+    `<w:style\\b[^>]*\\bw:styleId=(["'])${escapedId}\\1[^>]*(?:\\/>|>[\\s\\S]*?<\\/w:style>)`,
+  )
+  const match = existing.exec(xml)
+  const styleXml = mergeStyleXml(match?.[0] ?? null, up)
+  return match
+    ? xml.replace(existing, () => styleXml)
+    : xml.replace('</w:styles>', `${styleXml}</w:styles>`)
 }
 
 /** Patch only the requested default font slots, preserving all other defaults. */

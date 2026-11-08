@@ -1,5 +1,5 @@
 import { Editor } from '@tiptap/core'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import {
   computeSectionedSlicesF2,
@@ -10,9 +10,26 @@ import {
 
 const cell = { type: 'docTableCell', content: [{ type: 'docParagraph' }] }
 const row = { type: 'docTableRow', content: [cell] }
-const editor = new Editor({ element: document.createElement('div'), extensions: editorExtensions })
+
+/** Editors created during the current test; destroyed in afterEach so ProseMirror's
+ * DOMObserver timers can't fire after the JSDOM environment is torn down. */
+const liveEditors: Editor[] = []
+
+function makeEditor(): Editor {
+  const editor = new Editor({
+    element: document.createElement('div'),
+    extensions: editorExtensions,
+  })
+  liveEditors.push(editor)
+  return editor
+}
+
+afterEach(() => {
+  for (const editor of liveEditors.splice(0)) editor.destroy()
+})
 
 function tableAttrs(attrs: Record<string, unknown>): Record<string, string> {
+  const editor = makeEditor()
   const table = editor.schema.nodeFromJSON({ type: 'docTable', attrs, content: [row] })
   return (editor.schema.nodes.docTable.spec.toDOM!(table) as [string, Record<string, string>])[1]
 }
@@ -139,6 +156,21 @@ describe('keyword-anchored float shifts in the slice engine', () => {
     ])
   })
 
+  it('a float lifting over blank lines fits from its lifted top instead of turning the page', () => {
+    // prod corpus 20261020 sample 043: margin-top aligned photo whose anchor
+    // lands after a few empty paragraphs at the top of a page
+    const out: SliceOutputs = { floatVShifts: [] }
+    const blocks = [
+      block(0, 40, { emptyPara: true }),
+      block(40, 40, { emptyPara: true }),
+      block(80, 560, { floated: true, pageRelVyPx: 0, pageRelVAnchor: 'margin' }),
+      block(80, 40),
+    ]
+    const slices = computeSectionedSlicesF2(blocks, geoms, 600, out)
+    expect(slices.filter((s) => s.end > s.start)).toHaveLength(1)
+    expect(out.floatVShifts).toEqual([{ blockTop: 80, dyPx: -80 }])
+  })
+
   it('never lifts a float above content already on the page', () => {
     const out: SliceOutputs = { floatVShifts: [] }
     const blocks = [
@@ -152,5 +184,74 @@ describe('keyword-anchored float shifts in the slice engine', () => {
     ]
     computeSectionedSlicesF2(blocks, geoms, 600, out)
     expect(out.floatVShifts).toEqual([{ blockTop: 200, dyPx: 0 }])
+  })
+})
+
+describe('legacy cell-margin hang of a float', () => {
+  it('only a margin-anchored float without an offset hangs by its indent', () => {
+    const base = { tblFloat: 'left', tblFloatSource: 'left', tblFloatVertAnchor: 'text' }
+    const hung = tableAttrs({ ...base, tblFloatHorzAnchor: 'margin', indentTwips: -108 })
+    expect(hung.style).toContain('margin-left:-7.2px')
+    const textAnchored = tableAttrs({ ...base, tblFloatHorzAnchor: 'text', indentTwips: -108 })
+    expect(textAnchored.style ?? '').not.toContain('margin-left')
+    const unanchored = tableAttrs({ ...base, indentTwips: -108 })
+    expect(unanchored.style ?? '').not.toContain('margin-left')
+    const offset = tableAttrs({
+      ...base,
+      tblFloatHorzAnchor: 'margin',
+      tblFloatXTwips: 300,
+      indentTwips: -108,
+    })
+    expect(offset.style).not.toContain('-7.2px')
+  })
+})
+
+describe('page-anchored w:tblpY', () => {
+  it('opens the band above the shifted table to the anchor paragraph (shape on the engine shift)', () => {
+    const attrs = tableAttrs({
+      tblFloat: 'left',
+      tblFloatSource: 'left',
+      tblFloatHorzAnchor: 'margin',
+      tblFloatVertAnchor: 'page',
+      tblFloatYTwips: 2581,
+      widthPx: 586,
+    })
+    expect(attrs.style).toContain('margin-top:var(--tblp-dy,0px)')
+    expect(attrs.style).toContain('shape-outside:inset(var(--tblp-dy,0px) 0 0 0)')
+  })
+})
+
+describe('w:tblpXSpec="center" wider than the column', () => {
+  const centred = {
+    tblFloatSource: 'left',
+    tblFloatHorzAnchor: 'margin',
+    tblFloatVertAnchor: 'text',
+    tblFloatXSpec: 'center',
+    tblFloatYTwips: 635,
+    widthPx: 724,
+  }
+  const paper =
+    'calc(var(--doc-content-w,100%) + var(--doc-margin-left,var(--doc-margin-right,0px)) + var(--doc-margin-right,0px))'
+
+  it('a live float keeps w:tblW, centres on the margin box and lets text fill the w:tblpY band', () => {
+    const attrs = tableAttrs({ ...centred, tblFloat: 'left' })
+    expect(attrs.style).toContain(`width:min(724px,${paper})`)
+    expect(attrs.style).toContain(
+      `margin-left:calc((var(--doc-content-w,100%) - min(724px,${paper}))/2)`,
+    )
+    expect(attrs.style).toContain('margin-top:42.3px')
+    expect(attrs.style).toContain('shape-outside:inset(42.3px 0 0 0)')
+    // a band shorter than a line keeps the plain margin
+    const thin = tableAttrs({ ...centred, tblFloat: 'left', tblFloatYTwips: 200 })
+    expect(thin.style).toContain('margin-top:13.3px')
+    expect(thin.style).not.toContain('shape-outside')
+  })
+
+  it('a flowed (suppressed) float centres the same way without a shape', () => {
+    const attrs = tableAttrs({ ...centred, tblFloat: null, tblFloatSuppressed: true })
+    expect(attrs.style).toContain(
+      `margin-left:calc((var(--doc-content-w,100%) - min(724px,${paper}))/2)`,
+    )
+    expect(attrs.style).not.toContain('shape-outside')
   })
 })

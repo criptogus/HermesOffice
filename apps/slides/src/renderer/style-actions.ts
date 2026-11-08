@@ -4,6 +4,7 @@
  * Functions read the latest App state through ActionCtx.
  */
 import type { ShapeRenderNode } from '@hermesoffice/pptx-render'
+import { mergeSlideUpdate } from '../shared/slide-update'
 import type {
   EditBackgroundOp,
   EditChartOp,
@@ -11,6 +12,7 @@ import type {
   EditTableStyleOp,
   GradientFillSpec,
 } from '../shared/ipc'
+import type { FontSizeStep } from '@hermesoffice/pptx-ops/font-size'
 import type { ActionCtx } from './action-context'
 import { FIT_WIDTH } from './app-constants'
 import {
@@ -60,6 +62,24 @@ export function onFontSize(ctx: ActionCtx, pt: number): void {
       slideIndex: ctx.current,
       sourceIds: ctx.selectedIds,
       fontSizePt: pt,
+      ...(groupId ? { groupId } : {}),
+    })
+    .then((r) => r && ctx.applySlide(ctx.current, r))
+}
+
+// Grow/shrink relative to each run's own size, so a mixed-size shape keeps its contrast
+export function onFontSizeStep(ctx: ActionCtx, step: FontSizeStep): void {
+  if (ctx.editing || ctx.editingCell) {
+    resizeSelectionFont(step.dir, step.mode)
+    return
+  }
+  if (!ctx.selectedIds.length) return
+  const groupId = ctx.groupIdOf(ctx.selectedIds[0]!)
+  void window.slidesApi
+    .setElementFont({
+      slideIndex: ctx.current,
+      sourceIds: ctx.selectedIds,
+      fontSizeStep: step,
       ...(groupId ? { groupId } : {}),
     })
     .then((r) => r && ctx.applySlide(ctx.current, r))
@@ -258,7 +278,7 @@ export async function onBackground(
     fitWidthPx: FIT_WIDTH,
   } as EditBackgroundOp)
   if (r) {
-    ctx.setSlides(r)
+    ctx.setSlides((current) => mergeSlideUpdate(current, r))
     ctx.setDirty(true)
     ctx.setStatus(op.slideIndex === -1 ? t('appStatusBgAppliedAll') : '')
   }

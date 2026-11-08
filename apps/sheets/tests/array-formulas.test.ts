@@ -98,7 +98,7 @@ describe('collectArrayFollowers', () => {
 
   it('adds no followers when the array extent was fully deleted', () => {
     const followers = new Set<string>()
-    // genspark-ai/genoffice#135 op stack: file rows 6-7 are both removed, but
+    // genspark-ai/hermesoffice#135 op stack: file rows 6-7 are both removed, but
     // box-envelope tracking reported screen row 8 (unrelated content) as a
     // survivor and blanked it.
     collectArrayFollowers(

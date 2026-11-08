@@ -109,6 +109,8 @@ export const ja = {
   aiErrUnknown: '不明なエラー',
   aiErrStreamTimeout:
     'AIリクエストがタイムアウトしました：ネットワークからの応答がないため中断しました。接続を確認して再試行してください',
+  aiErrRegion:
+    'このモデルの提供元は現在の地域ではサービスを提供していません。別のモデルを選ぶか、ネットワークを切り替えてください',
   aiErrOverloaded: 'AI サービスが混み合っています。しばらくしてからもう一度お試しください',
   aiErrNetwork:
     'ネットワークに問題があり、AI サービスに接続できません。接続を確認して再試行してください',
@@ -133,6 +135,7 @@ export const ja = {
   aiClarifyOther: 'その他（自由記入）',
   aiClarifySkip: 'アンケートをスキップ',
   aiClarifyNext: '次へ',
+  aiClarifyPrev: '前へ',
   aiClarifySubmit: '生成する',
   aiSumReadAttachment: '添付ファイルを読み取り',
   aiSumReadAttachmentName: '添付ファイル {name} を読み取り',

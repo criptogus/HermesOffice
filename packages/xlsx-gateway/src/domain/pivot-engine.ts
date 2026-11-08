@@ -8,6 +8,7 @@ import type {
 import { allowedByValueFilter, matchesLabelFilter } from './pivot-filters'
 import { evaluatePivotFormula, parsePivotFormula, type PivotFormulaAst } from './pivot-formula'
 import { groupLabel } from './pivot-grouping'
+import { showDataAsNeedsBaseField } from './pivot-value-modes'
 
 /// Recomputes a pivot table's DATA AREA from fresh source values, keeping the
 /// file's recorded layout (rowItems/colItems). Layout drift — new or renamed
@@ -96,11 +97,33 @@ function aggregate(subtotal: string, values: readonly SourceCell[]): number | nu
     case 'average':
       return numbers.length === 0 ? null : numbers.reduce((t, v) => t + v, 0) / numbers.length
     case 'max':
-      return numbers.length === 0 ? null : Math.max(...numbers)
+      return numbers.length === 0
+        ? null
+        : numbers.reduce((max, value) => Math.max(max, value), -Infinity)
     case 'min':
-      return numbers.length === 0 ? null : Math.min(...numbers)
+      return numbers.length === 0
+        ? null
+        : numbers.reduce((min, value) => Math.min(min, value), Infinity)
     case 'product':
       return numbers.length === 0 ? null : numbers.reduce((t, v) => t * v, 1)
+    case 'var':
+    case 'stdDev': {
+      // STDEV/VAR are sample statistics (n-1); Excel yields #DIV/0! for n<2,
+      // which this engine expresses as a blank cell (null), like every other
+      // empty-bucket case. Keep the arithmetic in sync with pivot-layout's bake.
+      if (numbers.length < 2) return null
+      const mean = numbers.reduce((t, v) => t + v, 0) / numbers.length
+      const variance =
+        numbers.reduce((t, v) => t + (v - mean) * (v - mean), 0) / (numbers.length - 1)
+      return subtotal === 'var' ? variance : Math.sqrt(variance)
+    }
+    case 'varp':
+    case 'stdDevp': {
+      if (numbers.length === 0) return null
+      const mean = numbers.reduce((t, v) => t + v, 0) / numbers.length
+      const variance = numbers.reduce((t, v) => t + (v - mean) * (v - mean), 0) / numbers.length
+      return subtotal === 'varp' ? variance : Math.sqrt(variance)
+    }
     default:
       throw new PivotRefreshError(`Aggregation "${subtotal}" does not support recompute.`)
   }
@@ -273,6 +296,48 @@ export function recomputePivotData(
     return baseCache.get(key)!
   }
 
+  // "Show values as" base fields (dataField@baseField/baseItem): resolved once
+  // per data field — the axis level it sits on, its visible member indexes in
+  // fieldItems (display) order, and the predicate key per member. The parser
+  // already rejects definitions with missing base fields, so an undefined base
+  // here only fails soft (blank cells).
+  const showAsBases = definition.dataFields.map((dataField) => {
+    const mode = dataField.showDataAs
+    if (mode === undefined || !showDataAsNeedsBaseField(mode)) return undefined
+    const baseField = dataField.baseField
+    if (baseField === undefined) return undefined
+    const rowLevel = definition.rowFields.indexOf(baseField)
+    const columnLevel = definition.colFields.indexOf(baseField)
+    if (rowLevel < 0 && columnLevel < 0) return undefined
+    const axis: 'row' | 'column' = rowLevel >= 0 ? 'row' : 'column'
+    const level = rowLevel >= 0 ? rowLevel : columnLevel
+    const visible: number[] = []
+    const keys = new Map<number, string>()
+    ;(definition.fieldItems[baseField] ?? []).forEach((item, member) => {
+      if (item.x === null || item.hidden) return
+      const shared = definition.fields[baseField]?.sharedItems[item.x]
+      if (shared === undefined) return
+      visible.push(member)
+      keys.set(member, groupKey(shared))
+    })
+    return {
+      field: baseField,
+      axis,
+      level,
+      visible,
+      keyOf: (member: number): string => keys.get(member) ?? '',
+      baseItem: dataField.baseItem,
+    }
+  })
+
+  // Running-total / rank accumulations per (data field × group): the group is
+  // every coordinate except the base-field level, so each new outer member of
+  // the base axis and each other-axis group restarts — Excel's reset rule.
+  const showAsRuns = new Map<string, { cum: number[]; values: (number | null)[] }>()
+  /// Canonical cache key of a predicate set (order preserved, fields+keys).
+  const predicateKey = (predicates: readonly AxisPredicate[]): string =>
+    predicates.map((predicate) => `${predicate.field}=${predicate.key}`).join(';')
+
   const data: (number | null)[][] = []
   definition.rowLines.forEach((rowLine, rowIndex) => {
     if (rowLine.t === 'blank') {
@@ -297,17 +362,167 @@ export function recomputePivotData(
       }
       // Second-pass normalization: % of row = this row's total (row
       // predicates only); % of column = this column's total (column predicates
-      // only); % of grand total = all visible rows. Also applies to subtotal
-      // and grand-total cells.
-      const base =
-        dataField.showDataAs === 'percentOfTotal'
-          ? aggregateBase('total', dataFieldIndex, [])
-          : dataField.showDataAs === 'percentOfRow'
-            ? aggregateBase(`row${rowIndex}`, dataFieldIndex, rowPart.predicates)
-            : aggregateBase(`col${colIndex}`, dataFieldIndex, colPart.predicates)
+      // only); % of grand total = all visible rows; parent modes drop the
+      // innermost fixed level. Also applies to subtotal and grand-total cells.
       // Leave blank when the denominator is null or 0 (Excel shows #DIV/0!;
       // the recompute engine opts for blank).
-      line.push(base === null || base === 0 ? null : raw / base)
+      const ratio = (base: number | null): number | null =>
+        base === null || base === 0 ? null : raw / base
+      switch (dataField.showDataAs) {
+        case 'percentOfTotal':
+          line.push(ratio(aggregateBase('total', dataFieldIndex, [])))
+          break
+        case 'percentOfRow':
+          line.push(ratio(aggregateBase(`row${rowIndex}`, dataFieldIndex, rowPart.predicates)))
+          break
+        case 'percentOfCol':
+          line.push(ratio(aggregateBase(`col${colIndex}`, dataFieldIndex, colPart.predicates)))
+          break
+        case 'percentOfParentRow':
+          line.push(
+            ratio(
+              aggregateBase(`prow${rowIndex}:${colIndex}`, dataFieldIndex, [
+                ...rowPart.predicates.slice(0, -1),
+                ...colPart.predicates,
+              ]),
+            ),
+          )
+          break
+        case 'percentOfParentCol':
+          line.push(
+            ratio(
+              aggregateBase(`pcol${rowIndex}:${colIndex}`, dataFieldIndex, [
+                ...rowPart.predicates,
+                ...colPart.predicates.slice(0, -1),
+              ]),
+            ),
+          )
+          break
+        case 'index': {
+          const grand = aggregateBase('total', dataFieldIndex, [])
+          const rowTotal = aggregateBase(`row${rowIndex}`, dataFieldIndex, rowPart.predicates)
+          const colTotal = aggregateBase(`col${colIndex}`, dataFieldIndex, colPart.predicates)
+          const denominator =
+            rowTotal === null || colTotal === null || grand === null ? null : rowTotal * colTotal
+          line.push(denominator === null || denominator === 0 ? null : (raw * grand!) / denominator)
+          break
+        }
+        case 'difference':
+        case 'percentDiff':
+        case 'percentOf': {
+          // Excel's base-item comparison: swap the base field's coordinate for
+          // the base item, keep every other coordinate. Difference and %
+          // difference are blank on the base item itself; "% Of" shows 100%.
+          // A blank when the base bucket is empty or zero (Excel: #DIV/0!).
+          const base = showAsBases[dataFieldIndex]
+          const ownPart = base?.axis === 'column' ? colPart : rowPart
+          const otherPart = base?.axis === 'column' ? rowPart : colPart
+          if (!base || base.baseItem === undefined || ownPart.predicates.length <= base.level) {
+            line.push(null)
+            break
+          }
+          const baseKey = base.keyOf(base.baseItem)
+          const ownKey = ownPart.predicates[base.level]!.key
+          if (dataField.showDataAs !== 'percentOf' && ownKey === baseKey) {
+            line.push(null)
+            break
+          }
+          const basePredicates = [
+            ...ownPart.predicates.slice(0, base.level),
+            { field: base.field, key: baseKey },
+            ...ownPart.predicates.slice(base.level + 1),
+          ]
+          const baseValue = aggregateCell(dataFieldIndex, [
+            ...otherPart.predicates,
+            ...basePredicates,
+          ])
+          if (baseValue === null) line.push(null)
+          else if (dataField.showDataAs === 'difference') line.push(raw - baseValue)
+          else if (baseValue === 0) line.push(null)
+          else if (dataField.showDataAs === 'percentOf') line.push(raw / baseValue)
+          else line.push((raw - baseValue) / baseValue)
+          break
+        }
+        case 'percentOfParent': {
+          // Denominator = the base field's parent-level subtotal: the base-axis
+          // predicates truncated above the base level, other axis untouched.
+          const base = showAsBases[dataFieldIndex]
+          if (!base) {
+            line.push(null)
+            break
+          }
+          const ownPart = base.axis === 'column' ? colPart : rowPart
+          const otherPart = base.axis === 'column' ? rowPart : colPart
+          const parent = aggregateBase(
+            `parent:${predicateKey([...otherPart.predicates, ...ownPart.predicates.slice(0, base.level)])}`,
+            dataFieldIndex,
+            [...otherPart.predicates, ...ownPart.predicates.slice(0, base.level)],
+          )
+          line.push(parent === null || parent === 0 ? null : raw / parent)
+          break
+        }
+        case 'runTotal':
+        case 'percentOfRunningTotal':
+        case 'rankAscending':
+        case 'rankDescending': {
+          const base = showAsBases[dataFieldIndex]
+          const ownPart = base?.axis === 'column' ? colPart : rowPart
+          const otherPart = base?.axis === 'column' ? rowPart : colPart
+          if (!base || ownPart.predicates.length <= base.level) {
+            line.push(null)
+            break
+          }
+          const ownKey = ownPart.predicates[base.level]!.key
+          const at = base.visible.findIndex((member) => base.keyOf(member) === ownKey)
+          if (at < 0) {
+            line.push(null)
+            break
+          }
+          const groupPredicates = [
+            ...otherPart.predicates,
+            ...ownPart.predicates.slice(0, base.level),
+            ...ownPart.predicates.slice(base.level + 1),
+          ]
+          const runKey = `${dataFieldIndex}:${predicateKey(groupPredicates)}`
+          let run = showAsRuns.get(runKey)
+          if (run === undefined) {
+            const values = base.visible.map((member) =>
+              aggregateCell(dataFieldIndex, [
+                ...otherPart.predicates,
+                ...ownPart.predicates.slice(0, base.level),
+                { field: base.field, key: base.keyOf(member) },
+                ...ownPart.predicates.slice(base.level + 1),
+              ]),
+            )
+            let sum = 0
+            const cum = values.map((value) => (sum += value ?? 0))
+            run = { values, cum }
+            showAsRuns.set(runKey, run)
+          }
+          if (dataField.showDataAs === 'runTotal') {
+            line.push(run.cum[at]!)
+            break
+          }
+          if (dataField.showDataAs === 'percentOfRunningTotal') {
+            const total = aggregateBase(
+              `parent:${predicateKey([...otherPart.predicates, ...ownPart.predicates.slice(0, base.level)])}`,
+              dataFieldIndex,
+              [...otherPart.predicates, ...ownPart.predicates.slice(0, base.level)],
+            )
+            line.push(total === null || total === 0 ? null : run.cum[at]! / total)
+            break
+          }
+          // RANK.EQ-style ties: equal values share the smaller rank.
+          const better = run.values.filter(
+            (value, index) =>
+              index !== at &&
+              value !== null &&
+              (dataField.showDataAs === 'rankAscending' ? value < raw : value > raw),
+          ).length
+          line.push(better + 1)
+          break
+        }
+      }
     })
     data.push(line)
   })

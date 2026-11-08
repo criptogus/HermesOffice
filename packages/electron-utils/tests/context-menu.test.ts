@@ -1,6 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { buildContextMenuItems, contextMenuLabels } from '../src/index'
+const electronMock = vi.hoisted(() => ({ popup: vi.fn() }))
+
+vi.mock('electron', () => ({
+  Menu: {
+    buildFromTemplate: vi.fn(() => ({ popup: electronMock.popup })),
+  },
+}))
+
+import {
+  appMenuLabels,
+  buildContextMenuItems,
+  contextMenuLabels,
+  installContextMenu,
+  setContextMenuInterceptor,
+} from '../src/index'
+
+const { popup } = electronMock
 
 const labels = contextMenuLabels('en')
 
@@ -92,6 +108,14 @@ describe('contextMenuLabels', () => {
     expect(contextMenuLabels('zh-TW').paste).toBe('貼上')
     expect(contextMenuLabels('xx')).toEqual(contextMenuLabels('en'))
   })
+
+  it('falls back to the base language for regional variants', () => {
+    expect(contextMenuLabels('pt-BR').copy).toBe(contextMenuLabels('pt').copy)
+    expect(contextMenuLabels('zh-Hant').copy).toBe(contextMenuLabels('zh').copy)
+    expect(contextMenuLabels('de-AT').copy).toBe(contextMenuLabels('de').copy)
+    expect(appMenuLabels('pt-BR').window).toBe(appMenuLabels('pt').window)
+    expect(appMenuLabels('zh-Hant').window).toBe(appMenuLabels('zh').window)
+  })
 })
 
 describe('image targets', () => {
@@ -118,5 +142,40 @@ describe('image targets', () => {
 
   it('ignores images without a source', () => {
     expect(buildContextMenuItems({ ...image, srcURL: '' }, labels)).toEqual([])
+  })
+})
+
+describe('installContextMenu interceptor failures', () => {
+  it('falls back to the native menu when the interceptor rejects', async () => {
+    // Electron ignores the promise an async listener returns, so a rejection here
+    // is an unhandled rejection in the main process
+    const appOn = vi.fn()
+    const app = { on: appOn } as unknown as Parameters<typeof installContextMenu>[0]
+    const menuListeners: Array<(event: unknown, params: unknown) => void> = []
+    const contents = {
+      id: 7,
+      on: vi.fn((_event: string, listener: (event: unknown, params: unknown) => void) =>
+        menuListeners.push(listener),
+      ),
+    }
+    const failing = vi.fn(async () => {
+      throw new Error('renderer is gone')
+    })
+    setContextMenuInterceptor(app, contents as never, failing)
+    installContextMenu(app, () => labels)
+    const created = appOn.mock.calls[0]![1] as (event: unknown, contents: unknown) => void
+    created({}, contents)
+    const rejected: unknown[] = []
+    const onRejection = (err: unknown): void => void rejected.push(err)
+    process.on('unhandledRejection', onRejection)
+    try {
+      menuListeners[0]!(null, { ...base, selectionText: 'selected' })
+      await new Promise((r) => setTimeout(r, 10))
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+    expect(rejected).toEqual([])
+    // the native menu still pops, so a right-click is never dead
+    expect(popup).toHaveBeenCalledTimes(1)
   })
 })

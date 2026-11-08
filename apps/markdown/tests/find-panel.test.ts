@@ -231,4 +231,21 @@ describe('FindPanel', () => {
     unmount()
     editor.destroy()
   })
+
+  it('labels both inputs and announces the match count', () => {
+    const editor = createEditor('hello')
+    const { container, unmount } = render(
+      createElement(FindPanel, {
+        target: tiptapFindTarget(editor),
+        strings: STRINGS,
+        onClose() {},
+      }),
+    )
+    const [find, replace] = Array.from(container.querySelectorAll<HTMLInputElement>('.find-input'))
+    expect(find!.getAttribute('aria-label')).toBe('Find')
+    expect(replace!.getAttribute('aria-label')).toBe('Replace with')
+    expect(container.querySelector('.find-count')!.getAttribute('aria-live')).toBe('polite')
+    unmount()
+    editor.destroy()
+  })
 })

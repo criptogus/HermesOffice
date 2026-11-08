@@ -1,7 +1,19 @@
 // Records shared by the pagination modules: measured blocks, page slices,
 // section geometry and the patch outputs of a slicing pass.
-import type { SectionInfo, TextFlowDirection, TextOutline } from '@hermesoffice/docx-engine'
+import type {
+  RevisionInfo,
+  SectionInfo,
+  TextFlowDirection,
+  TextOutline,
+} from '@hermesoffice/docx-engine'
 
+/** one placeable line of a block; `lead` marks ink-less space a float pushed the
+ *  sole line past: the page bottom swallows it without a fit check */
+export interface LineBox {
+  offsetInBlock: number
+  height: number
+  lead?: boolean
+}
 export interface BlockBox {
   top: number
   height: number
@@ -21,6 +33,12 @@ export interface BlockBox {
    *  lineBoxes offsets); the engine turns the page there and the text before
    *  stays on the current page like Word */
   innerBreaks?: number[]
+  /** the first inner break leads the paragraph (w:br page before any text): its
+   *  break line needs no room on the page it ends, the text opens the next page */
+  leadingBreakCut?: boolean
+  /** a page-break-before paragraph lives inside a cell: the row data must exist
+   *  even when the table fits its page, or the instruction is invisible */
+  hasCellBreak?: boolean
   /** zero-height break carrier (floating-textbox anchor): the break survives a blank page */
   breakForce?: boolean
   /** block contains a column break (w:br type=column): force a column change after it (new page on last column) */
@@ -29,6 +47,9 @@ export interface BlockBox {
   colBreakBefore?: boolean
   /** source DOM block (filled during canvas measurement, used to position page-gap decorations) */
   el?: HTMLElement
+  /** the element's own measured height (px at 100% zoom) before the inter-block
+   *  margins and lead space are folded into `height` */
+  domHeight?: number
   /** the block's docxIndex (DOM data-idx; new unsaved blocks lack one) */
   docxIndex?: number
   /** owning section index (filled by assignSections) */
@@ -40,6 +61,8 @@ export interface BlockBox {
    *  wrapped text beside it carries the vertical extent, so it consumes no
    *  column height itself (block boxes in normal flow stack ignoring floats) */
   floated?: boolean
+  /** float lifted above the flow position into the previous anchor's band (syncAnchorBands) */
+  lifted?: boolean
   /** w:tblpPr table (floated or currently flowed by the engine, see floatFlowed) */
   floatTable?: true
   /** floating table the engine renders in normal flow because one of its rows
@@ -65,16 +88,40 @@ export interface BlockBox {
   /** w:tblpYSpec keyword: the target is the anchor box edge/centre minus the
    *  block's own height instead of a fixed Y */
   pageRelVSpec?: 'top' | 'center' | 'bottom'
+  /** in-flow band (wrapTopAndBottom): the --tblp-dy already in the measured flow, px */
+  pageRelVApplied?: number
+  /** the engine's applied float shift (--tblp-dy) already subtracted from `top`, px */
+  floatShiftPx?: number
   /** inline-flowed w:tblpPr table with a negative text-relative w:tblpY: the
    *  block starts this many px above its flow position (Word hangs it above
    *  the anchor paragraph, into the top margin on a page start) */
   liftPx?: number
+  /** text-anchored w:tblpPr table (floated or flowed inline): Word starts it on
+   *  the next page when it does not fit the rest of the current one (probe
+   *  2026-10-13; the split at row boundaries only begins from there) */
+  floatPushWhole?: true
+  /** anchor paragraph whose side-wrapped drawings are page obstacles: Word
+   *  turns the page before it when a drawing would pass the body bottom and
+   *  cannot be pulled up to end there (probe 2026-10-13); floatBottom is the
+   *  lowest drawing bottom, floatMaxH the tallest drawing */
+  floatKeepWhole?: true
+  floatMaxH?: number
+  /** compatibilityMode >= 15: the page turn applies and the pull-up stops at the
+   *  body bottom; legacy layout overflows the bottom margin (probe 2026-11-03) */
+  modernFloatTurn?: true
+  /** side-wrapped block picture (picture-only anchor paragraph, CSS float) */
+  floatPicture?: true
+  /** painted offset of a floatPicture's box below its measured slot (px) */
+  anchorDyPx?: number
   /** in-block line boundaries (relative to block top, ascending, each = a line's starting Y): used to split page-crossing blocks by line */
   lineOffsets?: number[]
   /** min lines kept on each side of a split (widow/orphan control): paragraphs 2, table rows 1 (default) */
   splitMinLines?: number
   /** no visible text/image (empty paragraph mark): flows but doesn't count toward column-balance quotas */
   emptyPara?: boolean
+  /** no text and no inline picture: the paragraph's only runs are anchored drawings
+   *  (its flow footprint is the mark's strut line) */
+  anchorOnly?: boolean
   /** non-reflowable block's rendered width (tables, protected textboxes/objects):
    *  such a block never advances into a narrower column (Word turns the page instead) */
   fixedWidthPx?: number
@@ -92,17 +139,38 @@ export interface BlockBox {
    * Paragraph line-box list (from computeLineMetrics, for line-level page splitting).
    * When absent, degrades to F1 block-level greedy placement.
    */
-  lineBoxes?: Array<{ offsetInBlock: number; height: number }>
+  lineBoxes?: LineBox[]
   /** space before (px), from line-metrics output */
   spaceBeforePx?: number
-  /** first block only: leading space-before folded into height (top moved to 0) */
+  /** leading space-before folded into height (top moved up by it) */
   leadFoldPx?: number
+  /** space-before laid out as padding inside the box (additive paragraph spacing);
+   *  Word drops it when the paragraph opens a page by a natural break */
+  padBeforePx?: number
+  /** the BlockPlan's space before laid out as a block margin (px; 0 under
+   *  additive spacing, where padBeforePx carries it): folded into spaceBeforePx
+   *  at the page lead / a forced section start. Plan-less blocks read the
+   *  computed margin there instead. */
+  marginBeforePx?: number
+  /** BlockPlan.dropAtPageTop of a planned block: a natural page lead drops its
+   *  space before (absent for plan-less blocks: the section rule decides) */
+  dropAtPageTop?: boolean
+  /** BlockPlan.forcedLeadSpacePt (px): the space before an explicit break of
+   *  this block keeps at the page top */
+  forcedLeadSpacePx?: number
+  /** forcedLeadSpacePx folded into spaceBeforePx (foldForcedLeadSpaceBefore):
+   *  the margin the lead's DOM shows below the gap */
+  leadMtPx?: number
   /** space after (px), from line-metrics output */
   spaceAfterPx?: number
+  /** auto-multiple extra leading of one line (px): a page's last line needs only
+   *  its single-spacing extent, this much may overflow the bottom margin */
+  lineLeadPx?: number
   /** total page-bottom footnote reservation folded into `height` by
    *  applyBlockMeta (never into spaceAfterPx: page-bottom exemptions must not
    *  hand it back) */
   footnoteExtraPx?: number
+  metaApplied?: boolean
   /** per-reference reservations at their marker offsets (same in-block space
    *  as lineBoxes): a split paragraph charges each note on the page holding
    *  its reference line. Absent = the whole reservation rides the last line. */
@@ -136,8 +204,29 @@ export interface BlockBox {
   /** virtual trailing block reserving pages for overflowing floating boxes (appendFloatSpillBlock) */
   isFloatSpill?: boolean
 
+  /** I9 shadow: the break flags the DOM scrape produced for a plan-driven block */
+  shadowScrape?: Record<string, unknown>
+  /** row keep policy from the BlockPlan; when present the sampler takes the
+   *  flags from here instead of the tr attributes and the table XML */
+  rowPlan?: RowPlan[]
   /** table block under Word 2013+ layout rules (see BlockMeta.modernTableHeaders) */
   modernTableHeaders?: boolean
+  /** table block whose cell paragraphs run without widow/orphan control */
+  cellWidowOff?: true
+}
+
+/** Model-side keep policy of one table row (pagination-plan.ts) */
+export interface RowPlan {
+  isHeader: boolean
+  cantSplit: boolean
+  /** first paragraph of the first cell keeps with next (Word probes 2026-09-17 / 2026-10-13) */
+  keepNext?: true
+  /** atLeast w:trHeight (pt) */
+  minHPt?: number
+  /** every cell continues a vertical merge */
+  vMergeContinue?: true
+  /** a cell paragraph carries pageBreakBefore: the row turns the page there */
+  hasForcedBreak?: true
 }
 
 /**
@@ -157,6 +246,10 @@ export interface TableRowBox {
   /** in-row safe cut points (relative to row top, px, ascending): spanning all cells without splitting any text line/image.
    *  Word allows in-row page breaks by default; without cut points or with cantSplit the row is atomic */
   cutYs?: number[]
+  /** forced in-row cut points (relative to row top, px, ascending): page breaks the
+   *  author instructed inside a cell (a page-break-before paragraph) — they turn the
+   *  page at their position regardless of what fits, unlike the content-line cutYs */
+  forcedCuts?: number[]
   /** bottom of the lowest content band (text/image rects) relative to row top (px, 0 = empty row):
    *  lets pagination clip declared-height fill below the content instead of pushing pages */
   contentBottom?: number
@@ -184,6 +277,12 @@ export interface RowCellBox {
   /** border-box [top, bottom] of each direct child of the cell (clip-path insets
    *  are box-relative; a line's ink sits half a leading inside its box) */
   childBox?: Array<[number, number]>
+  /** per direct child: space-after that must fit below its last line when the
+   *  cell goes on (px); absent = none */
+  childAfter?: number[]
+  /** per direct child: space-before a fragment opening at the child keeps (px);
+   *  0 when the previous sibling's auto space-after already collapsed it */
+  childBefore?: number[]
   /** offset the canvas' vertical-align (middle/bottom) already applied to the content; 0 for top */
   alignDy: number
   /** 0 top, 0.5 middle, 1 bottom */
@@ -196,6 +295,8 @@ export interface PageColumn {
   end: number
   /** table continued into the column: header-row range repeated at column top (virtual coordinates) */
   repeatHeader?: { top: number; height: number }
+  /** spilled leading of the column's last line (px), see PageSlice.leadSpill */
+  leadSpill?: number
 }
 
 /** A column-flow region within a page (a continuous column-count change can stack multiple regions vertically on one page) */
@@ -251,6 +352,10 @@ export interface PageSlice {
   /** The owning section began mid-page on an earlier page (continuous break), so
    *  this is not its first page for w:titlePg header/footer selection. */
   continuedSection?: true
+  /** how far the page's last line box runs past the content bottom (px): the
+   *  auto-multiple leading of a paragraph kept by its single-spacing extent
+   *  (applyLeadSpills); the preview window grows by it so no glyph is clipped */
+  leadSpill?: number
 }
 
 /** Pagination geometry for one section */
@@ -260,17 +365,36 @@ export interface SectionGeom {
    *  header/footer variant push-down); pages render per-variant margins, so
    *  slicing with the default capacity clips/underfills the first page */
   firstContentHeight?: number
+  /** content height of the section's even-numbered pages when the even
+   *  header/footer variant pushes differently (w:evenAndOddHeaders) */
+  evenContentHeight?: number
+  /** w:pgNumType w:start: the slicer tracks displayed numbers for the even capacity */
+  pageNumberStart?: number
   /** content width (px, page width minus side margins); optional so height-only callers/tests can omit it */
   contentWidth?: number
+  /** vertical text only: body height under the first-page / even header
+   *  variants (the fill extent contentHeight is sideways and variant-free) */
+  firstBodyHeight?: number
+  evenBodyHeight?: number
   /** content-area top offset from the page edge (px, header-expanded top margin);
    *  resolves page-anchored w:tblpY targets into content coordinates */
   topPx?: number
   /** full page height (px): page-anchored bottom/center keyword targets */
   pageHeightPx?: number
+  /** body bottom to paper edge (px, the larger of pgMar bottom and the footer
+   *  extent): how far a legacy-layout anchored drawing may overflow the body;
+   *  first/even variants like the content heights */
+  marginBottomPx?: number
+  firstMarginBottomPx?: number
+  evenMarginBottomPx?: number
   /** section start forces a page break (nextPage/evenPage/oddPage, or continuous with different page geometry) */
   forceBreak: boolean
   /** section break type: evenPage/oddPage need physical blank pages inserted to align parity */
   startType?: SectionInfo['startType']
+  /** a nextPage section restarting page numbers under w:evenAndOddHeaders: Word
+   *  inserts a blank page when the restart number's parity does not match the
+   *  physical page, exactly like an evenPage/oddPage break */
+  numberingParity?: 'evenPage' | 'oddPage'
   /** equal-width column count (w:cols w:num, default 1): page capacity = columns × column height */
   cols?: number
   /** per-column widths (px, length cols) — differ under w:equalWidth="0" */
@@ -321,6 +445,13 @@ export interface FloatSplitPatch {
   carryPx: number
 }
 
+export interface FloatCarryPatch {
+  /** carried block's own virtual top (without the spacer already applied) */
+  blockTop: number
+  /** total spacer height before the block (px) */
+  carryPx: number
+}
+
 /** Single line taller than its column (oversized inline picture): renderer-baked page-bottom clip */
 export interface OversizeClipPatch {
   /** owning block's virtual top (block identity within one layout pass) */
@@ -352,15 +483,34 @@ export interface RowSplitPatch {
 }
 
 export interface SliceOutputs {
+  /** slicer runs the fixed-point loop took, and where its time went (diagnostics) */
+  iterations?: number
+  /** the fixed-point loop hit its pass bound without settling */
+  iterationsCapped?: boolean
+  /** the column-turn safety net fired (content placed without page breaks) */
+  runaway?: boolean
+  /** row splits that ran out of fragments and fell back to the legacy cut path */
+  rowSplitOverflows?: number
+  fillMs?: number
+  sliceRunMs?: number
   rowFills?: RowFillPatch[]
   rowSplits?: RowSplitPatch[]
   floatVShifts?: FloatVShiftPatch[]
+  /** side-wrapped drawings pulled up (dyPx < 0) to the body bottom / paper edge */
+  floatPullUps?: FloatVShiftPatch[]
+  /** blocks turning the page under an overflowing drawing: a flow spacer carries them past it */
+  floatCarries?: FloatCarryPatch[]
   floatFlows?: FloatFlowPatch[]
   floatSplits?: FloatSplitPatch[]
   oversizeClips?: OversizeClipPatch[]
   /** paragraphs the unequal-column balance wants to cut mid-paragraph but has no
    *  ColWrapTable for yet (fillColWraps measures them, then the slicer reruns) */
   colWrapRequests?: ColWrapRequest[]
+  /** chain blocks the keepNext walk wants line data for although they lie on
+   *  no page edge (fillLineBoxes samples them, then the slicer reruns) */
+  lineRequests?: Set<BlockBox>
+  /** the slicing before parity blanks were inserted (what a resumed pass builds on) */
+  preParity?: PageSlice[]
 }
 
 export interface ColWrapTable {
@@ -409,6 +559,10 @@ export interface SectionHfHeights {
    *  the section's first page renders these strips, so its capacity differs */
   firstHeaderPx?: number
   firstFooterPx?: number
+  /** evenAndOddHeaders even-page variant heights (only set under the flag):
+   *  even pages render these strips, so their capacity differs too */
+  evenHeaderPx?: number
+  evenFooterPx?: number
 }
 
 /** One block's mixed-column canvas placement (consumed by editor/column-layout.ts) */
@@ -428,6 +582,8 @@ export interface ColumnBlockPlacement {
   gridPitchPt?: number
   /** owning section's character-grid letter-spacing delta (pt, docGrid charSpace/4096) */
   charSpacePt?: number
+  /** single-byte half of charSpacePt under balanceSingleByteDoubleByteWidth */
+  charSpaceSbPt?: number
   dx: number
   dy: number
   /** left edge of the block's page on the shared paper (--page-cx): pages narrower
@@ -440,6 +596,9 @@ export interface ColumnBlockPlacement {
   /** paragraph straddling two columns of different widths: widthPx is the wider
    *  one and a leading float shape narrows the head or the tail lines */
   split?: ColumnSplitShape
+  /** first block of a section that opens a new page: clears the previous
+   *  section's CSS floats so a page-bottom floating table cannot push it */
+  sectionPageStart?: true
 }
 
 /** Geometry of the float that rewraps part of a straddling paragraph (px,
@@ -516,6 +675,8 @@ export interface PageNoteItem {
       fontAscii?: string
       caps?: 'all' | 'small' | 'none'
       textOutline?: TextOutline
+      ins?: RevisionInfo
+      del?: RevisionInfo
     }>
   >
 }
@@ -529,6 +690,14 @@ export interface BlockMeta {
   keepLines?: boolean
   /** paragraph opted out of section line numbering (w:suppressLineNumbers) */
   suppressLineNumbers?: boolean
+  /** the style chain's share of the flags above: a measured paragraph element takes its
+   *  direct flags from its own data-para and only these from the parse layer */
+  paraStyle?: {
+    keepNext?: boolean
+    keepLines?: boolean
+    widowControl?: boolean
+    suppressLineNumbers?: boolean
+  }
   /** pageBreakBefore (direct or style-level): force a page break before the block */
   breakBefore?: boolean
   /** false only when explicitly disabled (Word default on) */
@@ -544,6 +713,10 @@ export interface BlockMeta {
    *  remaining space (or would stay alone at the page bottom) pushes the table to a fresh page, and
    *  widow/orphan control applies inside split cells */
   modernTableHeaders?: boolean
+  /** Word 2013+ anchored-drawing page turn (see BlockBox.modernFloatTurn) */
+  modernAnchorFloats?: boolean
+  /** table block: the document default turns widow/orphan control off and no cell paragraph turns it back on */
+  cellWidowOff?: true
   /** page-bottom height reserved for footnote refs inside the block (px): merged into the block height (consumes page capacity like Word's note area) */
   footnoteExtraPx?: number
   /** per-reference reservation heights in run order (matched to the block's

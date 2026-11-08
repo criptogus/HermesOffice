@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Page } from '@playwright/test'
 import { launchShell, closeAndSaveVideo, waitForPageWithUrl } from './helpers'
 
-// the preload exposes window.__genofficeDebug only under this env var; the
+// the preload exposes window.__hermesofficeDebug only under this env var; the
 // spec needs it to read Univer's visible range through the Facade
 process.env.HERMESOFFICE_DEBUG_HOOKS = '1'
 
@@ -24,7 +24,7 @@ interface GridState {
 
 async function gridState(sheets: Page): Promise<GridState> {
   return sheets.evaluate(() => {
-    const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+    const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
       univerAPI: {
         getActiveWorkbook(): {
           getActiveRange(): { getRange(): { startRow: number; endRow: number } } | null
@@ -44,7 +44,7 @@ async function gridState(sheets: Page): Promise<GridState> {
 
 test.describe('sheets: ctrl+shift+arrow scroll follow', () => {
   test('extending the selection to the sheet edge scrolls the moving edge into view', async () => {
-    const scratch = await mkdtemp(join(tmpdir(), 'genoffice-jump-scroll-'))
+    const scratch = await mkdtemp(join(tmpdir(), 'hermesoffice-jump-scroll-'))
     const launched = await launchShell({ onboardingSeen: true, videoDir: 'sheets-jump-scroll' })
     try {
       const { app, page } = launched
@@ -74,7 +74,7 @@ test.describe('sheets: ctrl+shift+arrow scroll follow', () => {
       // row. Set the value through the Facade — typing it opens the cell
       // editor, whose hidden focus swallows the arrow shortcut afterwards.
       await sheets.evaluate(async () => {
-        const debug = (window as unknown as Record<string, unknown>).__genofficeDebug as {
+        const debug = (window as unknown as Record<string, unknown>).__hermesofficeDebug as {
           univerAPI: {
             getActiveWorkbook(): {
               getActiveSheet(): {

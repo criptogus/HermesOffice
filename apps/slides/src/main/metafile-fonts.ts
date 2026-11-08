@@ -22,6 +22,8 @@ const FONTSTYLE_BOLD = 1
 const FONTSTYLE_ITALIC = 2
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/g
+/** Decompression bombs must not exhaust main-process memory during font scans */
+export const MAX_METAFILE_GUNZIP_BYTES = 64 * 1024 * 1024
 
 function utf16(view: DataView, off: number, maxChars: number): string {
   let s = ''
@@ -125,7 +127,8 @@ export function scanMetafileFonts(bytes: Uint8Array): MetafileFontRequest[] {
   let u8 = bytes
   if (u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
     try {
-      u8 = new Uint8Array(gunzipSync(u8))
+      // maxOutputLength turns a gzip bomb into a throw (caught below)
+      u8 = new Uint8Array(gunzipSync(u8, { maxOutputLength: MAX_METAFILE_GUNZIP_BYTES }))
     } catch {
       return []
     }

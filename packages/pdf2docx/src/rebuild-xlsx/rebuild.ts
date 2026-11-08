@@ -14,6 +14,8 @@ import { splitBandRows } from './rowsplit'
 import {
   buildXlsxPackage,
   cellRef,
+  normalizeSheetSpec,
+  MAX_XLSX_ROW_HEIGHT_PT,
   StylePool,
   type AlignmentSpec,
   type BorderEdges,
@@ -34,7 +36,7 @@ export function ptToColumnChars(pt: number): number {
 }
 
 /** xlsx hard limit for row height */
-const MAX_ROW_HEIGHT_PT = 409
+const MAX_ROW_HEIGHT_PT = MAX_XLSX_ROW_HEIGHT_PT
 
 // ── text flattening ──
 
@@ -567,7 +569,7 @@ export async function rebuildXlsx(
 ): Promise<RebuildXlsxResult> {
   const styles = new StylePool()
   const groups = planPageGroups(pages)
-  const sheets: SheetSpec[] = groups.map((g) =>
+  let sheets: SheetSpec[] = groups.map((g) =>
     emitGroup(
       g.map((i) => pages[i]!),
       styles,
@@ -600,6 +602,12 @@ export async function rebuildXlsx(
   }
 
   const warnings: string[] = []
+  sheets = sheets.map((sheet) => {
+    const normalized = normalizeSheetSpec(sheet)
+    warnings.push(...normalized.warnings.map((warning) => `${sheet.name}: ${warning}`))
+    return normalized.sheet
+  })
+
   const hasTable = pages.some((p) => p.blocks.some((b) => b.kind === 'table'))
   const hasOkPage = pages.some((p) => !p.scanned && !p.degraded)
   if (!hasTable && hasOkPage) warnings.push('no tables detected')

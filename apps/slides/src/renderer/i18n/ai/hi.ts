@@ -110,6 +110,8 @@ export const hi = {
   aiErrUnknown: 'अज्ञात त्रुटि',
   aiErrStreamTimeout:
     'AI अनुरोध का समय समाप्त: नेटवर्क से कोई प्रतिक्रिया नहीं मिली, इसलिए रोक दिया गया। कनेक्शन जांचें और फिर से प्रयास करें',
+  aiErrRegion:
+    'इस मॉडल का प्रदाता आपके वर्तमान क्षेत्र में सेवा नहीं देता — कोई दूसरा मॉडल चुनें या नेटवर्क बदलें',
   aiErrOverloaded: 'AI सेवा अभी व्यस्त है — कृपया थोड़ी देर बाद फिर से प्रयास करें',
   aiErrNetwork:
     'नेटवर्क समस्या: AI सेवा से कनेक्ट नहीं हो सका। कनेक्शन जांचें और फिर से प्रयास करें',
@@ -134,6 +136,7 @@ export const hi = {
   aiClarifyOther: 'अन्य (स्वयं लिखें)',
   aiClarifySkip: 'सर्वेक्षण छोड़ें',
   aiClarifyNext: 'अगला',
+  aiClarifyPrev: 'पिछला',
   aiClarifySubmit: 'जनरेट करें',
   aiSumReadAttachment: 'अटैचमेंट पढ़ा गया',
   aiSumReadAttachmentName: 'अटैचमेंट {name} पढ़ा गया',

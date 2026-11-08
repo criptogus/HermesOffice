@@ -114,6 +114,8 @@ export const de = {
   aiErrUnknown: 'Unbekannter Fehler',
   aiErrStreamTimeout:
     'Zeitüberschreitung der KI-Anfrage: keine Antwort vom Netzwerk, der Vorgang wurde abgebrochen. Prüfe deine Verbindung und versuche es erneut',
+  aiErrRegion:
+    'Der Anbieter dieses Modells bedient Ihre aktuelle Region nicht — wählen Sie ein anderes Modell oder wechseln Sie das Netzwerk',
   aiErrOverloaded: 'Der KI-Dienst ist derzeit überlastet — bitte gleich erneut versuchen',
   aiErrNetwork:
     'Netzwerkproblem: Der KI-Dienst ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut',
@@ -138,6 +140,7 @@ export const de = {
   aiClarifyOther: 'Sonstiges (eingeben)',
   aiClarifySkip: 'Umfrage überspringen',
   aiClarifyNext: 'Weiter',
+  aiClarifyPrev: 'Zurück',
   aiClarifySubmit: 'Generieren',
   aiSumReadAttachment: 'Anlage gelesen',
   aiSumReadAttachmentName: 'Anlage {name} gelesen',

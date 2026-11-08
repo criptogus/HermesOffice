@@ -74,6 +74,14 @@ describe('parseTwips', () => {
     expect(parseTwips('72pt')).toBe(1440)
     expect(parseTwips('wide')).toBeUndefined()
   })
+
+  it('rejects astronomic lengths that would break layout', () => {
+    expect(parseTwips('999999in')).toBeUndefined()
+    expect(parseTwips('100000in')).toBeUndefined()
+    expect(parseTwips(1e12)).toBeUndefined()
+    expect(parseTwips(NaN)).toBeUndefined()
+    expect(parseTwips('8.5in')).toBe(12240)
+  })
 })
 
 describe('resolvePageSetup', () => {

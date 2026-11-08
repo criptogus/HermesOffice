@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { shiftFormulaRefs, shiftIndex, shiftSpecForOp } from '../src/domain/formula-shift'
+import {
+  offsetFormulaRefs,
+  shiftFormulaRefs,
+  shiftIndex,
+  shiftSpecForOp,
+} from '../src/domain/formula-shift'
 import type { StructuralOperation } from '../src/domain/workbook-dsl'
+import { applyDefinedNamesState } from '../src/gateway/xlsx-defined-names'
+import { spillsDynamicArray, withFutureFunctionMarkers } from '../src/gateway/future-functions'
 
 const SHEET = 'Sheet1'
 
@@ -118,6 +125,18 @@ describe('shiftFormulaRefs on delete rows', () => {
 })
 
 describe('shiftFormulaRefs on columns', () => {
+  it('shifts lowercase cell refs and whole-column spans on insert', () => {
+    const result = shiftFormulaRefs('=sum(a1:b2)+sum(b:d)', insertCols('B', 1), true, SHEET)
+    expect(result.formula).toBe('=sum(A1:C2)+sum(C:E)')
+    expect(result.changed).toBe(true)
+  })
+
+  it('shrinks lowercase ranges when a column is deleted', () => {
+    const result = shiftFormulaRefs('=sum(a1:b2)', deleteCols('B', 1), true, SHEET)
+    expect(result.formula).toBe('=sum(A1:A2)')
+    expect(result.hasRefError).toBe(false)
+  })
+
   it('shifts refs right on insert', () => {
     const result = shiftFormulaRefs('=A1+B1+C1', insertCols('B', 1), true, SHEET)
     expect(result.formula).toBe('=A1+C1+D1')
@@ -148,6 +167,42 @@ describe('shiftFormulaRefs on columns', () => {
   it('shifts whole-row spans on insert', () => {
     const result = shiftFormulaRefs('=SUM(2:4)', insertRows(2, 1), true, SHEET)
     expect(result.formula).toBe('=SUM(3:5)')
+  })
+})
+
+describe('shiftFormulaRefs at the grid edge', () => {
+  it('turns a ref the shift pushes past the last row or column into #REF!', () => {
+    const lastRow = shiftFormulaRefs('=A1048576', insertRows(2, 5), true, SHEET)
+    expect(lastRow.formula).toBe('=#REF!')
+    expect(lastRow.hasRefError).toBe(true)
+
+    const lastColumn = shiftFormulaRefs('=XFD1', insertCols('B', 1), true, SHEET)
+    expect(lastColumn.formula).toBe('=#REF!')
+
+    // Spans take the same bound, and a range that only overruns at its far end
+    // is #REF! too — never shrunk into an inverted range.
+    expect(shiftFormulaRefs('=SUM(XFD:XFD)', insertCols('B', 1), true, SHEET).formula).toBe(
+      '=SUM(#REF!)',
+    )
+    expect(shiftFormulaRefs('=SUM(2:1048576)', insertRows(2, 1), true, SHEET).formula).toBe(
+      '=SUM(#REF!)',
+    )
+    expect(shiftFormulaRefs('=SUM(A2:B1048576)', insertRows(2, 1), true, SHEET).formula).toBe(
+      '=SUM(#REF!)',
+    )
+  })
+})
+
+describe('offsetFormulaRefs', () => {
+  it('shifts lowercase cell refs and whole-column spans on fill', () => {
+    expect(offsetFormulaRefs('=sum(a1:b2)+sum($b:d)', 0, 1)).toBe('=sum(B1:C2)+sum($B:E)')
+  })
+
+  it('shifts external-workbook references instead of skipping their bracket prefix', () => {
+    expect(offsetFormulaRefs("='[1]Sheet 1'!A3+A3", 1, 0)).toBe("='[1]Sheet 1'!A4+A4")
+    expect(offsetFormulaRefs('=[Book.xlsx]Sheet1!A3+Table1[@Q1]', 1, 0)).toBe(
+      '=[Book.xlsx]Sheet1!A4+Table1[@Q1]',
+    )
   })
 })
 
@@ -202,5 +257,83 @@ describe('shiftFormulaRefs literals and names', () => {
   it('returns the input unchanged for sheet-level ops', () => {
     const result = shiftFormulaRefs('=A1', { op: 'add_sheet', name: 'New' }, true, SHEET)
     expect(result).toEqual({ formula: '=A1', changed: false, hasRefError: false })
+  })
+})
+
+describe('shiftFormulaRefs structured references', () => {
+  // A structured reference names a COLUMN, not a cell: Table1[Q1] is the Q1 column
+  // and must not move when rows are inserted, while a real ref in the same formula
+  // still shifts.
+  it('leaves a bracketed column name alone but still shifts the real refs', () => {
+    const result = shiftFormulaRefs('=SUM(Table1[Q1],A3)', insertRows(2, 1), true, SHEET)
+    expect(result.formula).toBe('=SUM(Table1[Q1],A4)')
+  })
+
+  it('leaves the this-row form alone', () => {
+    const result = shiftFormulaRefs('=SUM(Table1[@Q1],A3)', insertRows(2, 1), true, SHEET)
+    expect(result.formula).toBe('=SUM(Table1[@Q1],A4)')
+  })
+
+  it('leaves a padded column name alone', () => {
+    const result = shiftFormulaRefs('=SUM(Table1[ Q1 ],A3)', insertRows(2, 1), true, SHEET)
+    expect(result.formula).toBe('=SUM(Table1[ Q1 ],A4)')
+  })
+
+  it('leaves a nested header reference alone', () => {
+    const result = shiftFormulaRefs(
+      '=SUM(Table1[[#Headers],[Q1]],A3)',
+      insertRows(2, 1),
+      true,
+      SHEET,
+    )
+    expect(result.formula).toBe('=SUM(Table1[[#Headers],[Q1]],A4)')
+  })
+
+  it('handles several references and a column insert', () => {
+    const result = shiftFormulaRefs('=SUM(Table1[Q1],B3)', insertRows(2, 1), true, SHEET)
+    expect(result.formula).toBe('=SUM(Table1[Q1],B4)')
+
+    const colInsert = shiftFormulaRefs('=SUM(Table1[Q1],B3)', insertCols('B', 1), true, SHEET)
+    expect(colInsert.formula).toBe('=SUM(Table1[Q1],C3)')
+  })
+})
+
+describe('future function markers', () => {
+  it('marks calls after a quoted sheet qualifier', () => {
+    expect(withFutureFunctionMarkers('\'Data Sheet\'!MINIFS(A1:A3,A1:A3,">0")')).toBe(
+      '\'Data Sheet\'!_xlfn.MINIFS(A1:A3,A1:A3,">0")',
+    )
+  })
+
+  it('leaves callable defined names containing the marker unchanged', () => {
+    const formula = 'Budget_xlfn.Total(A1)+Other_xlfn.FILTER(A1)'
+    expect(withFutureFunctionMarkers(formula)).toBe(formula)
+    expect(spillsDynamicArray('Budget_xlfn.FILTER(A1)')).toBe(false)
+  })
+
+  it('does not treat a marked sheet name as a spill function', () => {
+    expect(spillsDynamicArray("'Data_xlfn.FILTER'!A1+FILTER(A1:A2)")).toBe(true)
+    expect(withFutureFunctionMarkers("'Data_xlfn.FILTER'!FILTER(A1:A2)")).toBe(
+      "'Data_xlfn.FILTER'!_xlfn._xlws.FILTER(A1:A2)",
+    )
+  })
+
+  it('protects marker-bearing callable names in defined-name save XML', () => {
+    const workbook =
+      '<workbook><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    const saved = applyDefinedNamesState(workbook, {
+      names: [
+        { name: 'Budget_xlfn.Total', formula: 'Budget_xlfn.Total(A1)' },
+        { name: 'FutureTotal', formula: `'Data_xlfn.Total'!MINIFS(A1:A3,A1:A3,">0")` },
+      ],
+      preserveNames: [],
+    })
+
+    expect(saved).toContain(
+      '<definedName name="Budget_xlfn.Total">Budget_xlfn.Total(A1)</definedName>',
+    )
+    expect(saved).toContain(
+      `<definedName name="FutureTotal">'Data_xlfn.Total'!_xlfn.MINIFS(A1:A3,A1:A3,"&gt;0")</definedName>`,
+    )
   })
 })

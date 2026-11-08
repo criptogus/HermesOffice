@@ -13,7 +13,7 @@ import {
 } from '@hermesoffice/cli/control-protocol'
 
 /**
- * Local request/reply channel for the genoffice CLI (`open --slide`,
+ * Local request/reply channel for the hermesoffice CLI (`open --slide`,
  * `selection`). Security model: the socket lives in userData (per-user
  * directory, 0600 on POSIX; a per-user named pipe on Windows), every request
  * must carry the random token from userData/control.json (0600), one request
@@ -30,7 +30,7 @@ export interface ControlServer {
 export function controlEndpointPath(userData: string): string {
   if (process.platform === 'win32') {
     const hash = createHash('sha1').update(userData).digest('hex').slice(0, 16)
-    return `\\\\.\\pipe\\genoffice-control-${hash}`
+    return `\\\\.\\pipe\\hermesoffice-control-${hash}`
   }
   return join(userData, 'control.sock')
 }

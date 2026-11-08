@@ -4,6 +4,7 @@ import { Fragment, Slice, type Mark, type Node as PmNode } from '@tiptap/pm/mode
 import { appAlertDialog, appChoiceDialog } from '@hermesoffice/ui'
 import type { ZoteroRendererRequest } from '../../shared/ipc'
 import { parseZoteroRtf, zoteroRtfToText, type ZoteroRtfParagraph, type ZoteroRtfRun } from './rtf'
+import { fieldTypeForDisk, fieldTypeForSession } from './field-type'
 
 const ZOTERO_INSTR_RE = /^\s*(?:ADDIN\s+)?(?:ZOTERO_|CSL_)(?:ITEM|BIBL|TEMP)\b/i
 
@@ -77,9 +78,11 @@ export class ZoteroDocumentController {
         return field ? this.fieldDescriptor(field) : null
       }
       case 'Document_getDocumentData':
-        return this.documentData.get()
+        // the stored value spells Field; the session is the LibreOffice bridge
+        return fieldTypeForSession(this.documentData.get())
       case 'Document_setDocumentData':
-        this.documentData.set(String(args[1] ?? ''))
+        // the session reports LibreOffice storages; the file holds Word fields
+        this.documentData.set(fieldTypeForDisk(String(args[1] ?? '')))
         return null
       case 'Document_insertField':
         return this.insertField(Number(args[2] ?? 0))
@@ -397,18 +400,11 @@ export class ZoteroDocumentController {
     if (run.underline && schema.marks.underline) marks.push(schema.marks.underline.create())
     if (run.strike && schema.marks.strike) marks.push(schema.marks.strike.create())
     if ((run.vertAlign || run.caps || run.sizeHalfPoints) && schema.marks.docTextStyle) {
-      const rawRPr =
-        run.caps === 'small'
-          ? '<w:rPr><w:smallCaps/></w:rPr>'
-          : run.caps === 'all'
-            ? '<w:rPr><w:caps/></w:rPr>'
-            : null
       marks.push(
         schema.marks.docTextStyle.create({
           vertAlign: run.vertAlign ?? null,
           caps: run.caps ?? null,
           sizeHalfPoints: run.sizeHalfPoints ?? null,
-          rawRPr,
         }),
       )
     }

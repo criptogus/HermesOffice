@@ -1,7 +1,7 @@
 import designMd from './guides/design.md?raw'
 import specMd from './guides/spec.md?raw'
 
-/** Agent-facing guides for building a deck from a spec; the app and the genoffice CLI print the same text. */
+/** Agent-facing guides for building a deck from a spec; the app and the hermesoffice CLI print the same text. */
 export const SLIDES_GUIDES: Readonly<
   Record<'design' | 'spec', { description: string; content: string }>
 > = {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chatForProvider } from '../src/chat'
+import { MAX_RESPONSE_BODY_BYTES } from '../src/protocols/shared'
 import { errorResponse, jsonResponse } from './test-utils'
 
 afterEach(() => {
@@ -74,6 +75,16 @@ describe('chatForProvider', () => {
       'https://api.deepseek.com/v1/chat/completions',
       expect.anything(),
     )
+  })
+
+  it('deepseek: sends the listed V4.1 Flash name under the vendor wire id', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await chatForProvider('deepseek', { apiKey: 'k', model: 'deep-seek-v4.1-flash' }, 'sys', 'hi')
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.model).toBe('deepseek-flash')
   })
 
   it('custom: uses the configured base URL', async () => {
@@ -187,6 +198,34 @@ describe('chatForProvider', () => {
       'hi',
     )
     expect(result).toEqual({ ok: false, error: 'AI returned an empty response' })
+  })
+
+  it('returns a capped error for an oversized one-shot body', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_RESPONSE_BODY_BYTES + 1))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(new Response(body, { headers: { 'content-type': 'application/json' } })),
+    )
+
+    const result = await chatForProvider(
+      'openai',
+      { apiKey: 'k', model: 'gpt-4.1-mini' },
+      'sys',
+      'hi',
+    )
+
+    expect(result).toEqual({ ok: false, error: expect.stringMatching(/Response body exceeded/) })
+    expect(cancelled).toBe(true)
   })
 
   it('anthropic: a 200 with an HTML body is an error, not a thrown SyntaxError', async () => {

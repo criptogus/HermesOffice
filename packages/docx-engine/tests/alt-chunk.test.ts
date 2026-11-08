@@ -2,7 +2,12 @@ import JSZip from 'jszip'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseDocx } from '../src/parse'
 import { saveDocx } from '../src/patch'
-import { decodeMhtToHtml, decodeQuotedPrintable, setAltChunkHtmlConverter } from '../src/alt-chunk'
+import {
+  altChunkPartPath,
+  decodeMhtToHtml,
+  decodeQuotedPrintable,
+  setAltChunkHtmlConverter,
+} from '../src/alt-chunk'
 import { buildDocx } from './helpers/build-docx'
 
 const CHUNK_REL =
@@ -39,6 +44,29 @@ function installStubConverter(): void {
 afterEach(() => {
   setAltChunkHtmlConverter(null)
   received.length = 0
+})
+
+describe('relationship target paths', () => {
+  it('decodes absolute and relative percent-encoded targets', () => {
+    const rels = new Map([
+      [
+        'absolute',
+        {
+          target: '/word/afchunk%20one.htm',
+          type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk',
+        },
+      ],
+      [
+        'relative',
+        {
+          target: '../shared/chunk%20two.htm',
+          type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk',
+        },
+      ],
+    ])
+    expect(altChunkPartPath(rels, 'absolute')).toBe('word/afchunk one.htm')
+    expect(altChunkPartPath(rels, 'relative')).toBe('shared/chunk two.htm')
+  })
 })
 
 describe('w:altChunk expansion', () => {
@@ -80,6 +108,22 @@ describe('w:altChunk expansion', () => {
     expect(outXml.match(/<w:altChunk/g)).toHaveLength(1)
     expect(outXml).not.toContain('Col 1')
     expect(outXml).toContain('Edited')
+  })
+
+  it('expands a chunk whose r:id uses single quotes', async () => {
+    installStubConverter()
+    const bytes = await buildDocx({
+      bodyXml: "<w:altChunk r:id='rIdChunk'/><w:p><w:r><w:t>After the chunk</w:t></w:r></w:p>",
+      extraRels: CHUNK_REL,
+      extraParts: [{ path: 'word/afchunk.htm', xml: HTML, contentType: 'text/html' }],
+    })
+    const parsed = await parseDocx(bytes)
+    expect(received).toEqual([HTML])
+    expect(parsed.blocks.filter((b) => !b.hidden).map((b) => b.type)).toEqual([
+      'paragraph',
+      'table',
+      'paragraph',
+    ])
   })
 
   it('adopts chunk numbering under fresh ids, in body and table-cell lists alike', async () => {
@@ -172,6 +216,15 @@ describe('w:altChunk expansion', () => {
     const visible = parsed.blocks.filter((b) => !b.hidden)
     expect(visible.map((b) => b.type)).toEqual(['passthrough', 'paragraph'])
     expect(visible[0].label).toBe('w:altChunk')
+    // a host that can convert (the UI thread) reparses when it sees this
+    expect(parsed.extras.altChunksNeedConverter).toBe(1)
+  })
+
+  it('does not flag chunks when a converter is installed', async () => {
+    installStubConverter()
+    const bytes = await hostDocx({ path: 'word/afchunk.htm', body: HTML, contentType: 'text/html' })
+    const parsed = await parseDocx(bytes)
+    expect(parsed.extras.altChunksNeedConverter).toBeUndefined()
   })
 })
 
@@ -187,5 +240,22 @@ describe('MIME decoding helpers', () => {
       'Content-Transfer-Encoding: 8bit\r\n\r\n<html><body>\u00e9</body></html>'
     const bytes = Uint8Array.from(mht, (c) => c.charCodeAt(0) & 0xff)
     expect(decodeMhtToHtml(bytes)).toBe('<html><body>\u00e9</body></html>')
+  })
+
+  it('inlines thousands of image parts in one pass over the html', () => {
+    const boundary = 'bomb'
+    let mht =
+      `Content-Type: multipart/related; boundary="${boundary}"\r\n\r\n` +
+      `--${boundary}\r\nContent-Type: text/html\r\n\r\n<html><body><p>hi</p><img src="F1999.PNG"><img src=f0.png></body></html>\r\n`
+    for (let i = 0; i < 2000; i++) {
+      mht += `--${boundary}\r\nContent-Type: image/png\r\nContent-Location: f${i}.png\r\n\r\nx\r\n`
+    }
+    mht += `--${boundary}--\r\n`
+    const bytes = Uint8Array.from(mht, (c) => c.charCodeAt(0) & 0xff)
+    const html = decodeMhtToHtml(bytes)
+    expect(html).toContain('<p>hi</p>')
+    expect(html).toContain(
+      '<img src="data:image/png;base64,eA=="><img src="data:image/png;base64,eA==">',
+    )
   })
 })

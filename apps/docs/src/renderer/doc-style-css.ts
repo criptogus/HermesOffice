@@ -1,6 +1,9 @@
 import {
+  paraCsFormat,
   readSections,
+  styleRunFormat,
   tocLevelOf,
+  type ParaBorderSides,
   type ParsedDocFull,
   type StyleDisplay,
   type StyleInfo,
@@ -17,25 +20,47 @@ import {
   docLatinChainCss,
   cssGridLineBase,
   cssGridLineExpr,
+  cssGridObjectPadExpr,
   cssGridLineMaxExpr,
   cssGridSpacingPt,
+  cssExactLineCap,
+  cssLeadTop,
   cssLineHeight,
-  WORD_AUTO_SPACING_PT,
+  fontBoxCss,
+  autoSpacingPt,
+  spaceBeforeProp,
   isBundledFont,
   isCjkFontName,
+  isEaLayoutFace,
+  isKoreanLayoutFace,
+  wordMetricAliasFace,
   isFontAvailable,
   krLineFactor,
+  latinLineFactor,
   lineHeightFactor,
   textHasCjk,
   isKoreanFontName,
   wordKerns,
+  wordSlotFaces,
 } from './line-metrics'
+import {
+  documentTextContext,
+  eaFaceForAutospace,
+  eaFaceForCjkFactor,
+  eaFaceForGridStrut,
+  eaFaceForKrFactor,
+} from './text-layout/document-context'
 import { sectionGridPitchPt } from './pagination'
 import { DARK_PAPER_HEX, DK_SIDE, darkPageBorderCss, darkPageColor } from './editor/dark-page'
 import { fillInk } from './editor/shading-ink'
 import { textOutlineDecl } from './editor/text-outline'
 import { textAlignDecl } from './editor/text-effects'
-import { paraBorderCss, paraBorderPadding, paraBorderPaddingDecls } from './editor/hf-dom'
+import {
+  paraBorderCss,
+  paraBorderPadding,
+  paraBorderPaddingDecls,
+  paraBorderShadowDecls,
+} from './editor/hf-dom'
 
 /** lines laid out on list geometry: list items and the numbered stray line of a textbox anchor */
 const LIST_LINES = '.doc-li, .doc-li-stray'
@@ -86,6 +111,10 @@ const insideCells = (sel: string): string =>
     .join(', ')
 
 const DOC_FIRST_BLOCK = ':nth-child(1 of :not(.page-float-host))'
+/** the first block's own line may sit inside an anchored-drawing wrapper */
+const docFirstBlockSel = (qualifier: string, nested = qualifier): string =>
+  `.doc-page > ${qualifier}${DOC_FIRST_BLOCK}, ` +
+  `.doc-page > .doc-protected${DOC_FIRST_BLOCK} > :is(.doc-anchor-line, .doc-textbox-stray)${nested}`
 // ...and on a cell's first paragraph; auto space-after goes on its last (styles.css
 // sp-auto-*); .doc-cell-boxes is the zero-width anchored-shape strut ahead of it
 const CELL_BLOCK = '.doc-table :is(td, th, .cell-clip, .cell-vert) > '
@@ -115,12 +144,10 @@ export function docThemeCss(
       `.page-wrap, .doc-page, .pv-page { --doc-latin-chain:${docLatinChainCss(fonts.minor)} }`,
     )
   }
-  if (fonts?.major) {
-    const headings = [1, 2, 3, 4, 5, 6]
-      .map((n) => `.doc-page h${n}:where(:not(.doc-outline-only))`)
-      .join(', ')
-    rules.push(`${headings} { font-family:${cssFontFamily(fonts.major)} }`)
-  }
+  // No blanket heading rule: Word gives a heading the theme major face only
+  // through an asciiTheme/hAnsiTheme reference in its style chain, which
+  // docStyleCss resolves per style; a heading style without rFonts inherits
+  // Normal/docDefaults like any paragraph (Word probe 2026-09-23)
   if (colors?.accent1) {
     // Keep the live accent available to ribbon presets. Heading text itself must
     // come from its DOCX style; a theme palette alone does not make headings blue.
@@ -149,33 +176,25 @@ export function docLineFactor(parsed: ParsedDocFull, hasCjk: boolean): number {
   return hasCjk ? docCjkFactor(parsed) : lineHeightFactor(docBodyFont(parsed) ?? 'Calibri')
 }
 
+/** the document's East Asian body face (Normal, then docDefaults) */
+export function docBodyEaFont(parsed: ParsedDocFull): string | undefined {
+  return documentTextContext(parsed).bodyEa ?? undefined
+}
+
+/** StyleDisplay.font is EA-first: a name shared with fontAscii is a Latin-only
+ *  declaration, unless the shared name is itself a CJK face (Meiryo in every slot). */
+function styleDeclaresEaFace(d: { font?: string; fontAscii?: string }): boolean {
+  // inline-rules: allow
+  return !!d.font && (d.font !== d.fontAscii || isEaLayoutFace(d.font))
+}
+
 /** CJK line-height factor of the document's East Asian face (feeds --doc-line-factor-cjk:
  *  per-paragraph script overrides resolve CJK paragraphs through this var). */
 export function docCjkFactor(parsed: ParsedDocFull): number {
   // cjkDeclaredLineFactor first: missing Noto/Source Han variants take the
   // Word-probed substitution factor, same truth as per-paragraph overrides
   const factor = (f: string) => cjkDeclaredLineFactor(f) ?? lineHeightFactor(f)
-  // Normal's EA face wins over docDefaults (a Normal declaring e.g. Noto KR must
-  // not fall back to the SimSun factor). font === fontAscii means only a
-  // Latin slot was declared (StyleDisplay.font is EA-first) — not an EA choice,
-  // unless the shared name is itself a CJK face (Meiryo in every slot).
-  const normal = defaultParaDisplay(parsed)
-  const normalEa =
-    normal?.font && (normal.font !== normal.fontAscii || isCjkFontName(normal.font))
-      ? normal.font
-      : undefined
-  if (normalEa && !normal?.eaSlotEmpty) return factor(normalEa)
-  const dd = parsed.docDefaults
-  if (dd?.eastAsiaFont && !dd.eaSlotEmpty) return factor(dd.eastAsiaFont)
-  // An empty EA theme slot can still use a CJK-capable Latin theme face.
-  // Japanese templates commonly put Yu Mincho or Yu Gothic in the Latin
-  // slots, and LibreOffice lays undeclared CJK out with that face.
-  // A Latin theme face (Calibri…) can't render CJK, so the lang backfill wins.
-  const themeLatin = parsed.themeFonts?.minor
-  if ((normal?.eaSlotEmpty || dd?.eaSlotEmpty) && themeLatin && isCjkFontName(themeLatin)) {
-    return factor(themeLatin)
-  }
-  return factor(normalEa ?? dd?.eastAsiaFont ?? 'SimSun')
+  return factor(eaFaceForCjkFactor(documentTextContext(parsed)))
 }
 
 /**
@@ -194,18 +213,14 @@ export function docAutospaceOff(parsed: ParsedDocFull): boolean {
   // docDefaults w:lang w:val naming an East Asian language classifies the
   // Latin text itself as East Asian: no gaps anywhere (Word probe 2026-09-11,
   // ja-JP both ways; zh/ko assumed by the same mechanism)
-  if (/^(?:ja|zh|ko)(?:[-_]|$)/i.test(parsed.docDefaults?.lang ?? '')) return true
-  const normal = defaultParaDisplay(parsed)
-  const normalEa =
-    normal?.font &&
-    !normal.eaSlotEmpty &&
-    (normal.font !== normal.fontAscii || isKoreanFontName(normal.font))
-      ? normal.font
-      : undefined
-  const dd = parsed.docDefaults
-  const declared =
-    normalEa ??
-    (dd?.eastAsiaFont && !dd.eaSlotEmpty && !dd.eaFromLang ? dd.eastAsiaFont : undefined)
+  const ctx = documentTextContext(parsed)
+  if (ctx.eastAsianLang) return true
+  // docDefaults decides: a declared face gates on its own, a theme slot always
+  // resolves (themeFontLang) and keeps the gaps even when the default paragraph
+  // style names a missing superfamily (prod corpus 20261020 sample 023: Normal
+  // "Noto Sans CJK KR" over an empty theme slot, Word pads every digit-hangul
+  // seam). Only a bare docDefaults lets the Normal style gate.
+  const declared = eaFaceForAutospace(ctx)
   if (!declared || !NOTO_HAN_SUPERFAMILY_RE.test(declared.toLowerCase())) return false
   return isBundledFont(declared) || !isFontAvailable(declared)
 }
@@ -265,11 +280,12 @@ export function defaultParaDisplay(parsed: ParsedDocFull): StyleDisplay | undefi
 }
 
 /** Latin body font the document declares (Normal style or docDefaults, theme refs
- * resolved). Ascii slot first — StyleDisplay.font is eastAsia-first and would drag
- * the Latin line factor / theme override onto the CJK face. */
+ * resolved). Ascii slots first — StyleDisplay.font is eastAsia-first, and a Normal
+ * declaring only an EA slot inherits its Latin face from docDefaults (Word lays
+ * Latin lines by that face; the EA slot never sets their height). */
 export function docBodyFont(parsed: ParsedDocFull): string | undefined {
   const normal = defaultParaDisplay(parsed)
-  return normal?.fontAscii ?? normal?.font ?? parsed.docDefaults?.asciiFont
+  return normal?.fontAscii ?? parsed.docDefaults?.asciiFont ?? normal?.font
 }
 
 /** the Hyperlink character style: Word's id, or a localized id under the English name */
@@ -277,8 +293,140 @@ function isHyperlinkStyle(info: StyleInfo): boolean {
   return info.styleId === 'Hyperlink' || /^hyperlink$/i.test(info.name)
 }
 
+/** one selector per abstractNum: Word zeroes auto spacing only between items of
+ *  the same list definition, numId and ilvl aside (probe 2026-09-24). Lists
+ *  created after parse carry numIds this CSS never saw; they share one
+ *  fallback group so adjacent items of a fresh list still collapse. */
+function listGroupSelectors(parsed: ParsedDocFull): string[] {
+  const groups = new Map<string, string[]>()
+  for (const [numId, def] of parsed.numbering ?? []) {
+    const g = groups.get(def.abstractNumId) ?? []
+    g.push(`[data-num="${CSS.escape(numId)}"]`)
+    groups.set(def.abstractNumId, g)
+  }
+  const known = [...groups.values()].flat()
+  return [
+    ...[...groups.values()].map((g) => (g.length === 1 ? g[0] : `:is(${g.join(',')})`)),
+    known.length ? `:not(${known.join(',')})` : '',
+  ]
+}
+
+/**
+ * Style-level paragraph shading and w:pBdr, same look as blockAttrs' direct
+ * borders (which win as inline style); explicit pPr w:shd is inline and wins too.
+ */
+function styleBorderDecls(d: StyleDisplay): { decls: string[]; darkDecls: string[] } {
+  const decls: string[] = []
+  const darkDecls: string[] = []
+  if (d.shadingFill && d.shadingFill !== 'auto') {
+    decls.push(`background-color:#${d.shadingFill}`, `--pbdr-fill:#${d.shadingFill}`)
+    darkDecls.push(
+      `background-color:${darkPageColor(d.shadingFill)}`,
+      `--pbdr-fill:${darkPageColor(d.shadingFill)}`,
+    )
+  }
+  if (d.borderSides) {
+    let drawn = ''
+    for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+      const line = d.borderSides[DK_SIDE[side]]
+      if (!line || line.none) continue
+      drawn += DK_SIDE[side]
+      const css = paraBorderCss(line)
+      decls.push(`border-${side}:${css}`)
+      darkDecls.push(`border-${side}:${darkPageBorderCss(css)}`)
+    }
+    decls.push(
+      ...paraBorderPaddingDecls(paraBorderPadding(drawn, d.borderSides)),
+      ...paraBorderShadowDecls(d.borderSides),
+    )
+  }
+  return { decls, darkDecls }
+}
+
+/**
+ * Word does not pad table-cell paragraphs with the docDefaults none-side w:space
+ * (production PDFs: row pitch = cell margins + line); a style's own pBdr side keeps it.
+ */
+function cellPadResetDecls(d: StyleDisplay | undefined, dd: ParaBorderSides | undefined): string[] {
+  if (!dd) return []
+  const out: string[] = []
+  for (const [ch, prop] of [
+    ['t', 'padding-top'],
+    ['b', 'padding-bottom'],
+  ] as const) {
+    const side = dd[ch]
+    const own = d?.borderSides?.[ch]
+    if (side?.none && side.spacePt && own?.none && own.spacePt === side.spacePt) {
+      out.push(`${prop}:0`)
+    }
+  }
+  return out
+}
+
+/**
+ * Word's contextualSpacing compares a paragraph with the next one in cell-flow
+ * order (probe 2026-10-20): the paragraph before a table meets the first cell's
+ * first paragraph, a cell's last paragraph meets the next cell's first one, and
+ * the row's last cell meets the end-of-row mark, which carries the default
+ * paragraph style. Each helper selects one side of such a pair.
+ */
+function cellParaPaths(cell: string, para: string): string[] {
+  return [`${cell} > ${para}`, `${cell} > :is(.cell-clip, .cell-vert) > ${para}`]
+}
+function cellOpeningPaths(styleSel: string, cell = ':is(td, th)'): string[] {
+  return cellParaPaths(cell, `${styleSel}${CELL_FIRST}`)
+}
+/** `:has()` for the paragraph before a table whose first cell opens with the style */
+/** pagination widgets the canvas keeps between blocks: every sibling rule
+ *  gets a twin that looks through one, so the canvas measures the gapless
+ *  geometry the print preview clones (a page gap must not break contextual
+ *  spacing; styles.css carries the twins of its static rules) */
+const PAGE_WIDGET = ':is(.page-gap, .page-gap-cut, .page-float-host, .page-float-carry)'
+const acrossWidget = (prefix: string, next: string): string =>
+  `${prefix} + ${PAGE_WIDGET} + ${next}`
+
+function beforeTableOpening(styleSel: string, viaWidget = false): string {
+  const cell = 'table.doc-table > tbody > tr:first-child > :is(td, th):first-child'
+  return `:has(${cellOpeningPaths(styleSel, cell)
+    .map((path) => (viaWidget ? acrossWidget('', path) : `+ ${path}`))
+    .join(', ')})`
+}
+function cellClosingWith(closingSel: string, cell: string): string {
+  return `.doc-page .doc-table :is(${cellParaPaths(cell, `${closingSel}${CELL_LAST}`).join(', ')})`
+}
+/** last paragraph of a cell followed by a cell that opens with the same style */
+function cellClosingBefore(styleSel: string, closingSel: string): string {
+  const next = cellOpeningPaths(styleSel)
+    .map((path) => `+ ${path}`)
+    .join(', ')
+  return cellClosingWith(closingSel, `:is(td, th):has(${next})`)
+}
+/** last paragraph of a row's last cell */
+function rowClosing(closingSel: string): string {
+  return cellClosingWith(closingSel, ':is(td, th):last-child')
+}
+
 export function docStyleCss(parsed: ParsedDocFull): string {
   const rules: string[] = []
+  const additive = parsed.doNotUseHTMLParagraphAutoSpacing === true
+  const SB = spaceBeforeProp(additive)
+  const autoPt = autoSpacingPt(additive)
+  const listGroups = listGroupSelectors(parsed)
+  const liCollapse = (item: string, side: 'before' | 'after', important = ''): void => {
+    for (const g of listGroups) {
+      rules.push(
+        side === 'after'
+          ? `.doc-page .doc-li${g}${item}:has(+ .doc-li${g}) { margin-bottom:0${important} }`
+          : `.doc-page .doc-li${g} + .doc-li${g}${item} { ${SB}:0${important} }`,
+        side === 'after'
+          ? `.doc-page .doc-li${g}${item}:has(${acrossWidget('', `.doc-li${g}`)}) { margin-bottom:0${important} }`
+          : `${acrossWidget(`.doc-page .doc-li${g}`, `.doc-li${g}${item}`)} { ${SB}:0${important} }`,
+      )
+    }
+  }
+  // direct autospacing (sp-auto-*, inline 14pt margins): !important beats the inline margin
+  liCollapse('.sp-auto-a', 'after', ' !important')
+  liCollapse('.sp-auto-b', 'before', ' !important')
   // Dark-page twins of every color rule below (editor/dark-page.ts): same
   // selectors under `.page-dark`, remapped values, emitted in one screen-only
   // block at the end so printToPDF and the pagination preview keep the
@@ -315,9 +463,11 @@ export function docStyleCss(parsed: ParsedDocFull): string {
   // --doc-grid-pitch overrides re-substitute. Any typed section activates the
   // rules: App.tsx injects the .doc-page pitch (uniform docs) or per-block
   // pitches through the layout channel (mixed docs, sectionGridPitchSpecs).
+  const textCtx = documentTextContext(parsed)
   const typedGrid = readSections(parsed).some((s) => sectionGridPitchPt(s) != null)
   // set when the typed-grid strut alias (@font-face below) could be emitted
   let gridStrut = false
+  let eaStrut = false
   const gridBlocks = `.doc-page :is(p, h1, h2, h3, h4, h5, h6, .doc-li, .doc-textbox-para):not(.doc-lh-fixed)`
   const gridSpanSnap = `line-height:var(--doc-line-max)`
   if (typedGrid) {
@@ -325,7 +475,7 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // multiplying their snapped-single arm in typed-grid docs
     rules.push(
       `.doc-page, .doc-page * { --doc-line-grid:${cssGridLineExpr()}; ` +
-        `--doc-line-max:${cssGridLineMaxExpr()}; --doc-grid-single-mult:1 }`,
+        `--doc-line-max:${cssGridLineMaxExpr()}; --doc-grid-single-mult:1; --doc-lead-grid:1 }`,
     )
     // snapToGrid=0 paragraphs (blockAttrs .doc-nosnap) and untyped-section
     // blocks of mixed-grid docs (.doc-grid-nosnap, sectionGridPitchSpecs):
@@ -335,12 +485,29 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     rules.push(
       `.doc-page :is(.doc-nosnap, .doc-grid-nosnap), ` +
         `.doc-page :is(.doc-nosnap, .doc-grid-nosnap) * { ` +
-        `--doc-line-max:calc(var(--doc-line-factor,1.2) * 1em * var(--doc-line-mult,1)) }`,
+        `--doc-line-max:calc(var(--doc-line-factor,1.2) * 1em * var(--doc-line-mult,1)); --doc-lead-grid:0 }`,
+    )
+    // off-grid lines (cells without adjustLineHeightInTable, hf strips) lay out
+    // naturally, so their multiple's extra goes below the glyphs (Word probe
+    // 2026-09-23: cell first baseline at the single position for 1.5 and 2.0)
+    const offGrid = parsed.adjustLineHeightInTable
+      ? ['.page-hf']
+      : ['.doc-table :is(td, th)', '.page-hf']
+    rules.push(
+      `${offGrid.map((s) => `.doc-page ${s}, .doc-page ${s} *`).join(', ')} { --doc-lead-grid:0 }`,
     )
     // Word snaps by the tallest run per line: the paragraph's grid line-height
     // is a length computed from its own font size, so larger runs must
     // re-resolve the snap with their 1em (exact/atLeast lines never snap)
     rules.push(`${gridBlocks} span { ${gridSpanSnap} }`)
+    // cells kill the pitch (restored below under adjustLineHeightInTable), so
+    // the padding vanishes there with it; a chart pads its own plot so a
+    // caption sharing the paragraph keeps its own grid lines below it
+    rules.push(
+      `.doc-page .doc-protected[style*="--doc-obj-h"]:not(.doc-protected-chart), ` +
+        `.doc-page .doc-protected-chart[style*="--doc-obj-h"] > .doc-chart { padding-block:${cssGridObjectPadExpr()} }`,
+      `${gridBlocks} img.doc-inline-img[style*="--doc-obj-h"] { vertical-align:bottom; margin-block:${cssGridObjectPadExpr()} }`,
+    )
     // settings.xml w:compat w:adjustLineHeightInTable (Word probe 2026-09-02,
     // prod-sas 086 replicas): table-cell lines then follow the full body grid
     // semantics, so restore the pitch that styles.css kills in cells; `inherit`
@@ -382,32 +549,36 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // at parse time + live decorations in LineFactorExtension).
     const factor = docLineFactor(parsed, docHasCjk(parsed))
     decls.push(`--doc-line-factor:${factor}`)
-    // .page-wrap too: the first-page header/footer strips size their lines by it
-    rules.push(`.page-wrap { --doc-line-factor:${factor} }`)
     // CJK paragraphs resolve their per-paragraph factor through this var
     // (paraLineFactorCss); value follows the document's East Asian face
-    decls.push(`--doc-line-factor-cjk:${docCjkFactor(parsed)}`)
     // Latin factor for per-paragraph overrides (blockAttrs): pure-Western paragraphs
     // follow the body font's real single-line metric instead of a flat 1.2
-    decls.push(`--doc-line-factor-latin:${lineHeightFactor(docBodyFont(parsed) ?? 'Calibri')}`)
     // Korean factor for hangul paragraphs (Batang-class 1.15 unless the EA face says otherwise)
-    const normalEaKr =
-      normal?.font && (normal.font !== normal.fontAscii || isKoreanFontName(normal.font))
-        ? normal.font
-        : undefined
-    decls.push(`--doc-line-factor-kr:${krLineFactor(normalEaKr ?? dd?.eastAsiaFont)}`)
+    // an empty docDefaults EA slot resolved by themeFontLang (no w:lang backfill)
+    // still decides the hangul fallback face: MS Mincho hands hangul to Malgun
+    const scriptFactors = [
+      `--doc-line-factor-cjk:${docCjkFactor(parsed)}`,
+      `--doc-line-factor-latin:${latinLineFactor(docBodyFont(parsed) ?? 'Calibri')}`,
+      `--doc-line-factor-kr:${krLineFactor(eaFaceForKrFactor(textCtx))}`,
+    ]
+    decls.push(...scriptFactors)
+    // .page-wrap too: the first-page header/footer strips (.doc-page siblings)
+    // size their lines by the same factors (and the document multiple below)
+    const stripVars = [`--doc-line-factor:${factor}`, ...scriptFactors]
     // dual-slot baseline: Latin families first, then the East Asian chain
     const baseAscii = normal?.fontAscii ?? dd?.asciiFont
-    const baseEa =
-      normal?.eastAsiaFont ??
-      (normal?.font !== normal?.fontAscii ? normal?.font : undefined) ??
-      dd?.eastAsiaFont
+    const baseEa = textCtx.bodyEa ?? undefined
+    const viaEa = textCtx.latinViaEaSlot
+    const base = wordSlotFaces(baseAscii, baseEa, viaEa)
+    // Latin glyphs never come from the eastAsia slot: a document without an
+    // ascii face keeps Word's default Latin head, the East Asian face is the tail
+    const baseLatin = base.ascii ?? 'Calibri'
     const baseFamily =
-      baseAscii && baseEa && baseAscii !== baseEa
-        ? cssDualFontFamily(baseAscii, baseEa)
-        : cssFontFamily(baseEa ?? baseAscii ?? 'Calibri')
-    decls.push(`font-family:${baseFamily}`)
-    if (baseEa) decls.push(`--doc-east-asian-font:${cssFontFamily(baseEa)}`)
+      base.eastAsia && baseLatin !== base.eastAsia
+        ? cssDualFontFamily(baseLatin, base.eastAsia)
+        : cssFontFamily(base.eastAsia ?? baseLatin)
+    decls.push(`font-family:${baseFamily}`, ...fontBoxCss(baseFamily))
+    if (base.eastAsia) decls.push(`--doc-east-asian-font:${cssFontFamily(base.eastAsia)}`)
     // Mixed declared/inherited-font paragraphs under a typed grid (blockAttrs
     // .doc-grid-strut): Chromium's line box unions the strut's and every inline
     // box's half-leading geometry, so a Latin-primary strut under EA-primary
@@ -418,17 +589,30 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // PUA-blank source) carrying the EA face's measured metrics leads the
     // chain: strut and inherited-run boxes take the EA geometry while every
     // glyph falls through to the unchanged tail.
-    if (typedGrid) {
-      const eaFace =
-        normal?.font && !normal.eaSlotEmpty && normal.font !== normal.fontAscii
-          ? normal.font
-          : dd?.eastAsiaFont && !dd.eaSlotEmpty
-            ? dd.eastAsiaFont
-            : undefined
-      const metrics = eaFace ? fontChainMetricsPct(cssFontFamily(eaFace)) : null
+    // Also outside a grid when the face the CJK spans render with (baseEa,
+    // the --doc-east-asian-font value) is an Office-private one under a
+    // metric alias: the stand-in's own geometry would otherwise pad every
+    // CJK line by up to 1px against the Latin strut. The grid-only path keeps
+    // to declared faces, plus an empty theme slot themeFontLang / w:lang
+    // resolved (Word lays out with that face).
+    const aliasFace = baseEa ? wordMetricAliasFace(baseEa) : null
+    // an Office-private EA face (Yu Mincho, MS Mincho...) renders through a
+    // stand-in whose box geometry differs from the Latin strut's: every CJK
+    // line unions to ~0.17em above its line-height (11pt Yu Mincho 1.44 x 1.08
+    // pitched 18.9pt for Word's 17.0), so it gets the strut too
+    const standIn =
+      !!baseEa &&
+      !aliasFace &&
+      // inline-rules: allow
+      isCjkFontName(baseEa) &&
+      (isBundledFont(baseEa) || !isFontAvailable(baseEa))
+    const eaFace = aliasFace ? baseEa : eaFaceForGridStrut(textCtx)
+    if (eaFace && (typedGrid || aliasFace || standIn)) {
+      const metrics = fontChainMetricsPct(cssFontFamily(eaFace))
       const blankSrc = metrics ? blankFontFaceSrc() : null
       if (metrics && blankSrc) {
         gridStrut = true
+        eaStrut = !!aliasFace || standIn
         rules.push(
           `@font-face { font-family:'HermesOffice Grid Strut'; src:${blankSrc}; ` +
             `ascent-override:${metrics.ascentPct}%; descent-override:${metrics.descentPct}%; ` +
@@ -440,7 +624,7 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // inherited ascii chain for eastAsia-only runs (cssEaOnlyFontFamily);
     // .page-wrap too: header/footer areas are .doc-page siblings inside it
     rules.push(
-      `.page-wrap, .doc-page, .pv-page { --doc-latin-chain:${docLatinChainCss(baseAscii ?? baseEa ?? 'Calibri')} }`,
+      `.page-wrap, .doc-page, .pv-page { --doc-latin-chain:${docLatinChainCss(baseLatin)} }`,
     )
     // no size anywhere (HWP exports): Word's built-in default is 10pt, not the editor's 11pt
     const sizeHalf = normal?.sizeHalfPoints ?? dd?.sizeHalfPoints ?? 20
@@ -479,7 +663,15 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // grid span snapping scales by the document default multiple (inherits to runs)
     const lhSrc = normalLh ? normal : ddLh ? dd : undefined
     const docMult = cssAutoLineMult(lhSrc?.lineRule, lhSrc?.lineRawTwips, lhSrc?.lineSpacing)
-    if (docMult) decls.push(`--doc-line-mult:${docMult}`)
+    if (docMult) {
+      decls.push(`--doc-line-mult:${docMult}`)
+      stripVars.push(`--doc-line-mult:${docMult}`)
+    }
+    rules.push(`.page-wrap { ${stripVars.join(';')} }`)
+    const docLeadTop = cssLeadTop(lhSrc?.lineRule, lhSrc?.lineRawTwips, lhSrc?.lineSpacing)
+    if (docLeadTop && docLeadTop !== 'initial') decls.push(`--doc-lead-top:${docLeadTop}`)
+    const docCap = cssExactLineCap(lhSrc?.lineRule, lhSrc?.lineRawTwips)
+    if (docCap) decls.push(`--doc-lh-cap:${docCap}`)
     if (typedGrid && lhSrc && (lhSrc.lineRule === 'exact' || lhSrc.lineRule === 'atLeast')) {
       rules.push(`${gridBlocks} span { line-height:inherit }`)
       // paragraphs that declare their own auto spacing (inline --doc-line-mult)
@@ -516,45 +708,60 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // declared per block so --doc-line-factor set inline on a paragraph re-evaluates
     // the line-height var (it wouldn't through inheritance)
     const blockSel =
-      '.doc-page p, .doc-page .doc-li, .doc-page h1, .doc-page h2, .doc-page h3, .doc-page h4, .doc-page h5, .doc-page h6, .doc-page .doc-protected-field'
+      '.doc-page p, .doc-page .doc-li, .doc-page h1, .doc-page h2, .doc-page h3, .doc-page h4, .doc-page h5, .doc-page h6, .doc-page .doc-protected-field, .doc-page .doc-protected-formula-display, .doc-page .doc-img-para, .doc-page .doc-textbox-para, .doc-page .doc-cell-para'
     const beforePt =
       (normal?.spaceBeforeAuto ?? dd?.spaceBeforeAuto)
-        ? WORD_AUTO_SPACING_PT
+        ? autoPt
         : (normal?.spaceBeforeTwips ?? dd?.spaceBeforeTwips ?? 0) / 20
     const afterPt =
       (normal?.spaceAfterAuto ?? dd?.spaceAfterAuto)
-        ? WORD_AUTO_SPACING_PT
+        ? autoPt
         : (normal?.spaceAfterTwips ?? dd?.spaceAfterTwips ?? 0) / 20
-    const blockDecls = [
-      `margin-top:${cssGridSpacingPt(beforePt)}`,
+    // additive mode zeroes the static margin-top the padding replaces
+    const spacingDecls = [
+      ...(additive ? ['margin-top:0'] : []),
+      `${SB}:${cssGridSpacingPt(beforePt)}`,
       `margin-bottom:${cssGridSpacingPt(afterPt)}`,
-      `line-height:${lh ?? cssGridLineBase()}`,
     ]
+    const blockDecls = [...spacingDecls, `line-height:${lh ?? cssGridLineBase()}`]
     rules.push(`${blockSel} { ${blockDecls.join(';')} }`)
+    // a picture or chart paragraph spaces like any paragraph; the static 8pt
+    // chip margin put every in-flow picture 8pt too low in documents whose
+    // default after-spacing is 0 (their strut and line-height stay untouched)
+    rules.push(
+      `.doc-page :is(.doc-protected[data-doc-protected="image"], .doc-protected-chart):not(.doc-img-float) { ${spacingDecls.join(';')} }`,
+    )
+    if (additive) {
+      // direct w:contextualSpacing between unstyled paragraphs (styles.css zeroes the margin)
+      rules.push(
+        `.doc-page :is(p, .doc-li, .doc-outline-only):not([data-style]) + :is(p, .doc-li, .doc-outline-only).ctx-sp:not([data-style]) { padding-top:0 !important }`,
+        `${acrossWidget('.doc-page :is(p, .doc-li, .doc-outline-only):not([data-style])', ':is(p, .doc-li, .doc-outline-only).ctx-sp:not([data-style])')} { padding-top:0 !important }`,
+      )
+    }
     // default-level auto collapses to 0 between two list items like the direct/
     // per-style variants; scoped to unstyled items (styled ones resolve their
     // margins per style) and left un-!important so direct spacing still wins
     const unstyledBlock =
-      ':is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style])'
+      ':is(p, .doc-li, h1, h2, h3, h4, h5, h6, .doc-protected-field, .doc-protected-formula-display, .doc-img-para, .doc-textbox-para, .doc-cell-para):not([data-style])'
     if (normal?.spaceAfterAuto ?? dd?.spaceAfterAuto) {
-      rules.push(`.doc-page .doc-li:not([data-style]):has(+ .doc-li) { margin-bottom:0 }`)
+      liCollapse(':not([data-style])', 'after')
       rules.push(`${CELL_BLOCK}${unstyledBlock}${CELL_LAST} { margin-bottom:0 }`)
     }
     if (normal?.spaceBeforeAuto ?? dd?.spaceBeforeAuto) {
-      rules.push(`.doc-page .doc-li + .doc-li:not([data-style]) { margin-top:0 }`)
-      rules.push(`.doc-page > ${unstyledBlock}${DOC_FIRST_BLOCK} { margin-top:0 }`)
-      rules.push(`${CELL_BLOCK}${unstyledBlock}${CELL_FIRST} { margin-top:0 }`)
+      liCollapse(':not([data-style])', 'before')
+      rules.push(`${docFirstBlockSel(unstyledBlock, ':not([data-style])')} { ${SB}:0 }`)
+      rules.push(`${CELL_BLOCK}${unstyledBlock}${CELL_FIRST} { ${SB}:0 }`)
     }
     // textbox paragraphs re-evaluate the line-height var per block too;
     // inheriting .doc-page's computed length forced the body's pixel strut
     // onto every textbox line regardless of the box's own runs/snapToGrid
     rules.push(`.doc-page .doc-textbox-para { line-height:${lh ?? cssGridLineBase()} }`)
     // Normal's first-line indent applies to plain body paragraphs (not lists —
-    // their geometry runs on --li-left/--li-hang)
-    if ((normal?.indentFirstLineTwips ?? 0) > 0) {
-      rules.push(
-        `.doc-page p { text-indent:${((normal!.indentFirstLineTwips as number) / 20).toFixed(1)}pt }`,
-      )
+    // their geometry runs on --li-left/--li-hang); docDefaults' is the base
+    // under it (Google Docs exports carry the document's indent there)
+    const firstLineTwips = normal?.indentFirstLineTwips ?? dd?.indentFirstLineTwips ?? 0
+    if (firstLineTwips > 0) {
+      rules.push(`.doc-page p { text-indent:${(firstLineTwips / 20).toFixed(1)}pt }`)
     }
     // Normal's left/right indents reach unstyled paragraphs only: styled ones
     // inherit through their basedOn chain (resolved into their own rule), and a
@@ -567,7 +774,32 @@ export function docStyleCss(parsed: ParsedDocFull): string {
         decls.push(`margin-inline-end:${(normal.indentRightTwips / 20).toFixed(1)}pt`)
       if (decls.length > 0) {
         rules.push(
-          `.doc-page :is(p, h1, h2, h3, h4, h5, h6, .doc-protected-field):not([data-style]) { ${decls.join(';')} }`,
+          `.doc-page :is(p, h1, h2, h3, h4, h5, h6, .doc-protected-field, .doc-protected-formula-display):not([data-style]) { ${decls.join(';')} }`,
+        )
+      }
+    }
+    // Normal's w:pBdr / w:shd (docDefaults pPrDefault included) reach unstyled paragraphs the same way
+    if (normal) {
+      const sb = styleBorderDecls(normal)
+      const sels = [
+        'p',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'h5',
+        'h6',
+        '.doc-protected-field',
+        '.doc-protected-formula-display',
+      ]
+        .map((s) => `.doc-page ${s}:not([data-style])`)
+        .join(', ')
+      if (sb.decls.length > 0) rules.push(`${sels} { ${sb.decls.join(';')} }`)
+      darkTwin(sels, sb.darkDecls)
+      const cell = cellPadResetDecls(normal, parsed.docDefaults?.borderSides)
+      if (cell.length > 0) {
+        rules.push(
+          `.doc-page :is(td, th) :is(p, h1, h2, h3, h4, h5, h6):not([data-style]) { ${cell.join(';')} }`,
         )
       }
     }
@@ -588,7 +820,10 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     // table-style layer sits above docDefaults/Normal for unstyled cell text)
     {
       const decls: string[] = []
-      if (t.wholeTable?.sizeHalfPoints) decls.push(`font-size:${t.wholeTable.sizeHalfPoints / 2}pt`)
+      if (t.wholeTable?.sizeHalfPoints) {
+        const pt = `${t.wholeTable.sizeHalfPoints / 2}pt`
+        decls.push(`font-size:${pt}`, `--doc-base-fs:${pt}`)
+      }
       if (t.wholeTable?.italic) decls.push('font-style:italic')
       if (t.wholeTable?.kernHalfPoints !== undefined) {
         const on = wordKerns(
@@ -599,18 +834,21 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       }
       if (decls.length > 0) rules.push(`${sel} td, ${sel} th { ${decls.join(';')} }`)
     }
-    // band1 = first data row after the header → even nth-child when a header row exists
-    if (t.band1Fill) {
-      const bandSel = `${sel} tr:nth-child(even) td`
-      rules.push(`${bandSel} { background:#${t.band1Fill} }`)
-      darkTwin(bandSel, [`background:${darkPageColor(t.band1Fill)}`])
-      autoInk(bandSel, t.band1Fill, tableDark)
+    // w:tblLook opts a table out of its style's bands / header row (data-tbl-* set
+    // from tblLook); band1 = first data row after the header, or row 1 without one
+    const banded = `${sel}:not([data-tbl-nohband])`
+    const bandRules = (fill: string, withHeader: string, noHeader: string) => {
+      const bandSel = [
+        `${banded}:not([data-tbl-nofirstrow]) ${withHeader} td`,
+        `${banded}[data-tbl-nofirstrow] ${noHeader} td`,
+      ].join(', ')
+      rules.push(`${bandSel} { background:#${fill} }`)
+      darkTwin(bandSel, [`background:${darkPageColor(fill)}`])
+      autoInk(bandSel, fill, tableDark)
     }
+    if (t.band1Fill) bandRules(t.band1Fill, 'tr:nth-child(even)', 'tr:nth-child(odd)')
     if (t.band2Fill) {
-      const bandSel = `${sel} tr:nth-child(odd):not(:first-child) td`
-      rules.push(`${bandSel} { background:#${t.band2Fill} }`)
-      darkTwin(bandSel, [`background:${darkPageColor(t.band2Fill)}`])
-      autoInk(bandSel, t.band2Fill, tableDark)
+      bandRules(t.band2Fill, 'tr:nth-child(odd):not(:first-child)', 'tr:nth-child(even)')
     }
     if (t.firstRow) {
       const decls: string[] = []
@@ -625,7 +863,10 @@ export function docStyleCss(parsed: ParsedDocFull): string {
         decls.push(`color:#${t.firstRow.color}`)
         darkDecls.push(`color:${darkPageColor(t.firstRow.color)}`)
       }
-      if (t.firstRow.sizeHalfPoints) decls.push(`font-size:${t.firstRow.sizeHalfPoints / 2}pt`)
+      if (t.firstRow.sizeHalfPoints) {
+        const pt = `${t.firstRow.sizeHalfPoints / 2}pt`
+        decls.push(`font-size:${pt}`, `--doc-base-fs:${pt}`)
+      }
       if (t.firstRow.fontAscii) decls.push(`font-family:${cssFontFamily(t.firstRow.fontAscii)}`)
       if (t.firstRow.charSpacingTwips !== undefined)
         decls.push(`letter-spacing:${t.firstRow.charSpacingTwips / 20}pt`)
@@ -634,7 +875,8 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       // Word extends header-row formatting over the leading w:tblHeader rows;
       // kept as a comma list because the ink helpers split on ','
       const headerTr = 'tr[data-repeat-header="1"]:not(tr:not([data-repeat-header="1"]) ~ tr)'
-      const firstRowSel = [`${sel} tr:first-child`, `${sel} ${headerTr}`]
+      const headed = `${sel}:not([data-tbl-nofirstrow])`
+      const firstRowSel = [`${headed} tr:first-child`, `${headed} ${headerTr}`]
         .flatMap((tr) => [`${tr} td`, `${tr} th`])
         .join(', ')
       if (decls.length > 0) rules.push(`${firstRowSel} { ${decls.join(';')} }`)
@@ -647,7 +889,7 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       const ps = t.paraSpacing
       const decls: string[] = []
       if (ps?.beforeTwips !== undefined && normal?.spaceBeforeTwips === undefined)
-        decls.push(`margin-top:${cssGridSpacingPt(ps.beforeTwips / 20)}`)
+        decls.push(`${SB}:${cssGridSpacingPt(ps.beforeTwips / 20)}`)
       if (ps?.afterTwips !== undefined && normal?.spaceAfterTwips === undefined)
         decls.push(`margin-bottom:${cssGridSpacingPt(ps.afterTwips / 20)}`)
       const psLh = cssLineHeight(ps?.lineRule, ps?.lineRawTwips, ps?.lineSpacing)
@@ -657,6 +899,10 @@ export function docStyleCss(parsed: ParsedDocFull): string {
         // --doc-line-max reads the multiple from this var
         const psMult = cssAutoLineMult(ps?.lineRule, ps?.lineRawTwips, ps?.lineSpacing)
         if (psMult) decls.push(`--doc-line-mult:${psMult}`)
+        const psLeadTop = cssLeadTop(ps?.lineRule, ps?.lineRawTwips, ps?.lineSpacing)
+        if (psLeadTop) decls.push(`--doc-lead-top:${psLeadTop}`)
+        const psCap = cssExactLineCap(ps?.lineRule, ps?.lineRawTwips)
+        if (psCap) decls.push(`--doc-lh-cap:${psCap}`)
         if (ps?.lineRule === 'exact' || ps?.lineRule === 'atLeast') {
           const stretches = ['td p', 'th p', 'td .doc-li', 'th .doc-li']
             .map((c) => `${sel} ${c} .doc-run-lf`)
@@ -680,13 +926,26 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       }
     }
   }
+  const viaEa = textCtx.latinViaEaSlot
+  const baseEa = textCtx.bodyEa ?? undefined
   for (const info of parsed.styles.values()) {
     const d = info.display
     if (!d) continue
     const decls: string[] = []
     const darkDecls: string[] = []
+    // a paragraph style whose w:basedOn chain never reaches the default style
+    // inherits docDefaults only: Normal's size, spacing and line (the .doc-page
+    // base) must not leak into it (a No Spacing letterhead packs its lines in Word)
+    const offNormalChain =
+      info.type === 'paragraph' && !info.isDefault && !chainReachesDefault(parsed.styles, info)
+    const dd = offNormalChain ? parsed.docDefaults : undefined
     if (d.sizeHalfPoints) {
       decls.push(`font-size:${d.sizeHalfPoints / 2}pt`, `--doc-base-fs:${d.sizeHalfPoints / 2}pt`)
+    } else if (dd?.sizeHalfPoints) {
+      decls.push(`font-size:${dd.sizeHalfPoints / 2}pt`, `--doc-base-fs:${dd.sizeHalfPoints / 2}pt`)
+    } else if (info.headingLevel) {
+      // a defined heading style without w:sz is body-sized, not the built-in 16pt
+      decls.push('font-size:inherit')
     }
     if (d.color === 'auto') decls.push('color:var(--docs-paper-ink)')
     else if (d.color) {
@@ -703,36 +962,60 @@ export function docStyleCss(parsed: ParsedDocFull): string {
         `text-decoration:${[d.underline && 'underline', d.strike && 'line-through'].filter(Boolean).join(' ')}`,
       )
     }
+    // a Latin-only style (font === fontAscii) keeps the inherited East Asian
+    // slot; a style without fonts inherits its paragraph's faces as before
+    const styleSlot = wordSlotFaces(
+      d.fontAscii,
+      d.eastAsiaFont ?? (d.font !== d.fontAscii ? d.font : baseEa),
+      viaEa && !!(d.font || d.fontAscii),
+    )
+    const styleLatin = styleSlot.ascii
     if (d.font) {
       // no ascii slot at all = a genuine eastAsia-only style: its Latin glyphs
       // keep the inherited ascii chain (Word resolves them there, probe 2026-08-23)
-      const styleFamily =
-        d.fontAscii && d.fontAscii !== d.font
+      const styleFamily = viaEa
+        ? cssFontFamily(styleSlot.eastAsia ?? d.font)
+        : d.fontAscii && d.fontAscii !== d.font
           ? cssDualFontFamily(d.fontAscii, d.font)
           : d.fontAscii
             ? cssFontFamily(d.font)
             : cssEaOnlyFontFamily(d.font)
-      decls.push(`font-family:${styleFamily}`)
+      decls.push(`font-family:${styleFamily}`, ...fontBoxCss(styleFamily))
       if (!d.eaSlotEmpty && (d.eastAsiaFont || d.font !== d.fontAscii))
-        decls.push(`--doc-east-asian-font:${cssFontFamily(d.eastAsiaFont ?? d.font)}`)
+        decls.push(
+          `--doc-east-asian-font:${cssFontFamily(styleSlot.eastAsia ?? d.eastAsiaFont ?? d.font)}`,
+        )
       // the strut alias tail must follow the style's own chain, not the doc base
       if (gridStrut) decls.push(`--doc-grid-strut-tail:${styleFamily}`)
-      if (d.fontAscii) decls.push(`--doc-latin-chain:${docLatinChainCss(d.fontAscii)}`)
+      if (d.fontAscii)
+        decls.push(`--doc-latin-chain:${docLatinChainCss(styleLatin ?? d.fontAscii)}`)
       // style-declared EA face re-anchors the CJK line factor for its paragraphs
       // (runs without their own fonts resolve --doc-line-factor-cjk through this);
       // an empty-theme-slot backfill is not a document choice and stays silent
-      if (!d.eaSlotEmpty && (d.font !== d.fontAscii || isCjkFontName(d.font))) {
-        decls.push(`--doc-line-factor-cjk:${lineHeightFactor(d.font)}`)
+      if (!d.eaSlotEmpty && styleDeclaresEaFace(d)) {
+        decls.push(
+          `--doc-line-factor-cjk:${cjkDeclaredLineFactor(d.font) ?? lineHeightFactor(d.font)}`,
+        )
+        if (isKoreanLayoutFace(d.font)) decls.push(`--doc-line-factor-kr:${krLineFactor(d.font)}`)
+        // inline-rules: allow
+      } else if (d.eaSlotEmpty && isCjkFontName(d.font) && !isKoreanFontName(d.font)) {
+        // hangul the themeFontLang face cannot draw takes Word's fallback face height
+        decls.push(`--doc-line-factor-kr:${krLineFactor(d.font)}`)
       }
-    } else if (d.fontAscii) {
-      decls.push(`font-family:${cssFontFamily(d.fontAscii)}`)
-      if (gridStrut) decls.push(`--doc-grid-strut-tail:${cssFontFamily(d.fontAscii)}`)
-      decls.push(`--doc-latin-chain:${docLatinChainCss(d.fontAscii)}`)
+    } else if (styleLatin) {
+      decls.push(
+        `font-family:${cssFontFamily(styleLatin)}`,
+        ...fontBoxCss(cssFontFamily(styleLatin)),
+      )
+      if (gridStrut) decls.push(`--doc-grid-strut-tail:${cssFontFamily(styleLatin)}`)
+      decls.push(`--doc-latin-chain:${docLatinChainCss(styleLatin)}`)
     }
     // Latin lines of a paragraph style follow the style's own face, not the
     // body font (Cambria headings under a Calibri body: 1.172 vs 1.22)
+    // (empty paragraphs and marks: the ascii face, also under an East Asian
+    // docDefaults language — Word probe 2026-11-02)
     if (d.fontAscii && info.type === 'paragraph') {
-      decls.push(`--doc-line-factor-latin:${lineHeightFactor(d.fontAscii)}`)
+      decls.push(`--doc-line-factor-latin:${latinLineFactor(d.fontAscii)}`)
     }
     if (d.charSpacingTwips !== undefined) decls.push(`letter-spacing:${d.charSpacingTwips / 20}pt`)
     // the inherited threshold is re-tested against the style's own size
@@ -755,22 +1038,34 @@ export function docStyleCss(parsed: ParsedDocFull): string {
         darkDecls.push(AUTO_INK.light.dark)
       }
     }
-    // a paragraph style whose w:basedOn chain never reaches the default style
-    // inherits docDefaults only: Normal's spacing and line (the .doc-page base)
-    // must not leak into it (a No Spacing letterhead packs its lines in Word)
-    const offNormalChain =
-      info.type === 'paragraph' && !info.isDefault && !chainReachesDefault(parsed.styles, info)
-    const dd = offNormalChain ? parsed.docDefaults : undefined
-    const styleLh =
-      cssLineHeight(d.lineRule, d.lineRawTwips, d.lineSpacing) ??
-      (offNormalChain
-        ? (cssLineHeight(dd?.lineRule, dd?.lineRawTwips, dd?.lineSpacing) ?? cssGridLineBase())
-        : undefined)
+    const ownLh = cssLineHeight(d.lineRule, d.lineRawTwips, d.lineSpacing)
+    const ddLh = offNormalChain
+      ? cssLineHeight(dd?.lineRule, dd?.lineRawTwips, dd?.lineSpacing)
+      : null
+    const styleLh = ownLh ?? (offNormalChain ? (ddLh ?? cssGridLineBase()) : undefined)
     if (styleLh) decls.push(`line-height:${styleLh}`)
+    // the glyph shift and the snapping multiple follow the rule the line-height
+    // came from, so an off-Normal style laid out single/docDefaults does not
+    // inherit Normal's multiple or atLeast lead from .doc-page
+    const lineSrc = ownLh
+      ? d
+      : offNormalChain
+        ? ddLh
+          ? dd
+          : { lineRule: undefined, lineRawTwips: undefined, lineSpacing: 1 }
+        : undefined
+    const styleLeadTop = lineSrc
+      ? cssLeadTop(lineSrc.lineRule, lineSrc.lineRawTwips, lineSrc.lineSpacing)
+      : null
+    if (styleLeadTop) decls.push(`--doc-lead-top:${styleLeadTop}`)
+    const styleCap = lineSrc ? cssExactLineCap(lineSrc.lineRule, lineSrc.lineRawTwips) : null
+    if (styleCap) decls.push(`--doc-lh-cap:${styleCap}`)
     // grid span snapping scales by the style's multiple (an explicit single
     // still overrides an inherited document multiple); the extra rule keeps
     // tallest-run snapping when the document default line is exact/atLeast
-    const styleMult = cssAutoLineMult(d.lineRule, d.lineRawTwips, d.lineSpacing)
+    const styleMult = lineSrc
+      ? cssAutoLineMult(lineSrc.lineRule, lineSrc.lineRawTwips, lineSrc.lineSpacing)
+      : undefined
     if (styleMult) {
       decls.push(`--doc-line-mult:${styleMult}`)
       if (typedGrid) {
@@ -802,13 +1097,12 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     const beforeAuto = d.spaceBeforeAuto ?? dd?.spaceBeforeAuto
     const beforeTwips =
       d.spaceBeforeTwips ?? (offNormalChain ? (dd?.spaceBeforeTwips ?? 0) : undefined)
-    if (beforeAuto) decls.push(`margin-top:${cssGridSpacingPt(WORD_AUTO_SPACING_PT)}`)
-    else if (beforeTwips !== undefined)
-      decls.push(`margin-top:${cssGridSpacingPt(beforeTwips / 20)}`)
+    if (beforeAuto) decls.push(`${SB}:${cssGridSpacingPt(autoPt)}`)
+    else if (beforeTwips !== undefined) decls.push(`${SB}:${cssGridSpacingPt(beforeTwips / 20)}`)
     const afterAuto = d.spaceAfterAuto ?? dd?.spaceAfterAuto
     const afterTwips =
       d.spaceAfterTwips ?? (offNormalChain ? (dd?.spaceAfterTwips ?? 0) : undefined)
-    if (afterAuto) decls.push(`margin-bottom:${cssGridSpacingPt(WORD_AUTO_SPACING_PT)}`)
+    if (afterAuto) decls.push(`margin-bottom:${cssGridSpacingPt(autoPt)}`)
     else if (afterTwips !== undefined)
       decls.push(`margin-bottom:${cssGridSpacingPt(afterTwips / 20)}`)
     // style-level auto spacing collapses to 0 between two list items (Word),
@@ -818,13 +1112,13 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     if (d.spaceAfterAuto || d.spaceBeforeAuto) {
       const sa = `[data-style="${CSS.escape(info.styleId)}"]`
       if (d.spaceAfterAuto) {
-        rules.push(`.doc-page .doc-li${sa}:has(+ .doc-li) { margin-bottom:0 }`)
+        liCollapse(sa, 'after')
         rules.push(`${CELL_BLOCK}${sa}${CELL_LAST} { margin-bottom:0 }`)
       }
       if (d.spaceBeforeAuto) {
-        rules.push(`.doc-page .doc-li + .doc-li${sa} { margin-top:0 }`)
-        rules.push(`.doc-page > ${sa}${DOC_FIRST_BLOCK} { margin-top:0 }`)
-        rules.push(`${CELL_BLOCK}${sa}${CELL_FIRST} { margin-top:0 }`)
+        liCollapse(sa, 'before')
+        rules.push(`${docFirstBlockSel(sa)} { ${SB}:0 }`)
+        rules.push(`${CELL_BLOCK}${sa}${CELL_FIRST} { ${SB}:0 }`)
       }
     }
     // explicit 0 emits too: a child style's w:ind 0 cancels its parent's indent
@@ -853,29 +1147,24 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       const h = d.suppressAutoHyphens ? 'manual' : 'auto'
       decls.push(`hyphens:${h}`, `-webkit-hyphens:${h}`)
     }
-    // style-level paragraph shading (explicit pPr w:shd is inline style and wins)
-    if (d.shadingFill && d.shadingFill !== 'auto') {
-      decls.push(`background-color:#${d.shadingFill}`)
-      darkDecls.push(`background-color:${darkPageColor(d.shadingFill)}`)
-    }
-    // style-level w:pBdr, same look as blockAttrs' direct borders (which win as inline style)
-    if (d.borderSides) {
-      let drawn = ''
-      for (const side of ['top', 'bottom', 'left', 'right'] as const) {
-        const line = d.borderSides[DK_SIDE[side]]
-        if (!line) continue
-        drawn += DK_SIDE[side]
-        const css = paraBorderCss(line)
-        decls.push(`border-${side}:${css}`)
-        darkDecls.push(`border-${side}:${darkPageBorderCss(css)}`)
-      }
-      decls.push(...paraBorderPaddingDecls(paraBorderPadding(drawn, d.borderSides)))
+    {
+      const sb = styleBorderDecls(d)
+      decls.push(...sb.decls)
+      darkDecls.push(...sb.darkDecls)
     }
     // the static sheet guesses italic for h4-h6 (Word's built-in defaults);
     // a real style definition without w:i means upright
     if (info.headingLevel && info.headingLevel >= 4 && !d.italic) decls.push('font-style:normal')
     if (decls.length > 0) {
       rules.push(`.doc-page [data-style="${CSS.escape(info.styleId)}"] { ${decls.join(';')} }`)
+    }
+    {
+      const cell = cellPadResetDecls(d, parsed.docDefaults?.borderSides)
+      if (cell.length > 0) {
+        rules.push(
+          `.doc-page :is(td, th) [data-style="${CSS.escape(info.styleId)}"] { ${cell.join(';')} }`,
+        )
+      }
     }
     darkTwin(`.doc-page [data-style="${CSS.escape(info.styleId)}"]`, darkDecls)
     // Word merges indents per property (direct ind > numbering level ind > style ind), never
@@ -886,6 +1175,9 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       const pt = (d.indentLeftTwips / 20).toFixed(1)
       rules.push(`.doc-page ${s}:not(${LIST_LINES}) { margin-inline-start:${pt}pt }`)
       rules.push(`.doc-page :is(${LIST_LINES})${s} { --style-li-left:${pt}pt }`)
+      // the toc level ladder (styles.css em padding) only stands in for a style without its own indent
+      if (tocLevelOf(info.styleId, parsed.styles) !== null)
+        rules.push(`.doc-page ${s} .doc-toc-line > .doc-toc-body { --doc-toc-indent:0px }`)
     }
     // w:contextualSpacing: consecutive same-style paragraphs swallow the spacing
     // between them (ListParagraph/ListBullet carry this — Word lists are tight)
@@ -896,8 +1188,48 @@ export function docStyleCss(parsed: ParsedDocFull): string {
       // A direct w:contextualSpacing w:val="0" (.ctx-sp-off) re-enables the
       // paragraph's own spacing (Word honors the direct override).
       rules.push(`.doc-page ${s}:has(+ ${s}):not(.ctx-sp-off) { margin-bottom:0 !important }`)
-      rules.push(`.doc-page ${s} + ${s}:not(.ctx-sp-off) { margin-top:0 !important }`)
+      rules.push(`.doc-page ${s} + ${s}:not(.ctx-sp-off) { ${SB}:0 !important }`)
+      rules.push(
+        `.doc-page ${s}:has(${acrossWidget('', s)}):not(.ctx-sp-off) { margin-bottom:0 !important }`,
+        `${acrossWidget(`.doc-page ${s}`, `${s}:not(.ctx-sp-off)`)} { ${SB}:0 !important }`,
+      )
+      rules.push(
+        `.doc-page ${s}${beforeTableOpening(s)}:not(.ctx-sp-off) { margin-bottom:0 !important }`,
+        `.doc-page ${s}${beforeTableOpening(s, true)}:not(.ctx-sp-off) { margin-bottom:0 !important }`,
+      )
+      rules.push(`${cellClosingBefore(s, `${s}:not(.ctx-sp-off)`)} { margin-bottom:0 !important }`)
+      if (info.isDefault) {
+        rules.push(`${rowClosing(`${s}:not(.ctx-sp-off)`)} { margin-bottom:0 !important }`)
+        rules.push(
+          `${rowClosing(':is(p, .doc-li):not([data-style], .ctx-sp-off)')} { margin-bottom:0 !important }`,
+        )
+      }
     }
+  }
+  // .doc-cs gate: an rtl run reads the Cs size of its chain (w:szCs, paraCsFormat),
+  // so the base w:sz the paragraph rules paint must not reach it. Paragraph-level
+  // rules first, character styles after (same specificity, later wins). Weight
+  // and style are not painted here: the engine resolves them through every layer
+  // (table style included) and marks.ts carries them as doc-cs-(n)b / -(n)i.
+  {
+    rules.push(
+      `.doc-page span.doc-cs { font-size:${paraCsFormat(normal, dd).sizeHalfPoints / 2}pt }`,
+    )
+    const charRules: string[] = []
+    for (const info of parsed.styles.values()) {
+      const d = info.display
+      if (!d) continue
+      const s = `[data-style="${CSS.escape(info.styleId)}"]`
+      if (info.type === 'paragraph') {
+        rules.push(
+          `.doc-page ${s} .doc-cs { font-size:${paraCsFormat(d, dd).sizeHalfPoints / 2}pt }`,
+        )
+      } else if (info.type === 'character') {
+        const own = styleRunFormat(d, true).sizeHalfPoints
+        if (own) charRules.push(`.doc-page span${s}.doc-cs { font-size:${own / 2}pt }`)
+      }
+    }
+    rules.push(...charRules)
   }
   // direct pPr w:contextualSpacing (.ctx-sp) without style-level backing: same
   // same-style suppression, keyed to the paragraph that carries it (unstyled
@@ -907,6 +1239,16 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     const s = `[data-style="${CSS.escape(info.styleId)}"]`
     rules.push(`.doc-page ${s}.ctx-sp:has(+ ${s}) { margin-bottom:0 !important }`)
     rules.push(`.doc-page ${s} + ${s}.ctx-sp { margin-top:0 !important }`)
+    rules.push(
+      `.doc-page ${s}.ctx-sp:has(${acrossWidget('', s)}) { margin-bottom:0 !important }`,
+      `${acrossWidget(`.doc-page ${s}`, `${s}.ctx-sp`)} { margin-top:0 !important }`,
+    )
+    rules.push(
+      `.doc-page ${s}.ctx-sp${beforeTableOpening(s)} { margin-bottom:0 !important }`,
+      `.doc-page ${s}.ctx-sp${beforeTableOpening(s, true)} { margin-bottom:0 !important }`,
+    )
+    rules.push(`${cellClosingBefore(s, `${s}.ctx-sp`)} { margin-bottom:0 !important }`)
+    if (info.isDefault) rules.push(`${rowClosing(`${s}.ctx-sp`)} { margin-bottom:0 !important }`)
   }
   // a defined Hyperlink character style paints its links (colour, underline or
   // none); the .doc-link default only stands in when the document has none.
@@ -926,11 +1268,37 @@ export function docStyleCss(parsed: ParsedDocFull): string {
     rules.push(`.doc-page :is(${tocScopes}) ${h} { color:inherit;text-decoration:none }`)
     darkRules.push(`.page-dark .doc-page :is(${tocScopes}) ${h} { color:inherit }`)
   }
+  // a raised or lowered run never lifts its line in Word (an endnote reference
+  // on an 18pt grid kept 18pt lines that grew to 21pt here). Both style
+  // serialisations (the DOM rewrites `a:b` as `a: b`) and the run's inner
+  // spans, whose own line-height rules would otherwise re-grow the line; last
+  // so it wins every specificity tie with the grid span rules
+  {
+    const blocks = '.doc-page :is(p, h1, h2, h3, h4, h5, h6, .doc-li, .doc-textbox-para)'
+    const raised =
+      ':is(sup.doc-note-ref, span[style*="vertical-align:super"], span[style*="vertical-align: super"], span[style*="vertical-align:sub"], span[style*="vertical-align: sub"])'
+    rules.push(`${blocks} ${raised}, ${blocks} ${raised} :is(span, .doc-run-lf) { line-height:0 }`)
+  }
   if (gridStrut) {
     // after every [data-style] family rule so the strut face wins the cascade;
     // the tail keeps each context's own inherited chain rendering the glyphs
     rules.push(
-      `.doc-page .doc-grid-strut { font-family:'HermesOffice Grid Strut',var(--doc-grid-strut-tail,serif) }`,
+      // !important: a declared-face CJK paragraph carries its chain inline (blockAttrs)
+      `.doc-page :is(${eaStrut ? '.doc-grid-strut,.doc-ea-strut' : '.doc-grid-strut'}) { font-family:'HermesOffice Grid Strut',var(--doc-grid-strut-tail,serif) !important }`,
+    )
+    // declared-run and CJK-stretch spans keep their own primary face, whose box
+    // sits offset from the strut's; Chromium unions the offset boxes and the
+    // line outgrows its line-height (MS Mincho runs in a Noto JP doc: +2.3pt).
+    // Leading them with the strut face too makes the line box the tallest
+    // line-height, as in Word. !important beats the inline chains.
+    // .doc-ea-strut spans too: their primary is the loaded range alias
+    // ('MS Mincho GO', 0.69/0.25em) while the strut measured the chain before
+    // it loaded, and the offset boxes union to +3px per grid line (prod corpus
+    // 20261021 sample 004: 23 instead of 25 lines per page, +8 pages)
+    const eaSpanBlocks = eaStrut ? ':is(.doc-grid-strut,.doc-ea-strut)' : '.doc-grid-strut'
+    rules.push(
+      `.doc-page .doc-grid-strut span[style*='--doc-run-ff'] { font-family:'HermesOffice Grid Strut',var(--doc-run-ff) !important }`,
+      `.doc-page ${eaSpanBlocks} .doc-east-asian-font { font-family:'HermesOffice Grid Strut',var(--doc-east-asian-font,var(--doc-grid-strut-tail,serif)) !important }`,
     )
   }
   if (darkRules.length > 0) rules.push(`@media screen {\n${darkRules.join('\n')}\n}`)

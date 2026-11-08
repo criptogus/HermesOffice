@@ -1,13 +1,17 @@
 import { columnLabel } from '../domain/cell-address'
+import { MAX_GRID_COLUMNS, MAX_GRID_ROWS } from '../shared/grid-bounds'
+import { isValidDefinedName } from './xlsx-defined-names'
 import {
   allocatePartPath,
   appendRelationship,
   registerContentTypeOverride,
   relativeTarget,
   relsPathFor,
+  resolveRelTarget,
   type MutablePackage,
 } from './xlsx-drawing-add'
 import { ensureRelationshipNamespace } from './xlsx-namespace'
+import { rootTail } from './xlsx-root-tail'
 
 /// Persists tables (ListObjects) created in the editor as brand-new OOXML
 /// parts: xl/tables/tableN.xml, the worksheet's <tableParts> element, the
@@ -35,9 +39,21 @@ export interface TableAddition {
   /// Built-in style name; undefined = TableStyleMedium2.
   readonly style?: string | undefined
   readonly bandedRows: boolean
+  readonly options?: TableStyleOptions | undefined
 }
 
-const TABLE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table'
+/// Excel's Table Style Options; every field defaults to Excel's own default.
+export interface TableStyleOptions {
+  readonly headerRow?: boolean | undefined
+  readonly totalsRow?: boolean | undefined
+  readonly firstColumn?: boolean | undefined
+  readonly lastColumn?: boolean | undefined
+  readonly bandedColumns?: boolean | undefined
+  readonly filterButton?: boolean | undefined
+}
+
+export const TABLE_REL_TYPE =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table'
 const TABLE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml'
 const DEFAULT_TABLE_STYLE = 'TableStyleMedium2'
 
@@ -82,7 +98,22 @@ export async function applyTableAdditions(
 
 function validateAddition(addition: TableAddition): void {
   const { area, columnNames } = addition
-  if (area.endRow <= area.startRow) {
+  if (!isValidDefinedName(addition.name)) {
+    throw new TableAddError(`"${addition.name}" is not a valid table name.`)
+  }
+  if (
+    area.startRow < 0 ||
+    area.startColumn < 0 ||
+    area.endRow < area.startRow ||
+    area.endColumn < area.startColumn ||
+    area.endRow >= MAX_GRID_ROWS ||
+    area.endColumn >= MAX_GRID_COLUMNS
+  ) {
+    throw new TableAddError(`Table "${addition.name}" lies outside the worksheet grid.`)
+  }
+  const bandRows =
+    (addition.options?.headerRow === false ? 0 : 1) + (addition.options?.totalsRow ? 1 : 0)
+  if (area.endRow - area.startRow + 1 <= bandRows) {
     throw new TableAddError(
       `Table "${addition.name}" needs a header row plus at least one data row.`,
     )
@@ -107,7 +138,7 @@ function validateAddition(addition: TableAddition): void {
 }
 
 /// name= and displayName= of every existing table part, lowercased.
-async function collectExistingTableNames(pkg: MutablePackage): Promise<Set<string>> {
+export async function collectExistingTableNames(pkg: MutablePackage): Promise<Set<string>> {
   const names = new Set<string>()
   for (const path of await tablePartPaths(pkg)) {
     const xml = await pkg.readText(path)
@@ -129,12 +160,12 @@ async function maxExistingTableId(pkg: MutablePackage): Promise<number> {
   return max
 }
 
-async function tablePartPaths(pkg: MutablePackage): Promise<string[]> {
+export async function tablePartPaths(pkg: MutablePackage): Promise<string[]> {
   return (await pkg.paths()).filter((path) => /^xl\/tables\/[^/]+\.xml$/.test(path))
 }
 
 /// Table names share Excel's defined-name namespace.
-async function assertNameNotDefined(pkg: MutablePackage, name: string): Promise<void> {
+export async function assertNameNotDefined(pkg: MutablePackage, name: string): Promise<void> {
   const workbookXml = await pkg.readText('xl/workbook.xml')
   for (const match of workbookXml.matchAll(/<definedName\b[^>]*\bname="([^"]+)"/g)) {
     if (match[1]?.toLowerCase() === name.toLowerCase()) {
@@ -155,7 +186,7 @@ async function assertNoTableOverlap(pkg: MutablePackage, addition: TableAddition
     if (!tag.includes(`Type="${TABLE_REL_TYPE}"`)) continue
     const target = /\bTarget="([^"]+)"/.exec(tag)?.[1]
     if (!target) continue
-    const tablePath = resolveTarget(addition.worksheetPath, target)
+    const tablePath = resolveRelTarget(addition.worksheetPath, target)
     if (!(await pkg.has(tablePath))) continue
     const ref = /<table\b[^>]*\bref="([^"]+)"/.exec(await pkg.readText(tablePath))?.[1]
     if (ref && areasOverlap(addition.area, parseRef(ref))) {
@@ -165,7 +196,10 @@ async function assertNoTableOverlap(pkg: MutablePackage, addition: TableAddition
 }
 
 /// Excel forbids a table overlapping the sheet auto-filter or merged cells.
-function assertNoSheetConflicts(addition: TableAddition, worksheetXml: string): void {
+export function assertNoSheetConflicts(
+  addition: Pick<TableAddition, 'name' | 'area'>,
+  worksheetXml: string,
+): void {
   const autoFilterRef = /<autoFilter\b[^>]*\bref="([^"]+)"/.exec(worksheetXml)?.[1]
   if (autoFilterRef && areasOverlap(addition.area, parseRef(autoFilterRef))) {
     throw new TableAddError(
@@ -182,19 +216,12 @@ function assertNoSheetConflicts(addition: TableAddition, worksheetXml: string): 
   }
 }
 
-/// Resolves a relationship target relative to its source part.
-function resolveTarget(fromPart: string, target: string): string {
-  const base = fromPart.split('/').slice(0, -1)
-  for (const segment of target.split('/')) {
-    if (segment === '..') base.pop()
-    else if (segment !== '.' && segment !== '') base.push(segment)
-  }
-  return base.join('/')
-}
-
-function buildTableXml(id: number, addition: TableAddition): string {
+export function buildTableXml(id: number, addition: TableAddition): string {
   const ref = areaToRef(addition.area)
   const name = escapeAttribute(addition.name)
+  const options = addition.options ?? {}
+  const headerRows = options.headerRow === false ? 0 : 1
+  const totalsRows = options.totalsRow ? 1 : 0
   const columns = addition.columnNames
     .map(
       (columnName, index) =>
@@ -202,16 +229,35 @@ function buildTableXml(id: number, addition: TableAddition): string {
     )
     .join('')
   const style = escapeAttribute(addition.style ?? DEFAULT_TABLE_STYLE)
+  const flag = (on: boolean | undefined): string => (on ? '1' : '0')
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
     '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
-    `id="${id}" name="${name}" displayName="${name}" ref="${ref}" totalsRowShown="0">` +
-    `<autoFilter ref="${ref}"/>` +
+    `id="${id}" name="${name}" displayName="${name}" ref="${ref}"` +
+    (headerRows === 0 ? ' headerRowCount="0"' : '') +
+    (totalsRows === 1 ? ' totalsRowCount="1" totalsRowShown="1"' : ' totalsRowShown="0"') +
+    '>' +
+    // Excel drops the filter row with the header; the button toggle hides it.
+    (headerRows === 1 && options.filterButton !== false
+      ? `<autoFilter ref="${autoFilterRef(addition.area, totalsRows)}"/>`
+      : '') +
     `<tableColumns count="${addition.columnNames.length}">${columns}</tableColumns>` +
-    `<tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" ` +
-    `showRowStripes="${addition.bandedRows ? 1 : 0}" showColumnStripes="0"/>` +
+    `<tableStyleInfo name="${style}" showFirstColumn="${flag(options.firstColumn)}" ` +
+    `showLastColumn="${flag(options.lastColumn)}" ` +
+    `showRowStripes="${flag(addition.bandedRows)}" showColumnStripes="${flag(options.bandedColumns)}"/>` +
     '</table>'
   )
+}
+
+/// The filter range stops above the totals band.
+export function autoFilterRef(area: TableArea, totalsRows: number): string {
+  return areaToRef({ ...area, endRow: area.endRow - totalsRows })
+}
+
+/// Number of <tablePart> children the sheet already declares. `<tablePart\b`
+/// does not match `<tableParts`, so the container opener is not counted.
+function countTableParts(worksheetXml: string): number {
+  return (worksheetXml.match(/<tablePart\b/g) ?? []).length
 }
 
 /// Appends (or extends) the worksheet's <tableParts> element. Schema order
@@ -219,29 +265,44 @@ function buildTableXml(id: number, addition: TableAddition): string {
 function appendTablePart(worksheetXml: string, relId: string): string {
   const xml = ensureRelationshipNamespace(worksheetXml)
   const part = `<tablePart r:id="${relId}"/>`
-  const existing = /<tableParts\b[^>]*count="(\d+)"[^>]*>/.exec(xml)
+  const existing = /<tableParts\b[^>]*?(\/?)>/.exec(xml)
   if (existing) {
-    const opener = existing[0]
-    const count = Number(existing[1] ?? 0) + 1
-    const reopened = opener.replace(/count="\d+"/, `count="${count}"`)
+    const [opener, selfClosing] = existing
+    // count is optional in CT_TableParts: when the opener omits it, count the
+    // children instead — matching the attribute alone left the element behind
+    // and a second <tableParts> was written before </worksheet>.
+    const declared = /count="(\d+)"/.exec(opener)?.[1]
+    const count = (declared === undefined ? countTableParts(xml) : Number(declared)) + 1
+    if (selfClosing === '/') {
+      return xml.replace(opener, `<tableParts count="${count}">${part}</tableParts>`)
+    }
+    const reopened =
+      declared === undefined
+        ? opener.replace(/>$/, ` count="${count}">`)
+        : opener.replace(/count="\d+"/, `count="${count}"`)
     return xml.replace(opener, reopened).replace('</tableParts>', `${part}</tableParts>`)
   }
   const element = `<tableParts count="1">${part}</tableParts>`
-  const extLstAt = xml.search(/<extLst\b/)
-  if (extLstAt >= 0) return xml.slice(0, extLstAt) + element + xml.slice(extLstAt)
-  const closeAt = xml.lastIndexOf('</worksheet>')
-  if (closeAt < 0) throw new TableAddError('The worksheet part is malformed.')
-  return xml.slice(0, closeAt) + element + xml.slice(closeAt)
+  const anchor = worksheetTailOffset(xml)
+  return xml.slice(0, anchor) + element + xml.slice(anchor)
 }
 
-function areaToRef(area: TableArea): string {
+/// Locate only the worksheet's own extension list or closing tag. A linked
+/// conditional-formatting rule may carry an earlier, nested extLst.
+function worksheetTailOffset(xml: string): number {
+  const tail = rootTail(xml, 'worksheet')
+  if (tail === null) throw new TableAddError('The worksheet part is malformed.')
+  return tail.extLst === null ? tail.rootClose : tail.extLst.open
+}
+
+export function areaToRef(area: TableArea): string {
   return (
     `${columnLabel(area.startColumn)}${area.startRow + 1}` +
     `:${columnLabel(area.endColumn)}${area.endRow + 1}`
   )
 }
 
-function parseRef(ref: string): TableArea {
+export function parseRef(ref: string): TableArea {
   const match = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(ref.replace(/\$/g, ''))
   if (!match || !match[1] || !match[2]) {
     throw new TableAddError(`Unsupported range reference "${ref}" in the workbook.`)
@@ -259,7 +320,7 @@ function labelToIndex(label: string): number {
   return index - 1
 }
 
-function areasOverlap(a: TableArea, b: TableArea): boolean {
+export function areasOverlap(a: TableArea, b: TableArea): boolean {
   return (
     a.startRow <= b.endRow &&
     b.startRow <= a.endRow &&
@@ -268,7 +329,7 @@ function areasOverlap(a: TableArea, b: TableArea): boolean {
   )
 }
 
-function escapeAttribute(input: string): string {
+export function escapeAttribute(input: string): string {
   return input
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

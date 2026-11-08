@@ -4,11 +4,10 @@
  * to avoid renderer CORS), search tools, and the slides-only ai:* channels
  * (image generation, media analysis, style templates).
  */
-import { app, ipcMain, nativeImage, net, shell } from 'electron'
+import { app, ipcMain, nativeImage, net, shell, webContents } from 'electron'
 import {
   appendFileSync,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -21,12 +20,15 @@ import {
   AiTimeoutError,
   isAiNetworkError,
   isAiOverloadedError,
-  activeProvider,
+  isAiRegionBlockedError,
   defaultAiSettings,
+  activeProvider,
   maxOutputTokensOf,
   resolveAiSettings,
+  sanitizeAiSettings,
   setAiUserAgent,
   setRescueFetch,
+  resolveProfileCredential,
   streamForProvider,
   type AiSettings,
   type AiStreamChunk,
@@ -35,18 +37,29 @@ import {
   type LegacyAiSettings,
 } from '@hermesoffice/ai-provider'
 import { shutdownCodexAppServers } from '@hermesoffice/ai-provider/codex-app-server'
-import { fetchRemoteImage, safeExternalUrl } from '@hermesoffice/electron-utils'
+import { startAiTrace } from '@hermesoffice/ai-provider/trace'
+import {
+  abortOnDestroyed,
+  MAX_REMOTE_IMAGE_BYTES,
+  fetchRemoteImage,
+  readBodyCapped,
+  writeJsonAtomic,
+} from '@hermesoffice/electron-utils'
 import {
   webSearchTool,
   imageSearchTool,
   ensureGenofficeLogin,
+  noteGskCallFailure,
+  setGenofficeLoginOpener,
   gskApiKey,
   generateImageTool,
   analyzeMediaTool,
+  documentMediaRoots,
   gskLoginInfo,
   hasGskAuth,
 } from '@hermesoffice/ai-search'
 import { addPicture, editPictureSrcRect, replacePictureBytes } from '@hermesoffice/pptx-engine'
+import { rasterImageExt } from './media-mime'
 import { matchesElementRef } from '@hermesoffice/pptx-engine/identity'
 import { coverCropFractions } from '@hermesoffice/pipelines/slides'
 import type { AiRunFailure } from '../shared/ipc'
@@ -58,6 +71,20 @@ import { pushHistory, rebuildSlide, scheduleHistoryNotify, sessions } from './se
 
 const AI_SETTINGS_PATH = () => join(app.getPath('userData'), 'ai-settings.json')
 
+/**
+ * Local media roots for a slides renderer: the open deck's directory plus the
+ * directory slides stages pasted images in. generate_image (referenceImageUrls)
+ * and analyze_media (mediaUrls) both take paths straight from the model, so
+ * only these two directories are readable — a reference or a media file the
+ * user put next to the deck they are editing, and nothing else.
+ */
+function slidesMediaRoots(wcId: number): string[] {
+  return documentMediaRoots(
+    sessions.get(wcId)?.path,
+    join(app.getPath('temp'), 'hermesoffice-pasted'),
+  )
+}
+
 function readJson<T>(path: string, fallback: T): T {
   try {
     if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf-8')) as T
@@ -65,11 +92,6 @@ function readJson<T>(path: string, fallback: T): T {
     /* Corrupted state file: fall back to defaults */
   }
   return fallback
-}
-
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
 }
 
 const activeAiStreams = new Map<string, AbortController>()
@@ -110,7 +132,7 @@ export function registerAiIpc(): void {
   ipcMain.handle('ai:get-settings', (): AiSettings => {
     const stored = readJson<Partial<AiSettings> & LegacyAiSettings>(AI_SETTINGS_PATH(), {})
     const settings = resolveAiSettings(stored, defaultAiSettings())
-    // Honor usable saved providers; incomplete configurations fall back to Hermes.
+    // a stored BYOK provider is honored when usable; half-filled configs fall back to genspark
     settings.provider = activeProvider(settings)
     return settings
   })
@@ -126,15 +148,25 @@ export function registerAiIpc(): void {
     },
   )
 
+  // a 401 on the gsk key opens the device-code login once (hermesoffice-auth recovery)
+  setGenofficeLoginOpener((url) => void shell.openExternal(url))
+
   ipcMain.handle('ai:gsk-login', () => {
-    ensureGenofficeLogin((url) => {
-      const target = safeExternalUrl(url)
-      if (target) void shell.openExternal(target)
-    })
+    ensureGenofficeLogin((url) => void shell.openExternal(url))
   })
 
   ipcMain.handle('ai:set-settings', (_event, settings: AiSettings) => {
-    writeJson(AI_SETTINGS_PATH(), settings)
+    // SECURITY.md: payloads are schema-checked in the main process. The settings
+    // file feeds cliPath into spawn() and baseUrl receives the gsk bearer token,
+    // so the renderer's copy is sanitized before it touches disk.
+    const sanitized = sanitizeAiSettings(settings)
+    if (!sanitized) {
+      console.warn('[ai] rejected invalid ai:set-settings payload')
+      return
+    }
+    writeJsonAtomic(AI_SETTINGS_PATH(), sanitized)
+    for (const wc of webContents.getAllWebContents())
+      if (!wc.isDestroyed()) wc.send('ai:settings-changed')
   })
 
   ipcMain.handle('ai:log-run-failure', (_event, entry: AiRunFailure) => {
@@ -142,15 +174,32 @@ export function registerAiIpc(): void {
   })
 
   ipcMain.handle('ai:stream', async (event, request: AiStreamRequest) => {
-    const { requestId, settings, system, messages } = request
+    // per-request settings get the same schema check as the persisted ones: a
+    // compromised renderer could otherwise hand cliPath/baseUrl straight to
+    // the provider layer without ever touching the settings file
+    const settings = sanitizeAiSettings(request.settings)
+    if (!settings) {
+      event.sender.send('ai:stream-chunk', {
+        requestId: request.requestId,
+        type: 'error',
+        error: 'invalid AI settings payload',
+      } satisfies AiStreamChunk)
+      return
+    }
+    const { requestId, system, messages } = request
     const tools = request.tools ?? []
     const maxTokens = request.maxTokens ?? maxOutputTokensOf(settings)
     const provider = settings.provider
     let config = settings.providers?.[provider]
     // The genspark key never enters the settings file; it is fetched from the gsk login state per request
+    // set only when the gsk key was injected: a 401 then means that key expired
+    let gskKey = ''
     if (provider === 'genspark' && config && !config.apiKey) {
-      config = { ...config, apiKey: gskApiKey() }
+      gskKey = gskApiKey()
+      config = { ...config, apiKey: gskKey }
     }
+    // a custom endpoint may name an environment variable instead of storing a key
+    config = config ? resolveProfileCredential(config) : config
     const send = (chunk: AiStreamChunk) => {
       if (!event.sender.isDestroyed()) event.sender.send('ai:stream-chunk', chunk)
     }
@@ -168,6 +217,7 @@ export function registerAiIpc(): void {
     }
     const controller = new AbortController()
     activeAiStreams.set(requestId, controller)
+    const unwatchSender = abortOnDestroyed(event.sender, controller)
     // wire-activity keepalive: lets the renderer's silence watchdog tell a slow turn from a dead one
     let lastPing = 0
     const ping = () => {
@@ -176,28 +226,59 @@ export function registerAiIpc(): void {
       lastPing = now
       send({ requestId, type: 'ping' })
     }
+    const trace = startAiTrace({
+      requestId,
+      sessionId: request.sessionId,
+      source: event.sender.getURL(),
+      provider,
+      model: config.model,
+      maxTokens,
+      system,
+      messages,
+      tools,
+    })
     try {
       let stopReason: string | undefined
       await streamForProvider(provider, config, system, messages, tools, maxTokens, {
         ...(request.sessionId ? { sessionId: request.sessionId } : {}),
         signal: controller.signal,
-        onDelta: (text) => send({ requestId, type: 'delta', text }),
-        onReasoningDelta: (text) => send({ requestId, type: 'reasoning', text }),
-        onToolCall: (toolCall) => send({ requestId, type: 'tool-call', toolCall }),
+        onDelta: (text) => {
+          trace?.onDelta(text)
+          send({ requestId, type: 'delta', text })
+        },
+        onReasoningDelta: (text) => {
+          trace?.onReasoningDelta(text)
+          send({ requestId, type: 'reasoning', text })
+        },
+        onToolCall: (toolCall) => {
+          trace?.onToolCall(toolCall)
+          send({ requestId, type: 'tool-call', toolCall })
+        },
         onActivity: ping,
         onStopReason: (reason) => {
           stopReason = reason
+          trace?.onStopReason(reason)
+        },
+        onUsage: (usage) => {
+          trace?.onUsage(usage)
+          send({ requestId, type: 'usage', usage })
         },
       })
+      trace?.finish()
       send(
         stopReason === undefined
           ? { requestId, type: 'done' }
           : { requestId, type: 'done', stopReason },
       )
     } catch (err) {
+      trace?.finish(
+        controller.signal.aborted ? 'aborted' : err instanceof Error ? err.message : String(err),
+      )
       if (controller.signal.aborted) {
         send({ requestId, type: 'done' })
       } else {
+        // an expired/revoked key drops to signed-out so the inline sign-in button shows
+        noteGskCallFailure(gskKey, err)
         const msg = err instanceof Error ? err.message : String(err)
         console.error(`[ai-stream] ${requestId} (${provider}/${config.model}) failed:`, msg)
         send({
@@ -212,10 +293,13 @@ export function registerAiIpc(): void {
                 ? { errorCode: 'network' as const }
                 : isAiOverloadedError(err)
                   ? { errorCode: 'overloaded' as const }
-                  : {}),
+                  : isAiRegionBlockedError(err)
+                    ? { errorCode: 'region' as const }
+                    : {}),
         })
       }
     } finally {
+      unwatchSender()
       activeAiStreams.delete(requestId)
     }
   })
@@ -260,7 +344,7 @@ export function registerSlidesOnlyAiIpc(): void {
   ipcMain.handle(
     'ai:generate-image',
     async (
-      _event,
+      event,
       op: {
         prompt: string
         model?: string
@@ -282,21 +366,27 @@ export function registerSlidesOnlyAiIpc(): void {
           imageSize: op.imageSize ? String(op.imageSize) : undefined,
           transparentBackground: op.transparentBackground === true,
         },
-        { notLoggedInError: tm('errGskCli') },
+        {
+          notLoggedInError: tm('errGskCli'),
+          mediaRoots: slidesMediaRoots(event.sender.id),
+        },
       )
     },
   )
 
   ipcMain.handle(
-    'slides:analyze-media',
-    async (_event, op: { mediaUrls: string[]; requirements: string }) => {
+    'ai:analyze-media',
+    async (event, op: { mediaUrls: string[]; requirements: string }) => {
       return analyzeMediaTool(
         AI_SETTINGS_PATH(),
         {
           mediaUrls: (op.mediaUrls ?? []).map(String),
           requirements: String(op.requirements ?? ''),
         },
-        { notLoggedInError: tm('errGskCli') },
+        {
+          notLoggedInError: tm('errGskCli'),
+          mediaRoots: slidesMediaRoots(event.sender.id),
+        },
       )
     },
   )
@@ -354,9 +444,12 @@ export function registerSlidesOnlyAiIpc(): void {
           // fetchRemoteImage adds CDN-friendly headers and transient-error retries.
           const resp = await fetchRemoteImage(String(op.url))
           if (!resp || !resp.ok) return null
-          buf = Buffer.from(await resp.arrayBuffer())
-          const ct = resp.headers.get('content-type') ?? ''
-          ext = ct.includes('png') ? 'png' : ct.includes('gif') ? 'gif' : 'jpg'
+          buf = Buffer.from(await readBodyCapped(resp, MAX_REMOTE_IMAGE_BYTES))
+          // magic bytes decide: a header-informed extension would happily store
+          // an HTML error page (or an attacker "image") as a .jpg in the deck
+          const kind = rasterImageExt(buf)
+          if (!kind) return null
+          ext = kind
         }
         const baseWidthPx = session.opened.deck.size.cx / EMU_PER_PX_96
         const scale = op.fitWidthPx / baseWidthPx
@@ -427,9 +520,10 @@ export function registerSlidesOnlyAiIpc(): void {
         } else {
           const resp = await fetchRemoteImage(String(op.url))
           if (!resp || !resp.ok) return null
-          buf = Buffer.from(await resp.arrayBuffer())
-          const ct = resp.headers.get('content-type') ?? ''
-          ext = ct.includes('png') ? 'png' : ct.includes('gif') ? 'gif' : 'jpg'
+          buf = Buffer.from(await readBodyCapped(resp, MAX_REMOTE_IMAGE_BYTES))
+          const kind = rasterImageExt(buf)
+          if (!kind) return null
+          ext = kind
         }
         pushHistory(session)
         const ok = replacePictureBytes(
@@ -488,18 +582,18 @@ export function registerSlidesOnlyAiIpc(): void {
 
   ipcMain.handle(
     'ai:save-style-template',
-    (
+    async (
       _event,
       name: string,
-      data: { topic: string; styleSkill: string; createdAt: string },
-    ): { ok: boolean; error?: string } => {
+      data: { topic: string; styleSkill: string; createdAt: string; layout?: unknown },
+    ): Promise<{ ok: boolean; error?: string }> => {
       try {
         const dir = STYLE_TEMPLATES_DIR()
-        mkdirSync(dir, { recursive: true })
         // Filename: replace illegal characters in the name with _ then truncate to 64 chars
         const safeName = name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 64)
         if (!safeName) return { ok: false, error: tm('errTplNameInvalid') }
-        writeJson(join(dir, `${safeName}.json`), { ...data, name: safeName })
+        // `layout` (the deck's chrome skeleton) rides along verbatim when present
+        writeJsonAtomic(join(dir, `${safeName}.json`), { ...data, name: safeName })
         return { ok: true }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -546,15 +640,23 @@ export function registerSlidesOnlyAiIpc(): void {
     (
       _event,
       name: string,
-    ): { ok: boolean; styleSkill?: string; topic?: string; error?: string } => {
+    ): { ok: boolean; styleSkill?: string; topic?: string; layout?: unknown; error?: string } => {
       try {
         const dir = STYLE_TEMPLATES_DIR()
         const safeName = name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 64)
         const filePath = join(dir, `${safeName}.json`)
         if (!existsSync(filePath)) return { ok: false, error: tm('errTplMissing', { name }) }
-        const raw = readJson<{ styleSkill?: string; topic?: string }>(filePath, {})
+        const raw = readJson<{ styleSkill?: string; topic?: string; layout?: unknown }>(
+          filePath,
+          {},
+        )
         if (!raw.styleSkill) return { ok: false, error: tm('errTplNoSkill', { name }) }
-        return { ok: true, styleSkill: raw.styleSkill, topic: raw.topic ?? '' }
+        return {
+          ok: true,
+          styleSkill: raw.styleSkill,
+          topic: raw.topic ?? '',
+          ...(raw.layout !== undefined && raw.layout !== null ? { layout: raw.layout } : {}),
+        }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
