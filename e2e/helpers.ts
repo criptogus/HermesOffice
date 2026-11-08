@@ -98,20 +98,22 @@ export async function launchShell(options: LaunchOptions): Promise<LaunchedApp> 
   // firstWindow() has no timeout of its own: an app that never creates a
   // window would hang the whole test silently. Bound it and report whether
   // the process is still alive so CI logs show where startup stalled.
+  let windowTimer: ReturnType<typeof setTimeout> | undefined
   const page = await Promise.race([
     app.firstWindow(),
-    new Promise<never>((_resolve, reject) =>
-      setTimeout(() => {
-        const child = app.process()
-        reject(
-          new Error(
-            `app.firstWindow() timed out after 30s ` +
-              `(process alive: ${child.exitCode === null && child.signalCode === null})`,
-          ),
-        )
-      }, 30_000),
-    ),
-  ])
+    new Promise<never>((_resolve, reject) => {
+      windowTimer = setTimeout(() => {
+        let alive = 'unknown'
+        try {
+          const child = app.process()
+          alive = String(child.exitCode === null && child.signalCode === null)
+        } catch {
+          alive = 'closed'
+        }
+        reject(new Error(`app.firstWindow() timed out after 30s (process alive: ${alive})`))
+      }, 30_000)
+    }),
+  ]).finally(() => clearTimeout(windowTimer))
   await waitForDocumentReady(app, page)
   return { app, page, userDataDir }
 }
