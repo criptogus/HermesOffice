@@ -1,24 +1,62 @@
 # HermesOffice
 
-**The world's first full-featured open-source AI Office suite.**
+**The open-source AI office suite.** Word processor, spreadsheet, presentation
+editor, PDF editor and Markdown editor in a single app — real `.docx`, `.xlsx`
+and `.pptx` files, edited byte-preservingly, with AI editing built into every
+app instead of bolted on as a chat box.
 
-[![License: Apache-2.0](https://img.shields.io/github/license/criptogus/HermesOffice)](LICENSE)
+[![CI](https://github.com/criptogus/HermesOffice/actions/workflows/ci.yml/badge.svg)](https://github.com/criptogus/HermesOffice/actions/workflows/ci.yml)
+[![Nightly build](https://github.com/criptogus/HermesOffice/actions/workflows/main-build.yml/badge.svg)](https://github.com/criptogus/HermesOffice/actions/workflows/main-build.yml)
 [![Latest release](https://img.shields.io/github/v/release/criptogus/HermesOffice)](https://github.com/criptogus/HermesOffice/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/github/license/criptogus/HermesOffice)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/criptogus/HermesOffice/total)](https://github.com/criptogus/HermesOffice/releases)
 
-[Download](https://github.com/criptogus/HermesOffice/releases/latest) · [Privacy](PRIVACY.md) · [Demo](https://www.youtube.com/watch?v=B2pLdMX95v4)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.webp">
+  <img src="docs/assets/readme/hero.webp" alt="HermesOffice — the open-source AI office suite" width="100%">
+</picture>
+
+**[⬇ Download for macOS](#download)** ·
+[Watch the demo](https://www.youtube.com/watch?v=B2pLdMX95v4) ·
+[Contributing](CONTRIBUTING.md) ·
+[Security](SECURITY.md) ·
+[Privacy](PRIVACY.md)
 
 HermesOffice is a free, open-source alternative to Microsoft Office for macOS,
-Windows, and Linux, built around AI editing as a first-class workflow rather
-than a bolted-on chat box. It opens and saves the real Microsoft Office
-formats — Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`) — and edits
-PDF and Markdown too: a word processor, spreadsheet, presentation editor,
-PDF editor, and Markdown editor as six Electron apps sharing one engine
-layer.
+Windows, and Linux. Every app embeds the same AI panel — block-level edits with
+snapshots and diffs, document-aware agents, web/image search, and image
+generation — and you can run it on your own API key (Claude, OpenAI, Gemini,
+DeepSeek, Kimi, GLM, Qwen and more) or a keyless Genspark sign-in.
 
-[![Meet HermesOffice — the world's first full-featured open-source AI Office (video)](https://img.youtube.com/vi/B2pLdMX95v4/maxresdefault.jpg)](https://www.youtube.com/watch?v=B2pLdMX95v4)
+## Download
 
-[Watch the demo video on YouTube](https://www.youtube.com/watch?v=B2pLdMX95v4)
+### Stable
+
+| Platform                  | Requirements                     | Download                                                                                                                                                                                                          |
+| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS** — Apple Silicon | macOS 11+                        | **[`.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg)** · [`.zip`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64-mac.zip) |
+| **Windows** (x64)         | Windows 10+                      | [build from source](#development)                                                                                                                                                                                 |
+| **Linux** (x86_64)        | glibc 2.34+, FUSE 2 for AppImage | [build from source](#development)                                                                                                                                                                                 |
+
+The `releases/latest/download/…` links above never change — they always point
+at the newest stable build. Older versions live on the
+[Releases](https://github.com/criptogus/HermesOffice/releases) page.
+
+### Nightly — built on every push to `main`
+
+**[⬇ HermesOffice-nightly-arm64-mac.zip](https://github.com/criptogus/HermesOffice/releases/download/ho-nightly/HermesOffice-nightly-arm64-mac.zip)**
+
+The nightly channel ships the latest `main` as a rolling prerelease, built
+automatically on every push. Installed apps detect it on their own: the app
+checks for updates shortly after launch, every 4 hours and when the window
+regains focus, then offers **Update Now** — which downloads the build,
+verifies it and swaps it into place without a reinstall. Stable `ho-v*`
+releases always take priority over the nightly.
+
+macOS builds are **ad-hoc signed, not notarized** (no Apple Developer ID yet),
+so the first launch of a manually downloaded build needs one confirmation:
+right-click the app → **Open**, or allow it under **System Settings → Privacy
+& Security**. Updates applied from inside the app skip this step.
 
 ## Features
 
@@ -36,26 +74,6 @@ layer.
 - **Light / dark / system themes.**
 - **macOS, Windows, Linux.**
 - **Free & open-source (Apache-2.0).**
-
-## Download
-
-**macOS · Apple Silicon — [download the latest `.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg)**
-One click, always the newest build. That link never changes — it is also the one to share or put on a page.
-
-| Platform                             | Requirements                | Download                                                                                                                                                                                                      |
-| ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **macOS** — Apple Silicon (arm64)    | macOS 11+                   | [`.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg) · [`.zip`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64-mac.zip) |
-| **macOS** — Intel (x64)              | macOS 11+                   | [build from source](#development) — no published artifact yet                                                                                                                                                 |
-| **Windows** (x64)                    | Windows 10+                 | [build from source](#development) — no published artifact yet                                                                                                                                                 |
-| **Linux** — Debian / Ubuntu          | x86_64, glibc 2.34+         | [build from source](#development) — no published artifact yet                                                                                                                                                 |
-| **Linux** — Fedora / RHEL / openSUSE | x86_64, glibc 2.34+         | [build from source](#development) — no published artifact yet                                                                                                                                                 |
-| **Linux** — other distributions      | x86_64, glibc 2.34+, FUSE 2 | [build from source](#development) — no published artifact yet                                                                                                                                                 |
-
-Builds come from `main`. The macOS bundle is **ad-hoc signed, not notarized** (there is no
-Apple Developer ID behind it yet), so the first launch needs one confirmation: right-click
-the app → **Open**, or allow it under **System Settings → Privacy & Security**.
-
-Older versions are on the [Releases](https://github.com/criptogus/HermesOffice/releases) page.
 
 ### Installing on Linux
 
@@ -84,9 +102,13 @@ chmod +x HermesOffice-<version>.AppImage
 
 ## Screenshots
 
-| Docs                               | PDF                              |
-| ---------------------------------- | -------------------------------- |
-| ![Docs](docs/screenshots/docs.png) | ![PDF](docs/screenshots/pdf.png) |
+| Docs — AI editing                           | Sheets — AI assistant                           | Slides — AI generation                          |
+| ------------------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| ![Docs AI](docs/assets/readme/docs-ai.webp) | ![Sheets AI](docs/assets/readme/sheets-ai.webp) | ![Slides AI](docs/assets/readme/slides-ai.webp) |
+
+| PDF — real text editing                       | HTML — AI restyle                           | Markdown — AI panel                                 |
+| --------------------------------------------- | ------------------------------------------- | --------------------------------------------------- |
+| ![PDF edit](docs/assets/readme/pdf-edit.webp) | ![HTML AI](docs/assets/readme/html-ai.webp) | ![Markdown AI](docs/assets/readme/markdown-ai.webp) |
 
 ## Apps
 
@@ -143,6 +165,9 @@ All pure TypeScript, no Electron dependency, unit-tested (except the UI kit):
   store, and Electron main-process helpers.
 
 ## Development
+
+TypeScript · Electron · React · Rust xlsx sidecar · ~17,000 unit tests ·
+Playwright E2E against the real built app.
 
 ```bash
 npm install
@@ -266,3 +291,15 @@ is covered by the [HermesOffice Enterprise License](ee/LICENSE).
 The HermesOffice and Genspark names and logos are trademarks of Mainfunc, Inc.
 The Apache-2.0 license does not grant permission to use them (see section 6);
 forks should use their own branding.
+
+---
+
+<p align="center">
+  <strong>HermesOffice</strong> is designed and built by
+  <a href="https://zeroagency.ai">ZeroAgency.ai</a> — an independent AI product
+  studio.<br>
+  If the suite saves you a Microsoft 365 subscription, a star goes a long way:
+  <a href="https://github.com/criptogus/HermesOffice">⭐ criptogus/HermesOffice</a>
+  · <a href="https://github.com/criptogus/HermesOffice/issues">Report a bug</a>
+  · <a href="CONTRIBUTING.md">Contribute</a>
+</p>
