@@ -615,9 +615,9 @@ export function buildCodexAppServerPrompt(
     })),
   }
   return [
-    'Treat the payload below as the new GenOffice conversation events for this turn and follow its system instruction.',
-    'Do not use Codex tools. GenOffice will execute only the tool calls returned in the required response schema.',
-    'Put user-visible prose in text. Put requested GenOffice tool calls in toolCalls; inputJson must be a JSON-encoded object matching the listed inputSchema. Use only listed tool names. If no tool is needed, return an empty toolCalls array.',
+    'Treat the payload below as the new HermesOffice conversation events for this turn and follow its system instruction.',
+    'Do not use Codex tools. HermesOffice will execute only the tool calls returned in the required response schema.',
+    'Put user-visible prose in text. Put requested HermesOffice tool calls in toolCalls; inputJson must be a JSON-encoded object matching the listed inputSchema. Use only listed tool names. If no tool is needed, return an empty toolCalls array.',
     `Keep this one-turn response within roughly ${maxTokens} output tokens.`,
     '<genoffice_payload>',
     JSON.stringify(payload),

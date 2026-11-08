@@ -22,7 +22,7 @@ export function setRescueFetch(fn: FetchLike | null): void {
  * clients to identify themselves and flags "broad" user agents). Main
  * processes refine the default with the app version.
  */
-export const AI_DEFAULT_USER_AGENT = 'GenOffice'
+export const AI_DEFAULT_USER_AGENT = 'HermesOffice'
 
 let userAgent = AI_DEFAULT_USER_AGENT
 
