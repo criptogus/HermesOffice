@@ -32,11 +32,11 @@ DeepSeek, Kimi, GLM, Qwen and more) or a keyless Genspark sign-in.
 
 ### Stable
 
-| Platform | Requirements | Download |
-| -------- | ------------ | -------- |
-| **macOS** — Apple Silicon | macOS 11+ | **[`.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg)** · [`.zip`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64-mac.zip) |
-| **Windows** (x64) | Windows 10+ | [build from source](#development) |
-| **Linux** (x86_64) | glibc 2.34+, FUSE 2 for AppImage | [build from source](#development) |
+| Platform                  | Requirements                     | Download                                                                                                                                                                                                          |
+| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS** — Apple Silicon | macOS 11+                        | **[`.dmg`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64.dmg)** · [`.zip`](https://github.com/criptogus/HermesOffice/releases/latest/download/HermesOffice-arm64-mac.zip) |
+| **Windows** (x64)         | Windows 10+                      | [build from source](#development)                                                                                                                                                                                 |
+| **Linux** (x86_64)        | glibc 2.34+, FUSE 2 for AppImage | [build from source](#development)                                                                                                                                                                                 |
 
 The `releases/latest/download/…` links above never change — they always point
 at the newest stable build. Older versions live on the
@@ -102,12 +102,12 @@ chmod +x HermesOffice-<version>.AppImage
 
 ## Screenshots
 
-| Docs — AI editing | Sheets — AI assistant | Slides — AI generation |
-| ----------------- | --------------------- | ---------------------- |
+| Docs — AI editing                           | Sheets — AI assistant                           | Slides — AI generation                          |
+| ------------------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
 | ![Docs AI](docs/assets/readme/docs-ai.webp) | ![Sheets AI](docs/assets/readme/sheets-ai.webp) | ![Slides AI](docs/assets/readme/slides-ai.webp) |
 
-| PDF — real text editing | HTML — AI restyle | Markdown — AI panel |
-| ----------------------- | ---------------- | ------------------- |
+| PDF — real text editing                       | HTML — AI restyle                           | Markdown — AI panel                                 |
+| --------------------------------------------- | ------------------------------------------- | --------------------------------------------------- |
 | ![PDF edit](docs/assets/readme/pdf-edit.webp) | ![HTML AI](docs/assets/readme/html-ai.webp) | ![Markdown AI](docs/assets/readme/markdown-ai.webp) |
 
 ## Apps
