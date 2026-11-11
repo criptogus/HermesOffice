@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { uniquePathIn } from '../src/safe-file-name'
+import { sanitizeFileName, uniquePathIn } from '../src/safe-file-name'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'safe-file-name-'))
 
@@ -60,5 +60,25 @@ describe('uniquePathIn', () => {
     const d = dir()
     writeFileSync(join(d, 'notes'), 'x')
     expect(uniquePathIn(d, 'notes')).toBe(join(d, 'notes-2'))
+  })
+
+  it('neutralizes Windows reserved device names', () => {
+    expect(sanitizeFileName('CON')).toBe('_CON')
+    expect(sanitizeFileName('con.docx')).toBe('_con.docx')
+    expect(sanitizeFileName('PRN')).toBe('_PRN')
+    expect(sanitizeFileName('aux.txt')).toBe('_aux.txt')
+    expect(sanitizeFileName('NUL')).toBe('_NUL')
+    expect(sanitizeFileName('com1.pdf')).toBe('_com1.pdf')
+    expect(sanitizeFileName('LPT9')).toBe('_LPT9')
+    // Legitimate names with prefixes/suffixes containing reserved names are allowed
+    expect(sanitizeFileName('CONSOLE.docx')).toBe('CONSOLE.docx')
+    expect(sanitizeFileName('my-con.docx')).toBe('my-con.docx')
+  })
+
+  it('strips trailing dots and spaces', () => {
+    expect(sanitizeFileName('report.')).toBe('report')
+    expect(sanitizeFileName('report   ')).toBe('report')
+    expect(sanitizeFileName('report. . .')).toBe('report')
+    expect(sanitizeFileName('...')).toBe('Untitled')
   })
 })

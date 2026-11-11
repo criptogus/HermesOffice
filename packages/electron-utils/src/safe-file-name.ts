@@ -5,13 +5,22 @@
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
+const WINDOWS_RESERVED_NAMES = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/i
+
 /** basename + illegal-char strip; 'Untitled' when nothing usable remains */
 export function sanitizeFileName(fileName: string): string {
-  const cleaned = basename(String(fileName ?? ''))
+  let cleaned = basename(String(fileName ?? ''))
     // eslint-disable-next-line no-control-regex -- control characters are rejected on purpose
     .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '_')
     .trim()
-  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : 'Untitled'
+    .replace(/[. ]+$/, '') // Windows disallows trailing dots and spaces in file names
+
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'Untitled'
+  // Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) with or without extensions
+  if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
+    cleaned = `_${cleaned}`
+  }
+  return cleaned
 }
 
 export function uniquePathIn(dir: string, fileName: string): string {
