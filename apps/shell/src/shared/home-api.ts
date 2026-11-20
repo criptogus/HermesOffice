@@ -111,6 +111,10 @@ export interface HomeApi {
   browse(): Promise<void>
   /** open a docs window at its start screen; `dir` = folder the first save should land in */
   newDoc(opts?: NewFileOpts): Promise<void>
+  /** built-in document templates offered by "New from template…" */
+  listDocTemplates(): Promise<DocTemplateInfo[]>
+  /** copy a built-in template into a fresh file and open it in a new tab */
+  newDocFromTemplate(id: string, opts?: NewFileOpts): Promise<void>
   /** open a sheets window */
   newSheet(opts?: NewFileOpts): Promise<void>
   /** open a slides tab at its start screen (open-a-pptx) */
@@ -321,6 +325,14 @@ export interface RenameResult {
   error?: string
 }
 
+export interface DocTemplateInfo {
+  /** stable id from `templates/manifest.json` */
+  id: string
+  name: string
+  description: string
+  tags: string[]
+}
+
 export interface NewFileOpts {
   /** folder the new file's first save should land in (defaults to the save folder root) */
   dir?: string
@@ -386,6 +398,8 @@ export const HOME_CHANNELS = {
   openPath: 'home:open-path',
   browse: 'home:browse',
   newDoc: 'home:new-doc',
+  listDocTemplates: 'home:list-doc-templates',
+  newDocFromTemplate: 'home:new-doc-from-template',
   newSheet: 'home:new-sheet',
   newSlide: 'home:new-slide',
   newMarkdown: 'home:new-markdown',
