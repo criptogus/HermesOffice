@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "docs": [
+    {
+      "id": "meeting-notes",
+      "file": "docs/meeting-notes.docx",
+      "name": "Meeting notes",
+      "description": "Agenda, discussion, decisions and an action-item table.",
+      "tags": ["meetings", "team"]
+    },
+    {
+      "id": "project-proposal",
+      "file": "docs/project-proposal.docx",
+      "name": "Project proposal",
+      "description": "Goals and metrics, scope, milestones and risks.",
+      "tags": ["proposal", "projects"]
+    },
+    {
+      "id": "status-report",
+      "file": "docs/status-report.docx",
+      "name": "Status report",
+      "description": "TL;DR, done and planned work, blockers and metric trends.",
+      "tags": ["report", "projects"]
+    },
+    {
+      "id": "decision-memo",
+      "file": "docs/decision-memo.docx",
+      "name": "Decision memo",
+      "description": "Options table, recommendation and a decision record.",
+      "tags": ["board", "decisions"]
+    },
+    {
+      "id": "business-plan",
+      "file": "docs/business-plan.docx",
+      "name": "Business plan",
+      "description": "Executive summary through financials and the ask.",
+      "tags": ["strategy", "finance"]
+    },
+    {
+      "id": "product-requirements",
+      "file": "docs/product-requirements.docx",
+      "name": "Product requirements",
+      "description": "User stories, requirements table and rollout plan.",
+      "tags": ["product", "engineering"]
+    },
+    {
+      "id": "idea-brief",
+      "file": "docs/idea-brief.docx",
+      "name": "Idea brief",
+      "description": "The idea in one sentence, problem, solution and next experiment.",
+      "tags": ["strategy", "product"]
+    },
+    {
+      "id": "one-pager",
+      "file": "docs/one-pager.docx",
+      "name": "One-pager",
+      "description": "Single-page executive summary with a clear ask.",
+      "tags": ["summary", "executive"]
+    },
+    {
+      "id": "invoice",
+      "file": "docs/invoice.docx",
+      "name": "Invoice",
+      "description": "Itemised invoice with subtotal, tax and total.",
+      "tags": ["finance"]
+    }
+  ]
+}

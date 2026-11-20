@@ -24,6 +24,7 @@ import { fileCountKey, visiblePageCount } from './counts'
 import { useI18n } from './locale'
 import type { I18n, StringKey } from './locale'
 import { SettingsModal } from './SettingsModal'
+import { TemplatePicker } from './TemplatePicker'
 import { skillUpdateDue } from './IntegrationsPane'
 
 declare global {
@@ -1368,6 +1369,7 @@ export function Home() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null)
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
   // unavailable recent entry (missing flag) the user clicked — offer list removal
   const [confirmMissing, setConfirmMissing] = useState<RecentEntry | null>(null)
   // name in the greeting; omitted when logged out
@@ -1995,6 +1997,15 @@ export function Home() {
             </span>
           </button>
         ))}
+        <button className="quick-card" onClick={() => setTemplatePickerOpen(true)}>
+          <FileBadge ext="docx" size={30} />
+          <span className="quick-text">
+            <span className="quick-title-row">
+              <span className="quick-title">{t('newFromTemplate')}</span>
+            </span>
+            <span className="quick-sub">.docx</span>
+          </span>
+        </button>
         <button
           className="quick-card"
           onClick={() => void window.aiOffice.browse()}
@@ -2888,6 +2899,15 @@ export function Home() {
         <CloudProjectsView />
       ) : (
         renderGlobalContent()
+      )}
+      {templatePickerOpen && (
+        <TemplatePicker
+          onCancel={() => setTemplatePickerOpen(false)}
+          onChoose={(id) => {
+            setTemplatePickerOpen(false)
+            void window.aiOffice.newDocFromTemplate(id, newFileOpts)
+          }}
+        />
       )}
       {confirmDelete && (
         <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>

@@ -273,6 +273,7 @@ import {
   pageRecentPaths,
   statPathEntries,
 } from './recent-files'
+import { createDocFromTemplate, listDocTemplates } from './doc-templates'
 import { isSameFile, isValidRawRenameName } from './rename-validation'
 import {
   FolderWatcher,
@@ -338,6 +339,10 @@ if (app.isPackaged) {
 // relative to apps/shell in the monorepo layout.
 const SIDECAR_EXE = process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar'
 const APPS_ROOT = join(app.getAppPath(), '..')
+// built-in document templates (templates/ at the repo root, an extraResource when packaged)
+const DOC_TEMPLATES_DIR = app.isPackaged
+  ? join(process.resourcesPath, 'templates')
+  : join(APPS_ROOT, '..', 'templates')
 const DOCS_OUT = app.isPackaged
   ? join(process.resourcesPath, 'modules', 'docs')
   : join(APPS_ROOT, 'docs', 'out')
@@ -3336,6 +3341,25 @@ function newDocTab(): void {
   }
 }
 
+/**
+ * "New from template…": copy the chosen built-in template into the folder the
+ * click came from (the save root unless a folder inside it was selected) and
+ * open the copy like any other document. The template itself is never opened.
+ */
+function newDocFromTemplate(id: unknown, opts?: NewFileOpts): void {
+  try {
+    const root = defaultSaveDir()
+    const dir = opts?.dir && isInsideRoot(root, opts.dir) ? opts.dir : root
+    const filePath = createDocFromTemplate(DOC_TEMPLATES_DIR, id, dir)
+    // route directly (not via openDocumentPath) so creating a document emits
+    // only file_new — the file_open event is reserved for opening existing files
+    if (routeDocumentPath(filePath)) recordStarPromptDocOpen()
+    analytics.track('file_new', { kind: 'docx' })
+  } catch (err) {
+    surfaceNewTabError(err)
+  }
+}
+
 /** MCP: open a blank docs tab and return its webContents id, for the visible-editor bridge */
 function openBlankDocsTabForMcp(): number {
   if (!tabManager) throw new Error('HermesOffice is not ready')
@@ -3626,6 +3650,12 @@ function registerHomeIpc(): void {
   ipcMain.handle(HOME_CHANNELS.newDoc, (_event, opts?: NewFileOpts) => {
     rememberPendingDir('doc', opts)
     newDocTab()
+  })
+
+  ipcMain.handle(HOME_CHANNELS.listDocTemplates, () => listDocTemplates(DOC_TEMPLATES_DIR))
+
+  ipcMain.handle(HOME_CHANNELS.newDocFromTemplate, (_event, id: unknown, opts?: NewFileOpts) => {
+    newDocFromTemplate(id, opts)
   })
 
   ipcMain.handle(HOME_CHANNELS.newSheet, (_event, opts?: NewFileOpts) => {

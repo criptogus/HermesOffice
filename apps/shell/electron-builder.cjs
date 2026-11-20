@@ -266,6 +266,12 @@ const config = {
       from: '../../node_modules/electron/dist/LICENSES.chromium.html',
       to: 'LICENSES.chromium.html',
     },
+    // built-in document templates for "New from template…" (manifest.json drives the picker)
+    {
+      from: '../../templates',
+      to: 'templates',
+      filter: ['manifest.json', 'docs/*.docx'],
+    },
     {
       from: '../docs/out',
       to: 'modules/docs',

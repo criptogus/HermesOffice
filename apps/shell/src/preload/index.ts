@@ -96,6 +96,13 @@ const homeApi: HomeApi = {
   async newDoc(opts) {
     await ipcRenderer.invoke(HOME_CHANNELS.newDoc, opts)
   },
+  async listDocTemplates() {
+    return ipcRenderer.invoke(HOME_CHANNELS.listDocTemplates)
+  },
+  async newDocFromTemplate(id, opts) {
+    if (typeof id !== 'string' || !id) throw new Error('Invalid template.')
+    await ipcRenderer.invoke(HOME_CHANNELS.newDocFromTemplate, id, opts)
+  },
   async newSheet(opts) {
     await ipcRenderer.invoke(HOME_CHANNELS.newSheet, opts)
   },
